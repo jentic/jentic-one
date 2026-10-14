@@ -7606,6 +7606,48 @@ components:
         Per-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
       scheme: bearer
       type: http
+    OAuth2:
+      description: |-
+        OAuth 2.0 authorization code flow with PKCE (`S256` only), run by this deployment's authorization server. The resulting access token is the same opaque bearer token `BearerAuth` describes, sent as `Authorization: Bearer <token>`.
+
+        Scopes are permission names, plus the OpenID Connect identity scopes. A request for scopes beyond the client's allowed scopes is rejected with `invalid_scope`, and a token is never enforced beyond its client's allowed scopes or the consent grant. Agents normally authenticate with the JWT-bearer grant instead — see `BearerAuth`.
+      flows:
+        authorizationCode:
+          authorizationUrl: /authorize
+          refreshUrl: /oauth/token
+          scopes:
+            agents:read: Read agent configuration and status.
+            agents:write: Create, update, and delete agents.
+            apis:read: Read API definitions and metadata.
+            apis:write: Import, update, and delete API definitions and their revisions.
+            audit:read: Read audit log entries.
+            capabilities:execute: Execute capabilities via the broker.
+            capabilities:read: Read capability metadata.
+            catalog:import: Import an API from the public catalog into the local registry.
+            config:read: Read runtime platform configuration.
+            config:write: Create and update runtime platform configuration.
+            credentials:connect: Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.
+            credentials:read: Read credential metadata.
+            credentials:write: Create, update, and delete credentials.
+            email: Include the user's email address in the ID token.
+            events:read: Read platform events.
+            events:write: Manage platform events.
+            executions:read: Read execution records.
+            jobs:read: Read job status and results.
+            jobs:write: Cancel and manage async jobs.
+            oauth-clients:read: Read OAuth client registrations.
+            oauth-clients:write: Create, update, disable, and rotate secrets of OAuth clients.
+            openid: Issue an OpenID Connect ID token identifying the user.
+            org:admin: Full organisation administrator access.
+            overlays:confirm: Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default).
+            owner:agents:read: Read agents owned by the agent's creator.
+            owner:credentials:read: Read credentials owned by the agent's creator.
+            owner:resources:read: Read resources owned by the agent's creator (umbrella).
+            profile: Include the user's display name in the ID token.
+            users:read: Read user profiles and permissions.
+            users:write: Create, update, and disable users.
+          tokenUrl: /oauth/token
+      type: oauth2
 info:
   contact:
     email: support@jentic.com
@@ -8230,6 +8272,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List users and agents
       tags:
       - Actors
@@ -8329,6 +8372,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Resolve actor names by id
       tags:
       - Actors
@@ -8396,6 +8440,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List credential provider configs
       tags:
       - Configuration
@@ -8488,6 +8533,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get a credential provider config
       tags:
       - Configuration
@@ -8584,6 +8630,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Set a credential provider config
       tags:
       - Configuration
@@ -8731,6 +8778,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List OAuth clients
       tags:
       - OAuth Clients
@@ -8806,6 +8854,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Register OAuth client
       tags:
       - OAuth Clients
@@ -8893,6 +8942,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Disable OAuth client
       tags:
       - OAuth Clients
@@ -8978,6 +9028,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get OAuth client
       tags:
       - OAuth Clients
@@ -9069,6 +9120,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update OAuth client
       tags:
       - OAuth Clients
@@ -9159,6 +9211,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Rotate client secret
       tags:
       - OAuth Clients
@@ -9250,6 +9303,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Approve OAuth client
       tags:
       - OAuth Clients
@@ -9342,6 +9396,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete OAuth client
       tags:
       - OAuth Clients
@@ -9441,6 +9496,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Deny OAuth client
       tags:
       - OAuth Clients
@@ -9607,6 +9663,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List OAuth grants
       tags:
       - OAuth
@@ -9726,6 +9783,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List visible agents
       tags:
       - Agents
@@ -9809,6 +9867,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Create an agent
       tags:
       - Agents
@@ -9908,6 +9967,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Archive Agent
       tags:
       - Agents
@@ -9992,6 +10052,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get an agent
       tags:
       - Agents
@@ -10085,6 +10146,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update an agent
       tags:
       - Agents
@@ -10175,6 +10237,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get an agent's API key metadata
       tags:
       - Agents
@@ -10262,6 +10325,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get an agent's API key history
       tags:
       - Agents
@@ -10349,6 +10413,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List an agent's credential bindings
       tags:
       - Agents
@@ -10442,6 +10507,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Bind a credential to an agent
       tags:
       - Agents
@@ -10551,6 +10617,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Suspend or remove a credential binding
       tags:
       - Agents
@@ -10651,6 +10718,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Resume a suspended credential binding
       tags:
       - Agents
@@ -10747,6 +10815,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update Agent Jwks
       tags:
       - Agents
@@ -10889,6 +10958,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List an agent's connected OAuth clients
       tags:
       - Agents
@@ -10969,6 +11039,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Agent Permissions
       tags:
       - Agents
@@ -11053,6 +11124,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Replace Agent Permissions
       tags:
       - Agents
@@ -11140,6 +11212,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Approve Agent
       tags:
       - Agents
@@ -11244,6 +11317,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Claim Agent
       tags:
       - Agents
@@ -11336,6 +11410,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Deny Agent
       tags:
       - Agents
@@ -11412,6 +11487,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Disable Agent
       tags:
       - Agents
@@ -11488,6 +11564,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Enable Agent
       tags:
       - Agents
@@ -11568,6 +11645,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Generate Agent Api Key
       tags:
       - Agents
@@ -11644,6 +11722,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Revoke Agent Api Key
       tags:
       - Agents
@@ -11760,6 +11839,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Apis
       tags:
       - APIs
@@ -11830,6 +11910,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Import Apis
       tags:
       - APIs
@@ -11948,6 +12029,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete Api
       tags:
       - APIs
@@ -12050,6 +12132,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Api
       tags:
       - APIs
@@ -12157,6 +12240,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update Api
       tags:
       - APIs
@@ -12273,6 +12357,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Api Spec
       tags:
       - API Spec
@@ -12414,6 +12499,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List the operations an API currently serves
       tags:
       - API Operations
@@ -12568,6 +12654,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List an API's overlays
       tags:
       - Overlays
@@ -12685,6 +12772,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Submit an OpenAPI overlay
       tags:
       - Overlays
@@ -12802,6 +12890,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Deprecate an overlay
       tags:
       - Overlays
@@ -12916,6 +13005,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Overlay
       tags:
       - Overlays
@@ -13050,6 +13140,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Edit an overlay
       tags:
       - Overlays
@@ -13185,6 +13276,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Confirm an overlay and apply it to the served spec
       tags:
       - Overlays
@@ -13310,6 +13402,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Roll back a confirmed overlay
       tags:
       - Overlays
@@ -13468,6 +13561,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List an API's revisions
       tags:
       - APIs
@@ -13584,6 +13678,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete an archived API revision
       tags:
       - APIs
@@ -13704,6 +13799,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get an API revision
       tags:
       - APIs
@@ -13840,6 +13936,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Download an API revision's OpenAPI document
       tags:
       - API Spec
@@ -13990,6 +14087,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List the operations in an API revision
       tags:
       - API Operations
@@ -14112,6 +14210,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Archive an API revision
       tags:
       - APIs
@@ -14234,6 +14333,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Promote Revision
       tags:
       - APIs
@@ -14345,6 +14445,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List security schemes for an API
       tags:
       - APIs
@@ -14532,6 +14633,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Audit Entries
       tags:
       - Audit
@@ -14612,6 +14714,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Audit Entry
       tags:
       - Audit
@@ -14865,6 +14968,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Refresh session token
       tags:
       - Users
@@ -15206,6 +15310,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Catalog
       tags:
       - Catalog
@@ -15286,6 +15391,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Catalog Entry
       tags:
       - Catalog
@@ -15429,6 +15535,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Preview Catalog Operations
       tags:
       - Catalog
@@ -15509,6 +15616,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Import Catalog Entry
       tags:
       - Catalog
@@ -15608,6 +15716,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Snooze Catalog Entry
       tags:
       - Catalog
@@ -15684,6 +15793,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Unsnooze Catalog Entry
       tags:
       - Catalog
@@ -15751,6 +15861,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Refresh Catalog
       tags:
       - Catalog
@@ -15887,6 +15998,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List connect sessions
       tags:
       - Integrations
@@ -15996,6 +16108,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get review data for a connect session
       tags:
       - Integrations
@@ -16103,6 +16216,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Poll a connect session's status
       tags:
       - Integrations
@@ -16206,6 +16320,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Cancel an in-flight connect session
       tags:
       - Integrations
@@ -16342,6 +16457,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Confirm a connect session
       tags:
       - Integrations
@@ -16427,6 +16543,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Reject an agent's connect request
       tags:
       - Integrations
@@ -16598,6 +16715,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List credentials
       tags:
       - Credentials
@@ -16685,6 +16803,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Create credential
       tags:
       - Credentials
@@ -16866,6 +16985,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List credential providers
       tags:
       - Credentials
@@ -16948,6 +17068,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete credential
       tags:
       - Credentials
@@ -17033,6 +17154,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get credential
       tags:
       - Credentials
@@ -17138,6 +17260,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update or rotate credential
       tags:
       - Credentials
@@ -17260,6 +17383,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List agents bound to credential
       tags:
       - Credentials
@@ -17359,6 +17483,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List binding permission rules
       tags:
       - Credentials
@@ -17462,6 +17587,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Patch binding permission rules
       tags:
       - Credentials
@@ -17569,6 +17695,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Replace binding permission rules
       tags:
       - Credentials
@@ -17680,6 +17807,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Dry-run permission evaluation
       tags:
       - Credentials
@@ -17777,6 +17905,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Detach rule set from binding
       tags:
       - Credentials
@@ -17886,6 +18015,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Attach rule set to binding
       tags:
       - Credentials
@@ -17992,6 +18122,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Begin OAuth connect flow
       tags:
       - Credentials
@@ -18279,6 +18410,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Events
       tags:
       - Events
@@ -18466,6 +18598,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Stream Events
       tags:
       - Events
@@ -18546,6 +18679,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Event
       tags:
       - Events
@@ -18761,6 +18895,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Executions
       tags:
       - Executions
@@ -18841,6 +18976,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Execution
       tags:
       - Executions
@@ -18955,6 +19091,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Governed Hosts
       tags:
       - Governed Hosts
@@ -19114,6 +19251,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Inspect operation
       tags:
       - Inspect
@@ -19251,6 +19389,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Start an integration connect session
       tags:
       - Integrations
@@ -19409,6 +19548,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Jobs
       tags:
       - Jobs
@@ -19489,6 +19629,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Job
       tags:
       - Jobs
@@ -19568,6 +19709,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Job Result
       tags:
       - Jobs
@@ -19648,6 +19790,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Cancel Job
       tags:
       - Jobs
@@ -19889,6 +20032,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Report MCP config registration
       tags:
       - MCP
@@ -19964,6 +20108,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Me
       tags:
       - Identity
@@ -20047,6 +20192,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Execution Stats
       tags:
       - Monitoring
@@ -20228,6 +20374,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Usage Stats
       tags:
       - Monitoring
@@ -20408,6 +20555,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Notes
       tags:
       - Notes
@@ -20478,6 +20626,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Create Note
       tags:
       - Notes
@@ -20567,6 +20716,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete Note
       tags:
       - Notes
@@ -20644,6 +20794,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get Note
       tags:
       - Notes
@@ -20741,6 +20892,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update Note
       tags:
       - Notes
@@ -20884,6 +21036,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List OAuth app registrations
       tags:
       - OAuth App Registrations
@@ -20969,6 +21122,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Register a shared OAuth application
       tags:
       - OAuth App Registrations
@@ -21062,6 +21216,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete an OAuth app registration
       tags:
       - OAuth App Registrations
@@ -21147,6 +21302,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get an OAuth app registration
       tags:
       - OAuth App Registrations
@@ -21242,6 +21398,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update an OAuth app registration
       tags:
       - OAuth App Registrations
@@ -21345,6 +21502,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Rotate the client secret
       tags:
       - OAuth App Registrations
@@ -21504,6 +21662,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Revoke OAuth grant
       tags:
       - OAuth
@@ -21602,6 +21761,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Approve or deny a pending client inline (approval-pending page)
       tags:
       - OAuth
@@ -22165,6 +22325,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Introspect Endpoint
       tags:
       - OAuth
@@ -22410,6 +22571,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Exchange a live platform session for an authorize continuation
       tags:
       - OAuth
@@ -22675,6 +22837,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List permission rule sets
       tags:
       - Permission Rule Sets
@@ -22764,6 +22927,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Create permission rule set
       tags:
       - Permission Rule Sets
@@ -22859,6 +23023,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete permission rule set
       tags:
       - Permission Rule Sets
@@ -22944,6 +23109,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get permission rule set
       tags:
       - Permission Rule Sets
@@ -23043,6 +23209,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Rename or re-describe a permission rule set
       tags:
       - Permission Rule Sets
@@ -23149,6 +23316,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Replace all rules in a permission rule set
       tags:
       - Permission Rule Sets
@@ -23223,6 +23391,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List the permission catalogue
       tags:
       - Permissions
@@ -23360,6 +23529,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete Registration Endpoint
       tags:
       - Agent Registration
@@ -23506,6 +23676,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update Registration Endpoint
       tags:
       - Agent Registration
@@ -23640,6 +23811,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Search operations
       tags:
       - Search
@@ -23672,6 +23844,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Running and latest-available app version
       tags:
       - System
@@ -23786,6 +23959,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List Users
       tags:
       - Users
@@ -23857,6 +24031,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Create User
       tags:
       - Users
@@ -23924,6 +24099,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get current user
       tags:
       - Users
@@ -24003,6 +24179,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Change own password
       tags:
       - Users
@@ -24098,6 +24275,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Delete User
       tags:
       - Users
@@ -24187,6 +24365,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get User
       tags:
       - Users
@@ -24271,6 +24450,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Update User
       tags:
       - Users
@@ -24372,6 +24552,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Set User Permissions
       tags:
       - Users
@@ -24462,6 +24643,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Disable User
       tags:
       - Users
@@ -24538,6 +24720,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Enable User
       tags:
       - Users
@@ -24618,6 +24801,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Reissue Invite
       tags:
       - Users
@@ -24827,6 +25011,7 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: List verified vendors
       tags:
       - Vendors
@@ -24932,12 +25117,14 @@ paths:
           description: Unexpected error, as RFC 9457 Problem Details.
       security:
       - BearerAuth: []
+      - OAuth2: []
       summary: Get a vendor's OAuth flows and scopes
       tags:
       - Vendors
     summary: Get a vendor's OAuth flows and scopes
 security:
 - BearerAuth: []
+- OAuth2: []
 servers:
 - description: Production (placeholder — set to your deployment's Control Plane host)
   url: https://control.your-instance.example

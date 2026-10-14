@@ -11120,6 +11120,49 @@
         "description": "Opaque bearer access token (prefixed `at_`), sent as `Authorization: Bearer <token>`. It is **not** a JWT — it is a random string validated server-side by lookup, so it cannot be decoded by the client.\n\nObtain one from `POST /oauth/token` using the grant for your actor type:\n- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).\n- **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.\n\nPer-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.",
         "scheme": "bearer",
         "type": "http"
+      },
+      "OAuth2": {
+        "description": "OAuth 2.0 authorization code flow with PKCE (`S256` only), run by this deployment's authorization server. The resulting access token is the same opaque bearer token `BearerAuth` describes, sent as `Authorization: Bearer <token>`.\n\nScopes are permission names, plus the OpenID Connect identity scopes. A request for scopes beyond the client's allowed scopes is rejected with `invalid_scope`, and a token is never enforced beyond its client's allowed scopes or the consent grant. Agents normally authenticate with the JWT-bearer grant instead — see `BearerAuth`.",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "/authorize",
+            "refreshUrl": "/oauth/token",
+            "scopes": {
+              "agents:read": "Read agent configuration and status.",
+              "agents:write": "Create, update, and delete agents.",
+              "apis:read": "Read API definitions and metadata.",
+              "apis:write": "Import, update, and delete API definitions and their revisions.",
+              "audit:read": "Read audit log entries.",
+              "capabilities:execute": "Execute capabilities via the broker.",
+              "capabilities:read": "Read capability metadata.",
+              "catalog:import": "Import an API from the public catalog into the local registry.",
+              "config:read": "Read runtime platform configuration.",
+              "config:write": "Create and update runtime platform configuration.",
+              "credentials:connect": "Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.",
+              "credentials:read": "Read credential metadata.",
+              "credentials:write": "Create, update, and delete credentials.",
+              "email": "Include the user's email address in the ID token.",
+              "events:read": "Read platform events.",
+              "events:write": "Manage platform events.",
+              "executions:read": "Read execution records.",
+              "jobs:read": "Read job status and results.",
+              "jobs:write": "Cancel and manage async jobs.",
+              "oauth-clients:read": "Read OAuth client registrations.",
+              "oauth-clients:write": "Create, update, disable, and rotate secrets of OAuth clients.",
+              "openid": "Issue an OpenID Connect ID token identifying the user.",
+              "org:admin": "Full organisation administrator access.",
+              "overlays:confirm": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default).",
+              "owner:agents:read": "Read agents owned by the agent's creator.",
+              "owner:credentials:read": "Read credentials owned by the agent's creator.",
+              "owner:resources:read": "Read resources owned by the agent's creator (umbrella).",
+              "profile": "Include the user's display name in the ID token.",
+              "users:read": "Read user profiles and permissions.",
+              "users:write": "Create, update, and disable users."
+            },
+            "tokenUrl": "/oauth/token"
+          }
+        },
+        "type": "oauth2"
       }
     }
   },
@@ -11858,6 +11901,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List users and agents",
@@ -12023,6 +12069,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Resolve actor names by id",
@@ -12160,6 +12209,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List credential provider configs",
@@ -12333,6 +12385,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get a credential provider config",
@@ -12496,6 +12551,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Set a credential provider config",
@@ -12776,6 +12834,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List OAuth clients",
@@ -12920,6 +12981,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Register OAuth client",
@@ -13085,6 +13149,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Disable OAuth client",
@@ -13255,6 +13322,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get OAuth client",
@@ -13435,6 +13505,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update OAuth client",
@@ -13608,6 +13681,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Rotate client secret",
@@ -13781,6 +13857,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Approve OAuth client",
@@ -13947,6 +14026,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete OAuth client",
@@ -14138,6 +14220,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Deny OAuth client",
@@ -14421,6 +14506,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List OAuth grants",
@@ -14628,6 +14716,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List visible agents",
@@ -14772,6 +14863,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Create an agent",
@@ -14938,6 +15032,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Archive Agent",
@@ -15091,6 +15188,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get an agent",
@@ -15254,6 +15354,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update an agent",
@@ -15418,6 +15521,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get an agent's API key metadata",
@@ -15574,6 +15680,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get an agent's API key history",
@@ -15730,6 +15839,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List an agent's credential bindings",
@@ -15893,6 +16005,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Bind a credential to an agent",
@@ -16076,6 +16191,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Suspend or remove a credential binding",
@@ -16250,6 +16368,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Resume a suspended credential binding",
@@ -16417,6 +16538,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update Agent Jwks",
@@ -16662,6 +16786,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List an agent's connected OAuth clients",
@@ -16818,6 +16945,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Agent Permissions",
@@ -16981,6 +17111,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Replace Agent Permissions",
@@ -17137,6 +17270,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Approve Agent",
@@ -17304,6 +17440,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Claim Agent",
@@ -17471,6 +17610,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Deny Agent",
@@ -17620,6 +17762,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Disable Agent",
@@ -17769,6 +17914,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Enable Agent",
@@ -17925,6 +18073,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Generate Agent Api Key",
@@ -18074,6 +18225,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Revoke Agent Api Key",
@@ -18281,6 +18435,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Apis",
@@ -18423,6 +18580,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Import Apis",
@@ -18639,6 +18799,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete Api",
@@ -18826,6 +18989,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Api",
@@ -19021,6 +19187,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update Api",
@@ -19227,6 +19396,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Api Spec",
@@ -19461,6 +19633,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List the operations an API currently serves",
@@ -19719,6 +19894,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List an API's overlays",
@@ -19916,6 +20094,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Submit an OpenAPI overlay",
@@ -20115,6 +20296,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Deprecate an overlay",
@@ -20319,6 +20503,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Overlay",
@@ -20533,6 +20720,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Edit an overlay",
@@ -20751,6 +20941,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Confirm an overlay and apply it to the served spec",
@@ -20951,6 +21144,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Roll back a confirmed overlay",
@@ -21212,6 +21408,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List an API's revisions",
@@ -21411,6 +21610,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete an archived API revision",
@@ -21613,6 +21815,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get an API revision",
@@ -21836,6 +22041,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Download an API revision's OpenAPI document",
@@ -22085,6 +22293,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List the operations in an API revision",
@@ -22290,6 +22501,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Archive an API revision",
@@ -22495,6 +22709,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Promote Revision",
@@ -22702,6 +22919,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List security schemes for an API",
@@ -23031,6 +23251,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Audit Entries",
@@ -23187,6 +23410,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Audit Entry",
@@ -23638,6 +23864,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Refresh session token",
@@ -24192,6 +24421,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Catalog",
@@ -24348,6 +24580,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Catalog Entry",
@@ -24592,6 +24827,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Preview Catalog Operations",
@@ -24748,6 +24986,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Import Catalog Entry",
@@ -24932,6 +25173,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Snooze Catalog Entry",
@@ -25081,6 +25325,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Unsnooze Catalog Entry",
@@ -25218,6 +25465,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Refresh Catalog",
@@ -25455,6 +25705,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List connect sessions",
@@ -25650,6 +25903,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get review data for a connect session",
@@ -25828,6 +26084,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Poll a connect session's status",
@@ -26001,6 +26260,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Cancel an in-flight connect session",
@@ -26247,6 +26509,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Confirm a connect session",
@@ -26396,6 +26661,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Reject an agent's connect request",
@@ -26706,6 +26974,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List credentials",
@@ -26881,6 +27152,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Create credential",
@@ -27189,6 +27463,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List credential providers",
@@ -27354,6 +27631,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete credential",
@@ -27524,6 +27804,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get credential",
@@ -27731,6 +28014,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update or rotate credential",
@@ -27948,6 +28234,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List agents bound to credential",
@@ -28138,6 +28427,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List binding permission rules",
@@ -28335,6 +28627,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Patch binding permission rules",
@@ -28537,6 +28832,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Replace binding permission rules",
@@ -28738,6 +29036,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Dry-run permission evaluation",
@@ -28920,6 +29221,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Detach rule set from binding",
@@ -29111,6 +29415,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Attach rule set to binding",
@@ -29310,6 +29617,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Begin OAuth connect flow",
@@ -29821,6 +30131,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Events",
@@ -30162,6 +30475,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Stream Events",
@@ -30318,6 +30634,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Event",
@@ -30701,6 +31020,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Executions",
@@ -30857,6 +31179,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Execution",
@@ -31039,6 +31364,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Governed Hosts",
@@ -31295,6 +31623,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Inspect operation",
@@ -31517,6 +31848,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Start an integration connect session",
@@ -31803,6 +32137,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Jobs",
@@ -31959,6 +32296,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Job",
@@ -32113,6 +32453,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Job Result",
@@ -32269,6 +32612,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Cancel Job",
@@ -32665,6 +33011,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Report MCP config registration",
@@ -32817,6 +33166,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Me",
@@ -32976,6 +33328,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Execution Stats",
@@ -33303,6 +33658,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Usage Stats",
@@ -33628,6 +33986,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Notes",
@@ -33770,6 +34131,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Create Note",
@@ -33942,6 +34306,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete Note",
@@ -34093,6 +34460,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get Note",
@@ -34278,6 +34648,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update Note",
@@ -34527,6 +34900,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List OAuth app registrations",
@@ -34686,6 +35062,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Register a shared OAuth application",
@@ -34868,6 +35247,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete an OAuth app registration",
@@ -35038,6 +35420,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get an OAuth app registration",
@@ -35218,6 +35603,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update an OAuth app registration",
@@ -35419,6 +35807,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Rotate the client secret",
@@ -35669,6 +36060,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Revoke OAuth grant",
@@ -35817,6 +36211,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Approve or deny a pending client inline (approval-pending page)",
@@ -36715,6 +37112,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Introspect Endpoint",
@@ -37044,6 +37444,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Exchange a live platform session for an authorize continuation",
@@ -37512,6 +37915,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List permission rule sets",
@@ -37673,6 +38079,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Create permission rule set",
@@ -37855,6 +38264,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete permission rule set",
@@ -38025,6 +38437,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get permission rule set",
@@ -38205,6 +38620,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Rename or re-describe a permission rule set",
@@ -38394,6 +38812,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Replace all rules in a permission rule set",
@@ -38531,6 +38952,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List the permission catalogue",
@@ -38794,6 +39218,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete Registration Endpoint",
@@ -39076,6 +39503,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update Registration Endpoint",
@@ -39327,6 +39757,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Search operations",
@@ -39356,6 +39789,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Running and latest-available app version",
@@ -39563,6 +39999,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List Users",
@@ -39707,6 +40146,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Create User",
@@ -39844,6 +40286,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get current user",
@@ -39992,6 +40437,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Change own password",
@@ -40174,6 +40622,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Delete User",
@@ -40344,6 +40795,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get User",
@@ -40507,6 +40961,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Update User",
@@ -40708,6 +41165,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Set User Permissions",
@@ -40891,6 +41351,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Disable User",
@@ -41040,6 +41503,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Enable User",
@@ -41196,6 +41662,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Reissue Invite",
@@ -41570,6 +42039,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "List verified vendors",
@@ -41749,6 +42221,9 @@
         "security": [
           {
             "BearerAuth": []
+          },
+          {
+            "OAuth2": []
           }
         ],
         "summary": "Get a vendor's OAuth flows and scopes",
@@ -41762,6 +42237,9 @@
   "security": [
     {
       "BearerAuth": []
+    },
+    {
+      "OAuth2": []
     }
   ],
   "servers": [

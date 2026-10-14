@@ -337,3 +337,36 @@ def test_every_operation_documents_a_default_problem_response(
         != "#/components/schemas/ProblemDetail"
     ]
     assert not bad, "Operations without a Problem Details default response:\n" + "\n".join(bad)
+
+def test_oauth2_scheme_matches_the_authorization_server(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """The ``OAuth2`` scheme's scopes are exactly the permission catalogue plus OIDC scopes.
+
+    Scopes are permission names (``scopes_to_permissions`` is the identity), so a
+    permission added to the catalogue must appear here — which it does by
+    construction; this pins that nobody hard-codes a divergent list.
+    """
+    from jentic_one.shared.auth.permission_catalog import (
+        ALL_PERMISSIONS,
+        OIDC_PASSTHROUGH_SCOPES,
+    )
+
+    scheme = generated_control_spec["components"]["securitySchemes"]["OAuth2"]
+    flow = scheme["flows"]["authorizationCode"]
+    assert flow["authorizationUrl"] == "/authorize"
+    assert flow["tokenUrl"] == "/oauth/token"
+    assert set(flow["scopes"]) == set(ALL_PERMISSIONS) | OIDC_PASSTHROUGH_SCOPES
+    assert all(desc for desc in flow["scopes"].values())
+
+
+def test_authenticated_operations_accept_bearer_or_oauth2(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Every authenticated operation offers both schemes, with no per-operation scopes."""
+    bad = [
+        f"{method.upper()} {path}: {operation.get('security')}"
+        for path, method, operation in _operations(generated_control_spec)
+        if operation.get("security") not in ([], [{"BearerAuth": []}, {"OAuth2": []}])
+    ]
+    assert not bad, "Unexpected security requirements:\n" + "\n".join(bad)

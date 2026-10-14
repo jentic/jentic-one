@@ -4,7 +4,7 @@ This module is the single source of truth for the document-level metadata that
 FastAPI cannot infer from type hints and docstrings: the ``info`` block (title,
 summary, the long marketing/architecture description, contact, license),
 ``servers``, the tag catalogue (with descriptions), the Redoc ``x-tagGroups``
-extension, and the global ``BearerAuth`` security scheme.
+extension, and the global ``BearerAuth`` / ``OAuth2`` security schemes.
 
 It was ported from the hand-curated ``openapi/control/control.openapi.yaml`` so
 the generated spec carries the same richness. Wire it into a FastAPI app via
@@ -24,6 +24,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 
 from jentic_one import __version__
+from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web.endpoint_permissions import build_operation_auth_map
 from jentic_one.shared.web.openapi_responses import PROBLEM_JSON, STATUS_EXAMPLES
 
@@ -766,6 +767,64 @@ BEARER_SECURITY_SCHEME = {
     }
 }
 
+_OIDC_SCOPE_DESCRIPTIONS = {
+    "openid": "Issue an OpenID Connect ID token identifying the user.",
+    "email": "Include the user's email address in the ID token.",
+    "profile": "Include the user's display name in the ID token.",
+}
+
+#: The interactive OAuth 2.0 flow this deployment's own authorization server runs
+#: (the one ``/.well-known/oauth-authorization-server`` advertises). It yields the
+#: same opaque ``at_`` access token ``BearerAuth`` describes, so operations accept
+#: either requirement. It carries no per-operation scopes: what a token may do is
+#: decided by the actor's permissions (see the ``BearerAuth`` description), and a
+#: scope only narrows a grant to a subset of them.
+OAUTH2_SECURITY_SCHEME = {
+    "OAuth2": {
+        "type": "oauth2",
+        "description": (
+            "OAuth 2.0 authorization code flow with PKCE (`S256` only), run by this "
+            "deployment's authorization server. The resulting access token is the same "
+            "opaque bearer token `BearerAuth` describes, sent as "
+            "`Authorization: Bearer <token>`.\n\n"
+            "Scopes are permission names, plus the OpenID Connect identity scopes. A "
+            "request for scopes beyond the client's allowed scopes is rejected with "
+            "`invalid_scope`, and a token is never enforced beyond its client's allowed "
+            "scopes or the consent grant. Agents normally authenticate with the "
+            "JWT-bearer grant instead — see `BearerAuth`."
+        ),
+        "flows": {
+            "authorizationCode": {
+                "authorizationUrl": "/authorize",
+                "tokenUrl": "/oauth/token",
+                "refreshUrl": "/oauth/token",
+                "scopes": {
+                    **{
+                        scope: _OIDC_SCOPE_DESCRIPTIONS[scope]
+                        for scope in sorted(OIDC_PASSTHROUGH_SCOPES)
+                    },
+                    **{
+                        name: f"{perm.description}."
+                        if not perm.description.endswith(".")
+                        else perm.description
+                        for name, perm in sorted(ALL_PERMISSIONS.items())
+                    },
+                },
+            }
+        },
+    }
+}
+
+
+def authenticated_security() -> list[dict[str, list[str]]]:
+    """Security requirement for an authenticated operation: either scheme.
+
+    A fresh list per call, so the YAML export never emits anchors/aliases for a
+    shared object.
+    """
+    return [{"BearerAuth": []}, {"OAuth2": []}]
+
+
 # Operations that are intentionally unauthenticated and must NOT inherit the
 # global BearerAuth requirement.
 PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
@@ -1074,8 +1133,9 @@ def _stamp_permission_metadata(
 ) -> None:
     """Stamp the operation's ``security`` from its recovered identity dependency.
 
-    The OpenAPI document models only the real authentication mechanism —
-    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation
+    The OpenAPI document models only the real authentication mechanism — an
+    opaque bearer token (not a JWT), described as ``BearerAuth`` and, for the
+    interactive authorization-code flow that issues it, ``OAuth2``. The per-operation
     permission/actor-type join is *not* expressed here: OpenAPI's ``security`` model
     cannot faithfully carry our OR-of-permissions semantics, the ``org:admin``
     superuser bypass, the typical-caller hint, or the fact that many permissions are
@@ -1090,7 +1150,8 @@ def _stamp_permission_metadata(
     never fall back to the global document-level requirement to decide whether an
     operation authenticates: an operation with no recovered identity dependency is
     stamped ``security: []`` (public); an authenticated one is stamped
-    ``[{"BearerAuth": []}]``. This keeps the public/authenticated boundary derived
+    ``[{"BearerAuth": []}, {"OAuth2": []}]`` (either scheme, no per-operation
+    scopes). This keeps the public/authenticated boundary derived
     from the actual route dependency rather than inferred.
     """
     info = operation_auth.get((method.upper(), path))
@@ -1102,7 +1163,7 @@ def _stamp_permission_metadata(
         for code in ("401", "403"):
             responses.pop(code, None)
         return
-    operation["security"] = [{"BearerAuth": []}]
+    operation["security"] = authenticated_security()
 
 
 def install_openapi_metadata(app: FastAPI) -> None:
@@ -1135,8 +1196,9 @@ def install_openapi_metadata(app: FastAPI) -> None:
         components = schema.setdefault("components", {})
         security_schemes = components.setdefault("securitySchemes", {})
         security_schemes.update(BEARER_SECURITY_SCHEME)
+        security_schemes.update(OAUTH2_SECURITY_SCHEME)
 
-        schema["security"] = [{"BearerAuth": []}]
+        schema["security"] = authenticated_security()
         schema["x-tagGroups"] = X_TAG_GROUPS
 
         operation_auth = build_operation_auth_map(app)
