@@ -319,3 +319,20 @@ def test_every_path_item_and_request_body_has_a_description(
         if "requestBody" in operation and not operation["requestBody"].get("description")
     ]
     assert not missing, "Missing descriptions:\n" + "\n".join(missing)
+
+def test_every_operation_documents_a_default_problem_response(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Every operation's ``default`` response is the RFC 9457 catch-all."""
+    bad = [
+        f"{method.upper()} {path}"
+        for path, method, operation in _operations(generated_control_spec)
+        if (operation.get("responses") or {})
+        .get("default", {})
+        .get("content", {})
+        .get("application/problem+json", {})
+        .get("schema", {})
+        .get("$ref")
+        != "#/components/schemas/ProblemDetail"
+    ]
+    assert not bad, "Operations without a Problem Details default response:\n" + "\n".join(bad)

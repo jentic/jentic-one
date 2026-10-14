@@ -1046,6 +1046,26 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         content[PROBLEM_JSON] = media
 
 
+def _add_default_problem_response(responses: dict[str, Any]) -> None:
+    """Document the RFC 9457 catch-all as the operation's ``default`` response.
+
+    Any status the operation does not list (an unmapped 5xx, a proxy-injected
+    error) still arrives as Problem Details: ``unhandled_exception_handler``
+    guarantees it for an unclaimed exception, so every operation — the bare
+    public probes included — gets the same ``default``.
+    """
+    if "default" not in responses:
+        responses["default"] = {
+            "description": "Unexpected error, as RFC 9457 Problem Details.",
+            "content": {
+                PROBLEM_JSON: {
+                    "schema": {"$ref": "#/components/schemas/ProblemDetail"},
+                    "example": STATUS_EXAMPLES["500"],
+                }
+            },
+        }
+
+
 def _stamp_permission_metadata(
     method: str,
     path: str,
@@ -1151,6 +1171,7 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # returned.
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
+                _add_default_problem_response(operation.get("responses", {}))
                 _summarise_parameter_examples(operation)
                 _describe_request_body(operation, components.get("schemas", {}))
             _summarise_path_item(path_item)

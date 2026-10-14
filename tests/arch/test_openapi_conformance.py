@@ -36,6 +36,7 @@ from tools.openapi_export import (
     UI_SPEC_PATH,
     dump_spec_yaml,
     published_spec,
+    ui_client_spec,
 )
 
 from jentic_one.shared.web.openapi_meta import PUBLISHED_SERVERS
@@ -227,7 +228,7 @@ def test_ui_client_schema_matches_generated(generated_control_spec: dict[str, An
     whitespace differences while still asserting the document matches.
     """
     actual = json.loads(UI_SPEC_PATH.read_text(encoding="utf-8"))
-    if actual != generated_control_spec:
+    if actual != ui_client_spec(generated_control_spec):
         _drift_failure(
             "ui/openapi.json is out of date with the FastAPI app. "
             "Regenerate it with `make openapi` (then `cd ui && npm run codegen`) and commit."

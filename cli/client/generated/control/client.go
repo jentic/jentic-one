@@ -27364,6 +27364,8 @@ type JwksHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27389,6 +27391,11 @@ func (r JwksHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r JwksHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r JwksHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27433,6 +27440,8 @@ type OauthAuthorizationServerHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27458,6 +27467,11 @@ func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27504,6 +27518,8 @@ type McpOauthAuthorizationServerHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27534,6 +27550,11 @@ func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON500() *Pro
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27580,6 +27601,8 @@ type McpOauthProtectedResourceRootAliasHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27610,6 +27633,11 @@ func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON500
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27656,6 +27684,8 @@ type McpOauthProtectedResourceHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27686,6 +27716,11 @@ func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON500() *Probl
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27734,6 +27769,8 @@ type ListActorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27769,6 +27806,11 @@ func (r ListActorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListActorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListActorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27817,6 +27859,8 @@ type LookupActorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27852,6 +27896,11 @@ func (r LookupActorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LookupActorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27900,6 +27949,8 @@ type ListProviderConfigsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27935,6 +27986,11 @@ func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -27985,6 +28041,8 @@ type GetProviderConfigHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28025,6 +28083,11 @@ func (r GetProviderConfigHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetProviderConfigHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetProviderConfigHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28073,6 +28136,8 @@ type SetProviderConfigHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28108,6 +28173,11 @@ func (r SetProviderConfigHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SetProviderConfigHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetProviderConfigHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28152,6 +28222,8 @@ type HealthHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28177,6 +28249,11 @@ func (r HealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r HealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r HealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28225,6 +28302,8 @@ type ListOauthClientsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28260,6 +28339,11 @@ func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28308,6 +28392,8 @@ type CreateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -28343,6 +28429,11 @@ func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28391,6 +28482,8 @@ type DeactivateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -28426,6 +28519,11 @@ func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28476,6 +28574,8 @@ type GetOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28516,6 +28616,11 @@ func (r GetOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28566,6 +28671,8 @@ type UpdateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28606,6 +28713,11 @@ func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28656,6 +28768,8 @@ type RotateOauthClientSecretHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28696,6 +28810,11 @@ func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28746,6 +28865,8 @@ type ApproveOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28786,6 +28907,11 @@ func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28834,6 +28960,8 @@ type DeleteOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -28869,6 +28997,11 @@ func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28919,6 +29052,8 @@ type DenyOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28959,6 +29094,11 @@ func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29007,6 +29147,8 @@ type ListOauthGrantsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29042,6 +29184,11 @@ func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29090,6 +29237,8 @@ type ListAgentsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29125,6 +29274,11 @@ func (r ListAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29173,6 +29327,8 @@ type CreateAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -29208,6 +29364,11 @@ func (r CreateAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29254,6 +29415,8 @@ type ArchiveAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -29284,6 +29447,11 @@ func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ArchiveAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29332,6 +29500,8 @@ type GetAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29367,6 +29537,11 @@ func (r GetAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29415,6 +29590,8 @@ type UpdateAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29450,6 +29627,11 @@ func (r UpdateAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29498,6 +29680,8 @@ type GetAgentApiKeyInfoHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29533,6 +29717,11 @@ func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29581,6 +29770,8 @@ type GetAgentApiKeyHistoryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29616,6 +29807,11 @@ func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29664,6 +29860,8 @@ type ListAgentCredentialsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29699,6 +29897,11 @@ func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29747,6 +29950,8 @@ type BindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -29782,6 +29987,11 @@ func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29828,6 +30038,8 @@ type UnbindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -29858,6 +30070,11 @@ func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29906,6 +30123,8 @@ type ResumeAgentCredentialBindingHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29941,6 +30160,11 @@ func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29989,6 +30213,8 @@ type UpdateAgentJwksHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30024,6 +30250,11 @@ func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30074,6 +30305,8 @@ type ListAgentOauthGrantsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30114,6 +30347,11 @@ func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30162,6 +30400,8 @@ type GetAgentPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30197,6 +30437,11 @@ func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30245,6 +30490,8 @@ type ReplaceAgentPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30280,6 +30527,11 @@ func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30328,6 +30580,8 @@ type ApproveAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30363,6 +30617,11 @@ func (r ApproveAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApproveAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApproveAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30411,6 +30670,8 @@ type ClaimAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30446,6 +30707,11 @@ func (r ClaimAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ClaimAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30494,6 +30760,8 @@ type DenyAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30529,6 +30797,11 @@ func (r DenyAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DenyAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DenyAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30575,6 +30848,8 @@ type DisableAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -30605,6 +30880,11 @@ func (r DisableAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DisableAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisableAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30651,6 +30931,8 @@ type EnableAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -30681,6 +30963,11 @@ func (r EnableAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r EnableAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30729,6 +31016,8 @@ type GenerateAgentApiKeyHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30764,6 +31053,11 @@ func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30810,6 +31104,8 @@ type RevokeAgentApiKeyHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -30840,6 +31136,11 @@ func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30888,6 +31189,8 @@ type ListApisHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30923,6 +31226,11 @@ func (r ListApisHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApisHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApisHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30971,6 +31279,8 @@ type ImportApisHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -31006,6 +31316,11 @@ func (r ImportApisHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ImportApisHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ImportApisHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31056,6 +31371,8 @@ type DeleteApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31096,6 +31413,11 @@ func (r DeleteApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31144,6 +31466,8 @@ type GetApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31179,6 +31503,11 @@ func (r GetApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31227,6 +31556,8 @@ type UpdateApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31262,6 +31593,11 @@ func (r UpdateApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31310,6 +31646,8 @@ type GetApiSpecHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31345,6 +31683,11 @@ func (r GetApiSpecHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiSpecHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiSpecHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31393,6 +31736,8 @@ type ListApiOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31428,6 +31773,11 @@ func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31476,6 +31826,8 @@ type ListOverlaysHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31511,6 +31863,11 @@ func (r ListOverlaysHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOverlaysHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOverlaysHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31559,6 +31916,8 @@ type SubmitOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -31594,6 +31953,11 @@ func (r SubmitOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SubmitOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SubmitOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31640,6 +32004,8 @@ type DeprecateOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31670,6 +32036,11 @@ func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31718,6 +32089,8 @@ type GetOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31753,6 +32126,11 @@ func (r GetOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31801,6 +32179,8 @@ type UpdateOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31836,6 +32216,11 @@ func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31884,6 +32269,8 @@ type ConfirmOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31919,6 +32306,11 @@ func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31965,6 +32357,8 @@ type RollbackOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31995,6 +32389,11 @@ func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RollbackOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32043,6 +32442,8 @@ type ListApiRevisionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32078,6 +32479,11 @@ func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32124,6 +32530,8 @@ type DeleteRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -32154,6 +32562,11 @@ func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32202,6 +32615,8 @@ type GetApiRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32237,6 +32652,11 @@ func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32285,6 +32705,8 @@ type GetApiRevisionSpecHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32320,6 +32742,11 @@ func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32368,6 +32795,8 @@ type ListApiRevisionOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32403,6 +32832,11 @@ func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON500() *Probl
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32451,6 +32885,8 @@ type ArchiveRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32486,6 +32922,11 @@ func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32534,6 +32975,8 @@ type PromoteRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32569,6 +33012,11 @@ func (r PromoteRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PromoteRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PromoteRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32619,6 +33067,8 @@ type ListApiSecuritySchemesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32659,6 +33109,11 @@ func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32707,6 +33162,8 @@ type ListAuditEntriesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32742,6 +33199,11 @@ func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32790,6 +33252,8 @@ type GetAuditEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32825,6 +33289,11 @@ func (r GetAuditEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAuditEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAuditEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32869,6 +33338,8 @@ type AuthHealthHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32894,6 +33365,11 @@ func (r AuthHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AuthHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthHealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32938,6 +33414,8 @@ type AuthIdpDescriptorHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32963,6 +33441,11 @@ func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33007,6 +33490,8 @@ type LoginHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33032,6 +33517,11 @@ func (r LoginHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LoginHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LoginHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33080,6 +33570,8 @@ type RefreshSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33115,6 +33607,11 @@ func (r RefreshSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RefreshSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33159,6 +33656,8 @@ type AuthorizeEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33184,6 +33683,11 @@ func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33232,6 +33736,8 @@ type ListCatalogHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33267,6 +33773,11 @@ func (r ListCatalogHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCatalogHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCatalogHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33315,6 +33826,8 @@ type GetCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33350,6 +33863,11 @@ func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33398,6 +33916,8 @@ type PreviewCatalogOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33433,6 +33953,11 @@ func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33481,6 +34006,8 @@ type ImportCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -33516,6 +34043,11 @@ func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33564,6 +34096,8 @@ type SnoozeCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -33599,6 +34133,11 @@ func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33645,6 +34184,8 @@ type UnsnoozeCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -33675,6 +34216,11 @@ func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33723,6 +34269,8 @@ type RefreshCatalogHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33758,6 +34306,11 @@ func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshCatalogHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33806,6 +34359,8 @@ type ListConnectSessionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33841,6 +34396,11 @@ func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33891,6 +34451,8 @@ type GetConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33931,6 +34493,11 @@ func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33979,6 +34546,8 @@ type PollConnectSessionStatusHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34014,6 +34583,11 @@ func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34060,6 +34634,8 @@ type CancelConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34090,6 +34666,11 @@ func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34142,6 +34723,8 @@ type ConfirmConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34189,6 +34772,11 @@ func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDe
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r ConfirmConnectSessionHTTPResp) GetBody() []byte {
 	return r.Body
@@ -34233,6 +34821,8 @@ type RejectConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34263,6 +34853,11 @@ func (r RejectConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RejectConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RejectConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34307,6 +34902,8 @@ type ControlHealthHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34332,6 +34929,11 @@ func (r ControlHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ControlHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ControlHealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34380,6 +34982,8 @@ type ListCredentialsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34415,6 +35019,11 @@ func (r ListCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCredentialsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34463,6 +35072,8 @@ type CreateCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -34498,6 +35109,11 @@ func (r CreateCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34542,6 +35158,8 @@ type OauthCallbackHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34567,6 +35185,11 @@ func (r OauthCallbackHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r OauthCallbackHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r OauthCallbackHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34615,6 +35238,8 @@ type ListProvidersHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34650,6 +35275,11 @@ func (r ListProvidersHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListProvidersHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListProvidersHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34698,6 +35328,8 @@ type DeleteCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34733,6 +35365,11 @@ func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34783,6 +35420,8 @@ type GetCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34823,6 +35462,11 @@ func (r GetCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34873,6 +35517,8 @@ type UpdateCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34913,6 +35559,11 @@ func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34963,6 +35614,8 @@ type ListCredentialAgentsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35003,6 +35656,11 @@ func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35053,6 +35711,8 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35093,6 +35753,11 @@ func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35143,6 +35808,8 @@ type PatchAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35183,6 +35850,11 @@ func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35233,6 +35905,8 @@ type ReplaceAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35273,6 +35947,11 @@ func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500(
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35323,6 +36002,8 @@ type TestAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35363,6 +36044,11 @@ func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35411,6 +36097,8 @@ type DetachAgentCredentialRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -35446,6 +36134,11 @@ func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35494,6 +36187,8 @@ type AttachAgentCredentialRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -35529,6 +36224,11 @@ func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35581,6 +36281,8 @@ type ConnectCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35628,6 +36330,11 @@ func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConnectCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r ConnectCredentialHTTPResp) GetBody() []byte {
 	return r.Body
@@ -35670,6 +36377,8 @@ type ErrorPageHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35695,6 +36404,11 @@ func (r ErrorPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ErrorPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ErrorPageHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35743,6 +36457,8 @@ type ListEventsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35778,6 +36494,11 @@ func (r ListEventsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListEventsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListEventsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35826,6 +36547,8 @@ type StreamEventsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35861,6 +36584,11 @@ func (r StreamEventsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r StreamEventsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StreamEventsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35909,6 +36637,8 @@ type GetEventHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35944,6 +36674,11 @@ func (r GetEventHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetEventHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetEventHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35992,6 +36727,8 @@ type ListExecutionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36027,6 +36764,11 @@ func (r ListExecutionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListExecutionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListExecutionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36075,6 +36817,8 @@ type GetExecutionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36110,6 +36854,11 @@ func (r GetExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetExecutionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36168,6 +36917,8 @@ type GetGovernedHostsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetGovernedHostsHTTPResp200Headers
 	// Headers304 the parsed response headers for an HTTP 304 response
@@ -36209,6 +36960,11 @@ func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r GetGovernedHostsHTTPResp) GetBody() []byte {
 	return r.Body
@@ -36243,11 +36999,18 @@ type GetHealthHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *RootHealthResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetHealthHTTPResp) GetJSON200() *RootHealthResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36296,6 +37059,8 @@ type InspectOperationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36333,6 +37098,11 @@ func (r InspectOperationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r InspectOperationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r InspectOperationHTTPResp) GetBody() []byte {
 	return r.Body
@@ -36367,11 +37137,18 @@ type GetInstanceHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *InstanceIdentityResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetInstanceHTTPResp) GetJSON200() *InstanceIdentityResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetInstanceHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36426,6 +37203,8 @@ type IntegrationsConnectHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -36478,6 +37257,11 @@ func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON503() *ProblemDeta
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r IntegrationsConnectHTTPResp) GetBody() []byte {
 	return r.Body
@@ -36524,6 +37308,8 @@ type ListJobsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36559,6 +37345,11 @@ func (r ListJobsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListJobsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListJobsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36607,6 +37398,8 @@ type GetJobHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36642,6 +37435,11 @@ func (r GetJobHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetJobHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetJobHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36690,6 +37488,8 @@ type GetJobResultHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36725,6 +37525,11 @@ func (r GetJobResultHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetJobResultHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetJobResultHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36773,6 +37578,8 @@ type CancelJobHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36808,6 +37615,11 @@ func (r CancelJobHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CancelJobHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CancelJobHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36852,6 +37664,8 @@ type LoginPageHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -36877,6 +37691,11 @@ func (r LoginPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LoginPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36923,6 +37742,8 @@ type LoginSubmitHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36953,6 +37774,11 @@ func (r LoginSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LoginSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LoginSubmitHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37001,6 +37827,8 @@ type ReportMcpConfigRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -37036,6 +37864,11 @@ func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON500() *Pro
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37084,6 +37917,8 @@ type GetMeHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37119,6 +37954,11 @@ func (r GetMeHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetMeHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetMeHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37167,6 +38007,8 @@ type GetExecutionStatsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37202,6 +38044,11 @@ func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37250,6 +38097,8 @@ type GetUsageStatsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37285,6 +38134,11 @@ func (r GetUsageStatsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetUsageStatsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetUsageStatsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37333,6 +38187,8 @@ type ListNotesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37368,6 +38224,11 @@ func (r ListNotesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListNotesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListNotesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37416,6 +38277,8 @@ type CreateNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -37451,6 +38314,11 @@ func (r CreateNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37497,6 +38365,8 @@ type DeleteNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -37527,6 +38397,11 @@ func (r DeleteNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37575,6 +38450,8 @@ type GetNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37610,6 +38487,11 @@ func (r GetNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37658,6 +38540,8 @@ type UpdateNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37693,6 +38577,11 @@ func (r UpdateNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37741,6 +38630,8 @@ type ListOauthAppRegistrationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37776,6 +38667,11 @@ func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON500() *Probl
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37824,6 +38720,8 @@ type CreateOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -37859,6 +38757,11 @@ func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37909,6 +38812,8 @@ type DeleteOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -37949,6 +38854,11 @@ func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37999,6 +38909,8 @@ type GetOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38039,6 +38951,11 @@ func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38089,6 +39006,8 @@ type UpdateOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38129,6 +39048,11 @@ func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38181,6 +39105,8 @@ type RotateOauthAppRegistrationSecretHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38228,6 +39154,11 @@ func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON503()
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r RotateOauthAppRegistrationSecretHTTPResp) GetBody() []byte {
 	return r.Body
@@ -38268,6 +39199,8 @@ type RegisterOauthClientEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -38288,6 +39221,11 @@ func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON500() *Pro
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38336,6 +39274,8 @@ type RevokeOauthGrantHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -38371,6 +39311,11 @@ func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38419,6 +39364,8 @@ type ApprovalDecisionEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38454,6 +39401,11 @@ func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38498,6 +39450,8 @@ type ApprovalStatusEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38523,6 +39477,11 @@ func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38567,6 +39526,8 @@ type AuthorizeOauthCallbackHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38592,6 +39553,11 @@ func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38634,6 +39600,8 @@ type ConsentPageHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -38654,6 +39622,11 @@ func (r ConsentPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38698,6 +39671,8 @@ type ConsentSubmitHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38723,6 +39698,11 @@ func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentSubmitHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38767,6 +39747,8 @@ type ConsentAgentCreateHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38792,6 +39774,11 @@ func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38836,6 +39823,8 @@ type ConsentAgentStatusHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38861,6 +39850,11 @@ func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38909,6 +39903,8 @@ type IntrospectEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38944,6 +39940,11 @@ func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38996,6 +39997,8 @@ type RevokeEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39041,6 +40044,11 @@ func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39091,6 +40099,8 @@ type SessionContinueEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39131,6 +40141,11 @@ func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39175,6 +40190,8 @@ type TokenEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39200,6 +40217,11 @@ func (r TokenEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r TokenEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TokenEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39248,6 +40270,8 @@ type ListPermissionRuleSetsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39283,6 +40307,11 @@ func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39333,6 +40362,8 @@ type CreatePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39373,6 +40404,11 @@ func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39423,6 +40459,8 @@ type DeletePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -39463,6 +40501,11 @@ func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39513,6 +40556,8 @@ type GetPermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39553,6 +40598,11 @@ func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39603,6 +40653,8 @@ type UpdatePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39643,6 +40695,11 @@ func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39693,6 +40750,8 @@ type ReplacePermissionRuleSetRulesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39733,6 +40792,11 @@ func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON500() *P
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39781,6 +40845,8 @@ type ListPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39816,6 +40882,11 @@ func (r ListPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39860,6 +40931,8 @@ type RegisterEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39885,6 +40958,11 @@ func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39933,6 +41011,8 @@ type DeleteRegistrationEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39968,6 +41048,11 @@ func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40014,6 +41099,8 @@ type PollStatusEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40044,6 +41131,11 @@ func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40092,6 +41184,8 @@ type UpdateRegistrationEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40127,6 +41221,11 @@ func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40171,6 +41270,8 @@ type RegistryHealthHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40196,6 +41297,11 @@ func (r RegistryHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RegistryHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegistryHealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40244,6 +41350,8 @@ type SearchOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40281,6 +41389,11 @@ func (r SearchOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SearchOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r SearchOperationsHTTPResp) GetBody() []byte {
 	return r.Body
@@ -40315,11 +41428,18 @@ type GetVersionHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *VersionResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetVersionHTTPResp) GetJSON200() *VersionResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetVersionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40368,6 +41488,8 @@ type ListUsersHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40403,6 +41525,11 @@ func (r ListUsersHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListUsersHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListUsersHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40451,6 +41578,8 @@ type CreateUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -40486,6 +41615,11 @@ func (r CreateUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40534,6 +41668,8 @@ type GetCurrentUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40569,6 +41705,11 @@ func (r GetCurrentUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCurrentUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCurrentUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40617,6 +41758,8 @@ type ChangePasswordHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40652,6 +41795,11 @@ func (r ChangePasswordHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ChangePasswordHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ChangePasswordHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40702,6 +41850,8 @@ type DeleteUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -40742,6 +41892,11 @@ func (r DeleteUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40792,6 +41947,8 @@ type GetUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40832,6 +41989,11 @@ func (r GetUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40880,6 +42042,8 @@ type UpdateUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40915,6 +42079,11 @@ func (r UpdateUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40967,6 +42136,8 @@ type SetUserPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41012,6 +42183,11 @@ func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41062,6 +42238,8 @@ type DisableUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -41102,6 +42280,11 @@ func (r DisableUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DisableUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisableUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41148,6 +42331,8 @@ type EnableUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -41178,6 +42363,11 @@ func (r EnableUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r EnableUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41226,6 +42416,8 @@ type ReissueInviteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41261,6 +42453,11 @@ func (r ReissueInviteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReissueInviteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41307,6 +42504,8 @@ type CreateAdminHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41337,6 +42536,11 @@ func (r CreateAdminHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateAdminHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAdminHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41381,6 +42585,8 @@ type RedeemInviteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41406,6 +42612,11 @@ func (r RedeemInviteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RedeemInviteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemInviteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41454,6 +42665,8 @@ type ListVendorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41489,6 +42702,11 @@ func (r ListVendorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListVendorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41537,6 +42755,8 @@ type GetAuthCapabilitiesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41572,6 +42792,11 @@ func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -46244,6 +47469,13 @@ func ParseJwksHTTPResp(rsp *http.Response) (*JwksHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46297,6 +47529,13 @@ func ParseOauthAuthorizationServerHTTPResp(rsp *http.Response) (*OauthAuthorizat
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -46359,6 +47598,13 @@ func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuth
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46420,6 +47666,13 @@ func ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp *http.Response) (*McpOa
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46480,6 +47733,13 @@ func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtec
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -46549,6 +47809,13 @@ func ParseListActorsHTTPResp(rsp *http.Response) (*ListActorsHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46617,6 +47884,13 @@ func ParseLookupActorsHTTPResp(rsp *http.Response) (*LookupActorsHTTPResp, error
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46684,6 +47958,13 @@ func ParseListProviderConfigsHTTPResp(rsp *http.Response) (*ListProviderConfigsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -46760,6 +48041,13 @@ func ParseGetProviderConfigHTTPResp(rsp *http.Response) (*GetProviderConfigHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46828,6 +48116,13 @@ func ParseSetProviderConfigHTTPResp(rsp *http.Response) (*SetProviderConfigHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -46881,6 +48176,13 @@ func ParseHealthHTTPResp(rsp *http.Response) (*HealthHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -46950,6 +48252,13 @@ func ParseListOauthClientsHTTPResp(rsp *http.Response) (*ListOauthClientsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47017,6 +48326,13 @@ func ParseCreateOauthClientHTTPResp(rsp *http.Response) (*CreateOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47088,6 +48404,13 @@ func ParseDeactivateOauthClientHTTPResp(rsp *http.Response) (*DeactivateOauthCli
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47164,6 +48487,13 @@ func ParseGetOauthClientHTTPResp(rsp *http.Response) (*GetOauthClientHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47238,6 +48568,13 @@ func ParseUpdateOauthClientHTTPResp(rsp *http.Response) (*UpdateOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47314,6 +48651,13 @@ func ParseRotateOauthClientSecretHTTPResp(rsp *http.Response) (*RotateOauthClien
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47389,6 +48733,13 @@ func ParseApproveOauthClientHTTPResp(rsp *http.Response) (*ApproveOauthClientHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47459,6 +48810,13 @@ func ParseDeleteOauthClientHTTPResp(rsp *http.Response) (*DeleteOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47535,6 +48893,13 @@ func ParseDenyOauthClientHTTPResp(rsp *http.Response) (*DenyOauthClientHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47602,6 +48967,13 @@ func ParseListOauthGrantsHTTPResp(rsp *http.Response) (*ListOauthGrantsHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47671,6 +49043,13 @@ func ParseListAgentsHTTPResp(rsp *http.Response) (*ListAgentsHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47739,6 +49118,13 @@ func ParseCreateAgentHTTPResp(rsp *http.Response) (*CreateAgentHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47802,6 +49188,13 @@ func ParseArchiveAgentHTTPResp(rsp *http.Response) (*ArchiveAgentHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -47871,6 +49264,13 @@ func ParseGetAgentHTTPResp(rsp *http.Response) (*GetAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -47938,6 +49338,13 @@ func ParseUpdateAgentHTTPResp(rsp *http.Response) (*UpdateAgentHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48007,6 +49414,13 @@ func ParseGetAgentApiKeyInfoHTTPResp(rsp *http.Response) (*GetAgentApiKeyInfoHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48074,6 +49488,13 @@ func ParseGetAgentApiKeyHistoryHTTPResp(rsp *http.Response) (*GetAgentApiKeyHist
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48143,6 +49564,13 @@ func ParseListAgentCredentialsHTTPResp(rsp *http.Response) (*ListAgentCredential
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48211,6 +49639,13 @@ func ParseBindAgentCredentialHTTPResp(rsp *http.Response) (*BindAgentCredentialH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48274,6 +49709,13 @@ func ParseUnbindAgentCredentialHTTPResp(rsp *http.Response) (*UnbindAgentCredent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48343,6 +49785,13 @@ func ParseResumeAgentCredentialBindingHTTPResp(rsp *http.Response) (*ResumeAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48410,6 +49859,13 @@ func ParseUpdateAgentJwksHTTPResp(rsp *http.Response) (*UpdateAgentJwksHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48486,6 +49942,13 @@ func ParseListAgentOauthGrantsHTTPResp(rsp *http.Response) (*ListAgentOauthGrant
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48553,6 +50016,13 @@ func ParseGetAgentPermissionsHTTPResp(rsp *http.Response) (*GetAgentPermissionsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48622,6 +50092,13 @@ func ParseReplaceAgentPermissionsHTTPResp(rsp *http.Response) (*ReplaceAgentPerm
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48689,6 +50166,13 @@ func ParseApproveAgentHTTPResp(rsp *http.Response) (*ApproveAgentHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48758,6 +50242,13 @@ func ParseClaimAgentHTTPResp(rsp *http.Response) (*ClaimAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48826,6 +50317,13 @@ func ParseDenyAgentHTTPResp(rsp *http.Response) (*DenyAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48890,6 +50388,13 @@ func ParseDisableAgentHTTPResp(rsp *http.Response) (*DisableAgentHTTPResp, error
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48953,6 +50458,13 @@ func ParseEnableAgentHTTPResp(rsp *http.Response) (*EnableAgentHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49022,6 +50534,13 @@ func ParseGenerateAgentApiKeyHTTPResp(rsp *http.Response) (*GenerateAgentApiKeyH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49085,6 +50604,13 @@ func ParseRevokeAgentApiKeyHTTPResp(rsp *http.Response) (*RevokeAgentApiKeyHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49154,6 +50680,13 @@ func ParseListApisHTTPResp(rsp *http.Response) (*ListApisHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49221,6 +50754,13 @@ func ParseImportApisHTTPResp(rsp *http.Response) (*ImportApisHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49300,6 +50840,13 @@ func ParseDeleteApiHTTPResp(rsp *http.Response) (*DeleteApiHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49367,6 +50914,13 @@ func ParseGetApiHTTPResp(rsp *http.Response) (*GetApiHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49436,6 +50990,13 @@ func ParseUpdateApiHTTPResp(rsp *http.Response) (*UpdateApiHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49503,6 +51064,13 @@ func ParseGetApiSpecHTTPResp(rsp *http.Response) (*GetApiSpecHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49572,6 +51140,13 @@ func ParseListApiOperationsHTTPResp(rsp *http.Response) (*ListApiOperationsHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49639,6 +51214,13 @@ func ParseListOverlaysHTTPResp(rsp *http.Response) (*ListOverlaysHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49708,6 +51290,13 @@ func ParseSubmitOverlayHTTPResp(rsp *http.Response) (*SubmitOverlayHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49771,6 +51360,13 @@ func ParseDeprecateOverlayHTTPResp(rsp *http.Response) (*DeprecateOverlayHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49840,6 +51436,13 @@ func ParseGetOverlayHTTPResp(rsp *http.Response) (*GetOverlayHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49907,6 +51510,13 @@ func ParseUpdateOverlayHTTPResp(rsp *http.Response) (*UpdateOverlayHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49976,6 +51586,13 @@ func ParseConfirmOverlayHTTPResp(rsp *http.Response) (*ConfirmOverlayHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50039,6 +51656,13 @@ func ParseRollbackOverlayHTTPResp(rsp *http.Response) (*RollbackOverlayHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50108,6 +51732,13 @@ func ParseListApiRevisionsHTTPResp(rsp *http.Response) (*ListApiRevisionsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50171,6 +51802,13 @@ func ParseDeleteRevisionHTTPResp(rsp *http.Response) (*DeleteRevisionHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50240,6 +51878,13 @@ func ParseGetApiRevisionHTTPResp(rsp *http.Response) (*GetApiRevisionHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50307,6 +51952,13 @@ func ParseGetApiRevisionSpecHTTPResp(rsp *http.Response) (*GetApiRevisionSpecHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50376,6 +52028,13 @@ func ParseListApiRevisionOperationsHTTPResp(rsp *http.Response) (*ListApiRevisio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50444,6 +52103,13 @@ func ParseArchiveRevisionHTTPResp(rsp *http.Response) (*ArchiveRevisionHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50511,6 +52177,13 @@ func ParsePromoteRevisionHTTPResp(rsp *http.Response) (*PromoteRevisionHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50587,6 +52260,13 @@ func ParseListApiSecuritySchemesHTTPResp(rsp *http.Response) (*ListApiSecuritySc
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50654,6 +52334,13 @@ func ParseListAuditEntriesHTTPResp(rsp *http.Response) (*ListAuditEntriesHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50723,6 +52410,13 @@ func ParseGetAuditEntryHTTPResp(rsp *http.Response) (*GetAuditEntryHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50776,6 +52470,13 @@ func ParseAuthHealthHTTPResp(rsp *http.Response) (*AuthHealthHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50831,6 +52532,13 @@ func ParseAuthIdpDescriptorHTTPResp(rsp *http.Response) (*AuthIdpDescriptorHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50884,6 +52592,13 @@ func ParseLoginHTTPResp(rsp *http.Response) (*LoginHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50953,6 +52668,13 @@ func ParseRefreshSessionHTTPResp(rsp *http.Response) (*RefreshSessionHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51006,6 +52728,13 @@ func ParseAuthorizeEndpointHTTPResp(rsp *http.Response) (*AuthorizeEndpointHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51075,6 +52804,13 @@ func ParseListCatalogHTTPResp(rsp *http.Response) (*ListCatalogHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51142,6 +52878,13 @@ func ParseGetCatalogEntryHTTPResp(rsp *http.Response) (*GetCatalogEntryHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51211,6 +52954,13 @@ func ParsePreviewCatalogOperationsHTTPResp(rsp *http.Response) (*PreviewCatalogO
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51278,6 +53028,13 @@ func ParseImportCatalogEntryHTTPResp(rsp *http.Response) (*ImportCatalogEntryHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51350,6 +53107,13 @@ func ParseSnoozeCatalogEntryHTTPResp(rsp *http.Response) (*SnoozeCatalogEntryHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51413,6 +53177,13 @@ func ParseUnsnoozeCatalogEntryHTTPResp(rsp *http.Response) (*UnsnoozeCatalogEntr
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51482,6 +53253,13 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51549,6 +53327,13 @@ func ParseListConnectSessionsHTTPResp(rsp *http.Response) (*ListConnectSessionsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51625,6 +53410,13 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51693,6 +53485,13 @@ func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSess
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51756,6 +53555,13 @@ func ParseCancelConnectSessionHTTPResp(rsp *http.Response) (*CancelConnectSessio
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51839,6 +53645,13 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51903,6 +53716,13 @@ func ParseRejectConnectSessionHTTPResp(rsp *http.Response) (*RejectConnectSessio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51956,6 +53776,13 @@ func ParseControlHealthHTTPResp(rsp *http.Response) (*ControlHealthHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52025,6 +53852,13 @@ func ParseListCredentialsHTTPResp(rsp *http.Response) (*ListCredentialsHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52093,6 +53927,13 @@ func ParseCreateCredentialHTTPResp(rsp *http.Response) (*CreateCredentialHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52146,6 +53987,13 @@ func ParseOauthCallbackHTTPResp(rsp *http.Response) (*OauthCallbackHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52214,6 +54062,13 @@ func ParseListProvidersHTTPResp(rsp *http.Response) (*ListProvidersHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52285,6 +54140,13 @@ func ParseDeleteCredentialHTTPResp(rsp *http.Response) (*DeleteCredentialHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52361,6 +54223,13 @@ func ParseGetCredentialHTTPResp(rsp *http.Response) (*GetCredentialHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52435,6 +54304,13 @@ func ParseUpdateCredentialHTTPResp(rsp *http.Response) (*UpdateCredentialHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52511,6 +54387,13 @@ func ParseListCredentialAgentsHTTPResp(rsp *http.Response) (*ListCredentialAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52585,6 +54468,13 @@ func ParseListAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ListAgent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52661,6 +54551,13 @@ func ParsePatchAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*PatchAge
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52735,6 +54632,13 @@ func ParseReplaceAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*Replac
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52811,6 +54715,13 @@ func ParseTestAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*TestAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52882,6 +54793,13 @@ func ParseDetachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*DetachAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52952,6 +54870,13 @@ func ParseAttachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*AttachAgent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53035,6 +54960,13 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53088,6 +55020,13 @@ func ParseErrorPageHTTPResp(rsp *http.Response) (*ErrorPageHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53157,6 +55096,13 @@ func ParseListEventsHTTPResp(rsp *http.Response) (*ListEventsHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53224,6 +55170,13 @@ func ParseStreamEventsHTTPResp(rsp *http.Response) (*StreamEventsHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53293,6 +55246,13 @@ func ParseGetEventHTTPResp(rsp *http.Response) (*GetEventHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53361,6 +55321,13 @@ func ParseListExecutionsHTTPResp(rsp *http.Response) (*ListExecutionsHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53428,6 +55395,13 @@ func ParseGetExecutionHTTPResp(rsp *http.Response) (*GetExecutionHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53500,6 +55474,13 @@ func ParseGetGovernedHostsHTTPResp(rsp *http.Response) (*GetGovernedHostsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	switch {
@@ -53548,6 +55529,13 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53617,6 +55605,13 @@ func ParseInspectOperationHTTPResp(rsp *http.Response) (*InspectOperationHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53642,6 +55637,13 @@ func ParseGetInstanceHTTPResp(rsp *http.Response) (*GetInstanceHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53732,6 +55734,13 @@ func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53799,6 +55808,13 @@ func ParseListJobsHTTPResp(rsp *http.Response) (*ListJobsHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53868,6 +55884,13 @@ func ParseGetJobHTTPResp(rsp *http.Response) (*GetJobHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53935,6 +55958,13 @@ func ParseGetJobResultHTTPResp(rsp *http.Response) (*GetJobResultHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54004,6 +56034,13 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54057,6 +56094,13 @@ func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54118,6 +56162,13 @@ func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54187,6 +56238,13 @@ func ParseReportMcpConfigRegistrationHTTPResp(rsp *http.Response) (*ReportMcpCon
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54254,6 +56312,13 @@ func ParseGetMeHTTPResp(rsp *http.Response) (*GetMeHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54323,6 +56388,13 @@ func ParseGetExecutionStatsHTTPResp(rsp *http.Response) (*GetExecutionStatsHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54390,6 +56462,13 @@ func ParseGetUsageStatsHTTPResp(rsp *http.Response) (*GetUsageStatsHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54459,6 +56538,13 @@ func ParseListNotesHTTPResp(rsp *http.Response) (*ListNotesHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54527,6 +56613,13 @@ func ParseCreateNoteHTTPResp(rsp *http.Response) (*CreateNoteHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54590,6 +56683,13 @@ func ParseDeleteNoteHTTPResp(rsp *http.Response) (*DeleteNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54659,6 +56759,13 @@ func ParseGetNoteHTTPResp(rsp *http.Response) (*GetNoteHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54726,6 +56833,13 @@ func ParseUpdateNoteHTTPResp(rsp *http.Response) (*UpdateNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54795,6 +56909,13 @@ func ParseListOauthAppRegistrationsHTTPResp(rsp *http.Response) (*ListOauthAppRe
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54862,6 +56983,13 @@ func ParseCreateOauthAppRegistrationHTTPResp(rsp *http.Response) (*CreateOauthAp
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54941,6 +57069,13 @@ func ParseDeleteOauthAppRegistrationHTTPResp(rsp *http.Response) (*DeleteOauthAp
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55016,6 +57151,13 @@ func ParseGetOauthAppRegistrationHTTPResp(rsp *http.Response) (*GetOauthAppRegis
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55090,6 +57232,13 @@ func ParseUpdateOauthAppRegistrationHTTPResp(rsp *http.Response) (*UpdateOauthAp
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55173,6 +57322,13 @@ func ParseRotateOauthAppRegistrationSecretHTTPResp(rsp *http.Response) (*RotateO
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55219,6 +57375,13 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55291,6 +57454,13 @@ func ParseRevokeOauthGrantHTTPResp(rsp *http.Response) (*RevokeOauthGrantHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55359,6 +57529,13 @@ func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55412,6 +57589,13 @@ func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEnd
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55467,6 +57651,13 @@ func ParseAuthorizeOauthCallbackHTTPResp(rsp *http.Response) (*AuthorizeOauthCal
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55513,6 +57704,13 @@ func ParseConsentPageHTTPResp(rsp *http.Response) (*ConsentPageHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55568,6 +57766,13 @@ func ParseConsentSubmitHTTPResp(rsp *http.Response) (*ConsentSubmitHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55622,6 +57827,13 @@ func ParseConsentAgentCreateHTTPResp(rsp *http.Response) (*ConsentAgentCreateHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55675,6 +57887,13 @@ func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55743,6 +57962,13 @@ func ParseIntrospectEndpointHTTPResp(rsp *http.Response) (*IntrospectEndpointHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55826,6 +58052,13 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55901,6 +58134,13 @@ func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueE
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55954,6 +58194,13 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56022,6 +58269,13 @@ func ParseListPermissionRuleSetsHTTPResp(rsp *http.Response) (*ListPermissionRul
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56097,6 +58351,13 @@ func ParseCreatePermissionRuleSetHTTPResp(rsp *http.Response) (*CreatePermission
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56176,6 +58437,13 @@ func ParseDeletePermissionRuleSetHTTPResp(rsp *http.Response) (*DeletePermission
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56250,6 +58518,13 @@ func ParseGetPermissionRuleSetHTTPResp(rsp *http.Response) (*GetPermissionRuleSe
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56326,6 +58601,13 @@ func ParseUpdatePermissionRuleSetHTTPResp(rsp *http.Response) (*UpdatePermission
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56401,6 +58683,13 @@ func ParseReplacePermissionRuleSetRulesHTTPResp(rsp *http.Response) (*ReplacePer
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56469,6 +58758,13 @@ func ParseListPermissionsHTTPResp(rsp *http.Response) (*ListPermissionsHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56522,6 +58818,13 @@ func ParseRegisterEndpointHTTPResp(rsp *http.Response) (*RegisterEndpointHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56591,6 +58894,13 @@ func ParseDeleteRegistrationEndpointHTTPResp(rsp *http.Response) (*DeleteRegistr
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56651,6 +58961,13 @@ func ParsePollStatusEndpointHTTPResp(rsp *http.Response) (*PollStatusEndpointHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56720,6 +59037,13 @@ func ParseUpdateRegistrationEndpointHTTPResp(rsp *http.Response) (*UpdateRegistr
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56773,6 +59097,13 @@ func ParseRegistryHealthHTTPResp(rsp *http.Response) (*RegistryHealthHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56842,6 +59173,13 @@ func ParseSearchOperationsHTTPResp(rsp *http.Response) (*SearchOperationsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56867,6 +59205,13 @@ func ParseGetVersionHTTPResp(rsp *http.Response) (*GetVersionHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56936,6 +59281,13 @@ func ParseListUsersHTTPResp(rsp *http.Response) (*ListUsersHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57003,6 +59355,13 @@ func ParseCreateUserHTTPResp(rsp *http.Response) (*CreateUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57072,6 +59431,13 @@ func ParseGetCurrentUserHTTPResp(rsp *http.Response) (*GetCurrentUserHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57139,6 +59505,13 @@ func ParseChangePasswordHTTPResp(rsp *http.Response) (*ChangePasswordHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57218,6 +59591,13 @@ func ParseDeleteUserHTTPResp(rsp *http.Response) (*DeleteUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57293,6 +59673,13 @@ func ParseGetUserHTTPResp(rsp *http.Response) (*GetUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57360,6 +59747,13 @@ func ParseUpdateUserHTTPResp(rsp *http.Response) (*UpdateUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57443,6 +59837,13 @@ func ParseSetUserPermissionsHTTPResp(rsp *http.Response) (*SetUserPermissionsHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57521,6 +59922,13 @@ func ParseDisableUserHTTPResp(rsp *http.Response) (*DisableUserHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57584,6 +59992,13 @@ func ParseEnableUserHTTPResp(rsp *http.Response) (*EnableUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57653,6 +60068,13 @@ func ParseReissueInviteHTTPResp(rsp *http.Response) (*ReissueInviteHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57714,6 +60136,13 @@ func ParseCreateAdminHTTPResp(rsp *http.Response) (*CreateAdminHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57767,6 +60196,13 @@ func ParseRedeemInviteHTTPResp(rsp *http.Response) (*RedeemInviteHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57836,6 +60272,13 @@ func ParseListVendorsHTTPResp(rsp *http.Response) (*ListVendorsHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57903,6 +60346,13 @@ func ParseGetAuthCapabilitiesHTTPResp(rsp *http.Response) (*GetAuthCapabilitiesH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
