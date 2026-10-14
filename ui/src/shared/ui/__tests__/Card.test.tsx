@@ -86,4 +86,24 @@ describe('Card', () => {
 			'text-foreground-name',
 		);
 	});
+
+	it('renders as another element and keeps the surface, edge and attributes', () => {
+		renderWithProviders(
+			<>
+				<h2 id="card-heading">Group</h2>
+				<Card as="section" aria-labelledby="card-heading" data-testid="card" />
+			</>,
+		);
+		const card = screen.getByTestId('card');
+		expect(card.tagName).toBe('SECTION');
+		expect(screen.getByRole('region', { name: 'Group' })).toBe(card);
+		expect(card).toHaveAttribute('data-surface', 'card');
+		expect(card).toHaveClass('bg-surface-1', 'rounded-lg');
+		expect(getComputedStyle(card).outlineStyle).toBe('solid');
+	});
+
+	it('is a div by default', () => {
+		renderWithProviders(<Card data-testid="card" />);
+		expect(screen.getByTestId('card').tagName).toBe('DIV');
+	});
 });
