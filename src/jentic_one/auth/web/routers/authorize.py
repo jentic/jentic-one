@@ -1152,14 +1152,48 @@ def _render_approval_pending_page(
 @router.get("/authorize", dependencies=[Depends(check_rate_limit)], response_model=None)
 async def authorize_endpoint(
     request: Request,
-    response_type: str = Query(..., openapi_examples=ex.example("code")),
-    client_id: str = Query(..., openapi_examples=ex.example(ex.OAUTH_PUBLIC_CLIENT_ID)),
-    redirect_uri: str = Query(..., openapi_examples=ex.example(ex.REDIRECT_URI)),
-    code_challenge: str = Query(..., openapi_examples=ex.example(ex.PKCE_CODE_CHALLENGE)),
-    code_challenge_method: str = Query(..., openapi_examples=ex.example("S256")),
-    scope: str = Query(default="openid", openapi_examples=ex.example("openid")),
-    state: str | None = Query(default=None, openapi_examples=ex.example(ex.OAUTH_STATE)),
-    nonce: str | None = Query(default=None, openapi_examples=ex.example(ex.OIDC_NONCE)),
+    response_type: str = Query(
+        ...,
+        description="OAuth response type; only `code` is supported.",
+        openapi_examples=ex.example("code"),
+    ),
+    client_id: str = Query(
+        ...,
+        description="Client ID of the application requesting authorization.",
+        openapi_examples=ex.example(ex.OAUTH_PUBLIC_CLIENT_ID),
+    ),
+    redirect_uri: str = Query(
+        ...,
+        description="Where to send the result; must be a redirect URI allowed for the client.",
+        openapi_examples=ex.example(ex.REDIRECT_URI),
+    ),
+    code_challenge: str = Query(
+        ...,
+        description="PKCE code challenge derived from the client's code verifier.",
+        openapi_examples=ex.example(ex.PKCE_CODE_CHALLENGE),
+    ),
+    code_challenge_method: str = Query(
+        ...,
+        description="PKCE challenge method; only `S256` is supported.",
+        openapi_examples=ex.example("S256"),
+    ),
+    scope: str = Query(
+        default="openid",
+        description=(
+            "Space-separated scopes requested; must stay within the client's allowed scopes."
+        ),
+        openapi_examples=ex.example("openid"),
+    ),
+    state: str | None = Query(
+        default=None,
+        description="Opaque client value returned unchanged on the redirect back to the client.",
+        openapi_examples=ex.example(ex.OAUTH_STATE),
+    ),
+    nonce: str | None = Query(
+        default=None,
+        description="OpenID Connect nonce to bind the ID token to the client's session.",
+        openapi_examples=ex.example(ex.OIDC_NONCE),
+    ),
     sc: str | None = Query(
         default=None,
         description="Signed session-continuation blob minted by "
@@ -1489,8 +1523,16 @@ async def approval_decision_endpoint(
 )
 async def oauth_callback(
     request: Request,
-    code: str = Query(..., openapi_examples=ex.example(ex.AUTHORIZATION_CODE)),
-    state: str = Query(..., openapi_examples=ex.example(ex.OAUTH_STATE)),
+    code: str = Query(
+        ...,
+        description="Authorization code issued by the external identity provider.",
+        openapi_examples=ex.example(ex.AUTHORIZATION_CODE),
+    ),
+    state: str = Query(
+        ...,
+        description="Signed authorization-flow state that `/authorize` sent to the provider.",
+        openapi_examples=ex.example(ex.OAUTH_STATE),
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> RedirectResponse:
@@ -1588,7 +1630,11 @@ async def oauth_callback(
 
 @router.get("/error")
 async def error_page(
-    error: str = Query(default="unknown_error", openapi_examples=ex.example("access_denied")),
+    error: str = Query(
+        default="unknown_error",
+        description="Error code to display; returned as-is in the response body.",
+        openapi_examples=ex.example("access_denied"),
+    ),
 ) -> dict[str, str]:
     """Minimal error endpoint for browser-facing authorization failures."""
     return {"error": error}
@@ -2168,9 +2214,21 @@ async def _render_agent_consent_page(
 @router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)])
 async def consent_submit(
     request: Request,
-    consent_token: str = Form(..., json_schema_extra=SENSITIVE),
-    action: str = Form(...),
-    agent_id: str | None = Form(default=None),
+    consent_token: str = Form(
+        ...,
+        json_schema_extra=SENSITIVE,
+        description="Single-use consent handle embedded in the consent page.",
+    ),
+    action: str = Form(
+        ...,
+        description="`approve` or `deny`; any value other than `deny` is treated as approval.",
+    ),
+    agent_id: str | None = Form(
+        default=None,
+        description=(
+            "ID of the agent to connect the client to; sent only by the agent-picker consent page."
+        ),
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
@@ -2366,9 +2424,19 @@ async def _approve_agent_consent(
 )
 async def consent_agent_create(
     request: Request,
-    consent_token: str = Form(..., json_schema_extra=SENSITIVE),
-    create_state: str = Form(..., json_schema_extra=SENSITIVE),
-    agent_name: str = Form(...),
+    consent_token: str = Form(
+        ...,
+        json_schema_extra=SENSITIVE,
+        description="Single-use consent handle embedded in the consent page.",
+    ),
+    create_state: str = Form(
+        ...,
+        json_schema_extra=SENSITIVE,
+        description="Signed single-use agent-creation token embedded in the consent page.",
+    ),
+    agent_name: str = Form(
+        ..., description="Name for the new agent; surrounding whitespace is trimmed."
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
     agent_svc: AgentService = Depends(get_agent_service),

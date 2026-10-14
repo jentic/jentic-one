@@ -39,8 +39,10 @@ class OAuthGrantResponse(BaseModel):
     )
     scopes: list[str] = Field(description="Scopes granted at consent (the D2 intersection).")
     status: str = Field(description="Grant lifecycle state: ``active`` or ``revoked``.")
-    created_at: datetime
-    revoked_at: datetime | None
+    created_at: datetime = Field(description="When the grant was created (RFC 3339).")
+    revoked_at: datetime | None = Field(
+        description="When the grant was revoked (RFC 3339); null while it is active."
+    )
     last_used_at: datetime | None = Field(
         description="Last time the client obtained tokens under this grant "
         "(stamped at exchange/refresh, not per request)."
@@ -61,6 +63,8 @@ class OAuthGrantResponse(BaseModel):
 class OAuthGrantListResponse(BaseModel):
     """A paginated list of OAuth grants."""
 
-    data: list[OAuthGrantResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    data: list[OAuthGrantResponse] = Field(description="The page of OAuth grants.")
+    has_more: bool = Field(description="Whether more results exist after this page.")
+    next_cursor: str | None = Field(
+        default=None, description="Cursor for the next page; null when there are no more results."
+    )

@@ -129,8 +129,18 @@ async def list_oauth_app_registrations(
         description="Filter by OAuth flow kind.",
         openapi_examples=ex.example("authorization_code"),
     ),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of registrations to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> OAuthAppRegistrationListResponse:
     """List OAuth application registrations with cursor-based pagination.
 
@@ -158,7 +168,13 @@ async def list_oauth_app_registrations(
     responses=not_found(),
 )
 async def get_oauth_app_registration(
-    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
+    id: Annotated[
+        str,
+        Path(
+            description="ID of the OAuth app registration.",
+            openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
 ) -> OAuthAppRegistrationResponse:
@@ -173,7 +189,13 @@ async def get_oauth_app_registration(
     responses=not_found(),
 )
 async def update_oauth_app_registration(
-    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
+    id: Annotated[
+        str,
+        Path(
+            description="ID of the OAuth app registration.",
+            openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
+        ),
+    ],
     body: OAuthAppRegistrationUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
@@ -204,7 +226,13 @@ async def update_oauth_app_registration(
     responses=with_responses(not_found(), conflict()),
 )
 async def rotate_oauth_app_registration_secret(
-    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
+    id: Annotated[
+        str,
+        Path(
+            description="ID of the OAuth app registration.",
+            openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
+        ),
+    ],
     body: OAuthAppRegistrationRotateSecretRequest,
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
@@ -222,7 +250,13 @@ async def rotate_oauth_app_registration_secret(
     responses=with_responses(not_found(), conflict()),
 )
 async def delete_oauth_app_registration(
-    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
+    id: Annotated[
+        str,
+        Path(
+            description="ID of the OAuth app registration.",
+            openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
 ) -> Response:

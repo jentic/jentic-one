@@ -33,7 +33,13 @@ def _to_response(view: ProviderConfigView) -> ProviderConfigResponse:
 
 @router.put("/admin/config/providers/{name}", summary="Set a credential provider config")
 async def set_provider_config(
-    name: Annotated[str, Path(openapi_examples=ex.example(ex.PROVIDER_NAME))],
+    name: Annotated[
+        str,
+        Path(
+            description="Provider name, e.g. `pipedream`.",
+            openapi_examples=ex.example(ex.PROVIDER_NAME),
+        ),
+    ],
     body: ProviderConfigSetRequest,
     identity: Identity = get_current_identity(required_permissions=["config:write"]),
     svc: ProviderConfigService = Depends(get_provider_config_service),
@@ -55,7 +61,13 @@ async def set_provider_config(
     responses=not_found(),
 )
 async def get_provider_config(
-    name: Annotated[str, Path(openapi_examples=ex.example(ex.PROVIDER_NAME))],
+    name: Annotated[
+        str,
+        Path(
+            description="Provider name, e.g. `pipedream`.",
+            openapi_examples=ex.example(ex.PROVIDER_NAME),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["config:read"]),
     svc: ProviderConfigService = Depends(get_provider_config_service),
 ) -> ProviderConfigResponse:

@@ -60,8 +60,18 @@ async def list_oauth_grants(
         description="Filter by grant lifecycle state.",
         openapi_examples=ex.example("active"),
     ),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of grants to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
 ) -> OAuthGrantAdminListResponse:
     """List consent→agent grants across all clients and agents.
 

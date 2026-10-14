@@ -245,8 +245,18 @@ async def list_connect_sessions(
         description="Filter by vendor registry key",
         openapi_examples=ex.example(ex.VENDOR_KEY),
     ),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of sessions to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -298,7 +308,13 @@ async def list_connect_sessions(
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
-    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     poll_token: str | None = Query(
         default=None,
         description=_POLL_TOKEN_DESCRIPTION,
@@ -422,7 +438,13 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
     ),
 )
 async def confirm_connect_session(
-    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     request: Request,
     body: Annotated[ConfirmSessionRequest, Body()],
     poll_token: str | None = Query(
@@ -533,7 +555,13 @@ def _to_variant(
     response_model=None,
 )
 async def poll_connect_session_status(
-    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     poll_token: str | None = Query(
         default=None,
         description=_POLL_TOKEN_DESCRIPTION,
@@ -589,7 +617,13 @@ async def poll_connect_session_status(
     response_model=None,
 )
 async def cancel_connect_session(
-    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     poll_token: str | None = Query(
         default=None,
         description=_POLL_TOKEN_DESCRIPTION,
@@ -630,7 +664,13 @@ async def cancel_connect_session(
     response_model=None,
 )
 async def reject_connect_session(
-    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:

@@ -224,9 +224,23 @@ async def list_credentials(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
-    vendor: str | None = Query(default=None, openapi_examples=ex.example(ex.API_VENDOR)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of credentials to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
+    vendor: str | None = Query(
+        default=None,
+        description="Filter to credentials for this API vendor (exact match).",
+        openapi_examples=ex.example(ex.API_VENDOR),
+    ),
 ) -> CredentialListResponse:
     """List credentials with cursor-based pagination."""
     page = await svc.list_all(cursor=cursor, limit=limit, vendor=vendor, identity=identity)
@@ -273,9 +287,21 @@ def _oauth_callback_error() -> RedirectResponse:
 
 @router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback")
 async def oauth_callback(
-    code: str | None = Query(default=None, openapi_examples=ex.example(ex.AUTHORIZATION_CODE)),
-    state: str | None = Query(default=None, openapi_examples=ex.example(ex.OAUTH_STATE)),
-    error: str | None = Query(default=None, openapi_examples=ex.example("access_denied")),
+    code: str | None = Query(
+        default=None,
+        description="Authorization code issued by the identity provider.",
+        openapi_examples=ex.example(ex.AUTHORIZATION_CODE),
+    ),
+    state: str | None = Query(
+        default=None,
+        description="Signed state value issued when the connect flow began.",
+        openapi_examples=ex.example(ex.OAUTH_STATE),
+    ),
+    error: str | None = Query(
+        default=None,
+        description="OAuth error code from the identity provider when authorization failed.",
+        openapi_examples=ex.example("access_denied"),
+    ),
     ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
     session_svc: ConnectSessionService = Depends(get_connect_session_service),
@@ -401,7 +427,10 @@ async def oauth_callback(
 
 @router.get("/credentials/{credential_id}", summary="Get credential", responses=not_found())
 async def get_credential(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -418,13 +447,26 @@ async def get_credential(
     responses=not_found(),
 )
 async def list_credential_agents(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of agents to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> CredentialAgentListResponse:
     """List agents directly bound to a credential with cursor-based pagination.
 
@@ -477,8 +519,17 @@ def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
     responses=not_found(),
 )
 async def list_agent_permissions(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -496,8 +547,17 @@ async def list_agent_permissions(
     responses=not_found(),
 )
 async def replace_agent_permissions(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -517,8 +577,17 @@ async def replace_agent_permissions(
     responses=not_found(),
 )
 async def patch_agent_permissions(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     body: PermissionsPatchRequest,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -540,8 +609,17 @@ async def patch_agent_permissions(
     responses=not_found(),
 )
 async def test_agent_permissions(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     body: PermissionTestRequest,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
@@ -583,8 +661,17 @@ async def test_agent_permissions(
     responses=not_found(),
 )
 async def attach_agent_rule_set(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     body: RuleSetAttachRequest,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -611,8 +698,17 @@ async def attach_agent_rule_set(
     responses=not_found(),
 )
 async def detach_agent_rule_set(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the agent bound to the credential.",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
@@ -662,8 +758,18 @@ async def list_rule_sets(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of rule sets to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> RuleSetListResponse:
     """List shared rule sets with per-set rule counts (cursor-paginated)."""
     data, has_more, next_cursor = await svc.list_rule_sets(
@@ -727,7 +833,13 @@ async def create_rule_set(
     responses=not_found(),
 )
 async def get_rule_set(
-    rule_set_id: Annotated[str, Path(openapi_examples=ex.example(ex.RULE_SET_ID))],
+    rule_set_id: Annotated[
+        str,
+        Path(
+            description="ID of the permission rule set.",
+            openapi_examples=ex.example(ex.RULE_SET_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -745,7 +857,13 @@ async def get_rule_set(
     responses=not_found(),
 )
 async def update_rule_set(
-    rule_set_id: Annotated[str, Path(openapi_examples=ex.example(ex.RULE_SET_ID))],
+    rule_set_id: Annotated[
+        str,
+        Path(
+            description="ID of the permission rule set.",
+            openapi_examples=ex.example(ex.RULE_SET_ID),
+        ),
+    ],
     body: RuleSetUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -773,7 +891,13 @@ async def update_rule_set(
     responses=not_found(),
 )
 async def replace_rule_set_rules(
-    rule_set_id: Annotated[str, Path(openapi_examples=ex.example(ex.RULE_SET_ID))],
+    rule_set_id: Annotated[
+        str,
+        Path(
+            description="ID of the permission rule set.",
+            openapi_examples=ex.example(ex.RULE_SET_ID),
+        ),
+    ],
     body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -815,7 +939,13 @@ async def replace_rule_set_rules(
     responses=with_responses(not_found(), conflict()),
 )
 async def delete_rule_set(
-    rule_set_id: Annotated[str, Path(openapi_examples=ex.example(ex.RULE_SET_ID))],
+    rule_set_id: Annotated[
+        str,
+        Path(
+            description="ID of the permission rule set.",
+            openapi_examples=ex.example(ex.RULE_SET_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
@@ -836,7 +966,10 @@ async def delete_rule_set(
     responses=not_found(),
 )
 async def update_credential(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
     body: CredentialUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
@@ -874,7 +1007,10 @@ async def update_credential(
     responses=not_found(),
 )
 async def delete_credential(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
@@ -890,7 +1026,10 @@ async def delete_credential(
     response_model=None,
 )
 async def connect_credential(
-    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
     body: ConnectRequestBody,
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),

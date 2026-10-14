@@ -46,33 +46,67 @@ class VendorSummaryResponse(BaseModel):
     # ``oar_...`` registration id; for platform-shipped config entries it
     # is the vendor slug. Lets the picker render one card per registration
     # even when multiple registrations share an ``api_vendor``.
-    entry_id: str
+    entry_id: str = Field(
+        description=(
+            "Stable per-row key: the registration ID for admin registrations, else the vendor key."
+        ),
+    )
     # Present when the row came from an ``oauth_app_registrations`` row —
     # threaded onto ``POST /integrations:connect`` as the pin.
-    registration_id: str | None = None
+    registration_id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the admin OAuth app registration behind "
+            "this row; null for platform-shipped vendors."
+        ),
+    )
     # Vendor slug shared by every registration for the same vendor.
-    key: str
+    key: str = Field(description="Vendor registry key shared by every registration for the vendor.")
     # Config-side fully-qualified vendor id (``<host>/<api-id>``) when
     # available; falls back to ``key`` for DB-only vendors.
-    vendor: str
+    vendor: str = Field(
+        description=(
+            "Fully-qualified vendor ID (`<host>/<api-id>`) when known; otherwise the vendor key."
+        ),
+    )
     # Vendor's family display name (e.g. "Gmail"). Two admin registrations
     # for the same vendor share this.
-    display_name: str
+    display_name: str = Field(description="Vendor's display name (e.g. 'Gmail').")
     # Per-row human label. For DB rows this is the admin-picked
     # registration name; for config rows this equals ``display_name``.
-    name: str
+    name: str = Field(
+        description=(
+            "Label for this row: the registration name for "
+            "admin registrations, else the display name."
+        ),
+    )
     # Where this row came from — ``db`` = admin registration, ``config`` =
     # platform-shipped vendor entry.
-    source: Literal["db", "config"]
-    flow_kinds: list[str]
+    source: Literal["db", "config"] = Field(
+        description=(
+            "Where the row came from: `db` for an admin registration, "
+            "`config` for a platform-shipped vendor."
+        ),
+    )
+    flow_kinds: list[str] = Field(
+        description=(
+            "OAuth flow kinds this row supports (`authorization_code`, `device_authorization`)."
+        ),
+    )
     # For admin-registered rows, the catalog API the shared app signs in to
     # (``<domain>/<sub>``) — lets a flow already on one API offer only its
     # apps. ``None`` for platform-shipped config rows.
-    catalog_api_id: str | None = None
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog API (`<domain>/<sub>`) the registration "
+            "signs in to; null for platform-shipped vendors."
+        ),
+    )
 
 
 class VendorListResponse(BaseModel):
-    data: list[VendorSummaryResponse]
+    data: list[VendorSummaryResponse] = Field(description="The connectable vendors.")
 
 
 # ---------------------------------------------------------------------------
@@ -119,22 +153,52 @@ class IntegrationsConnectRequest(BaseModel):
     # the vendor's display name when omitted. Lets a user distinguish
     # multiple credentials minted from the same vendor / shared registration
     # (e.g. ``"Google (personal)"`` vs ``"Google (work)"``).
-    name: str | None = Field(default=None, max_length=255)
+    name: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Label for the resulting credential; defaults to the vendor's display name.",
+    )
     # Optional pin to a specific admin-registered OAuth app. When set, the
     # connect session mints tokens through this registration; when omitted,
     # the config-shipped vendor entry is used if it offers the requested
     # flow, else the vendor's single matching active registration (more
     # than one → 400 ``ambiguous_vendor``).
-    oauth_app_registration_id: str | None = Field(default=None, max_length=30)
+    oauth_app_registration_id: str | None = Field(
+        default=None,
+        max_length=30,
+        description=(
+            "ID of the admin OAuth app registration to connect through; required when "
+            "several active registrations offer the flow."
+        ),
+    )
     # Required for USER/SA callers, ignored for AGENT callers.
-    agent_id: str | None = Field(default=None)
+    agent_id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the agent to bind the credential to on confirm; agent callers must omit "
+            "it, and when omitted by a user the credential connects unbound."
+        ),
+    )
     # Cap mirrors the sister ``/credentials`` endpoints — a scope list
     # deep enough to spam a scope-classification pass in the worker is a
     # cheap DoS surface if left unbounded. 100 is well above any real
     # vendor's scope catalog.
-    requested_scopes: list[str] = Field(default_factory=list, max_length=100)
-    preferred_flow: str | None = Field(default=None)
-    reason: str | None = Field(default=None, max_length=1024)
+    requested_scopes: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Upstream scopes to request (at most 100).",
+    )
+    preferred_flow: str | None = Field(
+        default=None,
+        description=(
+            "Flow kind to use if the source offers it; defaults to the source's first flow."
+        ),
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=1024,
+        description="Free-text reason for the request, shown to the approver.",
+    )
     # As-requested permission rules — typically the initiating agent's ask,
     # rendered on the review page as pre-filled rows the human owner can
     # accept / edit / drop before ``:confirm`` persists the final set.
@@ -143,7 +207,12 @@ class IntegrationsConnectRequest(BaseModel):
     # session row (and the eventual binding write) cannot be inflated by
     # an unauthenticated ``:connect`` caller.
     requested_permission_rules: list[PermissionRuleSchema] = Field(
-        default_factory=list, max_length=100
+        default_factory=list,
+        max_length=100,
+        description=(
+            "Permission rules proposed for the agent, shown pre-filled on the review page; "
+            "nothing is bound until confirm."
+        ),
     )
 
     @model_validator(mode="after")
@@ -178,29 +247,43 @@ ConnectSessionState = Literal["created", "awaiting_app", "polling", "connected"]
 class ConnectSessionSummaryResponse(BaseModel):
     """Slim list row for the console — deliberately excludes ``poll_token``."""
 
-    session_id: str
-    state: ConnectSessionState
-    vendor_key: str
-    vendor_display_name: str
-    agent_id: str | None = None
-    requested_by_actor_id: str
-    reason: str | None = None
-    connected_as: str | None = None
+    session_id: str = Field(description="Unique ID of the connect session.")
+    state: ConnectSessionState = Field(description="Current lifecycle state of the session.")
+    vendor_key: str = Field(description="Vendor registry key the session connects.")
+    vendor_display_name: str = Field(description="Display name of the vendor.")
+    agent_id: str | None = Field(
+        default=None,
+        description="ID of the agent the credential is bound to on confirm; null when unbound.",
+    )
+    requested_by_actor_id: str = Field(description="ID of the actor that started the session.")
+    reason: str | None = Field(
+        default=None, description="Free-text reason given when the session was started."
+    )
+    connected_as: str | None = Field(
+        default=None,
+        description="Upstream account the credential connected as; null until known.",
+    )
     # Reserved: a failed session is deleted on its terminal transition, so a
     # listed row carries no error_code today.
-    error_code: str | None = None
-    created_at: datetime
+    error_code: str | None = Field(
+        default=None, description="Reserved for a failure code; always null on listed sessions."
+    )
+    created_at: datetime = Field(description="When the session was created (RFC 3339).")
     # The session's pending (later connected) credential. Lets a list reader
     # tell a session's own credential apart from an unrelated unfinished one.
-    credential_id: str
+    credential_id: str = Field(
+        description="ID of the session's credential (pending until the session connects)."
+    )
 
 
 class ConnectSessionListResponse(BaseModel):
     """Cursor-paginated envelope of connect-session summaries."""
 
-    data: list[ConnectSessionSummaryResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    data: list[ConnectSessionSummaryResponse] = Field(description="The page of connect sessions.")
+    has_more: bool = Field(description="Whether more results exist after this page.")
+    next_cursor: str | None = Field(
+        default=None, description="Cursor for the next page; null when there are no more results."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +308,11 @@ class ApiReferenceResponse(BaseModel):
     becomes non-null and the operations endpoint returns 200.
     """
 
-    vendor: str
-    name: str | None
-    version: str | None
+    vendor: str = Field(description="Registry vendor of the API.")
+    name: str | None = Field(description="Registry name of the API; null if not yet known.")
+    version: str | None = Field(
+        description="Registry version of the API; null until the catalog import completes."
+    )
 
 
 class ReviewProvenanceResponse(BaseModel):
@@ -320,25 +405,51 @@ class OAuthConfirmSessionRequest(BaseModel):
     The default variant — a body without ``kind`` is this one.
     """
 
-    kind: Literal["oauth"] = "oauth"
+    kind: Literal["oauth"] = Field(
+        default="oauth", description="Confirm variant; `oauth` (the default when omitted)."
+    )
     # Caps mirror ``IntegrationsConnectRequest`` — the eventual write
     # touches the same broker classification and binding paths, so leaving
     # them unbounded here would defeat the ``:connect`` cap. 100 is far
     # above any real vendor's scope catalog or a sane per-binding rule
     # count.
-    confirmed_scopes: list[str] = Field(max_length=100)
-    permission_rules: list[PermissionRuleSchema] = Field(default_factory=list, max_length=100)
+    confirmed_scopes: list[str] = Field(
+        max_length=100, description="Upstream scopes the approver confirmed (at most 100)."
+    )
+    permission_rules: list[PermissionRuleSchema] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Permission rules to bind for the agent (at most 100).",
+    )
     # Selected at the rules-page Continue-click when the session was
     # opened without a target agent (user starts a session by clicking a
     # vendor tile, then picks the agent to bind on the way through).
     # Ignored when the session already carries an ``agent_id`` — the
     # service refuses to switch the target once a binding has been made
     # visible to the user.
-    agent_id: str | None = Field(default=None)
+    agent_id: str | None = Field(
+        default=None,
+        description=(
+            "Agent to bind when the session has none; ignored if the session already has one."
+        ),
+    )
     # The review the approver saw. Checked when given; required for an
     # ``api`` target.
-    expected_agent_id: str | None = Field(default=None)
-    digest: str | None = Field(default=None, max_length=64)
+    expected_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "Agent ID from the review the approver saw; a mismatch is 409 review_stale. "
+            "Required for an API target."
+        ),
+    )
+    digest: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Review digest echoed from the review data; a mismatch is 409 review_stale. "
+            "Required for an API target."
+        ),
+    )
 
 
 class _ReviewedConfirm(BaseModel):
@@ -347,32 +458,61 @@ class _ReviewedConfirm(BaseModel):
     # Secrets never echo back in a validation error.
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    permission_rules: list[PermissionRuleSchema] = Field(max_length=100)
-    agent_id: str | None = Field(default=None)
-    expected_agent_id: str | None = Field(default=None)
-    digest: str = Field(min_length=1, max_length=64)
+    permission_rules: list[PermissionRuleSchema] = Field(
+        max_length=100, description="Permission rules to bind for the agent (at most 100)."
+    )
+    agent_id: str | None = Field(
+        default=None,
+        description=(
+            "Agent to bind when the session has none; ignored if the session already has one."
+        ),
+    )
+    expected_agent_id: str | None = Field(
+        default=None,
+        description="Agent ID from the review the approver saw; a mismatch is 409 review_stale.",
+    )
+    digest: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Review digest echoed from the review data; a mismatch is 409 review_stale.",
+    )
 
 
 class ApiKeyConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_api_key`` session with the API key to store."""
 
-    kind: Literal["api_key"]
-    key: SecretStr = Field(min_length=1, max_length=8192, json_schema_extra=SENSITIVE)
+    kind: Literal["api_key"] = Field(description="Confirm variant; always `api_key`.")
+    key: SecretStr = Field(
+        min_length=1,
+        max_length=8192,
+        json_schema_extra=SENSITIVE,
+        description="API key to store; write-only.",
+    )
 
 
 class BearerConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_bearer`` session with the bearer token to store."""
 
-    kind: Literal["bearer"]
-    token: SecretStr = Field(min_length=1, max_length=8192, json_schema_extra=SENSITIVE)
+    kind: Literal["bearer"] = Field(description="Confirm variant; always `bearer`.")
+    token: SecretStr = Field(
+        min_length=1,
+        max_length=8192,
+        json_schema_extra=SENSITIVE,
+        description="Bearer token to store; write-only.",
+    )
 
 
 class BasicConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_basic`` session with the username and password to store."""
 
-    kind: Literal["basic"]
-    username: str = Field(min_length=1, max_length=255)
-    password: SecretStr = Field(min_length=1, max_length=8192, json_schema_extra=SENSITIVE)
+    kind: Literal["basic"] = Field(description="Confirm variant; always `basic`.")
+    username: str = Field(min_length=1, max_length=255, description="Username to store.")
+    password: SecretStr = Field(
+        min_length=1,
+        max_length=8192,
+        json_schema_extra=SENSITIVE,
+        description="Password to store; write-only.",
+    )
 
 
 class OwnOAuthClientConfirmSessionRequest(_ReviewedConfirm):
@@ -386,19 +526,40 @@ class OwnOAuthClientConfirmSessionRequest(_ReviewedConfirm):
     client secret.
     """
 
-    kind: Literal["own_oauth_client"]
-    client_id: str = Field(min_length=1, max_length=255)
-    client_secret: SecretStr = Field(min_length=1, max_length=8192, json_schema_extra=SENSITIVE)
-    authorize_url: str = Field(min_length=1, max_length=2048)
-    token_url: str = Field(min_length=1, max_length=2048)
-    confirmed_scopes: list[str] = Field(default_factory=list, max_length=100)
+    kind: Literal["own_oauth_client"] = Field(
+        description="Confirm variant; always `own_oauth_client`."
+    )
+    client_id: str = Field(
+        min_length=1, max_length=255, description="Client ID of the approver's OAuth app."
+    )
+    client_secret: SecretStr = Field(
+        min_length=1,
+        max_length=8192,
+        json_schema_extra=SENSITIVE,
+        description="Client secret of the approver's OAuth app; write-only.",
+    )
+    authorize_url: str = Field(
+        min_length=1, max_length=2048, description="Authorization endpoint URL of the OAuth app."
+    )
+    token_url: str = Field(
+        min_length=1, max_length=2048, description="Token endpoint URL of the OAuth app."
+    )
+    confirmed_scopes: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Upstream scopes to request (at most 100).",
+    )
 
 
 class ExistingCredentialConfirmSessionRequest(_ReviewedConfirm):
     """Bind a credential the approver already holds (OAuth only if its grant covers the ask)."""
 
-    kind: Literal["existing_credential"]
-    credential_id: str = Field(min_length=1, max_length=30)
+    kind: Literal["existing_credential"] = Field(
+        description="Confirm variant; always `existing_credential`."
+    )
+    credential_id: str = Field(
+        min_length=1, max_length=30, description="ID of the approver's credential to bind."
+    )
 
 
 class ReauthorizeConfirmSessionRequest(_ReviewedConfirm):
@@ -407,8 +568,12 @@ class ReauthorizeConfirmSessionRequest(_ReviewedConfirm):
     Refused when another agent is bound to the credential.
     """
 
-    kind: Literal["reauthorize"]
-    credential_id: str = Field(min_length=1, max_length=30)
+    kind: Literal["reauthorize"] = Field(description="Confirm variant; always `reauthorize`.")
+    credential_id: str = Field(
+        min_length=1,
+        max_length=30,
+        description="ID of the approver's OAuth credential to bind and re-consent.",
+    )
 
 
 def _confirm_kind(value: Any) -> str:

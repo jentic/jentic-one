@@ -61,9 +61,26 @@ def _user_response(view: UserView) -> UserResponse:
 async def list_users(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
-    invite_state: InviteState | None = Query(default=None, openapi_examples=ex.example("pending")),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of users to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
+    invite_state: InviteState | None = Query(
+        default=None,
+        description=(
+            "Only return users with this stored invite state; lapsed invites are stored as "
+            "`pending`, so `expired` matches no users."
+        ),
+        openapi_examples=ex.example("pending"),
+    ),
 ) -> UserListResponse:
     """List users with cursor-based pagination.
 
@@ -104,7 +121,9 @@ async def create_user(
 
 @router.get("/users/{user_id}", responses=with_responses(not_found()))
 async def get_user(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
@@ -119,7 +138,9 @@ async def get_user(
 
 @router.patch("/users/{user_id}")
 async def update_user(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     body: UserUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
@@ -143,7 +164,9 @@ async def update_user(
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
 async def delete_user(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -164,7 +187,9 @@ async def delete_user(
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
 async def disable_user(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -175,7 +200,9 @@ async def disable_user(
 
 @router.post("/users/{user_id}:enable", status_code=204)
 async def enable_user(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -186,7 +213,9 @@ async def enable_user(
 
 @router.post("/users/{user_id}:reissue-invite")
 async def reissue_invite(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> InviteIssuedResponse:

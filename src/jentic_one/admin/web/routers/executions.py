@@ -78,20 +78,62 @@ async def list_executions(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
     exec_svc: ExecutionService = Depends(get_execution_service),
-    toolkit_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TOOLKIT_ID)),
-    trace_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TRACE_ID)),
+    toolkit_id: str | None = Query(
+        default=None,
+        description="Legacy: only return executions mediated by this toolkit.",
+        openapi_examples=ex.example(ex.TOOLKIT_ID),
+    ),
+    trace_id: str | None = Query(
+        default=None,
+        description="Only return executions with this trace ID.",
+        openapi_examples=ex.example(ex.TRACE_ID),
+    ),
     status: list[str] | None = Query(
-        default=None, openapi_examples=ex.example(["completed", "failed"])
+        default=None,
+        description=(
+            "Only return executions with one of these terminal statuses (`completed` or `failed`);"
+            " repeat the parameter for several."
+        ),
+        openapi_examples=ex.example(["completed", "failed"]),
     ),
     from_: datetime | None = Query(
-        default=None, alias="from", openapi_examples=ex.example(ex.DATETIME_FROM)
+        default=None,
+        alias="from",
+        description="Only return executions started at or after this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_FROM),
     ),
-    to: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
-    api: str | None = Query(default=None, openapi_examples=ex.example(ex.API_REF)),
-    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
-    origin: str | None = Query(default=None, openapi_examples=ex.example("dashboard")),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=25, ge=1, le=100, openapi_examples=ex.example(25)),
+    to: datetime | None = Query(
+        default=None,
+        description="Only return executions started before this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_TO),
+    ),
+    api: str | None = Query(
+        default=None,
+        description="Only return executions of this API, given as `vendor[:name[:version]]`.",
+        openapi_examples=ex.example(ex.API_REF),
+    ),
+    actor_id: str | None = Query(
+        default=None,
+        description="Only return executions run by this actor.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    origin: str | None = Query(
+        default=None,
+        description="Only return executions initiated from this surface, e.g. `api` or `mcp`.",
+        openapi_examples=ex.example("dashboard"),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of execution records to return (1-100, default 25).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> ExecutionListResponse:
     """List execution records with optional filters."""
     if status is not None:
@@ -135,7 +177,12 @@ async def list_executions(
 
 @router.get("/executions/{execution_id}")
 async def get_execution(
-    execution_id: Annotated[str, Path(openapi_examples=ex.example(ex.EXECUTION_ID))],
+    execution_id: Annotated[
+        str,
+        Path(
+            description="ID of the execution record.", openapi_examples=ex.example(ex.EXECUTION_ID)
+        ),
+    ],
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
     exec_svc: ExecutionService = Depends(get_execution_service),

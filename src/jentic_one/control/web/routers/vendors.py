@@ -65,7 +65,10 @@ async def list_vendors(
     response_model=None,
 )
 async def get_auth_capabilities(
-    vendor_key: Annotated[str, Path(openapi_examples=ex.example(ex.VENDOR_KEY))],
+    vendor_key: Annotated[
+        str,
+        Path(description="Vendor registry key.", openapi_examples=ex.example(ex.VENDOR_KEY)),
+    ],
     oauth_app_registration_id: str | None = Query(
         default=None,
         max_length=30,

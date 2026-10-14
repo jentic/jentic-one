@@ -55,7 +55,9 @@ def grant_response(view: OAuthGrantView) -> OAuthGrantResponse:
     responses=not_found(),
 )
 async def list_agent_oauth_grants(
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    agent_id: Annotated[
+        str, Path(description="ID of the agent.", openapi_examples=ex.example(ex.AGENT_ID))
+    ],
     identity: Identity = get_current_identity(),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
     status: Literal["active", "revoked"] | None = Query(
@@ -63,8 +65,18 @@ async def list_agent_oauth_grants(
         description="Filter by grant lifecycle state.",
         openapi_examples=ex.example("active"),
     ),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of grants to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
 ) -> OAuthGrantListResponse:
     """List the OAuth clients a user has consented to act as this agent.
 
@@ -93,7 +105,10 @@ async def list_agent_oauth_grants(
     responses=not_found(),
 )
 async def revoke_oauth_grant(
-    grant_id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_GRANT_ID))],
+    grant_id: Annotated[
+        str,
+        Path(description="ID of the OAuth grant.", openapi_examples=ex.example(ex.OAUTH_GRANT_ID)),
+    ],
     identity: Identity = get_current_identity(),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
 ) -> Response:

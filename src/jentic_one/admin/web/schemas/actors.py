@@ -12,19 +12,21 @@ from jentic_one.shared.models import ActorType
 class ActorSummaryResponse(BaseModel):
     """Single actor entry in the actors list."""
 
-    id: str
+    id: str = Field(description="Actor id (`usr_…` or `agnt_…`).")
     actor_type: ActorType
-    name: str
-    active: bool
-    created_at: datetime
+    name: str = Field(description="Display name: a user's full name or an agent's name.")
+    active: bool = Field(description="False for a disabled user or a non-active agent.")
+    created_at: datetime = Field(description="When the actor was created (RFC 3339).")
 
 
 class ActorListResponse(BaseModel):
     """Paginated list of actors."""
 
-    data: list[ActorSummaryResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    data: list[ActorSummaryResponse] = Field(description="The page of actors.")
+    has_more: bool = Field(description="Whether more results exist after this page.")
+    next_cursor: str | None = Field(
+        default=None, description="Cursor for the next page; null when there are no more results."
+    )
 
 
 class ActorLookupEntryResponse(BaseModel):
@@ -56,4 +58,6 @@ class ActorLookupResponse(BaseModel):
         }
     )
 
-    data: list[ActorLookupEntryResponse]
+    data: list[ActorLookupEntryResponse] = Field(
+        description="The resolved actors; ids that match no visible actor are omitted."
+    )

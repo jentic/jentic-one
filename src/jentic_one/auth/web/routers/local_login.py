@@ -455,10 +455,19 @@ async def login_page(
 )
 async def login_submit(
     request: Request,
-    email: str = Form(...),
-    password: str = Form(..., json_schema_extra=SENSITIVE),
-    ls: str = Form(...),
-    csrf: str = Form(..., json_schema_extra=SENSITIVE),
+    email: str = Form(..., description="Email address of the local account."),
+    password: str = Form(
+        ..., json_schema_extra=SENSITIVE, description="Password of the local account."
+    ),
+    ls: str = Form(
+        ...,
+        description="Signed authorization-flow state (carry-through token) from the login form.",
+    ),
+    csrf: str = Form(
+        ...,
+        json_schema_extra=SENSITIVE,
+        description="Single-use CSRF token embedded in the login form.",
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> HTMLResponse | RedirectResponse:

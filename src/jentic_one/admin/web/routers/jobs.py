@@ -63,16 +63,40 @@ async def list_jobs(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
-    kind: str | None = Query(default=None, openapi_examples=ex.example("import")),
+    kind: str | None = Query(
+        default=None,
+        description="Only return jobs of this kind, e.g. `import` or `execution`.",
+        openapi_examples=ex.example("import"),
+    ),
     job_status: list[str] | None = Query(
-        default=None, alias="status", openapi_examples=ex.example(["running"])
+        default=None,
+        alias="status",
+        description="Only return jobs in one of these states; repeat the parameter for several.",
+        openapi_examples=ex.example(["running"]),
     ),
     from_: datetime | None = Query(
-        default=None, alias="from", openapi_examples=ex.example(ex.DATETIME_FROM)
+        default=None,
+        alias="from",
+        description="Only return jobs created at or after this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_FROM),
     ),
-    to: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=25, ge=1, le=100, openapi_examples=ex.example(25)),
+    to: datetime | None = Query(
+        default=None,
+        description="Only return jobs created before this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_TO),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of jobs to return (1-100, default 25).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> JobListResponse:
     """List jobs with optional filters."""
     page = await job_svc.list_all(
@@ -91,7 +115,9 @@ async def list_jobs(
 @router.get("/jobs/{job_id}")
 async def get_job(
     request: Request,
-    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
@@ -102,7 +128,9 @@ async def get_job(
 
 @router.get("/jobs/{job_id}/result")
 async def get_job_result(
-    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
@@ -116,7 +144,9 @@ async def get_job_result(
 @router.post("/jobs/{job_id}:cancel")
 async def cancel_job(
     request: Request,
-    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
