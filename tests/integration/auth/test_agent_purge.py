@@ -1,22 +1,24 @@
 """Integration tests for the agent hard delete (``AgentService.purge``).
 
 ``DELETE /agents/{id}?purge=true`` removes an agent outright, from any status,
-together with every row keyed to it across the admin, control and registry
-databases. Audit entries are history and survive (plus one ``delete`` entry
-for the purge itself); credentials belong to their owner and are untouched.
-The control and registry sweeps are best effort: a failure there is logged and
-the agent is still deleted.
+with its authority and session rows: tokens, consent grants and codes,
+permission grants and rules, credential bindings, connect sessions (and the
+pending credential each live one holds), and it cancels the agent's active
+jobs. History is kept: audit entries, events, execution records, finished jobs
+and notes, as are the credentials the agent created. Every failure
+propagates; a failed purge leaves the agent archived and a retry finishes it.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
@@ -44,13 +46,16 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import AgentPermissionRuleRepository
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorStatus, JobKind, JobStatus, StoredCredentialType
 from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration
 
 _RULES: list[dict[str, object]] = [{"effect": "allow", "methods": ["GET"], "path": ".*"}]
+_PURGE_REASON = "agent purged"
 
 
 def _admin_identity(admin_id: str) -> Identity:
@@ -71,16 +76,26 @@ def _owner_identity(owner_id: str) -> Identity:
 
 @dataclass
 class _Fixture:
+    ctx: Context
     owner_id: str
     admin_id: str
     credential_id: str
+    #: Every agent a test seeds; the teardown sweeps exactly these.
+    agent_ids: list[str] = field(default_factory=list)
+
+    async def agent(self, *, status: ActorStatus = ActorStatus.ACTIVE, name: str = "purge") -> str:
+        agent_id = await seeds.seed_agent(
+            self.ctx, owner_id=self.owner_id, scopes=["apis:read"], status=status, name=name
+        )
+        self.agent_ids.append(agent_id)
+        return agent_id
 
 
 @pytest.fixture()
 async def purge_env(
     integration_context: Context, clean_grants: None
 ) -> AsyncGenerator[_Fixture, None]:
-    """Owner + admin users and one control credential; sweeps every seeded row after."""
+    """Owner + admin users and one owner credential; sweeps the seeded agents' rows after."""
     ctx = integration_context
     owner = await seeds.seed_user(ctx, "usr_purge_owner")
     admin_id = await seeds.seed_user(ctx, "usr_purge_admin")
@@ -97,39 +112,66 @@ async def purge_env(
         session.add(credential)
         await session.flush()
         credential_id = credential.id
-    yield _Fixture(owner_id=owner, admin_id=admin_id, credential_id=credential_id)
+    env = _Fixture(ctx=ctx, owner_id=owner, admin_id=admin_id, credential_id=credential_id)
+    yield env
 
+    ids = env.agent_ids
+    people = [owner, admin_id]
     async with ctx.control_db.transaction() as session:
         await session.execute(
-            delete(AgentPermissionRule).where(AgentPermissionRule.credential_id == credential_id)
+            delete(AgentPermissionRule).where(AgentPermissionRule.agent_id.in_(ids))
         )
         await session.execute(
-            delete(ConnectSessionOutcome).where(
-                ConnectSessionOutcome.credential_id == credential_id
+            delete(ConnectSessionOutcome).where(ConnectSessionOutcome.agent_id.in_(ids))
+        )
+        await session.execute(
+            delete(ConnectSession).where(
+                or_(ConnectSession.agent_id.in_(ids), ConnectSession.initiator_actor_id.in_(ids))
             )
         )
-        # Cascades to the credential's connect sessions.
-        await session.execute(delete(Credential).where(Credential.id == credential_id))
+        await session.execute(
+            delete(Credential).where(
+                or_(Credential.id == credential_id, Credential.created_by.in_(ids))
+            )
+        )
     async with ctx.registry_db.transaction() as session:
-        await session.execute(delete(Note).where(Note.created_by.like("agnt_%")))
+        await session.execute(delete(Note).where(Note.created_by.in_(ids)))
     async with ctx.admin_db.transaction() as session:
         await session.execute(
-            delete(AgentCredentialBinding).where(
-                AgentCredentialBinding.credential_id == credential_id
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id.in_(ids))
+        )
+        await session.execute(
+            delete(Event).where(
+                or_(
+                    Event.actor_id.in_(ids),
+                    Event.created_by.in_(ids),
+                    Event.created_by.in_(people),
+                    Event.created_by == seeds.SEED_MARKER,
+                )
             )
         )
-        await session.execute(delete(Event).where(Event.created_by == seeds.SEED_MARKER))
+        await session.execute(delete(ExecutionRecord).where(ExecutionRecord.actor_id.in_(ids)))
+        await session.execute(delete(Job).where(Job.created_by.in_(ids)))
         await session.execute(
-            delete(ExecutionRecord).where(ExecutionRecord.created_by == seeds.SEED_MARKER)
+            delete(AuditEntry).where(
+                or_(AuditEntry.actor_id.in_(people), AuditEntry.target_id.in_(ids))
+            )
         )
-        await session.execute(delete(Job).where(Job.created_by.like("agnt_%")))
-        await session.execute(delete(AuditEntry).where(AuditEntry.actor_id == admin_id))
-        await session.execute(delete(AuditEntry).where(AuditEntry.actor_id == owner))
 
 
-async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> None:
-    """Give one agent a row in every store the purge sweeps."""
-    await seeds.mint_grant_channel_tokens(
+@dataclass
+class _Seeded:
+    """The ids of the per-agent rows the footprint tracks across the purge."""
+
+    grant_ids: list[str]
+    pending_credential_id: str
+    retained_credential_id: str
+    jobs: dict[JobStatus, str]
+
+
+async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> _Seeded:
+    """Give one agent a row in every store the purge sweeps or keeps."""
+    grant_id, *_ = await seeds.mint_grant_channel_tokens(
         ctx, user_id=env.owner_id, agent_id=agent_id, grant_scopes=["apis:read"]
     )
     async with ctx.admin_db.transaction() as session:
@@ -139,7 +181,6 @@ async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> N
             credential_id=env.credential_id,
             created_by=seeds.SEED_MARKER,
         )
-        # One event per match arm: actor, visibility subject, data subject.
         await EventRepository.create(
             session,
             type="test.purge",
@@ -150,19 +191,7 @@ async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> N
             actor_type="agent",
         )
         await EventRepository.create(
-            session,
-            type="test.purge",
-            severity="info",
-            summary="about agent",
-            created_by=agent_id,
-        )
-        await EventRepository.create(
-            session,
-            type="test.purge",
-            severity="info",
-            summary="agent in data",
-            data={"agent_id": agent_id},
-            created_by=seeds.SEED_MARKER,
+            session, type="test.purge", severity="info", summary="about agent", created_by=agent_id
         )
         await ExecutionRecordRepository.create(
             session,
@@ -174,20 +203,41 @@ async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> N
             actor_id=agent_id,
             actor_type="agent",
         )
-        for status in (JobStatus.COMPLETED, JobStatus.RUNNING):
+        jobs = {}
+        for status in (JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED):
             job = await JobRepository.create(
                 session, kind=JobKind.EXECUTION, status=status, created_by=agent_id
             )
-            job.actor_type = "agent"
-        await session.flush()
+            jobs[status] = job.id
     async with ctx.control_db.transaction() as session:
         await AgentPermissionRuleRepository.replace_user_rules(
             session, agent_id, env.credential_id, _RULES, created_by=seeds.SEED_MARKER
         )
-        for state in ("failed", "polling"):
+        pending = Credential(
+            type=StoredCredentialType.API_KEY,
+            name="Pending Connect",
+            api_vendor="stripe",
+            api_name="payments",
+            api_version="v1",
+            state="pending",
+            created_by=agent_id,
+        )
+        retained = Credential(
+            type=StoredCredentialType.API_KEY,
+            name="Agent-Created Credential",
+            api_vendor="stripe",
+            api_name="payments",
+            api_version="v1",
+            created_by=agent_id,
+        )
+        session.add_all([pending, retained])
+        await session.flush()
+        # A live session holding its own pending credential, and a finished one
+        # over the owner's connected credential.
+        for credential_id, state in ((pending.id, "polling"), (env.credential_id, "connected")):
             session.add(
                 ConnectSession(
-                    credential_id=env.credential_id,
+                    credential_id=credential_id,
                     vendor="stripe",
                     agent_id=agent_id,
                     initiator_actor_id=agent_id,
@@ -204,39 +254,47 @@ async def _seed_agent_footprint(ctx: Context, env: _Fixture, agent_id: str) -> N
                 target_kind="vendor",
                 vendor="stripe",
                 resolved_flow="manual",
-                outcome="failed",
+                outcome="connected",
                 credential_id=env.credential_id,
                 poll_token_hash=f"{agent_id}-outcome"[:64],
             )
         )
+        await session.flush()
+        seeded = _Seeded(
+            grant_ids=[grant_id],
+            pending_credential_id=pending.id,
+            retained_credential_id=retained.id,
+            jobs=jobs,
+        )
     async with ctx.registry_db.transaction() as session:
         session.add(Note(body="agent-authored note", created_by=agent_id))
+    return seeded
 
 
-async def _footprint(ctx: Context, agent_id: str) -> dict[str, int]:
-    """Count the agent's rows in every swept store."""
+async def _count(session: object, stmt: object) -> int:
+    return int((await session.execute(stmt)).scalar_one())  # type: ignore[attr-defined]
 
-    async def _count(session: object, stmt: object) -> int:
-        return int((await session.execute(stmt)).scalar_one())  # type: ignore[attr-defined]
 
+async def _swept(ctx: Context, agent_id: str, seeded: _Seeded) -> dict[str, int]:
+    """Count the agent's rows the purge deletes (or, for jobs, cancels)."""
     counts: dict[str, int] = {}
     async with ctx.admin_db.session() as session:
-        grant_ids = list(
-            (
-                await session.execute(
-                    select(OAuthClientGrant.id).where(OAuthClientGrant.agent_id == agent_id)
-                )
-            ).scalars()
-        )
         counts["agents"] = await _count(
             session, select(func.count()).select_from(Agent).where(Agent.id == agent_id)
         )
-        counts["grants"] = len(grant_ids)
+        counts["grants"] = await _count(
+            session,
+            select(func.count())
+            .select_from(OAuthClientGrant)
+            .where(OAuthClientGrant.agent_id == agent_id),
+        )
+        # Keyed on the grant ids captured at seed time: once the grants are
+        # gone a lookup through them would count nothing either way.
         counts["codes"] = await _count(
             session,
             select(func.count())
             .select_from(AuthorizationCode)
-            .where(AuthorizationCode.grant_id.in_(grant_ids or ["-"])),
+            .where(AuthorizationCode.grant_id.in_(seeded.grant_ids)),
         )
         counts["access_tokens"] = await _count(
             session,
@@ -252,23 +310,14 @@ async def _footprint(ctx: Context, agent_id: str) -> dict[str, int]:
             .select_from(AgentCredentialBinding)
             .where(AgentCredentialBinding.agent_id == agent_id),
         )
-        events = (await session.execute(select(Event).where(Event.type == "test.purge"))).scalars()
-        counts["events"] = sum(
-            1
-            for e in events
-            if agent_id in (e.actor_id, e.created_by) or (e.data or {}).get("agent_id") == agent_id
-        )
-        counts["executions"] = await _count(
-            session,
-            select(func.count())
-            .select_from(ExecutionRecord)
-            .where(ExecutionRecord.actor_id == agent_id),
-        )
-        counts["jobs_finished"] = await _count(
+        counts["active_jobs"] = await _count(
             session,
             select(func.count())
             .select_from(Job)
-            .where(Job.created_by == agent_id, Job.status != JobStatus.RUNNING.value),
+            .where(
+                Job.created_by == agent_id,
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            ),
         )
     async with ctx.control_db.session() as session:
         counts["rules"] = await _count(
@@ -277,17 +326,55 @@ async def _footprint(ctx: Context, agent_id: str) -> dict[str, int]:
             .select_from(AgentPermissionRule)
             .where(AgentPermissionRule.agent_id == agent_id),
         )
-        counts["sessions_finished"] = await _count(
+        counts["sessions"] = await _count(
             session,
             select(func.count())
             .select_from(ConnectSession)
-            .where(ConnectSession.agent_id == agent_id, ConnectSession.state == "failed"),
+            .where(ConnectSession.agent_id == agent_id),
         )
         counts["outcomes"] = await _count(
             session,
             select(func.count())
             .select_from(ConnectSessionOutcome)
             .where(ConnectSessionOutcome.agent_id == agent_id),
+        )
+        counts["pending_credential"] = await _count(
+            session,
+            select(func.count())
+            .select_from(Credential)
+            .where(Credential.id == seeded.pending_credential_id),
+        )
+    return counts
+
+
+async def _kept(ctx: Context, agent_id: str, seeded: _Seeded) -> dict[str, int]:
+    """Count the agent's history rows and credential the purge keeps."""
+    counts: dict[str, int] = {}
+    async with ctx.admin_db.session() as session:
+        counts["events"] = await _count(
+            session,
+            select(func.count())
+            .select_from(Event)
+            .where(
+                Event.type == "test.purge",
+                or_(Event.actor_id == agent_id, Event.created_by == agent_id),
+            ),
+        )
+        counts["executions"] = await _count(
+            session,
+            select(func.count())
+            .select_from(ExecutionRecord)
+            .where(ExecutionRecord.actor_id == agent_id),
+        )
+        counts["jobs"] = await _count(
+            session, select(func.count()).select_from(Job).where(Job.created_by == agent_id)
+        )
+    async with ctx.control_db.session() as session:
+        counts["retained_credential"] = await _count(
+            session,
+            select(func.count())
+            .select_from(Credential)
+            .where(Credential.id == seeded.retained_credential_id),
         )
     async with ctx.registry_db.session() as session:
         counts["notes"] = await _count(
@@ -296,19 +383,25 @@ async def _footprint(ctx: Context, agent_id: str) -> dict[str, int]:
     return counts
 
 
-async def test_purge_removes_agent_footprint_and_spares_others(
+async def _agent_audits(ctx: Context, agent_id: str) -> list[AuditEntry]:
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(
+            select(AuditEntry).where(
+                AuditEntry.target_type == "agent", AuditEntry.target_id == agent_id
+            )
+        )
+        return sorted(rows.scalars(), key=lambda a: a.action)
+
+
+async def test_purge_removes_authority_and_sessions_and_keeps_history(
     integration_context: Context, purge_env: _Fixture
 ) -> None:
-    """Purging an active agent clears every store for it, leaves a bystander
-    agent's rows intact, keeps audit history and the credential, nulls a child's
-    parent link, and records one ``delete`` audit entry."""
+    """Purging an active agent sweeps its authority and session rows, keeps its
+    history and the credentials it created, leaves a bystander agent intact,
+    nulls a child's parent link, and audits both the archive and the delete."""
     ctx = integration_context
-    target = await seeds.seed_agent(
-        ctx, owner_id=purge_env.owner_id, scopes=["apis:read"], name="purge-target"
-    )
-    bystander = await seeds.seed_agent(
-        ctx, owner_id=purge_env.owner_id, scopes=["apis:read"], name="purge-bystander"
-    )
+    target = await purge_env.agent(name="purge-target")
+    bystander = await purge_env.agent(name="purge-bystander")
     async with ctx.admin_db.transaction() as session:
         child = await AgentRepository.create(
             session,
@@ -319,65 +412,63 @@ async def test_purge_removes_agent_footprint_and_spares_others(
             created_by=seeds.SEED_MARKER,
         )
         child_id = child.id
-    await _seed_agent_footprint(ctx, purge_env, target)
-    await _seed_agent_footprint(ctx, purge_env, bystander)
+    seeded = await _seed_agent_footprint(ctx, purge_env, target)
+    bystander_seeded = await _seed_agent_footprint(ctx, purge_env, bystander)
 
-    before = await _footprint(ctx, target)
-    assert all(count > 0 for count in before.values()), before
-    bystander_before = await _footprint(ctx, bystander)
+    swept_before = await _swept(ctx, target, seeded)
+    assert all(count > 0 for count in swept_before.values()), swept_before
+    kept_before = await _kept(ctx, target, seeded)
+    assert all(count > 0 for count in kept_before.values()), kept_before
+    bystander_before = (
+        await _swept(ctx, bystander, bystander_seeded),
+        await _kept(ctx, bystander, bystander_seeded),
+    )
 
     await AgentService(ctx).purge(target, identity=_admin_identity(purge_env.admin_id))
 
-    assert all(count == 0 for count in (await _footprint(ctx, target)).values())
-    assert await _footprint(ctx, bystander) == bystander_before
+    assert all(count == 0 for count in (await _swept(ctx, target, seeded)).values())
+    assert await _kept(ctx, target, seeded) == kept_before
+    assert (
+        await _swept(ctx, bystander, bystander_seeded),
+        await _kept(ctx, bystander, bystander_seeded),
+    ) == bystander_before
 
     async with ctx.admin_db.session() as session:
-        # A RUNNING job is left for its worker to finalise.
-        running = (
-            await session.execute(
-                select(func.count())
-                .select_from(Job)
-                .where(Job.created_by == target, Job.status == JobStatus.RUNNING.value)
-            )
-        ).scalar_one()
-        assert running == 1
+        statuses = {
+            status: (await session.get(Job, job_id)).status  # type: ignore[union-attr]
+            for status, job_id in seeded.jobs.items()
+        }
+        assert statuses == {
+            JobStatus.QUEUED: JobStatus.CANCELLED,
+            JobStatus.RUNNING: JobStatus.CANCELLED,
+            JobStatus.COMPLETED: JobStatus.COMPLETED,
+        }
         child_row = await AgentRepository.get_by_id(session, child_id)
         assert child_row is not None and child_row.parent_agent_id is None
-        audits = list(
-            (
-                await session.execute(
-                    select(AuditEntry).where(
-                        AuditEntry.target_type == "agent", AuditEntry.target_id == target
-                    )
-                )
-            ).scalars()
-        )
-        assert [a.action for a in audits] == ["delete"]
-        assert audits[0].actor_id == purge_env.admin_id
-        assert (audits[0].before or {}).get("name") == "purge-target"
         # The grant revocation from the inline archive step is kept as history.
-        grant_revokes = (
-            await session.execute(
-                select(func.count())
-                .select_from(AuditEntry)
-                .where(
-                    AuditEntry.target_type == "oauth_grant",
-                    AuditEntry.reason == "oauth grant revoked: agent deleted",
-                )
-            )
-        ).scalar_one()
+        grant_revokes = await _count(
+            session,
+            select(func.count())
+            .select_from(AuditEntry)
+            .where(
+                AuditEntry.target_type == "oauth_grant",
+                AuditEntry.target_id.in_(seeded.grant_ids),
+                AuditEntry.reason == "oauth grant revoked: agent deleted",
+            ),
+        )
         assert grant_revokes == 1
+    archive, purge = await _agent_audits(ctx, target)
+    assert (archive.action, purge.action) == ("archive", "delete")
+    assert {archive.reason, purge.reason} == {_PURGE_REASON}
+    assert {archive.actor_id, purge.actor_id} == {purge_env.admin_id}
+    assert purge.before == {
+        "name": "purge-target",
+        "owner_id": purge_env.owner_id,
+        "status": "active",
+        "retained_credential_ids": [seeded.retained_credential_id],
+    }
     async with ctx.control_db.session() as session:
         assert await session.get(Credential, purge_env.credential_id) is not None
-        # The live connect session is left for the stale-session sweep.
-        live = (
-            await session.execute(
-                select(func.count())
-                .select_from(ConnectSession)
-                .where(ConnectSession.agent_id == target, ConnectSession.state == "polling")
-            )
-        ).scalar_one()
-        assert live == 1
 
 
 @pytest.mark.parametrize(
@@ -387,74 +478,124 @@ async def test_purge_removes_agent_footprint_and_spares_others(
 async def test_purge_allowed_from_any_status_by_owner(
     integration_context: Context, purge_env: _Fixture, status: ActorStatus
 ) -> None:
-    """The owner (agents:write, not org:admin) may purge from every status."""
+    """The owner (agents:write, not org:admin) may purge from every status; an
+    agent that is already archived gets no second ``archive`` entry."""
     ctx = integration_context
-    agent_id = await seeds.seed_agent(
-        ctx, owner_id=purge_env.owner_id, scopes=["apis:read"], status=status
-    )
+    agent_id = await purge_env.agent(status=status)
 
     await AgentService(ctx).purge(agent_id, identity=_owner_identity(purge_env.owner_id))
 
     async with ctx.admin_db.session() as session:
         assert await AgentRepository.get_by_id(session, agent_id) is None
+    expected = ["delete"] if status == ActorStatus.ARCHIVED else ["archive", "delete"]
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == expected
 
 
 async def test_purge_hides_agents_outside_caller_ownership(
     integration_context: Context, purge_env: _Fixture
 ) -> None:
-    """A non-owner without org:admin gets not-found and the agent survives;
+    """A non-owner without org:admin gets not-found and the agent is untouched;
     a second purge of an already-deleted agent is not-found too."""
     ctx = integration_context
-    agent_id = await seeds.seed_agent(ctx, owner_id=purge_env.owner_id, scopes=[])
+    agent_id = await purge_env.agent()
     stranger = await seeds.seed_user(ctx, "usr_purge_stranger")
     svc = AgentService(ctx)
 
     with pytest.raises(ActorNotFoundError):
         await svc.purge(agent_id, identity=_owner_identity(stranger))
     async with ctx.admin_db.session() as session:
-        assert await AgentRepository.get_by_id(session, agent_id) is not None
+        agent = await AgentRepository.get_by_id(session, agent_id)
+        assert agent is not None and agent.status == ActorStatus.ACTIVE
 
     await svc.purge(agent_id, identity=_admin_identity(purge_env.admin_id))
     with pytest.raises(ActorNotFoundError):
         await svc.purge(agent_id, identity=_admin_identity(purge_env.admin_id))
 
 
-async def test_purge_survives_control_sweep_failure(
-    integration_context: Context, purge_env: _Fixture
-) -> None:
-    """The control sweep is best effort: when it fails the agent is still
-    deleted, and the control rows it would have removed are left behind."""
-    ctx = integration_context
-    agent_id = await seeds.seed_agent(ctx, owner_id=purge_env.owner_id, scopes=["apis:read"])
-    async with ctx.control_db.transaction() as session:
-        await AgentPermissionRuleRepository.replace_user_rules(
-            session, agent_id, purge_env.credential_id, _RULES, created_by=seeds.SEED_MARKER
-        )
+def _with_unreachable_control(config: AppConfig, tmp_path: Path) -> AppConfig:
+    """``config`` with the control DB pointed at a SQLite file that cannot be opened."""
+    control = DatabaseConfig(
+        backend="sqlite", path=str(tmp_path / "missing" / "control.db"), schema_name="control"
+    )
+    databases = config.databases.model_copy(update={"control": control})
+    return config.model_copy(update={"databases": databases})
 
-    with patch(
-        "jentic_one.auth.services.agent_service.AgentControlPurgeRepository.delete_for_agent",
-        new=AsyncMock(side_effect=RuntimeError("control unavailable")),
-    ):
-        await AgentService(ctx).purge(agent_id, identity=_admin_identity(purge_env.admin_id))
+
+async def test_failed_control_sweep_leaves_agent_archived_and_retry_finishes(
+    integration_context: Context,
+    integration_config: AppConfig,
+    purge_env: _Fixture,
+    tmp_path: Path,
+) -> None:
+    """A control-DB failure propagates: the agent is left archived (step 1
+    committed and audited), its control rows survive, and nothing else is
+    deleted. A retry from a healthy process completes the purge."""
+    ctx = integration_context
+    agent_id = await purge_env.agent()
+    seeded = await _seed_agent_footprint(ctx, purge_env, agent_id)
+
+    broken = _with_unreachable_control(integration_config, tmp_path)
+    async with Context(broken) as broken_ctx:
+        with pytest.raises(DatabaseUnavailableError):
+            await AgentService(broken_ctx).purge(
+                agent_id, identity=_admin_identity(purge_env.admin_id)
+            )
 
     async with ctx.admin_db.session() as session:
-        assert await AgentRepository.get_by_id(session, agent_id) is None
-    async with ctx.control_db.session() as session:
-        rules = await AgentPermissionRuleRepository.list_rules(
-            session, agent_id, purge_env.credential_id
-        )
-    assert len(rules) == 1
+        agent = await AgentRepository.get_by_id(session, agent_id)
+        assert agent is not None and agent.status == ActorStatus.ARCHIVED
+    left = await _swept(ctx, agent_id, seeded)
+    assert left["rules"] == 1 and left["sessions"] == 2 and left["active_jobs"] == 2
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive"]
+
+    await AgentService(ctx).purge(agent_id, identity=_admin_identity(purge_env.admin_id))
+
+    assert all(count == 0 for count in (await _swept(ctx, agent_id, seeded)).values())
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "delete"]
 
 
-async def test_purge_skips_registry_when_not_allowed(
-    integration_context: Context, integration_config: object, purge_env: _Fixture
+async def test_purge_refuses_up_front_without_control_db(
+    integration_config: AppConfig, integration_context: Context, purge_env: _Fixture
 ) -> None:
-    """A standalone auth surface has no registry DB: the purge still succeeds."""
-    agent_id = await seeds.seed_agent(
-        integration_context, owner_id=purge_env.owner_id, scopes=["apis:read"]
-    )
-    async with Context(integration_config, allowed_dbs={"admin", "control"}) as auth_ctx:  # type: ignore[arg-type]
+    """A process that cannot reach the control DB never starts a purge."""
+    agent_id = await purge_env.agent()
+    async with Context(integration_config, allowed_dbs={"admin"}) as admin_only:
+        with pytest.raises(RuntimeError, match="control database"):
+            await AgentService(admin_only).purge(
+                agent_id, identity=_admin_identity(purge_env.admin_id)
+            )
+
+    async with integration_context.admin_db.session() as session:
+        agent = await AgentRepository.get_by_id(session, agent_id)
+        assert agent is not None and agent.status == ActorStatus.ACTIVE
+
+
+async def test_purge_without_registry_db(
+    integration_config: AppConfig, integration_context: Context, purge_env: _Fixture
+) -> None:
+    """The purge never touches the registry DB, so an auth process without it purges."""
+    agent_id = await purge_env.agent()
+    async with Context(integration_config, allowed_dbs={"admin", "control"}) as auth_ctx:
         await AgentService(auth_ctx).purge(agent_id, identity=_admin_identity(purge_env.admin_id))
 
     async with integration_context.admin_db.session() as session:
         assert await AgentRepository.get_by_id(session, agent_id) is None
+
+
+async def test_concurrent_purges_delete_once(
+    integration_context: Context, purge_env: _Fixture
+) -> None:
+    """Two purges racing on one agent: one deletes it, the other gets not-found."""
+    ctx = integration_context
+    agent_id = await purge_env.agent()
+    await _seed_agent_footprint(ctx, purge_env, agent_id)
+    identity = _admin_identity(purge_env.admin_id)
+
+    results = await asyncio.gather(
+        AgentService(ctx).purge(agent_id, identity=identity),
+        AgentService(ctx).purge(agent_id, identity=identity),
+        return_exceptions=True,
+    )
+
+    assert sorted(type(r).__name__ for r in results) == ["ActorNotFoundError", "NoneType"]
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "delete"]

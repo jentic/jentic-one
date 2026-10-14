@@ -50,9 +50,10 @@ from jentic_one.wiring import (
 )
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
-    # Auth reaches the control DB read-only to resolve credential names for the
-    # /me whoami response (issue #686): the binding row lives in the admin DB
-    # but the credential name lives in the control DB.
+    # Auth reaches the control DB to resolve credential names for the /me
+    # whoami response (issue #686) — the binding row lives in the admin DB but
+    # the credential name lives in the control DB — and to delete the
+    # agent-keyed control rows when a binding or an agent is purged.
     "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
     # Every standalone surface in SURFACES_NEEDING_AUTH verifies callers locally

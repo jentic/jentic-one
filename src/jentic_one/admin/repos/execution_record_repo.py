@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import delete, literal, select, tuple_
+from sqlalchemy import literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -137,13 +137,3 @@ class ExecutionRecordRepository:
                 stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
-
-    @staticmethod
-    async def delete_for_actor(session: AsyncSession, *, actor_id: str, actor_type: str) -> int:
-        """Delete every execution record attributed to one actor; returns the row count."""
-        stmt = delete(ExecutionRecord).where(
-            ExecutionRecord.actor_id == actor_id, ExecutionRecord.actor_type == actor_type
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]

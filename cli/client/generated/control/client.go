@@ -3681,7 +3681,7 @@ type ListAgentsParams struct {
 
 // ArchiveAgentParams defines parameters for ArchiveAgent.
 type ArchiveAgentParams struct {
-	// Purge Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings, events, execution records, jobs, finished connect sessions and notes. Audit entries and credentials are kept.
+	// Purge Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings and connect sessions, and cancels its queued and running jobs. History (audit entries, events, execution records, finished jobs, notes) and the credentials it created are kept; once the agent is gone that history is visible to org:admin only.
 	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
 }
 
@@ -5604,10 +5604,10 @@ type ClientInterface interface {
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
-	// Purge removes the agent and its data outright (best effort across
-	// databases); it archives first if needed, so the agent's authority is gone
-	// before any cleanup runs. Archive returns 409 for an already-archived
-	// agent; purge accepts any status.
+	// Purge removes the agent and its authority and session rows; it archives
+	// first if needed, so the agent's authority is gone before any cleanup runs,
+	// and a failed purge leaves the agent archived and can be retried. Archive
+	// returns 409 for an already-archived agent; purge accepts any status.
 	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 	ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8630,10 +8630,10 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
-// Purge removes the agent and its data outright (best effort across
-// databases); it archives first if needed, so the agent's authority is gone
-// before any cleanup runs. Archive returns 409 for an already-archived
-// agent; purge accepts any status.
+// Purge removes the agent and its authority and session rows; it archives
+// first if needed, so the agent's authority is gone before any cleanup runs,
+// and a failed purge leaves the agent archived and can be retried. Archive
+// returns 409 for an already-archived agent; purge accepts any status.
 //
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
 func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -22529,10 +22529,10 @@ type ClientWithResponsesInterface interface {
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
-	// Purge removes the agent and its data outright (best effort across
-	// databases); it archives first if needed, so the agent's authority is gone
-	// before any cleanup runs. Archive returns 409 for an already-archived
-	// agent; purge accepts any status.
+	// Purge removes the agent and its authority and session rows; it archives
+	// first if needed, so the agent's authority is gone before any cleanup runs,
+	// and a failed purge leaves the agent archived and can be retried. Archive
+	// returns 409 for an already-archived agent; purge accepts any status.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -39939,10 +39939,10 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
-// Purge removes the agent and its data outright (best effort across
-// databases); it archives first if needed, so the agent's authority is gone
-// before any cleanup runs. Archive returns 409 for an already-archived
-// agent; purge accepts any status.
+// Purge removes the agent and its authority and session rows; it archives
+// first if needed, so the agent's authority is gone before any cleanup runs,
+// and a failed purge leaves the agent archived and can be retried. Archive
+// returns 409 for an already-archived agent; purge accepts any status.
 //
 // Returns a wrapper object for the known response body format(s).
 //

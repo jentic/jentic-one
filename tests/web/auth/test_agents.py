@@ -228,6 +228,37 @@ def test_purge_agent_unauthenticated(unauthed_client: TestClient, test_agent_id:
     assert resp.status_code == 401
 
 
+async def test_purge_agent_without_write_permission(
+    web_context: Context, owner_user_id: str, test_agent_id: str
+) -> None:
+    """The owner holding only ``agents:read`` is refused (403); the agent stays."""
+    token = _make_token(web_context, owner_user_id, OWNER_EMAIL, ["agents:read"])
+    with TestClient(
+        _build_app(web_context), headers={"Authorization": f"Bearer {token}"}
+    ) as client:
+        resp = client.delete(f"/agents/{test_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 403
+    async with web_context.admin_db.session() as session:
+        assert await AgentRepository.get_by_id(session, test_agent_id) is not None
+
+
+async def test_purge_foreign_agent_is_not_found(
+    web_context: Context, admin_user_id: str, test_agent_id: str
+) -> None:
+    """A caller with ``agents:write`` who does not own the agent gets the uniform 404."""
+    token = _make_token(
+        web_context, admin_user_id, "stranger@example.com", ["agents:read", "agents:write"]
+    )
+    with TestClient(
+        _build_app(web_context), headers={"Authorization": f"Bearer {token}"}
+    ) as client:
+        resp = client.delete(f"/agents/{test_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "actor_not_found"
+    async with web_context.admin_db.session() as session:
+        assert await AgentRepository.get_by_id(session, test_agent_id) is not None
+
+
 def test_verbs_on_archived_agent(admin_client: TestClient, test_agent_id: str) -> None:
     admin_client.delete(f"/agents/{test_agent_id}")
     for verb in ("approve", "deny", "disable", "enable"):

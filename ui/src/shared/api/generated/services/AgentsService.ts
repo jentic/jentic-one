@@ -90,10 +90,10 @@ export class AgentsService {
      * OAuth consent grants are revoked. For the reversible kill switch use
      * ``:disable`` / ``:enable`` instead.
      *
-     * Purge removes the agent and its data outright (best effort across
-     * databases); it archives first if needed, so the agent's authority is gone
-     * before any cleanup runs. Archive returns 409 for an already-archived
-     * agent; purge accepts any status.
+     * Purge removes the agent and its authority and session rows; it archives
+     * first if needed, so the agent's authority is gone before any cleanup runs,
+     * and a failed purge leaves the agent archived and can be retried. Archive
+     * returns 409 for an already-archived agent; purge accepts any status.
      * @returns void
      * @throws ApiError
      */
@@ -103,7 +103,7 @@ export class AgentsService {
     }: {
         agentId: string,
         /**
-         * Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings, events, execution records, jobs, finished connect sessions and notes. Audit entries and credentials are kept.
+         * Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings and connect sessions, and cancels its queued and running jobs. History (audit entries, events, execution records, finished jobs, notes) and the credentials it created are kept; once the agent is gone that history is visible to org:admin only.
          */
         purge?: boolean,
     }): CancelablePromise<void> {
