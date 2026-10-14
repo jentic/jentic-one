@@ -22,8 +22,15 @@ from fastapi.openapi.models import Example
 
 
 def example(value: object, summary: str | None = None) -> dict[str, Example]:
-    """Build a single-entry ``openapi_examples`` map for a parameter."""
+    """Build a single-entry ``openapi_examples`` map for a parameter.
+
+    ``summary`` defaults to the label of the canonical constant ``value`` is
+    (see ``_VALUE_SUMMARIES``). Any other value gets one from the parameter it
+    is attached to, when the spec is generated (``install_openapi_metadata``).
+    """
     entry: Example = {"value": value}
+    if summary is None and isinstance(value, str):
+        summary = _VALUE_SUMMARIES.get(value)
     if summary is not None:
         entry["summary"] = summary
     return {"example": entry}
@@ -92,3 +99,48 @@ SIGNED_FLOW_STATE = (
 )
 # Opaque ``secrets.token_urlsafe(32)`` handles (consent handle, connect poll token).
 OPAQUE_TOKEN = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"  # pragma: allowlist secret
+
+#: ``summary`` labels for the canonical values above, applied by ``example()``.
+#: Keyed by value, so two constants that share one (``API_VENDOR`` and
+#: ``CATALOG_API_ID``) share a label too.
+_VALUE_SUMMARIES: dict[str, str] = {
+    AGENT_ID: "Agent ID",
+    USER_ID: "User ID",
+    CREDENTIAL_ID: "Credential ID",
+    RULE_SET_ID: "Permission rule set ID",
+    OVERLAY_ID: "Overlay ID",
+    CONNECT_SESSION_ID: "Connect session ID",
+    OAUTH_APP_REGISTRATION_ID: "OAuth app registration ID",
+    OAUTH_CLIENT_RECORD_ID: "OAuth client record ID",
+    OAUTH_GRANT_ID: "OAuth consent grant ID",
+    EXECUTION_ID: "Execution ID",
+    EVENT_ID: "Event ID",
+    AUDIT_ID: "Audit entry ID",
+    JOB_ID: "Job ID",
+    NOTE_ID: "Note ID",
+    TOOLKIT_ID: "Toolkit ID",
+    REVISION_ID: "Revision ID (UUID)",
+    OAUTH_PUBLIC_CLIENT_ID: "Public OAuth client_id",
+    TRACE_ID: "W3C trace ID",
+    API_VENDOR: "API vendor domain",
+    API_NAME: "API name",
+    API_VERSION: "API version",
+    API_REF: "API reference (vendor:name:version)",
+    API_VENDOR_NAME: "API vendor and name (vendor/name)",
+    OPERATION_ID: "Upstream operationId",
+    OPERATION_METHOD_URL: "Upstream operation (method and URL)",
+    VENDOR_KEY: "Vendor registry key",
+    PROVIDER_NAME: "Credential provider name",
+    CURSOR: "Opaque cursor from a previous page",
+    DATETIME_FROM: "Start of a time window (RFC 3339)",
+    DATETIME_TO: "End of a time window (RFC 3339)",
+    NOTE_ETAG: "Note ETag (quoted revision)",
+    GOVERNED_HOSTS_ETAG: "Governed-hosts ETag",
+    REDIRECT_URI: "Registered redirect URI",
+    OAUTH_STATE: "Client OAuth state",
+    OIDC_NONCE: "OIDC nonce",
+    PKCE_CODE_CHALLENGE: "PKCE S256 code challenge",
+    AUTHORIZATION_CODE: "OAuth authorization code",
+    SIGNED_FLOW_STATE: "Signed flow state blob",
+    OPAQUE_TOKEN: "Opaque flow handle",
+}

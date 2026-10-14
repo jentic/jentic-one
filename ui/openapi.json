@@ -10509,7 +10509,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "JSON Web Key Set"
     },
     "/.well-known/oauth-authorization-server": {
       "get": {
@@ -10608,7 +10609,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "OAuth authorization server metadata"
     },
     "/.well-known/oauth-authorization-server/mcp": {
       "get": {
@@ -10720,7 +10722,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "Get OAuth authorization server metadata for MCP clients"
     },
     "/.well-known/oauth-protected-resource": {
       "get": {
@@ -10832,7 +10835,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "Get MCP protected resource metadata (root fallback)"
     },
     "/.well-known/oauth-protected-resource/mcp": {
       "get": {
@@ -10944,7 +10948,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "OAuth protected resource metadata for the MCP resource"
     },
     "/actors": {
       "get": {
@@ -10954,6 +10959,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -10975,6 +10981,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -11119,7 +11126,8 @@
         "tags": [
           "Actors"
         ]
-      }
+      },
+      "summary": "List users and agents"
     },
     "/actors/lookup": {
       "get": {
@@ -11130,6 +11138,7 @@
             "description": "Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).",
             "examples": {
               "example": {
+                "summary": "Example query value for `id`",
                 "value": [
                   "agnt_6968b3984d1c238dbe7e2e29",
                   "usr_6968b3987ee4c3ec0b4ee3b9"
@@ -11281,7 +11290,8 @@
         "tags": [
           "Actors"
         ]
-      }
+      },
+      "summary": "Resolve actor names by id"
     },
     "/admin/config/providers": {
       "get": {
@@ -11416,7 +11426,8 @@
         "tags": [
           "Configuration"
         ]
-      }
+      },
+      "summary": "List credential provider configs"
     },
     "/admin/config/providers/{name}": {
       "get": {
@@ -11426,6 +11437,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential provider name",
                 "value": "pipedream"
               }
             },
@@ -11592,6 +11604,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential provider name",
                 "value": "pipedream"
               }
             },
@@ -11743,7 +11756,8 @@
         "tags": [
           "Configuration"
         ]
-      }
+      },
+      "summary": "Set a credential provider config; Get a credential provider config"
     },
     "/admin/health": {
       "get": {
@@ -11840,7 +11854,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Health"
     },
     "/admin/oauth-clients": {
       "get": {
@@ -11850,6 +11865,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `include_inactive`",
                 "value": true
               }
             },
@@ -11866,6 +11882,7 @@
             "description": "Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.",
             "examples": {
               "example": {
+                "summary": "Example query value for `approval_status`",
                 "value": "pending"
               }
             },
@@ -12158,7 +12175,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Register OAuth client; List OAuth clients"
     },
     "/admin/oauth-clients/{id}": {
       "delete": {
@@ -12168,6 +12186,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -12327,6 +12346,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -12493,6 +12513,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -12661,7 +12682,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Get OAuth client; Update OAuth client; Disable OAuth client"
     },
     "/admin/oauth-clients/{id}/rotate-secret": {
       "post": {
@@ -12671,6 +12693,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -12829,7 +12852,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Rotate client secret"
     },
     "/admin/oauth-clients/{id}:approve": {
       "post": {
@@ -12839,6 +12863,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -12997,7 +13022,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Approve OAuth client"
     },
     "/admin/oauth-clients/{id}:delete": {
       "post": {
@@ -13007,6 +13033,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -13158,7 +13185,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Delete OAuth client"
     },
     "/admin/oauth-clients/{id}:deny": {
       "post": {
@@ -13168,6 +13196,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth client record ID",
                 "value": "oac_6968b39840a935d9f7e2714b"
               }
             },
@@ -13343,7 +13372,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Deny OAuth client"
     },
     "/admin/oauth-grants": {
       "get": {
@@ -13354,6 +13384,7 @@
             "description": "Filter by the client's public client_id.",
             "examples": {
               "example": {
+                "summary": "Public OAuth client_id",
                 "value": "oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU"
               }
             },
@@ -13377,6 +13408,7 @@
             "description": "Filter by bound agent.",
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -13400,6 +13432,7 @@
             "description": "Filter by consenting user.",
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -13423,6 +13456,7 @@
             "description": "Filter by grant lifecycle state.",
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": "active"
               }
             },
@@ -13449,6 +13483,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -13466,6 +13501,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -13614,7 +13650,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "List OAuth grants"
     },
     "/agents": {
       "get": {
@@ -13624,6 +13661,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -13645,6 +13683,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -13662,6 +13701,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": "active"
               }
             },
@@ -13953,7 +13993,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Create an agent; List visible agents"
     },
     "/agents/{agent_id}": {
       "delete": {
@@ -13963,6 +14004,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14105,6 +14147,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14254,6 +14297,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14405,7 +14449,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Get an agent; Update an agent; Archive Agent"
     },
     "/agents/{agent_id}/api-key": {
       "get": {
@@ -14415,6 +14460,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14564,7 +14610,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Get an agent's API key metadata"
     },
     "/agents/{agent_id}/api-key/history": {
       "get": {
@@ -14574,6 +14621,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14715,7 +14763,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Get an agent's API key history"
     },
     "/agents/{agent_id}/credentials": {
       "get": {
@@ -14725,6 +14774,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -14874,6 +14924,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15025,7 +15076,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "List an agent's credential bindings; Bind a credential to an agent"
     },
     "/agents/{agent_id}/credentials/{credential_id}": {
       "delete": {
@@ -15035,6 +15087,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15049,6 +15102,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -15064,6 +15118,7 @@
             "description": "Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.",
             "examples": {
               "example": {
+                "summary": "Example query value for `purge`",
                 "value": true
               }
             },
@@ -15200,7 +15255,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Suspend or remove a credential binding"
     },
     "/agents/{agent_id}/credentials/{credential_id}:resume": {
       "post": {
@@ -15210,6 +15266,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15224,6 +15281,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -15365,7 +15423,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Resume a suspended credential binding"
     },
     "/agents/{agent_id}/jwks": {
       "put": {
@@ -15375,6 +15434,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15526,7 +15586,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Update Agent Jwks"
     },
     "/agents/{agent_id}/oauth-grants": {
       "get": {
@@ -15536,6 +15597,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15551,6 +15613,7 @@
             "description": "Filter by grant lifecycle state.",
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": "active"
               }
             },
@@ -15577,6 +15640,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -15594,6 +15658,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -15759,7 +15824,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "List an agent's connected OAuth clients"
     },
     "/agents/{agent_id}/permissions": {
       "get": {
@@ -15769,6 +15835,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -15918,6 +15985,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16069,7 +16137,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Get Agent Permissions; Replace Agent Permissions"
     },
     "/agents/{agent_id}:approve": {
       "post": {
@@ -16079,6 +16148,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16220,7 +16290,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Approve Agent"
     },
     "/agents/{agent_id}:claim": {
       "post": {
@@ -16230,6 +16301,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16381,7 +16453,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Claim Agent"
     },
     "/agents/{agent_id}:deny": {
       "post": {
@@ -16391,6 +16464,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16542,7 +16616,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Deny Agent"
     },
     "/agents/{agent_id}:disable": {
       "post": {
@@ -16552,6 +16627,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16686,7 +16762,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Disable Agent"
     },
     "/agents/{agent_id}:enable": {
       "post": {
@@ -16696,6 +16773,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16830,7 +16908,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Enable Agent"
     },
     "/agents/{agent_id}:generate-api-key": {
       "post": {
@@ -16840,6 +16919,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -16981,7 +17061,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Generate Agent Api Key"
     },
     "/agents/{agent_id}:revoke-api-key": {
       "post": {
@@ -16991,6 +17072,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -17125,7 +17207,8 @@
         "tags": [
           "Agents"
         ]
-      }
+      },
+      "summary": "Revoke Agent Api Key"
     },
     "/apis": {
       "get": {
@@ -17135,6 +17218,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -17156,6 +17240,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -17177,6 +17262,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -17462,7 +17548,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "List Apis; Import Apis"
     },
     "/apis/{vendor}/{name}/{version}": {
       "delete": {
@@ -17472,6 +17559,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -17486,6 +17574,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -17500,6 +17589,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -17676,6 +17766,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -17690,6 +17781,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -17704,6 +17796,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -17853,6 +17946,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -17867,6 +17961,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -17881,6 +17976,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18030,7 +18126,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "Get Api; Update Api; Delete Api"
     },
     "/apis/{vendor}/{name}/{version}/openapi": {
       "get": {
@@ -18040,6 +18137,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -18054,6 +18152,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -18068,6 +18167,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18082,6 +18182,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `overlays`",
                 "value": false
               }
             },
@@ -18222,7 +18323,8 @@
         "tags": [
           "API Spec"
         ]
-      }
+      },
+      "summary": "Get Api Spec"
     },
     "/apis/{vendor}/{name}/{version}/operations": {
       "get": {
@@ -18232,6 +18334,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -18246,6 +18349,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -18260,6 +18364,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18274,6 +18379,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -18295,6 +18401,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -18439,7 +18546,8 @@
         "tags": [
           "API Operations"
         ]
-      }
+      },
+      "summary": "List the operations an API currently serves"
     },
     "/apis/{vendor}/{name}/{version}/overlays": {
       "get": {
@@ -18449,6 +18557,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -18463,6 +18572,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -18477,6 +18587,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18491,6 +18602,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -18512,6 +18624,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -18529,6 +18642,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": "confirmed"
               }
             },
@@ -18685,6 +18799,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -18699,6 +18814,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -18713,6 +18829,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18864,7 +18981,8 @@
         "tags": [
           "Overlays"
         ]
-      }
+      },
+      "summary": "Submit an OpenAPI overlay; List an API's overlays"
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}": {
       "delete": {
@@ -18874,6 +18992,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -18888,6 +19007,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -18902,6 +19022,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -18916,6 +19037,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Overlay ID",
                 "value": "ovr_6968b398ae1c9a6e2fe6520a"
               }
             },
@@ -19058,6 +19180,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -19072,6 +19195,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -19086,6 +19210,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -19100,6 +19225,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Overlay ID",
                 "value": "ovr_6968b398ae1c9a6e2fe6520a"
               }
             },
@@ -19249,6 +19375,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -19263,6 +19390,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -19277,6 +19405,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -19291,6 +19420,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Overlay ID",
                 "value": "ovr_6968b398ae1c9a6e2fe6520a"
               }
             },
@@ -19442,7 +19572,8 @@
         "tags": [
           "Overlays"
         ]
-      }
+      },
+      "summary": "Get Overlay; Edit an overlay; Deprecate an overlay"
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm": {
       "post": {
@@ -19452,6 +19583,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -19466,6 +19598,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -19480,6 +19613,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -19494,6 +19628,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Overlay ID",
                 "value": "ovr_6968b398ae1c9a6e2fe6520a"
               }
             },
@@ -19645,7 +19780,8 @@
         "tags": [
           "Overlays"
         ]
-      }
+      },
+      "summary": "Confirm an overlay and apply it to the served spec"
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback": {
       "post": {
@@ -19655,6 +19791,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -19669,6 +19806,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -19683,6 +19821,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -19697,6 +19836,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Overlay ID",
                 "value": "ovr_6968b398ae1c9a6e2fe6520a"
               }
             },
@@ -19831,7 +19971,8 @@
         "tags": [
           "Overlays"
         ]
-      }
+      },
+      "summary": "Roll back a confirmed overlay"
     },
     "/apis/{vendor}/{name}/{version}/revisions": {
       "get": {
@@ -19841,6 +19982,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -19855,6 +19997,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -19869,6 +20012,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -19883,6 +20027,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `state`",
                 "value": [
                   "published"
                 ]
@@ -19909,6 +20054,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -19930,6 +20076,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -20072,7 +20219,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "List an API's revisions"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}": {
       "delete": {
@@ -20082,6 +20230,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -20096,6 +20245,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -20110,6 +20260,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -20124,6 +20275,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -20266,6 +20418,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -20280,6 +20433,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -20294,6 +20448,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -20308,6 +20463,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -20447,7 +20603,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "Get an API revision; Delete an archived API revision"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi": {
       "get": {
@@ -20457,6 +20614,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -20471,6 +20629,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -20485,6 +20644,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -20499,6 +20659,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -20513,6 +20674,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `overlays`",
                 "value": false
               }
             },
@@ -20653,7 +20815,8 @@
         "tags": [
           "API Spec"
         ]
-      }
+      },
+      "summary": "Download an API revision's OpenAPI document"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations": {
       "get": {
@@ -20663,6 +20826,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -20677,6 +20841,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -20691,6 +20856,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -20705,6 +20871,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -20719,6 +20886,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -20740,6 +20908,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -20882,7 +21051,8 @@
         "tags": [
           "API Operations"
         ]
-      }
+      },
+      "summary": "List the operations in an API revision"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive": {
       "post": {
@@ -20892,6 +21062,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -20906,6 +21077,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -20920,6 +21092,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -20934,6 +21107,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -21073,7 +21247,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "Archive an API revision"
     },
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote": {
       "post": {
@@ -21083,6 +21258,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -21097,6 +21273,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -21111,6 +21288,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -21125,6 +21303,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -21264,7 +21443,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "Promote Revision"
     },
     "/apis/{vendor}/{name}/{version}/security-schemes": {
       "get": {
@@ -21274,6 +21454,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -21288,6 +21469,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API name",
                 "value": "stripe"
               }
             },
@@ -21302,6 +21484,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API version",
                 "value": "2024-04-10"
               }
             },
@@ -21460,7 +21643,8 @@
         "tags": [
           "APIs"
         ]
-      }
+      },
+      "summary": "List security schemes for an API"
     },
     "/audit": {
       "get": {
@@ -21470,6 +21654,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `target_type`",
                 "value": "agent"
               }
             },
@@ -21491,6 +21676,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -21512,6 +21698,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -21533,6 +21720,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `origin`",
                 "value": "dashboard"
               }
             },
@@ -21554,6 +21742,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Start of a time window (RFC 3339)",
                 "value": "2026-01-01T00:00:00Z"
               }
             },
@@ -21576,6 +21765,7 @@
           {
             "examples": {
               "example": {
+                "summary": "End of a time window (RFC 3339)",
                 "value": "2026-01-31T23:59:59Z"
               }
             },
@@ -21598,6 +21788,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -21619,6 +21810,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -21763,7 +21955,8 @@
         "tags": [
           "Audit"
         ]
-      }
+      },
+      "summary": "List Audit Entries"
     },
     "/audit/{audit_id}": {
       "get": {
@@ -21773,6 +21966,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Audit entry ID",
                 "value": "aud_6968b3984275d71e90f7f09f"
               }
             },
@@ -21914,7 +22108,8 @@
         "tags": [
           "Audit"
         ]
-      }
+      },
+      "summary": "Get Audit Entry"
     },
     "/auth/health": {
       "get": {
@@ -22015,7 +22210,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Auth health"
     },
     "/auth/idp": {
       "get": {
@@ -22114,7 +22310,8 @@
         "tags": [
           "Discovery"
         ]
-      }
+      },
+      "summary": "External IdP login descriptor"
     },
     "/auth/login": {
       "post": {
@@ -22221,7 +22418,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Log in"
     },
     "/auth/refresh": {
       "post": {
@@ -22356,7 +22554,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Refresh session token"
     },
     "/authorize": {
       "get": {
@@ -22366,6 +22565,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `response_type`",
                 "value": "code"
               }
             },
@@ -22380,6 +22580,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Public OAuth client_id",
                 "value": "oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU"
               }
             },
@@ -22394,6 +22595,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Registered redirect URI",
                 "value": "https://client.example.com/oauth/callback"
               }
             },
@@ -22408,6 +22610,7 @@
           {
             "examples": {
               "example": {
+                "summary": "PKCE S256 code challenge",
                 "value": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
               }
             },
@@ -22422,6 +22625,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `code_challenge_method`",
                 "value": "S256"
               }
             },
@@ -22436,6 +22640,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `scope`",
                 "value": "openid"
               }
             },
@@ -22451,6 +22656,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Client OAuth state",
                 "value": "af0ifjsldkj"
               }
             },
@@ -22472,6 +22678,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OIDC nonce",
                 "value": "n-0S6_WzA2Mj"
               }
             },
@@ -22494,6 +22701,7 @@
             "description": "Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.",
             "examples": {
               "example": {
+                "summary": "Signed flow state blob",
                 "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
               }
             },
@@ -22603,7 +22811,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Authorize Endpoint"
     },
     "/catalog": {
       "get": {
@@ -22613,6 +22822,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `q`",
                 "value": "charges"
               }
             },
@@ -22635,6 +22845,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `registered_only`",
                 "value": true
               }
             },
@@ -22650,6 +22861,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `unregistered_only`",
                 "value": false
               }
             },
@@ -22665,6 +22877,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `outdated_only`",
                 "value": true
               }
             },
@@ -22680,6 +22893,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `include_snoozed`",
                 "value": true
               }
             },
@@ -22695,6 +22909,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -22716,6 +22931,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -22860,7 +23076,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "List Catalog"
     },
     "/catalog/{api_id}": {
       "get": {
@@ -22870,6 +23087,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -23011,7 +23229,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Get Catalog Entry"
     },
     "/catalog/{api_id}/operations": {
       "get": {
@@ -23021,6 +23240,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -23035,6 +23255,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `offset`",
                 "value": 0
               }
             },
@@ -23051,6 +23272,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -23068,6 +23290,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `tag`",
                 "value": "Charges"
               }
             },
@@ -23089,6 +23312,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `q`",
                 "value": "charges"
               }
             },
@@ -23238,7 +23462,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Preview Catalog Operations"
     },
     "/catalog/{api_id}:import": {
       "post": {
@@ -23248,6 +23473,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -23389,7 +23615,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Import Catalog Entry"
     },
     "/catalog/{api_id}:snooze": {
       "post": {
@@ -23399,6 +23626,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -23567,7 +23795,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Snooze Catalog Entry"
     },
     "/catalog/{api_id}:unsnooze": {
       "post": {
@@ -23577,6 +23806,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -23711,7 +23941,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Unsnooze Catalog Entry"
     },
     "/catalog:refresh": {
       "post": {
@@ -23846,7 +24077,8 @@
         "tags": [
           "Catalog"
         ]
-      }
+      },
+      "summary": "Refresh Catalog"
     },
     "/connect-sessions": {
       "get": {
@@ -23857,6 +24089,7 @@
             "description": "Filter by session state",
             "examples": {
               "example": {
+                "summary": "Example query value for `state`",
                 "value": "polling"
               }
             },
@@ -23886,6 +24119,7 @@
             "description": "Filter by vendor registry key",
             "examples": {
               "example": {
+                "summary": "Vendor registry key",
                 "value": "github"
               }
             },
@@ -23908,6 +24142,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -23929,6 +24164,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -24073,7 +24309,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "List connect sessions"
     },
     "/connect-sessions/{session_id}": {
       "get": {
@@ -24083,6 +24320,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Connect session ID",
                 "value": "cs_6968b3983b8b91c75627bee5"
               }
             },
@@ -24098,6 +24336,7 @@
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "examples": {
               "example": {
+                "summary": "Opaque flow handle",
                 "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
               }
             },
@@ -24262,7 +24501,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Get review data for a connect session"
     },
     "/connect-sessions/{session_id}/status": {
       "get": {
@@ -24272,6 +24512,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Connect session ID",
                 "value": "cs_6968b3983b8b91c75627bee5"
               }
             },
@@ -24287,6 +24528,7 @@
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "examples": {
               "example": {
+                "summary": "Opaque flow handle",
                 "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
               }
             },
@@ -24434,7 +24676,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Poll a connect session's status"
     },
     "/connect-sessions/{session_id}:cancel": {
       "post": {
@@ -24444,6 +24687,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Connect session ID",
                 "value": "cs_6968b3983b8b91c75627bee5"
               }
             },
@@ -24459,6 +24703,7 @@
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "examples": {
               "example": {
+                "summary": "Opaque flow handle",
                 "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
               }
             },
@@ -24601,7 +24846,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Cancel an in-flight connect session"
     },
     "/connect-sessions/{session_id}:confirm": {
       "post": {
@@ -24611,6 +24857,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Connect session ID",
                 "value": "cs_6968b3983b8b91c75627bee5"
               }
             },
@@ -24626,6 +24873,7 @@
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "examples": {
               "example": {
+                "summary": "Opaque flow handle",
                 "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
               }
             },
@@ -24840,7 +25088,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Confirm a connect session"
     },
     "/connect-sessions/{session_id}:reject": {
       "post": {
@@ -24850,6 +25099,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Connect session ID",
                 "value": "cs_6968b3983b8b91c75627bee5"
               }
             },
@@ -24984,7 +25234,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Reject an agent's connect request"
     },
     "/control/health": {
       "get": {
@@ -25085,7 +25336,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Control health"
     },
     "/credentials": {
       "get": {
@@ -25095,6 +25347,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -25116,6 +25369,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -25133,6 +25387,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor domain",
                 "value": "stripe.com"
               }
             },
@@ -25455,7 +25710,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "Create credential; List credentials"
     },
     "/credentials/oauth/callback": {
       "get": {
@@ -25465,6 +25721,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth authorization code",
                 "value": "SplxlOBeZQQYbYS6WxSbIA"
               }
             },
@@ -25486,6 +25743,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Client OAuth state",
                 "value": "af0ifjsldkj"
               }
             },
@@ -25507,6 +25765,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `error`",
                 "value": "access_denied"
               }
             },
@@ -25615,7 +25874,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "OAuth connect callback"
     },
     "/credentials/providers": {
       "get": {
@@ -25750,7 +26010,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "List credential providers"
     },
     "/credentials/{credential_id}": {
       "delete": {
@@ -25760,6 +26021,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -25919,6 +26181,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26085,6 +26348,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26280,7 +26544,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "Get credential; Update or rotate credential; Delete credential"
     },
     "/credentials/{credential_id}/agents": {
       "get": {
@@ -26290,6 +26555,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26304,6 +26570,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -26325,6 +26592,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -26486,7 +26754,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "List agents bound to credential"
     },
     "/credentials/{credential_id}/agents/{agent_id}/permissions": {
       "get": {
@@ -26496,6 +26765,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26510,6 +26780,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -26676,6 +26947,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26690,6 +26962,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -26866,6 +27139,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -26880,6 +27154,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -27053,7 +27328,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "List binding permission rules; Replace binding permission rules; Patch binding permission rules"
     },
     "/credentials/{credential_id}/agents/{agent_id}/permissions:test": {
       "post": {
@@ -27063,6 +27339,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -27077,6 +27354,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -27245,7 +27523,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "Dry-run permission evaluation"
     },
     "/credentials/{credential_id}/agents/{agent_id}/rule-set": {
       "delete": {
@@ -27255,6 +27534,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -27269,6 +27549,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -27428,6 +27709,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -27442,6 +27724,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -27603,7 +27886,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "Attach rule set to binding; Detach rule set from binding"
     },
     "/credentials/{credential_id}/connect": {
       "post": {
@@ -27613,6 +27897,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -27796,7 +28081,8 @@
         "tags": [
           "Credentials"
         ]
-      }
+      },
+      "summary": "Begin OAuth connect flow"
     },
     "/error": {
       "get": {
@@ -27806,6 +28092,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `error`",
                 "value": "access_denied"
               }
             },
@@ -27914,7 +28201,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Error Page"
     },
     "/events": {
       "get": {
@@ -27924,6 +28212,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `event_type`",
                 "value": [
                   "import.completed"
                 ]
@@ -27950,6 +28239,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `severity`",
                 "value": [
                   "warning",
                   "error"
@@ -27977,6 +28267,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `requires_action`",
                 "value": true
               }
             },
@@ -27998,6 +28289,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Start of a time window (RFC 3339)",
                 "value": "2026-01-01T00:00:00Z"
               }
             },
@@ -28020,6 +28312,7 @@
           {
             "examples": {
               "example": {
+                "summary": "End of a time window (RFC 3339)",
                 "value": "2026-01-31T23:59:59Z"
               }
             },
@@ -28042,6 +28335,7 @@
           {
             "examples": {
               "example": {
+                "summary": "W3C trace ID",
                 "value": "4bf92f3577b34da6a3ce929d0e0e4736"
               }
             },
@@ -28063,6 +28357,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -28084,6 +28379,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `actor_type`",
                 "value": "agent"
               }
             },
@@ -28105,6 +28401,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -28126,6 +28423,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -28270,7 +28568,8 @@
         "tags": [
           "Events"
         ]
-      }
+      },
+      "summary": "List Events"
     },
     "/events/stream": {
       "get": {
@@ -28280,6 +28579,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Start of a time window (RFC 3339)",
                 "value": "2026-01-01T00:00:00Z"
               }
             },
@@ -28302,6 +28602,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `event_type`",
                 "value": [
                   "import.completed"
                 ]
@@ -28328,6 +28629,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `severity`",
                 "value": [
                   "warning",
                   "error"
@@ -28355,6 +28657,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `requires_action`",
                 "value": true
               }
             },
@@ -28376,6 +28679,7 @@
           {
             "examples": {
               "example": {
+                "summary": "W3C trace ID",
                 "value": "4bf92f3577b34da6a3ce929d0e0e4736"
               }
             },
@@ -28397,6 +28701,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -28418,6 +28723,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `actor_type`",
                 "value": "agent"
               }
             },
@@ -28439,6 +28745,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Event ID",
                 "value": "evt_6968b398b04f002b6dbff4d1"
               }
             },
@@ -28585,7 +28892,8 @@
         "tags": [
           "Events"
         ]
-      }
+      },
+      "summary": "Stream Events"
     },
     "/events/{event_id}": {
       "get": {
@@ -28595,6 +28903,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Event ID",
                 "value": "evt_6968b398b04f002b6dbff4d1"
               }
             },
@@ -28736,7 +29045,8 @@
         "tags": [
           "Events"
         ]
-      }
+      },
+      "summary": "Get Event"
     },
     "/executions": {
       "get": {
@@ -28746,6 +29056,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Toolkit ID",
                 "value": "tk_6968b3981ec22d56dbbc91e8"
               }
             },
@@ -28767,6 +29078,7 @@
           {
             "examples": {
               "example": {
+                "summary": "W3C trace ID",
                 "value": "4bf92f3577b34da6a3ce929d0e0e4736"
               }
             },
@@ -28788,6 +29100,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": [
                   "completed",
                   "failed"
@@ -28815,6 +29128,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Start of a time window (RFC 3339)",
                 "value": "2026-01-01T00:00:00Z"
               }
             },
@@ -28837,6 +29151,7 @@
           {
             "examples": {
               "example": {
+                "summary": "End of a time window (RFC 3339)",
                 "value": "2026-01-31T23:59:59Z"
               }
             },
@@ -28859,6 +29174,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API reference (vendor:name:version)",
                 "value": "stripe.com:stripe:2024-04-10"
               }
             },
@@ -28880,6 +29196,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -28901,6 +29218,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `origin`",
                 "value": "dashboard"
               }
             },
@@ -28922,6 +29240,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -28943,6 +29262,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -29087,7 +29407,8 @@
         "tags": [
           "Executions"
         ]
-      }
+      },
+      "summary": "List Executions"
     },
     "/executions/{execution_id}": {
       "get": {
@@ -29097,6 +29418,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Execution ID",
                 "value": "exec_6968b3982706c619fe73f0cf"
               }
             },
@@ -29238,7 +29560,8 @@
         "tags": [
           "Executions"
         ]
-      }
+      },
+      "summary": "Get Execution"
     },
     "/governed-hosts": {
       "get": {
@@ -29249,6 +29572,7 @@
             "description": "Change-poll precondition: the `ETag` from a previous response (quoted, `\"<digest>\"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.",
             "examples": {
               "example": {
+                "summary": "Governed-hosts ETag",
                 "value": "\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\""
               }
             },
@@ -29417,7 +29741,8 @@
         "tags": [
           "Governed Hosts"
         ]
-      }
+      },
+      "summary": "Get Governed Hosts"
     },
     "/health": {
       "get": {
@@ -29440,7 +29765,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Health"
     },
     "/inspect": {
       "get": {
@@ -29451,6 +29777,7 @@
             "description": "METHOD URL identifier",
             "examples": {
               "example": {
+                "summary": "Upstream operation (method and URL)",
                 "value": "GET https://api.stripe.com/v1/charges"
               }
             },
@@ -29474,6 +29801,7 @@
             "description": "Operation ID",
             "examples": {
               "example": {
+                "summary": "Upstream operationId",
                 "value": "listCharges"
               }
             },
@@ -29497,6 +29825,7 @@
             "description": "Pin to specific revision",
             "examples": {
               "example": {
+                "summary": "Revision ID (UUID)",
                 "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
               }
             },
@@ -29519,6 +29848,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `detail`",
                 "value": "summary"
               }
             },
@@ -29663,7 +29993,8 @@
         "tags": [
           "Inspect"
         ]
-      }
+      },
+      "summary": "Inspect operation"
     },
     "/instance": {
       "get": {
@@ -29686,7 +30017,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Backend identity"
     },
     "/integrations:connect": {
       "post": {
@@ -29880,7 +30212,8 @@
         "tags": [
           "Integrations"
         ]
-      }
+      },
+      "summary": "Start an integration connect session"
     },
     "/jobs": {
       "get": {
@@ -29890,6 +30223,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `kind`",
                 "value": "import"
               }
             },
@@ -29911,6 +30245,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": [
                   "running"
                 ]
@@ -29937,6 +30272,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Start of a time window (RFC 3339)",
                 "value": "2026-01-01T00:00:00Z"
               }
             },
@@ -29959,6 +30295,7 @@
           {
             "examples": {
               "example": {
+                "summary": "End of a time window (RFC 3339)",
                 "value": "2026-01-31T23:59:59Z"
               }
             },
@@ -29981,6 +30318,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -30002,6 +30340,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -30146,7 +30485,8 @@
         "tags": [
           "Jobs"
         ]
-      }
+      },
+      "summary": "List Jobs"
     },
     "/jobs/{job_id}": {
       "get": {
@@ -30156,6 +30496,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Job ID",
                 "value": "job_6968b3985e8c9902207afaeb"
               }
             },
@@ -30297,7 +30638,8 @@
         "tags": [
           "Jobs"
         ]
-      }
+      },
+      "summary": "Get Job"
     },
     "/jobs/{job_id}/result": {
       "get": {
@@ -30307,6 +30649,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Job ID",
                 "value": "job_6968b3985e8c9902207afaeb"
               }
             },
@@ -30446,7 +30789,8 @@
         "tags": [
           "Jobs"
         ]
-      }
+      },
+      "summary": "Get Job Result"
     },
     "/jobs/{job_id}:cancel": {
       "post": {
@@ -30456,6 +30800,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Job ID",
                 "value": "job_6968b3985e8c9902207afaeb"
               }
             },
@@ -30597,7 +30942,8 @@
         "tags": [
           "Jobs"
         ]
-      }
+      },
+      "summary": "Cancel Job"
     },
     "/login": {
       "get": {
@@ -30608,6 +30954,7 @@
             "description": "Signed authorization-flow state (carry-through token)",
             "examples": {
               "example": {
+                "summary": "Signed flow state blob",
                 "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
               }
             },
@@ -30841,7 +31188,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Local-account login form (authorization flow); Local-account login submit (authorization flow)"
     },
     "/mcp/config-registrations": {
       "post": {
@@ -30986,7 +31334,8 @@
         "tags": [
           "MCP"
         ]
-      }
+      },
+      "summary": "Report MCP config registration"
     },
     "/me": {
       "get": {
@@ -31136,7 +31485,8 @@
         "tags": [
           "Identity"
         ]
-      }
+      },
+      "summary": "Get Me"
     },
     "/monitoring/executions": {
       "get": {
@@ -31146,6 +31496,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `days`",
                 "value": 7
               }
             },
@@ -31290,7 +31641,8 @@
         "tags": [
           "Monitoring"
         ]
-      }
+      },
+      "summary": "Get Execution Stats"
     },
     "/monitoring/usage": {
       "get": {
@@ -31300,6 +31652,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `since`",
                 "value": 1767225600
               }
             },
@@ -31321,6 +31674,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `until`",
                 "value": 1769903999
               }
             },
@@ -31342,6 +31696,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `group_by`",
                 "value": "api"
               }
             },
@@ -31363,6 +31718,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `top_limit`",
                 "value": 10
               }
             },
@@ -31380,6 +31736,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Toolkit ID",
                 "value": "tk_6968b3981ec22d56dbbc91e8"
               }
             },
@@ -31401,6 +31758,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API vendor and name (vendor/name)",
                 "value": "stripe.com/stripe"
               }
             },
@@ -31422,6 +31780,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -31443,6 +31802,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `status`",
                 "value": "completed"
               }
             },
@@ -31591,7 +31951,8 @@
         "tags": [
           "Monitoring"
         ]
-      }
+      },
+      "summary": "Get Usage Stats"
     },
     "/notes": {
       "get": {
@@ -31601,6 +31962,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -31622,6 +31984,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -31639,6 +32002,7 @@
           {
             "examples": {
               "example": {
+                "summary": "API reference (vendor:name:version)",
                 "value": "stripe.com:stripe:2024-04-10"
               }
             },
@@ -31660,6 +32024,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Upstream operationId",
                 "value": "listCharges"
               }
             },
@@ -31681,6 +32046,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Execution ID",
                 "value": "exec_6968b3982706c619fe73f0cf"
               }
             },
@@ -31702,6 +32068,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Credential ID",
                 "value": "cred_6968b39855d91a3561684b32"
               }
             },
@@ -31723,6 +32090,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `type`",
                 "value": "usage_hint"
               }
             },
@@ -31744,6 +32112,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -32031,7 +32400,8 @@
         "tags": [
           "Notes"
         ]
-      }
+      },
+      "summary": "Create Note; List Notes"
     },
     "/notes/{note_id}": {
       "delete": {
@@ -32041,6 +32411,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Note ID",
                 "value": "note_6968b398edb465624291e405"
               }
             },
@@ -32055,6 +32426,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Note ETag (quoted revision)",
                 "value": "\"3\""
               }
             },
@@ -32204,6 +32576,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Note ID",
                 "value": "note_6968b398edb465624291e405"
               }
             },
@@ -32351,6 +32724,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Note ID",
                 "value": "note_6968b398edb465624291e405"
               }
             },
@@ -32365,6 +32739,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Note ETag (quoted revision)",
                 "value": "\"3\""
               }
             },
@@ -32521,7 +32896,8 @@
         "tags": [
           "Notes"
         ]
-      }
+      },
+      "summary": "Get Note; Update Note; Delete Note"
     },
     "/oauth-app-registrations": {
       "get": {
@@ -32532,6 +32908,7 @@
             "description": "Filter by vendor slug.",
             "examples": {
               "example": {
+                "summary": "Vendor registry key",
                 "value": "github"
               }
             },
@@ -32555,6 +32932,7 @@
             "description": "Include registrations with is_active=false in the response.",
             "examples": {
               "example": {
+                "summary": "Example query value for `include_inactive`",
                 "value": true
               }
             },
@@ -32572,6 +32950,7 @@
             "description": "Filter by OAuth flow kind.",
             "examples": {
               "example": {
+                "summary": "Example query value for `flow_kind`",
                 "value": "authorization_code"
               }
             },
@@ -32594,6 +32973,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -32615,6 +32995,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -32917,7 +33298,8 @@
         "tags": [
           "OAuth App Registrations"
         ]
-      }
+      },
+      "summary": "Register a shared OAuth application; List OAuth app registrations"
     },
     "/oauth-app-registrations/{id}": {
       "delete": {
@@ -32927,6 +33309,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth app registration ID",
                 "value": "oar_6968b39821e5f89a6975f501"
               }
             },
@@ -33103,6 +33486,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth app registration ID",
                 "value": "oar_6968b39821e5f89a6975f501"
               }
             },
@@ -33269,6 +33653,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth app registration ID",
                 "value": "oar_6968b39821e5f89a6975f501"
               }
             },
@@ -33437,7 +33822,8 @@
         "tags": [
           "OAuth App Registrations"
         ]
-      }
+      },
+      "summary": "Get an OAuth app registration; Update an OAuth app registration; Delete an OAuth app registration"
     },
     "/oauth-app-registrations/{id}:rotate-secret": {
       "post": {
@@ -33447,6 +33833,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth app registration ID",
                 "value": "oar_6968b39821e5f89a6975f501"
               }
             },
@@ -33632,7 +34019,8 @@
         "tags": [
           "OAuth App Registrations"
         ]
-      }
+      },
+      "summary": "Rotate the client secret"
     },
     "/oauth-clients": {
       "post": {
@@ -33713,7 +34101,8 @@
         "tags": [
           "OAuth Clients"
         ]
-      }
+      },
+      "summary": "Register OAuth client (anonymous DCR)"
     },
     "/oauth-grants/{grant_id}:revoke": {
       "post": {
@@ -33723,6 +34112,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth consent grant ID",
                 "value": "ocg_6968b3985e21c5fdf643025d"
               }
             },
@@ -33874,7 +34264,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Revoke OAuth grant"
     },
     "/oauth/approval/decision": {
       "post": {
@@ -34019,7 +34410,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Approve or deny a pending client inline (approval-pending page)"
     },
     "/oauth/approval/status": {
       "get": {
@@ -34030,6 +34422,7 @@
             "description": "Signed approval-state blob minted by /authorize",
             "examples": {
               "example": {
+                "summary": "Signed flow state blob",
                 "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
               }
             },
@@ -34134,7 +34527,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Poll client approval status (approval-pending page)"
     },
     "/oauth/callback": {
       "get": {
@@ -34144,6 +34538,7 @@
           {
             "examples": {
               "example": {
+                "summary": "OAuth authorization code",
                 "value": "SplxlOBeZQQYbYS6WxSbIA"
               }
             },
@@ -34158,6 +34553,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Client OAuth state",
                 "value": "af0ifjsldkj"
               }
             },
@@ -34259,7 +34655,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Authorize Oauth Callback"
     },
     "/oauth/consent": {
       "get": {
@@ -34270,6 +34667,7 @@
             "description": "Opaque consent-flow handle",
             "examples": {
               "example": {
+                "summary": "Opaque flow handle",
                 "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
               }
             },
@@ -34477,7 +34875,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Consent Page; Consent Submit"
     },
     "/oauth/consent/agent": {
       "post": {
@@ -34582,7 +34981,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Create the consenting user's first agent inline (consent page)"
     },
     "/oauth/consent/agent/status": {
       "get": {
@@ -34593,6 +34993,7 @@
             "description": "Signed agent-status blob minted by the consent flow's pending arm",
             "examples": {
               "example": {
+                "summary": "Signed flow state blob",
                 "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
               }
             },
@@ -34697,7 +35098,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Poll pending-agent approval status (consent awaiting page)"
     },
     "/oauth/introspect": {
       "post": {
@@ -34893,7 +35295,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Introspect Endpoint"
     },
     "/oauth/revoke": {
       "post": {
@@ -35058,7 +35461,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Revoke Endpoint"
     },
     "/oauth/session/continue": {
       "post": {
@@ -35216,7 +35620,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Exchange a live platform session for an authorize continuation"
     },
     "/oauth/token": {
       "post": {
@@ -35498,7 +35903,8 @@
         "tags": [
           "OAuth"
         ]
-      }
+      },
+      "summary": "Token Endpoint"
     },
     "/permission-rule-sets": {
       "get": {
@@ -35508,6 +35914,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -35529,6 +35936,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -35833,7 +36241,8 @@
         "tags": [
           "Permission Rule Sets"
         ]
-      }
+      },
+      "summary": "List permission rule sets; Create permission rule set"
     },
     "/permission-rule-sets/{rule_set_id}": {
       "delete": {
@@ -35843,6 +36252,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Permission rule set ID",
                 "value": "prs_6968b3987c22b63e87e79f05"
               }
             },
@@ -36019,6 +36429,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Permission rule set ID",
                 "value": "prs_6968b3987c22b63e87e79f05"
               }
             },
@@ -36185,6 +36596,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Permission rule set ID",
                 "value": "prs_6968b3987c22b63e87e79f05"
               }
             },
@@ -36353,7 +36765,8 @@
         "tags": [
           "Permission Rule Sets"
         ]
-      }
+      },
+      "summary": "Get permission rule set; Rename or re-describe a permission rule set; Delete permission rule set"
     },
     "/permission-rule-sets/{rule_set_id}/rules": {
       "put": {
@@ -36363,6 +36776,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Permission rule set ID",
                 "value": "prs_6968b3987c22b63e87e79f05"
               }
             },
@@ -36536,7 +36950,8 @@
         "tags": [
           "Permission Rule Sets"
         ]
-      }
+      },
+      "summary": "Replace all rules in a permission rule set"
     },
     "/permissions": {
       "get": {
@@ -36671,7 +37086,8 @@
         "tags": [
           "Permissions"
         ]
-      }
+      },
+      "summary": "List the permission catalogue"
     },
     "/register": {
       "post": {
@@ -36778,7 +37194,8 @@
         "tags": [
           "Agent Registration"
         ]
-      }
+      },
+      "summary": "Register Endpoint"
     },
     "/register/{agent_id}": {
       "delete": {
@@ -36788,6 +37205,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -36935,6 +37353,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -37063,6 +37482,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Agent ID",
                 "value": "agnt_6968b3984d1c238dbe7e2e29"
               }
             },
@@ -37202,7 +37622,8 @@
         "tags": [
           "Agent Registration"
         ]
-      }
+      },
+      "summary": "Poll Status Endpoint; Update Registration Endpoint; Delete Registration Endpoint"
     },
     "/registry/health": {
       "get": {
@@ -37303,7 +37724,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Registry health"
     },
     "/search": {
       "post": {
@@ -37448,7 +37870,8 @@
         "tags": [
           "Search"
         ]
-      }
+      },
+      "summary": "Search operations"
     },
     "/system/version": {
       "get": {
@@ -37475,7 +37898,8 @@
         "tags": [
           "System"
         ]
-      }
+      },
+      "summary": "Running and latest-available app version"
     },
     "/users": {
       "get": {
@@ -37485,6 +37909,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Opaque cursor from a previous page",
                 "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               }
             },
@@ -37506,6 +37931,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `limit`",
                 "value": 25
               }
             },
@@ -37523,6 +37949,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Example query value for `invite_state`",
                 "value": "pending"
               }
             },
@@ -37814,7 +38241,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "List Users; Create User"
     },
     "/users/me": {
       "get": {
@@ -37949,7 +38377,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Get current user"
     },
     "/users/me:change-password": {
       "post": {
@@ -38094,7 +38523,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Change own password"
     },
     "/users/{user_id}": {
       "delete": {
@@ -38104,6 +38534,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -38280,6 +38711,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -38446,6 +38878,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -38597,7 +39030,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Get User; Update User; Delete User"
     },
     "/users/{user_id}/permissions": {
       "put": {
@@ -38607,6 +39041,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -38792,7 +39227,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Set User Permissions"
     },
     "/users/{user_id}:disable": {
       "post": {
@@ -38802,6 +39238,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -38970,7 +39407,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Disable User"
     },
     "/users/{user_id}:enable": {
       "post": {
@@ -38980,6 +39418,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -39114,7 +39553,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Enable User"
     },
     "/users/{user_id}:reissue-invite": {
       "post": {
@@ -39124,6 +39564,7 @@
           {
             "examples": {
               "example": {
+                "summary": "User ID",
                 "value": "usr_6968b3987ee4c3ec0b4ee3b9"
               }
             },
@@ -39265,7 +39706,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Reissue Invite"
     },
     "/users:create-admin": {
       "post": {
@@ -39389,7 +39831,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Create first admin (one-time setup)"
     },
     "/users:redeem-invite": {
       "post": {
@@ -39496,7 +39939,8 @@
         "tags": [
           "Users"
         ]
-      }
+      },
+      "summary": "Redeem invite"
     },
     "/vendors": {
       "get": {
@@ -39631,7 +40075,8 @@
         "tags": [
           "Vendors"
         ]
-      }
+      },
+      "summary": "List verified vendors"
     },
     "/vendors/{vendor_key}/auth-capabilities": {
       "get": {
@@ -39641,6 +40086,7 @@
           {
             "examples": {
               "example": {
+                "summary": "Vendor registry key",
                 "value": "github"
               }
             },
@@ -39656,6 +40102,7 @@
             "description": "Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.",
             "examples": {
               "example": {
+                "summary": "OAuth app registration ID",
                 "value": "oar_6968b39821e5f89a6975f501"
               }
             },
@@ -39804,7 +40251,8 @@
         "tags": [
           "Vendors"
         ]
-      }
+      },
+      "summary": "Get a vendor's OAuth flows and scopes"
     }
   },
   "security": [
