@@ -368,6 +368,7 @@ def test_authenticated_operations_accept_bearer_or_oauth2(
     ]
     assert not bad, "Unexpected security requirements:\n" + "\n".join(bad)
 
+
 def test_every_component_property_example_validates(
     generated_control_spec: dict[str, Any],
 ) -> None:
