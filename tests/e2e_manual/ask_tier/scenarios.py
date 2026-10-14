@@ -11,9 +11,15 @@ Every agent call goes through a real lane — the ``jentic`` CLI built from this
 checkout, the Go ``jentic mcp`` stdio daemon, the Python HTTP ``/mcp`` mount,
 or plain HTTP to the standalone broker with an agent token — and every human
 step goes through the admin/control API with a signed-in user's token. The
-database is touched only to read state, to fast-forward an approval's
-``expires_at`` (s03), and to hand an agent to a non-admin owner (OSS has no
-claim-token minter, so a member cannot otherwise own a self-registered agent).
+database is touched only to read state, to fast-forward a held execution's
+``expires_at`` (s03), to hand an agent to a non-admin owner (OSS has no
+claim-token minter, so a member cannot otherwise own a self-registered agent),
+and to strip an agent's ``jobs:*`` grants (s09; agent grants have no admin route).
+
+A held call is followed only through its held execution
+(``/executions/holds/{id}``: ``execution_status`` for where it stands,
+``/result`` for its outcome), never through ``/jobs``. Neither the reviewing
+member owner nor the filing agent needs a ``jobs:*`` permission for that.
 
 Each scenario prints PASS / FAIL, plus GAP lines for behaviour that is out of
 the current phase's scope (2D fresh-rule re-authorisation). The results land
@@ -170,9 +176,9 @@ def setup(env: Env) -> World:
         env,
         admin,
         "owner@ask-e2e.test",
-        ["agents:read", "credentials:read", "jobs:read", "jobs:write", "apis:read"],
+        ["agents:read", "credentials:read", "apis:read"],
     )
-    other = make_user(env, admin, "other@ask-e2e.test", ["jobs:read", "jobs:write"])
+    other = make_user(env, admin, "other@ask-e2e.test", [])
     cli = CliLane(env, admin, "ask-cli")
     gocli = CliLane(env, admin, "ask-gomcp")
     http = HttpMcpLane(env, admin, "ask-httpmcp")
@@ -216,20 +222,23 @@ def broker_raw(
     *,
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
+    token: str | None = None,
 ) -> httpx.Response:
-    """Call the standalone broker as the HTTP lane's agent, bytes exactly as given."""
+    """Call the standalone broker as an agent (the HTTP lane's by default), bytes as given."""
     url = f"{world.env.broker}/{world.env.upstream}{path}"
-    h = {"authorization": f"Bearer {world.http.token}", **(headers or {})}
+    h = {"authorization": f"Bearer {token or world.http.token}", **(headers or {})}
     return httpx.request(method, url, content=body, headers=h, timeout=60)
 
 
-def agent_api(world: World, method: str, path: str, body: Any = None) -> httpx.Response:
-    """The HTTP lane's agent calling the admin API with its own token."""
+def agent_api(
+    world: World, method: str, path: str, body: Any = None, *, token: str | None = None
+) -> httpx.Response:
+    """An agent (the HTTP lane's by default) calling the admin API with its own token."""
     return httpx.request(
         method,
         f"{world.env.app}{path}",
         json=body,
-        headers={"authorization": f"Bearer {world.http.token}"},
+        headers={"authorization": f"Bearer {token or world.http.token}"},
         timeout=60,
     )
 
@@ -239,13 +248,57 @@ def calls_to(env: Env, path: str) -> list[dict[str, Any]]:
 
 
 def withdraw_all_pending(world: World) -> None:
-    for a in world.admin.approvals(state="pending", limit=100):
-        world.admin.decide(a["id"], "deny", "e2e cleanup")
+    """Settle every pending held execution (an admin deny), so caps start empty."""
+    for h in world.admin.holds(state="pending", limit=100):
+        world.admin.decide(h["id"], "deny", "e2e cleanup")
 
 
-def result_of(world: World, job_id: str) -> dict[str, Any]:
-    r = world.admin.get(f"/jobs/{job_id}/result")
-    expect(r.status_code == 200, f"GET /jobs/{job_id}/result -> {r.status_code}", r.text)
+def problem_type(r: httpx.Response) -> str:
+    """The RFC 9457 ``type`` of an error response, or ``""``."""
+    try:
+        body = r.json()
+    except ValueError:
+        return ""
+    return str(body.get("type") or "") if isinstance(body, dict) else ""
+
+
+def is_problem(r: httpx.Response, status: int, slug: str) -> bool:
+    return r.status_code == status and problem_type(r).endswith(slug)
+
+
+def wait_held(
+    get: Callable[[str], httpx.Response],
+    held_execution_id: str,
+    statuses: set[str],
+    timeout: float = 60,
+) -> dict[str, Any]:
+    """Poll ``GET /executions/holds/{id}`` (through ``get``) until ``execution_status``
+    is one of ``statuses``; return the held execution."""
+    path = f"/executions/holds/{held_execution_id}"
+    deadline = time.time() + timeout
+    held: dict[str, Any] = {}
+    while time.time() < deadline:
+        r = get(path)
+        expect(r.status_code == 200, f"GET {path} -> {r.status_code}", r.text)
+        held = r.json()
+        if held.get("execution_status") in statuses:
+            return held
+        time.sleep(0.5)
+    raise StepError(
+        f"held execution {held_execution_id} never reached {statuses}; "
+        f"last {held.get('execution_status')}",
+        held,
+    )
+
+
+def result_of(world: World, held_execution_id: str) -> dict[str, Any]:
+    """A finished held execution's result, read by the admin."""
+    r = world.admin.held_result(held_execution_id)
+    expect(
+        r.status_code == 200,
+        f"GET /executions/holds/{held_execution_id}/result -> {r.status_code}",
+        r.text,
+    )
     return dict(r.json())
 
 
@@ -258,25 +311,54 @@ def s01_hold_approve_result(w: World, o: Outcome) -> None:
     """Ask rule -> 202 held -> approve -> the result reaches the agent (CLI lane)."""
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=10")
-    approval = held["approval"]
+    hid = held["held_execution_id"]
+    expect(hid.startswith("exap_"), "held_execution_id", held)
+    expect("job_id" not in held and "approval" not in held, "no job_id or approval object", held)
+    expect(held["review_url"].endswith(f"/app/agents/approvals/{hid}"), "review_url", held)
+    links = held["_links"]
     expect(
-        approval["review_url"].endswith(f"/app/agents/approvals/{approval['id']}"),
-        "review_url",
-        held,
+        links["self"].endswith(f"/executions/holds/{hid}")
+        and links["result"].endswith(f"/executions/holds/{hid}/result")
+        and links["withdraw"].endswith(f"/executions/holds/{hid}:withdraw"),
+        "held envelope links point at the held execution",
+        links,
     )
     expect(calls_to(w.env, "/items") == [], "nothing reached the upstream before a decision")
-    job = w.admin.get(f"/jobs/{held['job_id']}").json()
-    expect(job["status"] == "held", "job is held", job)
-    detail = w.admin.approval(approval["id"]).json()
+    r = w.admin.hold(hid)
+    expect(r.status_code == 200, "GET held execution", r.text)
+    detail = r.json()
+    expect(
+        detail["state"] == "pending" and detail["execution_status"] == "held",
+        "pending and held",
+        detail,
+    )
+    expect("job_id" not in detail, "the held execution carries no job_id", detail)
+    expect(
+        detail["_links"].get("withdraw") and not detail["_links"].get("result"),
+        "withdraw link while pending, no result link yet",
+        detail["_links"],
+    )
     expect(
         detail["request"]["url"].endswith("/items?limit=10"), "reviewer sees the exact URL", detail
     )
-    r = w.admin.decide(approval["id"], "approve", "looks fine")
+    early = w.admin.held_result(hid)
+    expect(
+        is_problem(early, 409, "held_execution_result_not_ready"),
+        "no result before the call finishes (409 held_execution_result_not_ready)",
+        early.text,
+    )
+    r = w.admin.decide(hid, "approve", "looks fine")
     expect(r.status_code == 200 and r.json()["state"] == "approved", "approve", r.text)
-    job = _wait_job(w.admin, held["job_id"], {"completed", "failed"})
-    expect(job["status"] == "completed", "approved job completed", job)
+    done = wait_held(w.admin.get, hid, {"completed", "failed"})
+    expect(done["execution_status"] == "completed", "approved call completed", done)
+    expect(
+        done["_links"].get("result") and done["_links"].get("execution"),
+        "result and execution links once run",
+        done["_links"],
+    )
+    expect(not done["_links"].get("withdraw"), "no withdraw link once decided", done["_links"])
     # The agent reads its own result through the CLI (`jentic api`).
-    p = w.cli.run("api", "GET", f"/jobs/{held['job_id']}/result")
+    p = w.cli.run("api", "GET", f"/executions/holds/{hid}/result")
     res = w.cli.parse(p.stdout)
     expect(p.returncode == 0 and res.get("http_status") == 200, "agent reads the result", p.stdout)
     calls = calls_to(w.env, "/items")
@@ -288,22 +370,27 @@ def s01_hold_approve_result(w: World, o: Outcome) -> None:
         "the bound credential was injected at run time",
         calls[0]["headers"],
     )
-    o.note(f"approval {approval['id']} -> job completed, upstream hit once")
+    o.note(f"held execution {hid} -> completed, upstream hit once")
 
 
 def s02_deny_with_reason(w: World, o: Outcome) -> None:
     """Deny with a reason -> the agent reads a 403 problem carrying it."""
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"POST:{w.env.upstream}/orders", "-d", '{"n": 2}')
-    r = w.admin.decide(held["approval"]["id"], "deny", "not today")
+    hid = held["held_execution_id"]
+    r = w.admin.decide(hid, "deny", "not today")
     expect(r.status_code == 200 and r.json()["state"] == "denied", "deny", r.text)
-    job = _wait_job(w.admin, held["job_id"], {"failed"})
-    res = result_of(w, job["job_id"])
+    wait_held(w.admin.get, hid, {"failed"})
+    res = result_of(w, hid)
     expect(res.get("type") == "approval_denied" and res.get("status") == 403, "denied problem", res)
     expect("not today" in res.get("detail", ""), "reason reaches the agent", res)
     expect(calls_to(w.env, "/orders") == [], "a denied call never runs")
-    again = w.admin.decide(held["approval"]["id"], "approve")
-    expect(again.status_code == 409, "a second decision is refused (409)", again.text)
+    again = w.admin.decide(hid, "approve")
+    expect(
+        is_problem(again, 409, "held_execution_already_settled"),
+        "a second decision is refused (409 held_execution_already_settled)",
+        again.text,
+    )
 
 
 def _audit(w: World, target_id: str) -> list[dict[str, Any]]:
@@ -321,61 +408,76 @@ def _events(w: World, type_: str) -> list[dict[str, Any]]:
     return [e for e in r.json()["data"] if e.get("type") == type_]
 
 
+def _events_for(w: World, type_: str, held_execution_id: str) -> list[dict[str, Any]]:
+    """``type_`` events whose data names ``held_execution_id``."""
+    return [
+        e
+        for e in _events(w, type_)
+        if (e.get("data") or {}).get("held_execution_id") == held_execution_id
+    ]
+
+
 def s03_expiry(w: World, o: Outcome) -> None:
-    """Expiry -> the sweep fails the job; an audit entry and an event record it."""
+    """Expiry -> the sweep fails the call; an audit entry and an event record it."""
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=3")
-    aid = held["approval"]["id"]
+    hid = held["held_execution_id"]
     psql(
         w.env,
         "UPDATE admin.execution_approvals SET expires_at = now() - interval '1 second' "
-        f"WHERE id = '{aid}'",
+        f"WHERE id = '{hid}'",
     )
-    # Before the sweep runs, a decision on the lapsed approval is already refused.
-    late = w.admin.decide(aid, "approve")
-    expect(late.status_code == 409, "approving a lapsed approval answers 409", late.text)
+    # Before the sweep runs, a decision on the lapsed hold is already refused.
+    late = w.admin.decide(hid, "approve")
+    expect(
+        is_problem(late, 409, "held_execution_already_settled"),
+        "approving a lapsed hold answers 409 held_execution_already_settled",
+        late.text,
+    )
     o.note("waiting for the worker's expiry sweep (up to ~2.5 min)")
     deadline = time.time() + 170
     state = ""
     while time.time() < deadline:
-        state = w.admin.approval(aid).json()["state"]
+        state = w.admin.hold(hid).json()["state"]
         if state == "expired":
             break
         time.sleep(3)
-    expect(state == "expired", "approval expired by the sweep", state)
-    job = _wait_job(w.admin, held["job_id"], {"failed"})
-    res = result_of(w, job["job_id"])
+    expect(state == "expired", "held execution expired by the sweep", state)
+    wait_held(w.admin.get, hid, {"failed"})
+    res = result_of(w, hid)
     expect(
         res.get("type") == "approval_expired" and res.get("status") == 403, "expired problem", res
     )
-    audits = [a for a in _audit(w, aid) if a.get("action") == "expire"]
-    expect(len(audits) == 1, "one expire audit entry", _audit(w, aid))
+    audits = [a for a in _audit(w, hid) if a.get("action") == "expire"]
+    expect(len(audits) == 1, "one expire audit entry", _audit(w, hid))
     expect(audits[0].get("actor_id") == w.cli.agent_id, "attributed to the filing agent", audits[0])
-    events = [
-        e
-        for e in _events(w, "execution.approval_expired")
-        if (e.get("data") or {}).get("approval_id") == aid
-    ]
+    events = _events_for(w, "execution.approval_expired", hid)
     expect(len(events) == 1, "one execution.approval_expired event", events)
-    p = w.cli.run("api", "GET", f"/jobs/{held['job_id']}")
-    expect(w.cli.parse(p.stdout).get("status") == "failed", "agent sees the job failed", p.stdout)
+    p = w.cli.run("api", "GET", f"/executions/holds/{hid}")
+    seen = w.cli.parse(p.stdout)
+    expect(
+        seen.get("state") == "expired" and seen.get("execution_status") == "failed",
+        "agent sees its held call expired and failed",
+        p.stdout,
+    )
 
 
 def s04_withdraw(w: World, o: Outcome) -> None:
-    """Withdraw: only the filer; the job is cancelled and never runs."""
+    """Withdraw: only the filer; the call is cancelled and never runs."""
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=4")
-    aid = held["approval"]["id"]
+    hid = held["held_execution_id"]
     for who, human in (("other user", w.other), ("org admin", w.admin)):
-        r = human.post(f"/executions/approvals/{aid}:withdraw")
-        expect(r.status_code == 404, f"{who} cannot withdraw (404)", r.text)
-    p = w.cli.run("api", "POST", f"/executions/approvals/{aid}:withdraw")
+        r = human.withdraw(hid)
+        expect(
+            is_problem(r, 404, "held_execution_not_found"), f"{who} cannot withdraw (404)", r.text
+        )
+    p = w.cli.run("api", "POST", f"/executions/holds/{hid}:withdraw")
     body = w.cli.parse(p.stdout)
     expect(
         body.get("state") == "withdrawn", "filer withdraws via `jentic api`", p.stdout + p.stderr
     )
-    job = _wait_job(w.admin, held["job_id"], {"cancelled"})
-    expect(job["status"] == "cancelled", "job cancelled", job)
-    again = w.cli.run("api", "POST", f"/executions/approvals/{aid}:withdraw")
+    wait_held(w.admin.get, hid, {"cancelled"})
+    again = w.cli.run("api", "POST", f"/executions/holds/{hid}:withdraw")
     expect(
         '"status":409' in again.stdout.replace(" ", ""), "a second withdraw is 409", again.stdout
     )
@@ -387,8 +489,9 @@ def s05_join_and_new(w: World, o: Outcome) -> None:
     a = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=20", "--query", "x=1")
     b = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "x=1", "--query", "limit=20")
     c = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=21", "--query", "x=1")
-    expect(a["approval"]["id"] == b["approval"]["id"], "same query (reordered) joins", [a, b])
-    expect(a["approval"]["id"] != c["approval"]["id"], "a different query files a new hold", [a, c])
+    hid = "held_execution_id"
+    expect(a[hid] == b[hid], "same query (reordered) joins", [a, b])
+    expect(a[hid] != c[hid], "a different query files a new hold", [a, c])
     d = broker_raw(
         w, "POST", "/orders", body=b'{"a": 1, "b": 2}', headers={"content-type": "application/json"}
     )
@@ -404,15 +507,9 @@ def s05_join_and_new(w: World, o: Outcome) -> None:
         [d.text, e.text, f.text],
     )
     dj, ej, fj = d.json(), e.json(), f.json()
-    expect(dj["approval"]["id"] == ej["approval"]["id"], "equivalent JSON body joins", [dj, ej])
-    expect(
-        dj["approval"]["id"] != fj["approval"]["id"], "a different body files a new hold", [dj, fj]
-    )
-    requested = [
-        e
-        for e in _events(w, "execution.approval_requested")
-        if (e.get("data") or {}).get("approval_id") == a["approval"]["id"]
-    ]
+    expect(dj[hid] == ej[hid], "equivalent JSON body joins", [dj, ej])
+    expect(dj[hid] != fj[hid], "a different body files a new hold", [dj, fj])
+    requested = _events_for(w, "execution.approval_requested", a[hid])
     expect(len(requested) == 1, "a joined retry emits no second requested event", requested)
     withdraw_all_pending(w)
 
@@ -424,9 +521,9 @@ def s06_pending_cap(w: World, o: Outcome) -> None:
         cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", f"limit={600 + i}")
     rc, out, err = cli_execute(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=699")
     body = out.get("body") if isinstance(out.get("body"), dict) else {}
-    problem_type = (body or {}).get("type") or ""
+    ptype = (body or {}).get("type") or ""
     expect(
-        "approval_pending_limit_reached" in (problem_type + err + json.dumps(out)),
+        "approval_pending_limit_reached" in (ptype + err + json.dumps(out)),
         "the 4th call is refused with approval_pending_limit_reached",
         {"rc": rc, "out": out, "err": err},
     )
@@ -439,18 +536,18 @@ def s06_pending_cap(w: World, o: Outcome) -> None:
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         codes = list(pool.map(one, range(8)))
-    pending = w.admin.approvals(state="pending", agent_id=w.http.agent_id, limit=100)
+    pending = w.admin.holds(state="pending", agent_id=w.http.agent_id, limit=100)
     expect(
         codes.count(202) == 3 and codes.count(403) == 5,
         "8 concurrent calls: 3 held, 5 refused",
         codes,
     )
-    expect(len(pending) == 3, "exactly 3 pending approvals", [p["id"] for p in pending])
+    expect(len(pending) == 3, "exactly 3 pending held executions", [p["id"] for p in pending])
     withdraw_all_pending(w)
 
 
 def s07_rule_changed_to_deny(w: World, o: Outcome) -> None:
-    """A rule changed to deny before the run -> the approved job is denied at run time."""
+    """A rule changed to deny before the run -> the approved call is denied at run time."""
     reset_upstream(w.env)
     cid = w.creds["cli"]
     a = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=70")
@@ -463,11 +560,11 @@ def s07_rule_changed_to_deny(w: World, o: Outcome) -> None:
     try:
         # Approved at once: the run-time re-authorisation reads the rules fresh
         # (its evaluator has no cache), so the new deny already applies.
-        w.admin.decide(a["approval"]["id"], "approve")
-        ja = _wait_job(w.admin, a["job_id"], {"completed", "failed"})
-        if ja["status"] == "completed":
+        w.admin.decide(a["held_execution_id"], "approve")
+        ha = wait_held(w.admin.get, a["held_execution_id"], {"completed", "failed"})
+        if ha["execution_status"] == "completed":
             o.gap(
-                "2D: approved right after the rule became deny, the job still ran — the "
+                "2D: approved right after the rule became deny, the call still ran — the "
                 "run-time re-authorisation did not see the fresh rules"
             )
         else:
@@ -475,10 +572,10 @@ def s07_rule_changed_to_deny(w: World, o: Outcome) -> None:
         # And after the broker's hot-path rule cache (30 s) has lapsed too.
         o.note("waiting 32 s past the broker's rule cache")
         time.sleep(32)
-        w.admin.decide(b["approval"]["id"], "approve")
-        jb = _wait_job(w.admin, b["job_id"], {"completed", "failed"})
-        expect(jb["status"] == "failed", "approved job denied at run time", jb)
-        res = result_of(w, b["job_id"])
+        w.admin.decide(b["held_execution_id"], "approve")
+        hb = wait_held(w.admin.get, b["held_execution_id"], {"completed", "failed"})
+        expect(hb["execution_status"] == "failed", "approved call denied at run time", hb)
+        res = result_of(w, b["held_execution_id"])
         problem = res.get("problem") or res
         expect(problem.get("type") == "action_denied", "the run-time denial is action_denied", res)
         expect(
@@ -496,47 +593,126 @@ def s08_worker_crash(w: World, o: Outcome) -> None:
         w, "POST", "/slow?seconds=45", body=b"{}", headers={"content-type": "application/json"}
     )
     expect(r.status_code == 202, "slow call held", r.text)
-    held = r.json()
-    w.admin.decide(held["approval"]["id"], "approve")
-    _wait_job(w.admin, held["job_id"], {"running"}, timeout=30)
+    hid = r.json()["held_execution_id"]
+    w.admin.decide(hid, "approve")
+    wait_held(w.admin.get, hid, {"running"}, timeout=30)
     deadline = time.time() + 20
     while time.time() < deadline and not calls_to(w.env, "/slow"):
         time.sleep(0.3)
     expect(len(calls_to(w.env, "/slow")) == 1, "the run reached the upstream once")
     o.note("SIGKILL app + broker (both run workers), then restart")
     subprocess.run([str(ROOT / "tests/e2e_manual/ask_tier/stack.sh"), "restart"], check=True)
-    job = _wait_job(w.admin, held["job_id"], {"failed", "completed"}, timeout=120)
-    expect(job["status"] == "failed", "the re-claimed approved job is failed", job)
-    res = result_of(w, held["job_id"])
+    held = wait_held(w.admin.get, hid, {"failed", "completed"}, timeout=120)
+    expect(held["execution_status"] == "failed", "the re-claimed approved call is failed", held)
+    res = result_of(w, hid)
     expect(res.get("type") == "approval_resume_failed", "approval_resume_failed result", res)
     time.sleep(3)
     expect(len(calls_to(w.env, "/slow")) == 1, "never re-run", calls_to(w.env, "/slow"))
 
 
 def s09_who_decides(w: World, o: Outcome) -> None:
-    """The agent cannot decide (403); a non-owner sees 404; the member owner and org:admin can."""
-    r1 = broker_raw(w, "GET", "/items?limit=90")
-    r2 = broker_raw(w, "GET", "/items?limit=91")
+    """No jobs:* anywhere: the member owner views and decides, the agent follows its own
+    call; the agent cannot decide (403); a non-owner sees 404; org:admin decides any."""
+    me = w.owner.get("/users/me").json()
+    expect(
+        not any(str(p).startswith("jobs:") for p in me.get("permissions", [])),
+        "the member owner holds no jobs:* permission",
+        me,
+    )
+    # A fresh agent of the member owner's, stripped of its jobs:* grants.
+    agent = HttpMcpLane(w.env, w.admin, "ask-nojobs")
+    psql(
+        w.env,
+        f"UPDATE admin.agents SET owner_id = '{w.owner.user_id}' WHERE id = '{agent.agent_id}'",
+    )
+    _bind(w.admin, agent.agent_id, "nojobs", ASK_RULES)
+    psql(
+        w.env,
+        "DELETE FROM admin.actor_permission_grants "
+        f"WHERE actor_id = '{agent.agent_id}' AND permission LIKE 'jobs:%'",
+    )
+    agent.reissue_token()
+    tok = agent.token
+    no_jobs = agent_api(w, "GET", "/jobs", token=tok)
+    expect(
+        no_jobs.status_code == 403, "the agent holds no jobs:read (GET /jobs is 403)", no_jobs.text
+    )
+
+    r1 = broker_raw(w, "GET", "/items?limit=90", token=tok)
+    r2 = broker_raw(w, "GET", "/items?limit=91", token=tok)
     expect(r1.status_code == r2.status_code == 202, "two holds", [r1.text, r2.text])
-    a1, a2 = r1.json()["approval"]["id"], r2.json()["approval"]["id"]
+    h1, h2 = r1.json()["held_execution_id"], r2.json()["held_execution_id"]
+
+    # The filing agent: reads and lists its own, never decides.
     agent_decide = agent_api(
-        w, "POST", f"/executions/approvals/{a1}:decide", {"decision": "approve"}
+        w, "POST", f"/executions/holds/{h1}:decide", {"decision": "approve"}, token=tok
     )
     expect(
-        agent_decide.status_code == 403, "the filing agent cannot decide (403)", agent_decide.text
+        is_problem(agent_decide, 403, "held_execution_decide_forbidden"),
+        "the filing agent cannot decide (403 held_execution_decide_forbidden)",
+        agent_decide.text,
     )
-    agent_read = agent_api(w, "GET", f"/executions/approvals/{a1}")
-    expect(agent_read.status_code == 200, "the agent can read its own approval", agent_read.text)
-    for verb in ("get", "decide"):
-        r = w.other.approval(a1) if verb == "get" else w.other.decide(a1, "approve")
-        expect(r.status_code == 404, f"a non-owner {verb} answers 404", r.text)
-    expect(a1 not in [a["id"] for a in w.other.approvals()], "a non-owner does not list it")
-    expect(a1 in [a["id"] for a in w.owner.approvals()], "the member owner lists it")
-    r = w.owner.decide(a1, "approve")
-    expect(r.status_code == 200, "the member owner (jobs:write) approves", r.text)
-    r = w.admin.decide(a2, "deny", "admin says no")
-    expect(r.status_code == 200, "org:admin decides another agent's approval", r.text)
-    _wait_job(w.admin, r1.json()["job_id"], {"completed"})
+    agent_read = agent_api(w, "GET", f"/executions/holds/{h1}", token=tok)
+    expect(
+        agent_read.status_code == 200 and agent_read.json()["execution_status"] == "held",
+        "the agent reads its own held execution without jobs:read",
+        agent_read.text,
+    )
+    agent_list = agent_api(w, "GET", "/executions/holds", token=tok)
+    expect(
+        agent_list.status_code == 200 and h1 in [h["id"] for h in agent_list.json()["data"]],
+        "the agent lists its own held executions",
+        agent_list.text,
+    )
+
+    # An unrelated user: as if it did not exist.
+    for verb, resp in (
+        ("get", w.other.hold(h1)),
+        ("result", w.other.held_result(h1)),
+        ("decide", w.other.decide(h1, "approve")),
+    ):
+        expect(
+            is_problem(resp, 404, "held_execution_not_found"),
+            f"a non-owner {verb} answers 404",
+            resp.text,
+        )
+    expect(h1 not in [h["id"] for h in w.other.holds()], "a non-owner does not list it")
+
+    # The member owner, with no jobs:* permission: lists, reads, decides.
+    expect(h1 in [h["id"] for h in w.owner.holds()], "the member owner lists it")
+    detail = w.owner.hold(h1)
+    expect(
+        detail.status_code == 200 and detail.json()["request"]["url"].endswith("/items?limit=90"),
+        "the member owner reads the held request",
+        detail.text,
+    )
+    r = w.owner.decide(h1, "approve")
+    expect(
+        r.status_code == 200 and r.json()["state"] == "approved",
+        "the member owner (no jobs:write) approves",
+        r.text,
+    )
+    r = w.admin.decide(h2, "deny", "admin says no")
+    expect(r.status_code == 200, "org:admin decides another agent's held execution", r.text)
+
+    # The agent follows its approved call to the end and reads the outcome.
+    wait_held(lambda path: agent_api(w, "GET", path, token=tok), h1, {"completed"})
+    res = agent_api(w, "GET", f"/executions/holds/{h1}/result", token=tok)
+    expect(
+        res.status_code == 200 and res.json().get("http_status") == 200,
+        "the agent reads its result without jobs:read",
+        res.text,
+    )
+    owner_res = w.owner.held_result(h1)
+    expect(owner_res.status_code == 200, "the member owner reads the result", owner_res.text)
+    denied = agent_api(w, "GET", f"/executions/holds/{h2}/result", token=tok)
+    expect(
+        denied.status_code == 200
+        and denied.json().get("type") == "approval_denied"
+        and "admin says no" in denied.json().get("detail", ""),
+        "the agent reads the denial and its reason",
+        denied.text,
+    )
 
 
 def s10_post_json_bytes(w: World, o: Outcome) -> None:
@@ -547,9 +723,9 @@ def s10_post_json_bytes(w: World, o: Outcome) -> None:
         w, "POST", "/orders", body=raw, headers={"content-type": "application/json; charset=utf-8"}
     )
     expect(r.status_code == 202, "held", r.text)
-    held = r.json()
-    w.admin.decide(held["approval"]["id"], "approve")
-    _wait_job(w.admin, held["job_id"], {"completed"})
+    hid = r.json()["held_execution_id"]
+    w.admin.decide(hid, "approve")
+    wait_held(w.admin.get, hid, {"completed"})
     (call,) = calls_to(w.env, "/orders")
     expect(base64.b64decode(call["body_b64"]) == raw, "body byte for byte", call)
     expect(
@@ -565,8 +741,8 @@ def s10_post_json_bytes(w: World, o: Outcome) -> None:
     # And through the CLI lane, which sets its own Content-Type.
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"POST:{w.env.upstream}/orders", "-d", '{"cli": true}')
-    w.admin.decide(held["approval"]["id"], "approve")
-    _wait_job(w.admin, held["job_id"], {"completed"})
+    w.admin.decide(held["held_execution_id"], "approve")
+    wait_held(w.admin.get, held["held_execution_id"], {"completed"})
     (call,) = calls_to(w.env, "/orders")
     expect(
         (call["headers"].get("content-type") or "").startswith("application/json"),
@@ -578,17 +754,18 @@ def s10_post_json_bytes(w: World, o: Outcome) -> None:
 def s11_standalone_broker_links(w: World, o: Outcome) -> None:
     """The standalone broker roots review_url and _links on the admin app's origin."""
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=110")
-    review = held["approval"]["review_url"]
+    review = held["review_url"]
     expect(
         review.startswith(f"{w.env.app}/app/agents/approvals/"),
         "review_url on the app origin",
         held,
     )
-    expect(
-        held["_links"]["self"].startswith(f"{w.env.app}/jobs/"),
-        "_links.self on the app origin",
-        held,
-    )
+    for rel in ("self", "result", "withdraw"):
+        expect(
+            held["_links"][rel].startswith(f"{w.env.app}/executions/holds/"),
+            f"_links.{rel} on the app origin",
+            held,
+        )
     # A browser asks for HTML; the SPA fallback serves deep links to it.
     page = httpx.get(review, headers={"accept": "text/html"}, timeout=30)
     expect(
@@ -610,7 +787,7 @@ def _http_mcp_payload(resp: dict[str, Any]) -> Any:
 
 
 def s12_mcp_lanes(w: World, o: Outcome) -> None:
-    """Both MCP lanes, with and without URL elicitation, and wait_seconds."""
+    """Both MCP lanes, with and without URL elicitation, and get_execution_result's wait."""
     target = f"GET:{w.env.upstream}/items"
     # HTTP mount, no elicitation: the held result at once.
     t0 = time.time()
@@ -620,21 +797,24 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
     expect(time.time() - t0 < 15, "held result returned without waiting", time.time() - t0)
     body = held.get("body", {})
     expect(held.get("status") == 202 and body.get("status") == "held", "HTTP MCP held result", held)
-    job_id, aid = body["job_id"], body["approval"]["id"]
+    hid = body["held_execution_id"]
     t0 = time.time()
     polled = _http_mcp_payload(
-        w.http.call("get_execution_result", {"job_id": job_id, "wait_seconds": 5})
+        w.http.call("get_execution_result", {"held_execution_id": hid, "wait": 5000})
     )
     waited = time.time() - t0
     expect(
-        polled.get("status") == "held" and 4 <= waited < 20,
-        "wait_seconds bounds a held poll",
+        polled.get("held_execution_id") == hid
+        and polled.get("state") == "pending"
+        and polled.get("status") == "held"
+        and 4 <= waited < 20,
+        "wait (ms) bounds a held poll",
         [polled, waited],
     )
-    threading.Timer(3, lambda: w.owner.decide(aid, "approve")).start()
+    threading.Timer(3, lambda: w.owner.decide(hid, "approve")).start()
     t0 = time.time()
     done = _http_mcp_payload(
-        w.http.call("get_execution_result", {"job_id": job_id, "wait_seconds": 30})
+        w.http.call("get_execution_result", {"held_execution_id": hid, "wait": 30000})
     )
     expect(done.get("status") == "completed", "wait returns once approved", done)
     o.note(f"HTTP MCP: approved mid-wait, returned after {time.time() - t0:.1f}s")
@@ -664,9 +844,9 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
     )
     url = reqs["review_approval"]["params"]["url"]
     expect("/app/agents/approvals/" in url, "elicitation url is the review page", reqs)
-    pending = w.owner.approvals(state="pending", agent_id=w.http.agent_id)
-    aid2 = next(a["id"] for a in pending if url.endswith(a["id"]))
-    threading.Timer(3, lambda: w.owner.decide(aid2, "approve")).start()
+    pending = w.owner.holds(state="pending", agent_id=w.http.agent_id)
+    hid2 = next(h["id"] for h in pending if url.endswith(h["id"]))
+    threading.Timer(3, lambda: w.owner.decide(hid2, "approve")).start()
     retry = w.http.call(
         "execute",
         {"operation_id": target, "inputs": {"limit": 121}},
@@ -689,9 +869,9 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
         resp = go.call("execute", {"operation_id": target, "inputs": {"limit": 122}})
         err, payload = mcp_payload(resp)
         expect(not err and payload.get("status") == 202, "Go MCP held result", resp)
-        gjob, gaid = payload["body"]["job_id"], payload["body"]["approval"]["id"]
-        threading.Timer(3, lambda: w.admin.decide(gaid, "approve")).start()
-        resp = go.call("get_execution_result", {"job_id": gjob, "wait_seconds": 30})
+        ghid = payload["body"]["held_execution_id"]
+        threading.Timer(3, lambda: w.admin.decide(ghid, "approve")).start()
+        resp = go.call("get_execution_result", {"held_execution_id": ghid, "wait": 30000})
         err, payload = mcp_payload(resp)
         expect(
             not err and payload.get("status") == "completed", "Go MCP wait returns the result", resp
@@ -706,10 +886,8 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
         result = resp.get("result", {})
         if "inputRequests" in result:
             o.note("Go MCP with elicitation.url answers an input-required URL elicitation")
-            gaid = next(
-                a["id"] for a in w.admin.approvals(state="pending", agent_id=w.gocli.agent_id)
-            )
-            threading.Timer(3, lambda: w.admin.decide(gaid, "approve")).start()
+            ghid = next(h["id"] for h in w.admin.holds(state="pending", agent_id=w.gocli.agent_id))
+            threading.Timer(3, lambda: w.admin.decide(ghid, "approve")).start()
             resp = go.call(
                 "execute",
                 {"operation_id": target, "inputs": {"limit": 123}},
@@ -729,36 +907,85 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
     withdraw_all_pending(w)
 
 
+def _only_pending(w: World, agent_id: str, timeout: float = 30) -> str:
+    """The id of ``agent_id``'s single pending held execution, once it appears."""
+    deadline = time.time() + timeout
+    pending: list[dict[str, Any]] = []
+    while time.time() < deadline:
+        pending = w.admin.holds(state="pending", agent_id=agent_id)
+        if len(pending) == 1:
+            return str(pending[0]["id"])
+        time.sleep(0.5)
+    raise StepError(f"expected one pending held execution for {agent_id}", pending)
+
+
 def s13_cli_held_exit(w: World, o: Outcome) -> None:
-    """`jentic execute` on a held call: exit 3, `--wait`, and `jentic jobs wait`."""
-    rc, out, _ = cli_execute(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=130")
+    """`jentic execute` on a held call: exit 3, `--wait`, and `jentic holds wait`."""
+    withdraw_all_pending(w)
+    target = f"GET:{w.env.upstream}/items"
+    rc, out, err = cli_execute(w.cli, target, "--query", "limit=130")
     expect(out.get("status") == 202, "held envelope printed", out)
-    if rc == 0:
-        o.gap(
-            "2C: `jentic execute` exits 0 on a held call (a pass-through); no exit 3 / --wait yet"
-        )
-    p = w.cli.run("jobs", "--help")
-    if p.returncode != 0 or "wait" not in p.stdout:
-        o.gap("2C: no `jentic jobs wait`; agents poll with `jentic api GET /jobs/{id}`")
+    expect(rc == 3, "a held call exits 3 (TIMEOUT_PENDING)", {"rc": rc, "err": err})
+    hid = out["body"]["held_execution_id"]
+
+    # `holds wait` with a short budget on a still-held call: exit 3.
+    p = w.cli.run("holds", "wait", hid, "--timeout", "3s", "--json")
+    expect(p.returncode == 3, "`holds wait` times out with exit 3", p.stdout + p.stderr)
+    # Approved mid-wait: exit 0 with the upstream response.
+    threading.Timer(3, lambda: w.admin.decide(hid, "approve")).start()
+    p = w.cli.run("holds", "wait", hid, "--json")
+    res = w.cli.parse(p.stdout)
+    expect(
+        p.returncode == 0 and res.get("status") == 200,
+        "`holds wait` prints the run's result",
+        p.stdout + p.stderr,
+    )
+
+    # Denied: `holds wait` exits 2 with the denial.
+    _, out, _ = cli_execute(w.cli, target, "--query", "limit=131")
+    dhid = out["body"]["held_execution_id"]
+    w.admin.decide(dhid, "deny", "cli deny")
+    p = w.cli.run("holds", "wait", dhid, "--json")
+    expect(
+        p.returncode == 2 and "cli deny" in p.stdout + p.stderr,
+        "`holds wait` on a denied call exits 2 with the reason",
+        p.stdout + p.stderr,
+    )
+
+    # `execute --wait`: blocks on the decision, then prints the result.
+    proc = w.cli.popen("execute", target, "--query", "limit=132", "--wait", "--json")
+    if proc.stdin:
+        proc.stdin.close()
+    try:
+        whid = _only_pending(w, w.cli.agent_id)
+        w.admin.decide(whid, "approve")
+        stdout, stderr = proc.communicate(timeout=120)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    res = w.cli.parse(stdout)
+    expect(
+        proc.returncode == 0 and isinstance(res, dict) and res.get("status") == 200,
+        "`execute --wait` returns the approved call's result",
+        stdout + stderr,
+    )
     withdraw_all_pending(w)
 
 
 def s14_inbox(w: World, o: Outcome) -> None:
     """The inbox's API side: a requires_action event and a pending count that clear on decide."""
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=140")
-    aid = held["approval"]["id"]
-    ev = [
-        e
-        for e in _events(w, "execution.approval_requested")
-        if (e.get("data") or {}).get("approval_id") == aid
-    ]
+    hid = held["held_execution_id"]
+    ev = _events_for(w, "execution.approval_requested", hid)
     expect(
         len(ev) == 1 and ev[0].get("requires_action") is True, "requested event requires action", ev
     )
-    before = len(w.admin.approvals(state="pending"))
-    w.admin.decide(aid, "deny", "inbox check")
-    after = len(w.admin.approvals(state="pending"))
+    before = len(w.admin.holds(state="pending"))
+    w.admin.decide(hid, "deny", "inbox check")
+    after = len(w.admin.holds(state="pending"))
     expect(after == before - 1, "the pending list (badge source) drops it", [before, after])
+    decided = _events_for(w, "execution.approval_decided", hid)
+    expect(len(decided) == 1, "one execution.approval_decided event", decided)
     o.note("the UI side (inbox, badge, Waiting for you) is ui/e2e/docker/ask-tier-inbox.spec.ts")
 
 
@@ -773,13 +1000,20 @@ def _migrate(w: World, code: str) -> None:
 def s15_migration_round_trip(w: World, o: Outcome) -> None:
     """Downgrade below the ask tier (ask -> deny, held -> cancelled), then upgrade back."""
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=150")
+    # The held call's job, read while execution_approvals still exists.
+    job_id = psql(
+        w.env,
+        f"SELECT job_id FROM admin.execution_approvals WHERE id = '{held['held_execution_id']}'",
+    )
+    expect(bool(job_id), "the held execution names its job", job_id)
     stack = str(ROOT / "tests/e2e_manual/ask_tier/stack.sh")
     subprocess.run([stack, "stop"], check=False)
     try:
         _migrate(
             w,
             "from jentic_one.migrations.run import downgrade; "
-            "downgrade('control', 'cc3d4e5f6a7b'); downgrade('admin', 'd2e3f4a5b6c7')",
+            "downgrade('control', 'cc3d4e5f6a7b'); "  # pragma: allowlist secret
+            "downgrade('admin', 'd2e3f4a5b6c7')",  # pragma: allowlist secret
         )
         effects = psql(
             w.env,
@@ -794,7 +1028,7 @@ def s15_migration_round_trip(w: World, o: Outcome) -> None:
             "AND column_name = 'effect'",
         )
         expect(width == "10", "effect narrowed back to 10 chars", width)
-        status = psql(w.env, f"SELECT status FROM admin.jobs WHERE id = '{held['job_id']}'")
+        status = psql(w.env, f"SELECT status FROM admin.jobs WHERE id = '{job_id}'")
         expect(status == "cancelled", "the held job was cancelled", status)
         tables = psql(
             w.env,
@@ -813,7 +1047,7 @@ def s15_migration_round_trip(w: World, o: Outcome) -> None:
     # The broker's rule cache may still hold the downgraded (deny) rules.
     time.sleep(32)
     again = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=151")
-    o.note(f"after re-upgrade an ask rule holds again ({again['approval']['id']})")
+    o.note(f"after re-upgrade an ask rule holds again ({again['held_execution_id']})")
     withdraw_all_pending(w)
 
 
@@ -855,7 +1089,7 @@ def s16_connect_session_interplay(w: World, o: Outcome) -> None:
         timeout=60,
     )
     expect(hold.status_code == 202, "the connect-bound API holds the ask call", hold.text)
-    held = hold.json()
+    hid = hold.json()["held_execution_id"]
     # A second, still-open connect request from the same agent (another API),
     # pending beside the hold: both are the human's to act on.
     _import_api(w.admin, w.env, API_TWO, spec="ask-two.json")
@@ -867,13 +1101,13 @@ def s16_connect_session_interplay(w: World, o: Outcome) -> None:
     )
     expect(r2.status_code in (200, 201, 202), "a second connect request is open", r2.text)
     sid2 = r2.json().get("session_id") or r2.json().get("id")
-    pend_approvals = [a["id"] for a in w.admin.approvals(state="pending", agent_id=agent.agent_id)]
-    expect(held["approval"]["id"] in pend_approvals, "the approval is pending", pend_approvals)
+    pend = [h["id"] for h in w.admin.holds(state="pending", agent_id=agent.agent_id)]
+    expect(hid in pend, "the held execution is pending", pend)
     st = w.admin.get(f"/connect-sessions/{sid2}/status")
     expect(st.status_code == 200, "the connect request is readable", st.text)
-    o.note(f"pending together: approval {held['approval']['id']} + connect {sid2} {st.json()}")
-    w.admin.decide(held["approval"]["id"], "approve")
-    _wait_job(w.admin, held["job_id"], {"completed"})
+    o.note(f"pending together: held execution {hid} + connect {sid2} {st.json()}")
+    w.admin.decide(hid, "approve")
+    wait_held(w.admin.get, hid, {"completed"})
     (call,) = calls_to(w.env, "/orders")
     expect(
         call["headers"].get("authorization") == "Bearer upstream-secret-connect",

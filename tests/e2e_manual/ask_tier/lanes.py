@@ -12,8 +12,9 @@ same backend:
 
 :class:`Human` drives the admin/control API as an operator would from the
 browser (review, decide). Nothing here reaches into the database except
-:func:`psql`, which scenarios use only to read state or to fast-forward a
-clock (an approval's ``expires_at``).
+:func:`psql`, which scenarios use only to read state, to fast-forward a clock
+(a held execution's ``expires_at``), or to set up what the API has no route
+for (an agent's owner, an agent's permission grants).
 """
 
 from __future__ import annotations
@@ -97,21 +98,29 @@ class Human:
     def patch(self, path: str, body: Any) -> httpx.Response:
         return self.http.patch(path, headers=self._h(), json=body)
 
-    # -- approvals ---------------------------------------------------------
+    # -- held executions ---------------------------------------------------
 
-    def approvals(self, **params: Any) -> list[dict[str, Any]]:
-        r = self.get("/executions/approvals", params=params)
-        expect(r.status_code == 200, f"list approvals -> {r.status_code}", r.text)
+    def holds(self, **params: Any) -> list[dict[str, Any]]:
+        r = self.get("/executions/holds", params=params)
+        expect(r.status_code == 200, f"list held executions -> {r.status_code}", r.text)
         return list(r.json()["data"])
 
-    def approval(self, approval_id: str) -> httpx.Response:
-        return self.get(f"/executions/approvals/{approval_id}")
+    def hold(self, held_execution_id: str) -> httpx.Response:
+        return self.get(f"/executions/holds/{held_execution_id}")
 
-    def decide(self, approval_id: str, decision: str, reason: str | None = None) -> httpx.Response:
+    def held_result(self, held_execution_id: str) -> httpx.Response:
+        return self.get(f"/executions/holds/{held_execution_id}/result")
+
+    def decide(
+        self, held_execution_id: str, decision: str, reason: str | None = None
+    ) -> httpx.Response:
         body: dict[str, Any] = {"decision": decision}
         if reason is not None:
             body["reason"] = reason
-        return self.post(f"/executions/approvals/{approval_id}:decide", body)
+        return self.post(f"/executions/holds/{held_execution_id}:decide", body)
+
+    def withdraw(self, held_execution_id: str) -> httpx.Response:
+        return self.post(f"/executions/holds/{held_execution_id}:withdraw")
 
 
 def bootstrap_admin(env: Env) -> Human:
@@ -132,6 +141,7 @@ def bootstrap_admin(env: Env) -> Human:
 
 
 def make_user(env: Env, admin: Human, email: str, permissions: list[str]) -> Human:
+    """Sign in as ``email`` (created on first use) holding exactly ``permissions``."""
     password = "User-Passw0rd-123!"  # pragma: allowlist secret
     http = httpx.Client(base_url=env.app, timeout=60.0)
     r = http.post("/auth/login", json={"email": email, "password": password})
@@ -151,7 +161,13 @@ def make_user(env: Env, admin: Human, email: str, permissions: list[str]) -> Hum
         expect(r.status_code == 200, f"redeem invite {email}", r.text)
     token = r.json()["access_token"]
     me = http.get("/users/me", headers={"authorization": f"Bearer {token}"}).json()
-    return Human(env, token, me["id"], email)
+    # A user kept from an earlier run keeps the set it held then: pin this one,
+    # and sign in again so the token carries it.
+    r = admin.put(f"/users/{me['id']}/permissions", {"permissions": permissions})
+    expect(r.status_code == 200, f"set permissions of {email}", r.text)
+    r = http.post("/auth/login", json={"email": email, "password": password})
+    expect(r.status_code == 200, f"login {email}", r.text)
+    return Human(env, r.json()["access_token"], me["id"], email)
 
 
 def psql(env: Env, sql: str) -> str:
@@ -354,8 +370,13 @@ class HttpMcpLane:
     def __init__(self, env: Env, admin: Human, name: str) -> None:
         self.env = env
         self.http = httpx.Client(base_url=env.app, timeout=180.0)
-        self.agent_id, self.token = register_dcr_agent(env, admin, name)
+        self.agent_id, self._key, self._kid = register_dcr_agent(env, admin, name)
+        self.token = mint_agent_token(env, self.agent_id, self._key, self._kid)
         self._id = 0
+
+    def reissue_token(self) -> None:
+        """Mint a fresh token, carrying the agent's permission grants as they stand."""
+        self.token = mint_agent_token(self.env, self.agent_id, self._key, self._kid)
 
     def rpc(
         self, method: str, params: dict[str, Any], version: str = LEGACY_VERSION
@@ -410,8 +431,8 @@ class HttpMcpLane:
         return self.rpc("tools/call", p, MODERN_VERSION if modern else LEGACY_VERSION)
 
 
-def register_dcr_agent(env: Env, admin: Human, name: str) -> tuple[str, str]:
-    """Register, approve and mint a token for a fresh agent (the UI e2e path)."""
+def register_dcr_agent(env: Env, admin: Human, name: str) -> tuple[str, Ed25519PrivateKey, str]:
+    """Register and approve a fresh agent (the UI e2e path): its id, key and ``kid``."""
     http = httpx.Client(base_url=env.app, timeout=60.0)
     key = Ed25519PrivateKey.generate()
     raw = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -429,7 +450,7 @@ def register_dcr_agent(env: Env, admin: Human, name: str) -> tuple[str, str]:
     agent_id = r.json()["client_id"]
     r = admin.post(f"/agents/{agent_id}:approve")
     expect(r.status_code == 200, "approve DCR agent", r.text)
-    return agent_id, mint_agent_token(env, agent_id, key, kid)
+    return agent_id, key, kid
 
 
 def mint_agent_token(env: Env, agent_id: str, key: Ed25519PrivateKey, kid: str) -> str:
