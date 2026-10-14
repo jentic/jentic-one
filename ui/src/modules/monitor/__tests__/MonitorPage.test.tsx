@@ -482,16 +482,112 @@ describe('MonitorPage', () => {
 		await screen.findByText('Breakdown');
 
 		await user.click(breakdownLens('Agents'));
-		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
+		// The rollup carries only `agent/agent_billing`; the row reads the
+		// directory's name, never the id.
+		expect(await screen.findByText('Billing Agent')).toBeInTheDocument();
+		expect(screen.queryByText('agent_billing')).not.toBeInTheDocument();
 		expect(screen.getByText('Unattributed').closest('a')).toBeNull();
 
-		await user.click(screen.getByRole('row', { name: /View executions for agent_billing/ }));
+		await user.click(screen.getByRole('row', { name: /View executions for Billing Agent/ }));
 		await waitFor(() => {
 			const params = currentParams();
 			expect(params.get('show')).toBe('calls');
 			expect(params.get('actor_id')).toBe('agent_billing');
 			expect(params.get('actor_type')).toBe('agent');
 		});
+	});
+
+	it('names agents across the Overview, so two agnt_6… agents read apart', async () => {
+		const A = 'agnt_6accc351d881e4d9aaaa';
+		const B = 'agnt_6accc351d881e4d9bbbb';
+		const GONE = 'agnt_6accc351d881e4d9dead';
+		const now = Math.floor(Date.now() / 1000);
+		const top = (key: string, total: number) => ({
+			key,
+			label: key,
+			total,
+			success: total,
+			failed: 0,
+			avg_ms: 100,
+			trend: [total],
+		});
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				const since = Number(url.searchParams.get('since') ?? now - 86_400);
+				const until = Number(url.searchParams.get('until') ?? now);
+				const agentLens = url.searchParams.get('group_by') === 'agent';
+				return HttpResponse.json({
+					since,
+					until,
+					bucket_seconds: until - since,
+					group_by: agentLens ? 'agent' : 'api',
+					stats: {
+						total: 60,
+						success: 60,
+						failed: 0,
+						pending: 0,
+						avg_ms: 100,
+						p50_ms: 90,
+						p95_ms: 200,
+						active_now: 0,
+					},
+					buckets: [{ ts: since, total: 60, success: 60, failed: 0, avg_ms: 100 }],
+					top: agentLens
+						? [top(`agent/${A}`, 30), top(`agent/${B}`, 20), top(`agent/${GONE}`, 10)]
+						: [top('stripe/stripe-api', 60)],
+				});
+			}),
+			http.get('/actors', () =>
+				HttpResponse.json({
+					data: [
+						{
+							id: A,
+							actor_type: 'agent',
+							name: 'support-triage',
+							active: true,
+							created_at: '2026-01-01T00:00:00Z',
+						},
+						{
+							id: B,
+							actor_type: 'agent',
+							name: 'support-triage-eu',
+							active: true,
+							created_at: '2026-01-02T00:00:00Z',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+		await user.click(breakdownLens('Agents'));
+
+		// Breakdown: the names, the fleet's distinct initials, the name on the link.
+		const triage = await screen.findByRole('row', {
+			name: 'View executions for support-triage',
+		});
+		expect(triage.querySelector('[data-initials]')).toHaveAttribute('data-initials', 'ST');
+		const eu = screen.getByRole('row', { name: 'View executions for support-triage-eu' });
+		expect(eu.querySelector('[data-initials]')).toHaveAttribute('data-initials', 'STE');
+		// A deleted agent: its short id, with the whole id on its link.
+		expect(
+			screen.getByRole('row', { name: `View executions for agnt_…dead (${GONE})` }),
+		).toBeInTheDocument();
+		// Nowhere does a whole id stand in for a name.
+		expect(screen.queryByText(A)).not.toBeInTheDocument();
+		expect(screen.queryByText(B)).not.toBeInTheDocument();
+
+		// The volume chart's legend, on its Agents lens: names and fleet letters.
+		await user.click(toggle('Volume chart grouping', 'Agents'));
+		const legend = await screen.findByRole('button', { name: 'support-triage' });
+		expect(within(legend).getByTestId('entity-mark')).toHaveTextContent('ST');
+		const marks = screen.getAllByTestId('entity-mark').map((m) => m.textContent);
+		expect(marks).toEqual(expect.arrayContaining(['ST', 'STE', '?']));
+		expect(marks).not.toContain('A6');
 	});
 
 	it('drills an API row into API calls filtered by that API', async () => {

@@ -87,3 +87,9 @@ export { hasTrace } from '@/shared/lib/trace';
 
 // The compact relative age ("3m", "4d") a module's own helpers build on.
 export { timeAgo } from '@/shared/lib/utils';
+
+// Fleet-aware avatar initials, so every surface that draws an agent's avatar
+// reads the letters the Agents tab gives it; and the compact form of an actor
+// id no name is known for.
+export { smartInitials } from '@/shared/lib/smartInitials';
+export { shortActorId } from '@/shared/lib/actorId';

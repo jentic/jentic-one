@@ -25,7 +25,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
-import { SegmentedToggle } from '@/shared/ui';
+import { SegmentedToggle, TruncateWithTooltip } from '@/shared/ui';
 import type { UsageResponse } from '@/modules/monitor/api';
 import {
 	OTHER_KEY,
@@ -36,7 +36,7 @@ import {
 	type UsageLens,
 } from '@/modules/monitor/lib/palette';
 import { EntityMark } from '@/modules/monitor/components/EntityMark';
-import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
+import { isUnnamedActor, type EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 const DAY_SECONDS = 86_400;
 // A day-aligned 7d window can exceed 7·86400s across a DST change; anything up
@@ -49,6 +49,10 @@ const RANGE_SLICES = 6;
 interface BarSegment {
 	key: string;
 	label: string;
+	/** The row's own avatar letters (an agent's fleet initials). */
+	initials?: string;
+	/** The label is an unresolved actor id (see {@link isUnnamedActor}). */
+	unnamed?: boolean;
 	count: number;
 	tone: EntityTone;
 }
@@ -202,6 +206,8 @@ function buildBars(
 			segments.push({
 				key: row.id,
 				label: row.label,
+				initials: row.initials,
+				unnamed: isUnnamedActor(row),
 				count,
 				tone: toneFor(tones, row.id),
 			});
@@ -479,8 +485,24 @@ export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps
 									onMouseEnter={() => setHoveredSegKey(seg.key)}
 									onMouseLeave={() => setHoveredSegKey(null)}
 								>
-									<EntityMark tone={seg.tone} label={seg.label} lens={lens} />
-									<span className="text-foreground text-[11px]">{seg.label}</span>
+									<EntityMark
+										tone={seg.tone}
+										label={seg.label}
+										initials={seg.initials}
+										lens={lens}
+									/>
+									{/* A name can run long; the chip keeps to a budget. */}
+									<TruncateWithTooltip
+										inline
+										focusable={false}
+										dir="auto"
+										className={cn(
+											'text-foreground max-w-[24ch] text-[11px]',
+											seg.unnamed && 'font-mono',
+										)}
+									>
+										{seg.label}
+									</TruncateWithTooltip>
 								</button>
 							))}
 						</motion.div>
@@ -528,8 +550,21 @@ function BarTooltip({
 			<div className="space-y-1.5">
 				{bar.segments.map((seg) => (
 					<div key={seg.key} className="flex items-center gap-2">
-						<EntityMark tone={seg.tone} label={seg.label} lens={lens} />
-						<span className="text-foreground flex-1 truncate text-xs">{seg.label}</span>
+						<EntityMark
+							tone={seg.tone}
+							label={seg.label}
+							initials={seg.initials}
+							lens={lens}
+						/>
+						<span
+							className={cn(
+								'text-foreground flex-1 truncate text-xs',
+								seg.unnamed && 'font-mono',
+							)}
+							dir="auto"
+						>
+							{seg.label}
+						</span>
 						<span className="text-foreground text-xs font-medium">{seg.count}</span>
 					</div>
 				))}

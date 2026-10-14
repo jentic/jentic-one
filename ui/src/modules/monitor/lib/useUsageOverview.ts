@@ -18,15 +18,45 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { GroupBy, useUsageStats, type UsageResponse } from '@/modules/monitor/api';
+import { useActorDirectory, type ActorDirectory } from '@/shared/hooks';
+import { smartInitials } from '@/shared/lib';
 import {
 	usageToEntityRows,
 	usageToOverview,
+	withActorNames,
 	type EntityUsageRow,
 	type UsageOverview,
 } from '@/modules/monitor/lib/usage';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 
 const TOP_LIMIT = 12;
+
+/** The actor id in an agents-lens usage key (`actor_type/actor_id`). */
+function actorIdOf(key: string): string | null {
+	const slash = key.indexOf('/');
+	return slash < 0 ? null : key.slice(slash + 1) || null;
+}
+
+/**
+ * The initials the Agents tab gives every agent: `smartInitials` over the whole
+ * directory's agents, not just the rows on screen. Assigned first come, first
+ * served, so an agent's letters depend only on older agents, which both
+ * surfaces hold alike. A directory entry without a creation time (a by-id
+ * lookup) is served last.
+ *
+ * Monitor's usage is for org admins, who can list the whole actor directory,
+ * so that full listing (with creation times) is the source. The by-id lookup
+ * fallback carries no `created_at` and covers only the agents on screen, so
+ * its letters can differ from the Agents tab's.
+ */
+function fleetInitials(byId: ActorDirectory['byId']): Map<string, string> {
+	const fleet = [];
+	for (const actor of byId.values()) {
+		if (actor.actor_type !== 'agent') continue;
+		fleet.push({ id: actor.id, name: actor.name, createdAt: actor.created_at ?? '' });
+	}
+	return smartInitials(fleet);
+}
 
 /**
  * Auto-refresh cadence. Matches the backend's usage-cache TTL (30s): polling
@@ -114,7 +144,22 @@ export function useUsageOverview({ enabled }: { enabled: boolean }): UsageOvervi
 	const usage = apiUsage.data;
 	const overview = useMemo(() => (usage ? usageToOverview(usage) : null), [usage]);
 	const apis = useMemo(() => usageToEntityRows(apiUsage.data), [apiUsage.data]);
-	const agents = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
+	const agentRows = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
+
+	// The rollup has no names: each actor row is named from the actor directory,
+	// as `ActorLabel` names it everywhere else.
+	const directory = useActorDirectory(agentRows.map((row) => actorIdOf(row.id)));
+	const agentInitials = useMemo(() => fleetInitials(directory.byId), [directory.byId]);
+	const agents = useMemo(
+		() =>
+			withActorNames(agentRows, {
+				resolve: directory.resolve,
+				isHidden: directory.isHidden,
+				isLoading: directory.isLoading,
+				initials: agentInitials,
+			}),
+		[agentRows, directory, agentInitials],
+	);
 
 	return {
 		days,

@@ -343,8 +343,9 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 980,
 			trend: [22, 18, 15, 12, 10, 8, 6, 3, 2, 0, 0, 0],
 		},
-		// A historical pre-theme-8 service-account bucket: executions keep
-		// their original actor_type, so the Breakdown must still list it.
+		// A historical service-account bucket: executions recorded before the
+		// service-account migration keep their original actor_type, so the
+		// Breakdown must still list it.
 		{
 			key: 'service_account/sva_active_1',
 			label: 'service_account/sva_active_1',
