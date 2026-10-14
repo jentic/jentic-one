@@ -39,7 +39,7 @@ import {
 	type EntityTone,
 	type UsageLens,
 } from '@/modules/monitor/lib/palette';
-import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
+import { isUnnamedActor, type EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 export type BreakdownSortKey = 'calls' | 'success' | 'latency';
 
@@ -265,14 +265,17 @@ export function UsageBreakdown({
 function EntityAvatar({
 	tone,
 	label,
+	initials,
 	isAgent,
 }: {
 	tone: EntityTone;
 	label: string;
+	/** The row's own letters (an agent's fleet initials), over the label's. */
+	initials?: string;
 	isAgent: boolean;
 }) {
 	const avatar = isAgent ? (
-		<AgentBadge id={tone.seed ?? undefined} name={label} size="sm" />
+		<AgentBadge id={tone.seed ?? undefined} name={label} initials={initials} size="sm" />
 	) : (
 		<VendorIcon name={label} vendor={tone.seed ?? label} size="sm" />
 	);
@@ -328,6 +331,7 @@ function BreakdownRow({
 		LATENCY_TEXT_CLASS[latencyTier(row.avgLatencyMs)],
 	);
 	const healthTitle = `${formatPercent(row.successRate)} success — ${HEALTH_LABEL[health]}`;
+	const unnamed = isUnnamedActor(row);
 
 	const content = (
 		<>
@@ -336,8 +340,21 @@ function BreakdownRow({
 				    seeded exactly as on the entity's own pages, so a row reads
 				    the same here as everywhere else. The sparkline and volume
 				    bar wear the same hue in its chart tone. */}
-				<EntityAvatar tone={tone} label={row.label} isAgent={isAgent} />
-				<span className="text-foreground min-w-0 flex-1 truncate text-sm font-medium">
+				<EntityAvatar
+					tone={tone}
+					label={row.label}
+					initials={row.initials}
+					isAgent={isAgent}
+				/>
+				{/* An actor with no name to show reads as its short id, in mono like
+				    every other unresolved id; the full id names the row's link. */}
+				<span
+					className={cn(
+						'text-foreground min-w-0 flex-1 truncate text-sm font-medium',
+						unnamed && 'font-mono text-xs',
+					)}
+					dir="auto"
+				>
 					{row.label}
 				</span>
 				<span className={cn('shrink-0 sm:hidden', latencyClass)}>
@@ -417,7 +434,7 @@ function BreakdownRow({
 			href={href}
 			role="row"
 			className={className}
-			aria-label={`View executions for ${row.label}`}
+			aria-label={`View executions for ${unnamed && row.actor ? `${row.label} (${row.actor.id})` : row.label}`}
 		>
 			{content}
 		</AppLink>

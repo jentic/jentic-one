@@ -29,8 +29,13 @@ const PAGE_LIMIT = 5000;
 /** Max ids one `GET /actors/lookup` call accepts. */
 export const ACTOR_LOOKUP_MAX_IDS = 100;
 
-/** The fields both endpoints return for an actor. */
-export type ActorDirectoryEntry = ActorLookupEntryResponse;
+/**
+ * The fields both endpoints return for an actor. `created_at` comes only from
+ * the full listing (`GET /actors`); a by-id lookup leaves it out.
+ */
+export type ActorDirectoryEntry = ActorLookupEntryResponse & {
+	created_at?: ActorSummaryResponse['created_at'];
+};
 
 /**
  * Fetch every actor by following `next_cursor` until the backend reports no
