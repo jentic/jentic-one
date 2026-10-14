@@ -32,7 +32,7 @@ const KIND_ICON: Record<AttentionKind, ComponentType<{ className?: string }>> = 
 	agent: Bot,
 	oauth_client: ShieldQuestion,
 	connect_request: PlugZap,
-	execution_approval: CheckSquare,
+	held_execution: CheckSquare,
 	credential: KeyRound,
 	event: AlertTriangle,
 };
@@ -44,7 +44,7 @@ const GROUP_OF: Record<AttentionKind, Group> = {
 	agent: 'approvals',
 	oauth_client: 'approvals',
 	connect_request: 'approvals',
-	execution_approval: 'approvals',
+	held_execution: 'approvals',
 	credential: 'setup',
 };
 
@@ -222,7 +222,7 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 			return <ReviewLink href={item.href} label="View" onNavigate={onNavigate} />;
 		case 'oauth_client':
 		case 'connect_request':
-		case 'execution_approval':
+		case 'held_execution':
 			return <ReviewLink href={item.href} label="Review" onNavigate={onNavigate} />;
 		case 'credential':
 			// The inventory is a sheet on the Agents page; there is no per-credential route.

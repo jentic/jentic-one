@@ -78,7 +78,7 @@ def _coerce_json_list(value: object) -> list[str] | None:
 
 # Inline per-binding rules. No credential/vendor join — the binding is the key.
 # ``id`` is selected so the hold path can record which rule triggered the hold
-# as ``matched_rule_id`` on the ``execution_approvals`` row.
+# as ``matched_rule_id`` on the ``held_executions`` row.
 _BINDING_RULES_QUERY = text(
     "SELECT id, effect, methods, path, operations, match_mode "
     "FROM agent_permission_rules "

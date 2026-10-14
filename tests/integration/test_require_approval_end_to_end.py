@@ -30,7 +30,7 @@ from starlette.requests import Request
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
@@ -99,7 +99,7 @@ async def parties(integration_context: Context) -> AsyncGenerator[_Parties, None
 
     async def _clean() -> None:
         async with ctx.admin_db.transaction() as session:
-            await session.execute(delete(ExecutionApproval))
+            await session.execute(delete(HeldExecution))
             await session.execute(delete(JobResult))
             await session.execute(delete(Job))
             await session.execute(delete(Event).where(Event.type.like("execution.approval_%")))

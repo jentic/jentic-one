@@ -30,7 +30,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EncryptionKey,
     EntitlementConfig,
-    ExecutionApprovalsConfig,
+    HeldExecutionsConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -339,7 +339,7 @@ def test_non_positive_session_lifetimes_rejected(field: str):
         AdminAuthConfig.model_validate({field: 0})
 
 
-def test_execution_approvals_defaults(tmp_path: Path):
+def test_held_executions_defaults(tmp_path: Path):
     """A minimal config gets the 24 h TTL, a pending cap of 10, and 24 h retention."""
     minimal = {
         "databases": {
@@ -350,32 +350,32 @@ def test_execution_approvals_defaults(tmp_path: Path):
     }
     path = tmp_path / "minimal.yaml"
     path.write_text(yaml.dump(minimal))
-    cfg = load_config(path).execution_approvals
+    cfg = load_config(path).held_executions
     assert cfg.ttl_seconds == 86_400
     assert cfg.max_pending_per_agent == 10
     assert cfg.result_retention_seconds == 86_400
 
 
-def test_execution_approvals_yaml_and_env_override(tmp_path: Path):
-    """The section is top-level: YAML sets it and ``JENTIC__EXECUTION_APPROVALS__*`` wins."""
+def test_held_executions_yaml_and_env_override(tmp_path: Path):
+    """The section is top-level: YAML sets it and ``JENTIC__HELD_EXECUTIONS__*`` wins."""
     doc = {
         "databases": {
             "registry": {"name": "reg"},
             "admin": {"name": "admin"},
             "control": {"name": "ctrl"},
         },
-        "execution_approvals": {"ttl_seconds": 600, "max_pending_per_agent": 3},
+        "held_executions": {"ttl_seconds": 600, "max_pending_per_agent": 3},
     }
     path = tmp_path / "ea.yaml"
     path.write_text(yaml.dump(doc))
-    assert load_config(path).execution_approvals.ttl_seconds == 600
+    assert load_config(path).held_executions.ttl_seconds == 600
     env = {
-        "JENTIC__EXECUTION_APPROVALS__TTL_SECONDS": "120",
-        "JENTIC__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT": "5",
-        "JENTIC__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS": "3600",
+        "JENTIC__HELD_EXECUTIONS__TTL_SECONDS": "120",
+        "JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT": "5",
+        "JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS": "3600",
     }
     with patch.dict(os.environ, env, clear=False):
-        cfg = load_config(path).execution_approvals
+        cfg = load_config(path).held_executions
     assert cfg.ttl_seconds == 120
     assert cfg.max_pending_per_agent == 5
     assert cfg.result_retention_seconds == 3600
@@ -384,9 +384,9 @@ def test_execution_approvals_yaml_and_env_override(tmp_path: Path):
 @pytest.mark.parametrize(
     "field", ["ttl_seconds", "max_pending_per_agent", "result_retention_seconds"]
 )
-def test_execution_approvals_non_positive_rejected(field: str):
+def test_held_executions_non_positive_rejected(field: str):
     with pytest.raises(ValidationError, match=field):
-        ExecutionApprovalsConfig.model_validate({field: 0})
+        HeldExecutionsConfig.model_validate({field: 0})
 
 
 def test_catalog_jitter_ratio_default():

@@ -143,7 +143,7 @@ class RuleEvaluation:
 
     ``matched_rule_id`` is the primary key of the first rule that fired, or
     None when no rule matched (the deny is the implicit default). The hold path
-    records this on the ``execution_approvals`` row.
+    records this on the ``held_executions`` row.
     """
 
     verdict: RuleVerdict

@@ -2,7 +2,7 @@
 
 The broker execute route calls :func:`file_hold` instead of ``enqueue_job``
 when the rule evaluator returns ``REQUIRE_APPROVAL``. Filing writes a ``held``
-job (not claimable by the worker) and its ``pending`` ``execution_approvals``
+job (not claimable by the worker) and its ``pending`` ``held_executions``
 row in the caller's admin-DB transaction. The problem bodies a denied,
 expired, or unreleased hold fails with live here so the admin decide path, the
 worker's expiry sweep, and the run-time gate tell the agent the same story.
@@ -20,7 +20,7 @@ from urllib.parse import parse_qsl, urlencode
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.audit_repo import AuditRepository
@@ -29,16 +29,16 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
+from jentic_one.shared.models.held_executions import HeldExecutionState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-APPROVAL_PENDING = ExecutionApprovalState.PENDING
-APPROVAL_APPROVED = ExecutionApprovalState.APPROVED
-APPROVAL_DENIED = ExecutionApprovalState.DENIED
-APPROVAL_EXPIRED = ExecutionApprovalState.EXPIRED
+APPROVAL_PENDING = HeldExecutionState.PENDING
+APPROVAL_APPROVED = HeldExecutionState.APPROVED
+APPROVAL_DENIED = HeldExecutionState.DENIED
+APPROVAL_EXPIRED = HeldExecutionState.EXPIRED
 
 #: Problem types a failed held job's result carries. All are 403
 #: permission-denied problems: the call never reached the upstream.
@@ -145,13 +145,11 @@ def compute_execution_fingerprint(
     return digest.hexdigest()
 
 
-async def _pending_by_fingerprint(
-    session: AsyncSession, fingerprint: str
-) -> ExecutionApproval | None:
+async def _pending_by_fingerprint(session: AsyncSession, fingerprint: str) -> HeldExecution | None:
     result = await session.execute(
-        select(ExecutionApproval).where(
-            ExecutionApproval.request_fingerprint == fingerprint,
-            ExecutionApproval.state == APPROVAL_PENDING,
+        select(HeldExecution).where(
+            HeldExecution.request_fingerprint == fingerprint,
+            HeldExecution.state == APPROVAL_PENDING,
         )
     )
     return result.scalar_one_or_none()
@@ -161,17 +159,17 @@ async def count_pending_by_agent(session: AsyncSession, agent_id: str) -> int:
     """Number of pending approvals the agent holds."""
     result = await session.execute(
         select(func.count())
-        .select_from(ExecutionApproval)
+        .select_from(HeldExecution)
         .where(
-            ExecutionApproval.agent_id == agent_id,
-            ExecutionApproval.state == APPROVAL_PENDING,
+            HeldExecution.agent_id == agent_id,
+            HeldExecution.state == APPROVAL_PENDING,
         )
     )
     return int(result.scalar_one() or 0)
 
 
 #: Namespace of the per-agent advisory lock that serialises hold filing.
-_HOLD_LOCK_NAMESPACE = "execution_approvals:agent:"
+_HOLD_LOCK_NAMESPACE = "held_executions:agent:"
 
 
 async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
@@ -192,7 +190,7 @@ async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
     )
 
 
-async def _joined(session: AsyncSession, row: ExecutionApproval) -> HoldOutcome:
+async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
     job = await session.get(Job, row.job_id)
     return HoldOutcome(
         job_id=str(row.job_id),
@@ -268,7 +266,7 @@ async def file_hold(
             )
             session.add(job)
             await session.flush()
-            approval: Any = ExecutionApproval(
+            approval: Any = HeldExecution(
                 job_id=job.id,
                 agent_id=agent_id,
                 credential_id=credential_id,
@@ -301,12 +299,12 @@ async def file_hold(
     )
 
 
-async def get_approved_by_job_id(session: AsyncSession, job_id: str) -> ExecutionApproval | None:
+async def get_approved_by_job_id(session: AsyncSession, job_id: str) -> HeldExecution | None:
     """The ``approved`` approval row for a job, or None."""
     result = await session.execute(
-        select(ExecutionApproval).where(
-            ExecutionApproval.job_id == job_id,
-            ExecutionApproval.state == APPROVAL_APPROVED,
+        select(HeldExecution).where(
+            HeldExecution.job_id == job_id,
+            HeldExecution.state == APPROVAL_APPROVED,
         )
     )
     return result.scalar_one_or_none()
@@ -430,19 +428,19 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
     if now is None:
         now = await db_now(session)
     result = await session.execute(
-        update(ExecutionApproval)
+        update(HeldExecution)
         .where(
-            ExecutionApproval.state == APPROVAL_PENDING,
-            ExecutionApproval.expires_at <= now,
+            HeldExecution.state == APPROVAL_PENDING,
+            HeldExecution.expires_at <= now,
         )
         .values(state=APPROVAL_EXPIRED, decided_at=now)
         .returning(
-            ExecutionApproval.id,
-            ExecutionApproval.job_id,
-            ExecutionApproval.agent_id,
-            ExecutionApproval.method,
-            ExecutionApproval.path,
-            ExecutionApproval.trace_id,
+            HeldExecution.id,
+            HeldExecution.job_id,
+            HeldExecution.agent_id,
+            HeldExecution.method,
+            HeldExecution.path,
+            HeldExecution.trace_id,
         )
         .execution_options(synchronize_session=False)
     )
@@ -458,7 +456,7 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
         await AuditRepository.record(
             session,
             action=AuditAction.EXPIRE,
-            target_type=AuditTargetType.EXECUTION_APPROVAL,
+            target_type=AuditTargetType.HELD_EXECUTION,
             target_id=approval_id,
             actor_type=actor_type,
             actor_id=agent_id,
@@ -492,8 +490,8 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
 async def set_execution_id_for_job(session: AsyncSession, job_id: str, execution_id: str) -> None:
     """Link an approved job's approval to the execution record its run wrote."""
     await session.execute(
-        update(ExecutionApproval)
-        .where(ExecutionApproval.job_id == job_id, ExecutionApproval.state == APPROVAL_APPROVED)
+        update(HeldExecution)
+        .where(HeldExecution.job_id == job_id, HeldExecution.state == APPROVAL_APPROVED)
         .values(execution_id=execution_id)
         .execution_options(synchronize_session=False)
     )

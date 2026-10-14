@@ -5,7 +5,7 @@
 /**
  * Lifecycle of an execution approval; every state but ``pending`` is terminal.
  */
-export enum ExecutionApprovalState {
+export enum HeldExecutionState {
     PENDING = 'pending',
     APPROVED = 'approved',
     DENIED = 'denied',

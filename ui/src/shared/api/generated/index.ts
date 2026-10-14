@@ -87,7 +87,6 @@ export type { EventLinks } from './models/EventLinks';
 export type { EventListResponse } from './models/EventListResponse';
 export type { EventResponse } from './models/EventResponse';
 export { EventSeverity } from './models/EventSeverity';
-export { ExecutionApprovalState } from './models/ExecutionApprovalState';
 export type { ExecutionListResponse } from './models/ExecutionListResponse';
 export type { ExecutionRecordLinks } from './models/ExecutionRecordLinks';
 export type { ExecutionResponse } from './models/ExecutionResponse';
@@ -100,6 +99,7 @@ export type { HeldExecutionDetailResponse } from './models/HeldExecutionDetailRe
 export type { HeldExecutionLinksResponse } from './models/HeldExecutionLinksResponse';
 export type { HeldExecutionListResponse } from './models/HeldExecutionListResponse';
 export type { HeldExecutionResponse } from './models/HeldExecutionResponse';
+export { HeldExecutionState } from './models/HeldExecutionState';
 export type { HeldRequestResponse } from './models/HeldRequestResponse';
 export { InstanceIdentityResponse } from './models/InstanceIdentityResponse';
 export type { IntegrationsConnectRequest } from './models/IntegrationsConnectRequest';

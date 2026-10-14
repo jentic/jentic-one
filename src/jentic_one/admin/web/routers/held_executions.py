@@ -15,13 +15,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
-from jentic_one.admin.services.schemas.execution_approvals import (
+from jentic_one.admin.services.held_execution_service import HeldExecutionService
+from jentic_one.admin.services.schemas.held_executions import (
     DecideInput,
-    ExecutionApprovalDetailView,
-    ExecutionApprovalView,
+    HeldExecutionDetailView,
+    HeldExecutionView,
 )
-from jentic_one.admin.web.deps import get_execution_approval_service
+from jentic_one.admin.web.deps import get_held_execution_service
 from jentic_one.admin.web.schemas.held_executions import (
     DecideHeldExecutionRequest,
     HeldExecutionDetailResponse,
@@ -32,7 +32,7 @@ from jentic_one.admin.web.schemas.held_executions import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.jobs.hold import PROBLEM_CONTENT_TYPE, review_page_path
-from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
+from jentic_one.shared.models.held_executions import HeldExecutionState
 from jentic_one.shared.models.jobs import JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
@@ -52,7 +52,7 @@ _HeldExecutionId = Annotated[
 _FINISHED = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
 
 
-def _fields(view: ExecutionApprovalView, request: Request) -> dict[str, object]:
+def _fields(view: HeldExecutionView, request: Request) -> dict[str, object]:
     base = f"/executions/holds/{view.id}"
     return {
         **view.model_dump(exclude={"job_id"}),
@@ -67,7 +67,7 @@ def _fields(view: ExecutionApprovalView, request: Request) -> dict[str, object]:
             ),
             withdraw=(
                 build_link(request, f"{base}:withdraw")
-                if view.state == ExecutionApprovalState.PENDING.value
+                if view.state == HeldExecutionState.PENDING.value
                 else None
             ),
             execution=(
@@ -79,13 +79,13 @@ def _fields(view: ExecutionApprovalView, request: Request) -> dict[str, object]:
     }
 
 
-def _response(view: ExecutionApprovalView, request: Request) -> HeldExecutionResponse:
+def _response(view: HeldExecutionView, request: Request) -> HeldExecutionResponse:
     """Project a held execution view to its API response."""
     return HeldExecutionResponse.model_validate(_fields(view, request))
 
 
 def _detail_response(
-    view: ExecutionApprovalDetailView, request: Request
+    view: HeldExecutionDetailView, request: Request
 ) -> HeldExecutionDetailResponse:
     """Project a held execution detail view to its API response."""
     held = view.request
@@ -105,8 +105,8 @@ def _detail_response(
 async def list_held_executions(
     request: Request,
     identity: Identity = get_current_identity(),
-    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
-    state: ExecutionApprovalState | None = Query(
+    svc: HeldExecutionService = Depends(get_held_execution_service),
+    state: HeldExecutionState | None = Query(
         default=None,
         description="Only return held executions in this decision state, e.g. `pending`.",
         openapi_examples=ex.example("pending"),
@@ -153,7 +153,7 @@ async def get_held_execution(
     held_execution_id: _HeldExecutionId,
     request: Request,
     identity: Identity = get_current_identity(),
-    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
+    svc: HeldExecutionService = Depends(get_held_execution_service),
 ) -> HeldExecutionDetailResponse:
     """One held execution: its decision, where the call stands, and the held request.
 
@@ -173,7 +173,7 @@ async def get_held_execution(
 async def get_held_execution_result(
     held_execution_id: _HeldExecutionId,
     identity: Identity = get_current_identity(),
-    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
+    svc: HeldExecutionService = Depends(get_held_execution_service),
 ) -> Response:
     """The finished call's outcome: the upstream response, or why it never ran.
 
@@ -200,7 +200,7 @@ async def decide_held_execution(
     body: DecideHeldExecutionRequest,
     request: Request,
     identity: Identity = get_current_identity(),
-    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
+    svc: HeldExecutionService = Depends(get_held_execution_service),
 ) -> HeldExecutionResponse:
     """Decide a pending held execution — the agent's owner or an ``org:admin`` only.
 
@@ -226,7 +226,7 @@ async def withdraw_held_execution(
     held_execution_id: _HeldExecutionId,
     request: Request,
     identity: Identity = get_current_identity(),
-    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
+    svc: HeldExecutionService = Depends(get_held_execution_service),
 ) -> HeldExecutionResponse:
     """Abandon a held execution — the agent that filed it only.
 

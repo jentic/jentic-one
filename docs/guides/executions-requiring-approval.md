@@ -68,7 +68,7 @@ made it.
 
 An identical call while one is pending joins the existing held execution (same
 `held_execution_id`) instead of filing another, even when the agent is at its cap. Each
-agent may have at most `execution_approvals.max_pending_per_agent` pending
+agent may have at most `held_executions.max_pending_per_agent` pending
 approvals; past that a new held call is refused with **403**
 `approval_pending_limit_reached`.
 
@@ -154,21 +154,21 @@ withdrawal and expiry is audit-logged and emits an event
 | `pending` | `held` | The broker files the hold |
 | `approved` | `held` → `queued` → `running` → `completed` / `failed` | A reviewer approves |
 | `denied` | `held` → `failed` | A reviewer denies |
-| `expired` | `held` → `failed` | Nobody decided within `execution_approvals.ttl_seconds` |
+| `expired` | `held` → `failed` | Nobody decided within `held_executions.ttl_seconds` |
 | `withdrawn` | `held` → `cancelled` | The agent withdraws |
 
 An approved call runs at most once: it gets a single attempt, and a run cut
 off mid-flight is failed (`approval_resume_failed`) rather than re-run. Its
-result stays readable for `execution_approvals.result_retention_seconds`. The
+result stays readable for `held_executions.result_retention_seconds`. The
 held request is stored encrypted until it runs.
 
 ## Configuration
 
 | Key | Default | Env var |
 | --- | --- | --- |
-| `execution_approvals.ttl_seconds` | `86400` (24 h) | `JENTIC__EXECUTION_APPROVALS__TTL_SECONDS` |
-| `execution_approvals.max_pending_per_agent` | `10` | `JENTIC__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT` |
-| `execution_approvals.result_retention_seconds` | `86400` (24 h) | `JENTIC__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS` |
+| `held_executions.ttl_seconds` | `86400` (24 h) | `JENTIC__HELD_EXECUTIONS__TTL_SECONDS` |
+| `held_executions.max_pending_per_agent` | `10` | `JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT` |
+| `held_executions.result_retention_seconds` | `86400` (24 h) | `JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS` |
 
 When the broker runs as its own service (without the admin app), set
 `broker.jobs_api_base_url` to the admin API and web UI origin. Otherwise the

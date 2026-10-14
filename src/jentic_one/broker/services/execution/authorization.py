@@ -250,7 +250,7 @@ class ExecutionAuthorization:
     raises ``ActionDeniedError`` inside ``authorize_execution``).
 
     ``matched_rule_id`` carries the primary key of the rule that fired when the
-    verdict is REQUIRE_APPROVAL — recorded on the ``execution_approvals`` row.
+    verdict is REQUIRE_APPROVAL — recorded on the ``held_executions`` row.
     """
 
     allowed_credential_ids: list[str]

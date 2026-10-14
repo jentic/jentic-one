@@ -1,6 +1,6 @@
 """Integration tests for require-approval holds: filing, deciding, withdrawing, expiring.
 
-Runs the shared hold path, ``ExecutionApprovalService``, ``JobService`` /
+Runs the shared hold path, ``HeldExecutionService``, ``JobService`` /
 ``JobResultService`` and the worker's expiry sweep against the real admin DB,
 and drives the admin routes through the real admin app (only the identity
 dependency is overridden).
@@ -24,7 +24,7 @@ from sqlalchemy import delete, select, update
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
@@ -35,15 +35,15 @@ from jentic_one.admin.repos import (
     UserRepository,
 )
 from jentic_one.admin.services.errors import (
-    ExecutionApprovalAlreadyDecidedError,
-    ExecutionApprovalForbiddenError,
-    ExecutionApprovalJobNotHeldError,
-    ExecutionApprovalNotFoundError,
+    HeldExecutionAlreadyDecidedError,
+    HeldExecutionForbiddenError,
+    HeldExecutionJobNotHeldError,
+    HeldExecutionNotFoundError,
     JobAwaitingApprovalError,
 )
-from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
+from jentic_one.admin.services.held_execution_service import HeldExecutionService
 from jentic_one.admin.services.job_service import JobService
-from jentic_one.admin.services.schemas.execution_approvals import DecideInput
+from jentic_one.admin.services.schemas.held_executions import DecideInput
 from jentic_one.admin.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import WorkerConfig
@@ -58,7 +58,7 @@ from jentic_one.shared.jobs.hold import (
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState, JobKind, JobStatus
 from jentic_one.shared.models.events import EventType
-from jentic_one.shared.models.execution_approvals import ApprovalDecision
+from jentic_one.shared.models.held_executions import ApprovalDecision
 from jentic_one.shared.web.deps import resolve_identity
 
 pytestmark = pytest.mark.integration
@@ -82,7 +82,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
 
     async def _clean() -> None:
         async with ctx.admin_db.transaction() as session:
-            await session.execute(delete(ExecutionApproval))
+            await session.execute(delete(HeldExecution))
             await session.execute(delete(JobResult))
             await session.execute(delete(Job))
             await session.execute(delete(Event).where(Event.type.like("execution.approval_%")))
@@ -178,9 +178,9 @@ async def _job(ctx: Context, job_id: str) -> Job:
         return job
 
 
-async def _approval(ctx: Context, approval_id: str) -> ExecutionApproval:
+async def _approval(ctx: Context, approval_id: str) -> HeldExecution:
     async with ctx.admin_db.session() as session:
-        row = await session.get(ExecutionApproval, approval_id)
+        row = await session.get(HeldExecution, approval_id)
         assert row is not None
         return row
 
@@ -197,7 +197,7 @@ async def _client(ctx: Context, identity: Identity | None) -> AsyncIterator[Asyn
 
 async def _result_body(ctx: Context, approval_id: str, identity: Identity) -> dict[str, Any]:
     """A held execution's result, read through the held execution (never by job id)."""
-    view = await ExecutionApprovalService(ctx).get_result(approval_id, identity=identity)
+    view = await HeldExecutionService(ctx).get_result(approval_id, identity=identity)
     return view.body
 
 
@@ -239,7 +239,7 @@ async def test_concurrent_identical_holds_never_duplicate(
     results = await asyncio.gather(*(_hold(ctx, actors.agent) for _ in range(4)))
     assert len({r.job_id for r in results}) == 1
     async with ctx.admin_db.session() as session:
-        count = len((await session.execute(select(ExecutionApproval))).scalars().all())
+        count = len((await session.execute(select(HeldExecution))).scalars().all())
     assert count == 1
 
 
@@ -253,7 +253,7 @@ async def test_pending_cap_denies_further_holds_and_counts_only_pending(
         await _hold(ctx, actors.agent, path="/v1/c", max_pending=2)
     assert (exc.value.pending, exc.value.limit) == (2, 2)
 
-    await ExecutionApprovalService(ctx).decide(
+    await HeldExecutionService(ctx).decide(
         first.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
     )
     third = await _hold(ctx, actors.agent, path="/v1/c", max_pending=2)
@@ -277,9 +277,9 @@ async def test_concurrent_filings_never_exceed_the_pending_cap(
         pending = (
             (
                 await session.execute(
-                    select(ExecutionApproval).where(
-                        ExecutionApproval.agent_id == actors.agent.sub,
-                        ExecutionApproval.state == "pending",
+                    select(HeldExecution).where(
+                        HeldExecution.agent_id == actors.agent.sub,
+                        HeldExecution.state == "pending",
                     )
                 )
             )
@@ -302,8 +302,8 @@ async def test_a_decision_whose_job_is_no_longer_held_is_rolled_back(
             update(Job).where(Job.id == hold.job_id).values(status=JobStatus.CANCELLED)
         )
 
-    with pytest.raises(ExecutionApprovalJobNotHeldError):
-        await ExecutionApprovalService(ctx).decide(
+    with pytest.raises(HeldExecutionJobNotHeldError):
+        await HeldExecutionService(ctx).decide(
             hold.approval_id, DecideInput(decision=decision), identity=actors.owner
         )
     approval = await _approval(ctx, hold.approval_id)
@@ -336,8 +336,8 @@ async def test_a_withdrawal_whose_job_is_no_longer_held_is_rolled_back(
         await session.execute(
             update(Job).where(Job.id == hold.job_id).values(status=JobStatus.FAILED)
         )
-    with pytest.raises(ExecutionApprovalJobNotHeldError):
-        await ExecutionApprovalService(ctx).withdraw(hold.approval_id, identity=actors.agent)
+    with pytest.raises(HeldExecutionJobNotHeldError):
+        await HeldExecutionService(ctx).withdraw(hold.approval_id, identity=actors.agent)
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
 
@@ -346,7 +346,7 @@ async def test_approve_releases_the_job_once_with_audit_and_event(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    view = await ExecutionApprovalService(ctx).decide(
+    view = await HeldExecutionService(ctx).decide(
         hold.approval_id,
         DecideInput(decision=ApprovalDecision.APPROVE, reason="ok"),
         identity=actors.owner,
@@ -375,7 +375,7 @@ async def test_deny_fails_the_job_with_a_readable_permission_denied_result(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    await ExecutionApprovalService(ctx).decide(
+    await HeldExecutionService(ctx).decide(
         hold.approval_id,
         DecideInput(decision=ApprovalDecision.DENY, reason="wrong account"),
         identity=actors.admin,
@@ -394,7 +394,7 @@ async def test_first_decision_wins_and_later_decides_conflict(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    svc = ExecutionApprovalService(ctx)
+    svc = HeldExecutionService(ctx)
     outcomes = await asyncio.gather(
         svc.decide(
             hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
@@ -408,12 +408,12 @@ async def test_first_decision_wins_and_later_decides_conflict(
     losses = [o for o in outcomes if isinstance(o, BaseException)]
     assert len(wins) == 1
     assert len(losses) == 1
-    assert isinstance(losses[0], ExecutionApprovalAlreadyDecidedError)
+    assert isinstance(losses[0], HeldExecutionAlreadyDecidedError)
     assert f"already {wins[0].state}" in str(losses[0])
     expected_job = JobStatus.QUEUED if wins[0].state == "approved" else JobStatus.FAILED
     assert (await _job(ctx, hold.job_id)).status == expected_job
 
-    with pytest.raises(ExecutionApprovalAlreadyDecidedError):
+    with pytest.raises(HeldExecutionAlreadyDecidedError):
         await svc.decide(
             hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.admin
         )
@@ -426,12 +426,12 @@ async def test_an_expired_but_unswept_approval_cannot_be_approved(
     hold = await _hold(ctx, actors.agent)
     async with ctx.admin_db.transaction() as session:
         await session.execute(
-            update(ExecutionApproval)
-            .where(ExecutionApproval.id == hold.approval_id)
+            update(HeldExecution)
+            .where(HeldExecution.id == hold.approval_id)
             .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
         )
-    with pytest.raises(ExecutionApprovalAlreadyDecidedError, match="expired"):
-        await ExecutionApprovalService(ctx).decide(
+    with pytest.raises(HeldExecutionAlreadyDecidedError, match="expired"):
+        await HeldExecutionService(ctx).decide(
             hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
         )
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
@@ -442,13 +442,13 @@ async def test_only_the_owner_or_an_admin_may_review(
 ) -> None:
     """Outsiders cannot see or decide; agents are refused; ownerless agents are admin-only."""
     ctx = integration_context
-    svc = ExecutionApprovalService(ctx)
+    svc = HeldExecutionService(ctx)
     hold = await _hold(ctx, actors.agent, path="/v1/owned")
     orphan_hold = await _hold(ctx, actors.ownerless_agent, path="/v1/orphan")
 
-    with pytest.raises(ExecutionApprovalNotFoundError):
+    with pytest.raises(HeldExecutionNotFoundError):
         await svc.get(hold.approval_id, identity=actors.outsider)
-    with pytest.raises(ExecutionApprovalNotFoundError):
+    with pytest.raises(HeldExecutionNotFoundError):
         await svc.decide(
             hold.approval_id,
             DecideInput(decision=ApprovalDecision.APPROVE),
@@ -458,11 +458,11 @@ async def test_only_the_owner_or_an_admin_may_review(
         sub=actors.agent.sub, permissions=["org:admin"], actor_type=ActorType.AGENT
     )
     for agent in (actors.agent, agent_with_admin):
-        with pytest.raises(ExecutionApprovalForbiddenError):
+        with pytest.raises(HeldExecutionForbiddenError):
             await svc.decide(
                 hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=agent
             )
-    with pytest.raises(ExecutionApprovalNotFoundError):
+    with pytest.raises(HeldExecutionNotFoundError):
         await svc.decide(
             orphan_hold.approval_id,
             DecideInput(decision=ApprovalDecision.APPROVE),
@@ -492,7 +492,7 @@ async def test_detail_shows_the_agent_owner_and_the_held_request(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    detail = await ExecutionApprovalService(ctx).get(hold.approval_id, identity=actors.owner)
+    detail = await HeldExecutionService(ctx).get(hold.approval_id, identity=actors.owner)
     assert detail.agent_name == "held-agent"
     assert detail.agent_owner_id == actors.owner.sub
     assert detail.matched_rule_id == "apr_held"
@@ -546,7 +546,7 @@ async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_eve
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    view = await ExecutionApprovalService(ctx).withdraw(hold.approval_id, identity=actors.agent)
+    view = await HeldExecutionService(ctx).withdraw(hold.approval_id, identity=actors.agent)
     assert view.state == "withdrawn"
     assert view.decided_by == actors.agent.sub
     assert view.decided_at is not None
@@ -569,8 +569,8 @@ async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_eve
     (event,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_WITHDRAWN]
     assert event.data["held_execution_id"] == hold.approval_id
     assert "body" not in json.dumps(event.data)
-    with pytest.raises(ExecutionApprovalAlreadyDecidedError):
-        await ExecutionApprovalService(ctx).decide(
+    with pytest.raises(HeldExecutionAlreadyDecidedError):
+        await HeldExecutionService(ctx).decide(
             hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
         )
 
@@ -580,11 +580,11 @@ async def test_only_the_filing_identity_may_withdraw(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    svc = ExecutionApprovalService(ctx)
+    svc = HeldExecutionService(ctx)
     for caller in (actors.owner, actors.admin, actors.outsider, actors.ownerless_agent):
-        with pytest.raises(ExecutionApprovalNotFoundError):
+        with pytest.raises(HeldExecutionNotFoundError):
             await svc.withdraw(hold.approval_id, identity=caller)
-    with pytest.raises(ExecutionApprovalNotFoundError):
+    with pytest.raises(HeldExecutionNotFoundError):
         await svc.withdraw("held_missing", identity=actors.agent)
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
@@ -594,7 +594,7 @@ async def test_withdraw_conflicts_once_the_approval_is_settled(
     integration_context: Context, actors: _Actors
 ) -> None:
     ctx = integration_context
-    svc = ExecutionApprovalService(ctx)
+    svc = HeldExecutionService(ctx)
     denied = await _hold(ctx, actors.agent, path="/v1/denied")
     await svc.decide(
         denied.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
@@ -607,7 +607,7 @@ async def test_withdraw_conflicts_once_the_approval_is_settled(
     await svc.withdraw(withdrawn.approval_id, identity=actors.agent)
 
     for hold, state in ((denied, "denied"), (approved, "approved"), (withdrawn, "withdrawn")):
-        with pytest.raises(ExecutionApprovalAlreadyDecidedError, match=f"already {state}"):
+        with pytest.raises(HeldExecutionAlreadyDecidedError, match=f"already {state}"):
             await svc.withdraw(hold.approval_id, identity=actors.agent)
     assert (await _job(ctx, denied.job_id)).status == JobStatus.FAILED
     assert (await _job(ctx, approved.job_id)).status == JobStatus.QUEUED
@@ -619,7 +619,7 @@ async def test_concurrent_decide_and_withdraw_settle_exactly_once(
     ctx = integration_context
     for decision in (ApprovalDecision.APPROVE, ApprovalDecision.DENY):
         hold = await _hold(ctx, actors.agent, path=f"/v1/race/{decision.value}")
-        svc = ExecutionApprovalService(ctx)
+        svc = HeldExecutionService(ctx)
         outcomes = await asyncio.gather(
             svc.decide(hold.approval_id, DecideInput(decision=decision), identity=actors.owner),
             svc.withdraw(hold.approval_id, identity=actors.agent),
@@ -629,7 +629,7 @@ async def test_concurrent_decide_and_withdraw_settle_exactly_once(
         losses = [o for o in outcomes if isinstance(o, BaseException)]
         assert len(wins) == 1
         assert len(losses) == 1
-        assert isinstance(losses[0], ExecutionApprovalAlreadyDecidedError)
+        assert isinstance(losses[0], HeldExecutionAlreadyDecidedError)
         state = wins[0].state
         assert f"already {state}" in str(losses[0])
         assert (await _approval(ctx, hold.approval_id)).state == state
@@ -650,8 +650,8 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     live = await _hold(ctx, actors.agent, path="/v1/live")
     async with ctx.admin_db.transaction() as session:
         await session.execute(
-            update(ExecutionApproval)
-            .where(ExecutionApproval.id == lapsed.approval_id)
+            update(HeldExecution)
+            .where(HeldExecution.id == lapsed.approval_id)
             .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
         )
 
@@ -761,7 +761,7 @@ async def test_withdraw_route_answers_409_once_settled(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    await ExecutionApprovalService(ctx).decide(
+    await HeldExecutionService(ctx).decide(
         hold.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
     )
     async with _client(ctx, actors.agent) as client:
@@ -921,7 +921,7 @@ async def test_an_agent_with_no_permissions_follows_its_own_held_call(
     assert early.status_code == 409
     assert early.json()["type"].endswith("held_execution_result_not_ready")
 
-    await ExecutionApprovalService(ctx).decide(
+    await HeldExecutionService(ctx).decide(
         hold.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
     )
     async with _client(ctx, actors.agent) as client:
@@ -941,7 +941,7 @@ async def test_the_result_route_returns_the_upstream_response_once_run(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    await ExecutionApprovalService(ctx).decide(
+    await HeldExecutionService(ctx).decide(
         hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
     )
     async with ctx.admin_db.transaction() as session:
@@ -991,8 +991,8 @@ async def test_a_held_execution_never_reaches_a_job_that_is_not_its_held_executi
             created_by=actors.agent.sub,
         )
         await session.execute(
-            update(ExecutionApproval)
-            .where(ExecutionApproval.id == hold.approval_id)
+            update(HeldExecution)
+            .where(HeldExecution.id == hold.approval_id)
             .values(job_id=foreign.id)
         )
     for caller in (actors.agent, actors.owner, actors.admin):

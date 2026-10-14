@@ -1,4 +1,4 @@
-"""Integration tests for the ExecutionApproval ORM model against a real database."""
+"""Integration tests for the HeldExecution ORM model against a real database."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import JobKind, JobStatus
@@ -19,14 +19,14 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture()
-async def clean_execution_approvals(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+async def clean_held_executions(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """Empty ``jobs`` (approvals cascade with their job) before and after each test."""
     async with admin_db.transaction() as session:
-        await session.execute(delete(ExecutionApproval))
+        await session.execute(delete(HeldExecution))
         await session.execute(delete(Job))
     yield
     async with admin_db.transaction() as session:
-        await session.execute(delete(ExecutionApproval))
+        await session.execute(delete(HeldExecution))
         await session.execute(delete(Job))
 
 
@@ -38,7 +38,7 @@ async def _held_job(admin_db: DatabaseSession) -> str:
         return str(job.id)
 
 
-def _approval(job_id: str, **overrides: Any) -> ExecutionApproval:
+def _approval(job_id: str, **overrides: Any) -> HeldExecution:
     fields: dict[str, Any] = {
         "job_id": job_id,
         "agent_id": "agnt_model",
@@ -52,11 +52,11 @@ def _approval(job_id: str, **overrides: Any) -> ExecutionApproval:
         "expires_at": datetime.now(UTC) + timedelta(hours=1),
     }
     fields.update(overrides)
-    return ExecutionApproval(**fields)
+    return HeldExecution(**fields)
 
 
-async def test_execution_approval_round_trip(
-    admin_db: DatabaseSession, clean_execution_approvals: None
+async def test_held_execution_round_trip(
+    admin_db: DatabaseSession, clean_held_executions: None
 ) -> None:
     """A row inserts with a ksuid id and the pending default, and reads back intact."""
     job_id = await _held_job(admin_db)
@@ -68,9 +68,7 @@ async def test_execution_approval_round_trip(
 
     async with admin_db.session() as session:
         loaded = (
-            await session.execute(
-                select(ExecutionApproval).where(ExecutionApproval.id == approval_id)
-            )
+            await session.execute(select(HeldExecution).where(HeldExecution.id == approval_id))
         ).scalar_one()
     assert loaded.id.startswith("held_")
     assert loaded.state == "pending"
@@ -83,7 +81,7 @@ async def test_execution_approval_round_trip(
 
 
 async def test_only_one_pending_row_per_fingerprint(
-    admin_db: DatabaseSession, clean_execution_approvals: None
+    admin_db: DatabaseSession, clean_held_executions: None
 ) -> None:
     """The partial unique index refuses a second pending row for one fingerprint
     but admits a new pending row once the first is settled."""
@@ -99,20 +97,18 @@ async def test_only_one_pending_row_per_fingerprint(
 
     async with admin_db.transaction() as session:
         row = (
-            await session.execute(
-                select(ExecutionApproval).where(ExecutionApproval.job_id == first_job)
-            )
+            await session.execute(select(HeldExecution).where(HeldExecution.job_id == first_job))
         ).scalar_one()
         row.state = "denied"
     async with admin_db.transaction() as session:
         session.add(_approval(second_job))
     async with admin_db.session() as session:
-        states = sorted((await session.execute(select(ExecutionApproval.state))).scalars().all())
+        states = sorted((await session.execute(select(HeldExecution.state))).scalars().all())
     assert states == ["denied", "pending"]
 
 
 async def test_approval_is_deleted_with_its_job(
-    admin_db: DatabaseSession, clean_execution_approvals: None
+    admin_db: DatabaseSession, clean_held_executions: None
 ) -> None:
     """``job_id`` is a cascading foreign key to ``jobs.id``."""
     job_id = await _held_job(admin_db)
@@ -121,12 +117,12 @@ async def test_approval_is_deleted_with_its_job(
     async with admin_db.transaction() as session:
         await session.execute(delete(Job).where(Job.id == job_id))
     async with admin_db.session() as session:
-        remaining = (await session.execute(select(ExecutionApproval))).scalars().all()
+        remaining = (await session.execute(select(HeldExecution))).scalars().all()
     assert remaining == []
 
 
 async def test_job_id_must_reference_a_job(
-    admin_db: DatabaseSession, clean_execution_approvals: None
+    admin_db: DatabaseSession, clean_held_executions: None
 ) -> None:
     with pytest.raises(IntegrityError):
         async with admin_db.session() as session:

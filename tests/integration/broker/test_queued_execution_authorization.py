@@ -21,7 +21,7 @@ from sqlalchemy import delete, select, update
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
@@ -583,7 +583,7 @@ async def _job_with_approval(ctx: Context, agent_id: str, state: str | None) -> 
         await session.flush()
         if state is not None:
             session.add(
-                ExecutionApproval(
+                HeldExecution(
                     job_id=job.id,
                     agent_id=agent_id,
                     credential_id="cred_x",

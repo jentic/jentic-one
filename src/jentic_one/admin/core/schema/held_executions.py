@@ -1,4 +1,4 @@
-"""ExecutionApproval ORM model — the human-approval record for a held execution job.
+"""HeldExecution ORM model — the human-approval record for a held execution job.
 
 One row per held execution job, created in the same transaction as the job.
 Updated by the reviewer decision (approve / deny), the expiry sweep, or the
@@ -19,7 +19,7 @@ from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.types import UTCDateTime
 
 
-class ExecutionApproval(AuditableMixin, AdminBase):
+class HeldExecution(AuditableMixin, AdminBase):
     """The approval state of one held execution job.
 
     ``state`` lifecycle: ``pending`` → ``approved`` | ``denied`` | ``expired``
@@ -32,15 +32,15 @@ class ExecutionApproval(AuditableMixin, AdminBase):
     status and ``job_results`` row, not duplicated here.
     """
 
-    __tablename__ = "execution_approvals"
+    __tablename__ = "held_executions"
     __table_args__ = (
-        Index("ix_execution_approvals_agent_state", "agent_id", "state"),
-        Index("ix_execution_approvals_state_expires", "state", "expires_at"),
+        Index("ix_held_executions_agent_state", "agent_id", "state"),
+        Index("ix_held_executions_state_expires", "state", "expires_at"),
         # At most one pending row per fingerprint: an identical retry joins the
         # existing hold instead of filing a second one. Settled rows drop out
         # of the index so the same request can be filed again later.
         Index(
-            "uq_execution_approvals_pending_fingerprint",
+            "uq_held_executions_pending_fingerprint",
             "request_fingerprint",
             unique=True,
             postgresql_where=text("state = 'pending'"),

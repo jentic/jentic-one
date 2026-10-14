@@ -23,26 +23,26 @@ from typing import Any
 
 import structlog
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import AgentRepository, AuditRepository, JobResultRepository
-from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
+from jentic_one.admin.repos.held_execution_repo import HeldExecutionRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import (
-    ExecutionApprovalAlreadyDecidedError,
-    ExecutionApprovalForbiddenError,
-    ExecutionApprovalJobNotHeldError,
-    ExecutionApprovalNotFoundError,
+    HeldExecutionAlreadyDecidedError,
+    HeldExecutionForbiddenError,
+    HeldExecutionJobNotHeldError,
+    HeldExecutionNotFoundError,
     HeldExecutionResultExpiredError,
     HeldExecutionResultNotReadyError,
 )
 from jentic_one.admin.services.job_result_service import JobResultService
-from jentic_one.admin.services.schemas.execution_approvals import (
+from jentic_one.admin.services.schemas.held_executions import (
     DecideInput,
-    ExecutionApprovalDetailView,
-    ExecutionApprovalView,
+    HeldExecutionDetailView,
+    HeldExecutionView,
     HeldRequestView,
 )
 from jentic_one.admin.services.schemas.jobs import JobResultView
@@ -57,7 +57,7 @@ from jentic_one.shared.jobs.hold import (
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.models.execution_approvals import ApprovalDecision, ExecutionApprovalState
+from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
 logger = structlog.get_logger(__name__)
@@ -80,7 +80,7 @@ def _execution_status(job_status: str | None) -> str | None:
     return job_status
 
 
-class ExecutionApprovalService:
+class HeldExecutionService:
     """Read and decide execution approvals."""
 
     def __init__(self, ctx: Context) -> None:
@@ -90,18 +90,18 @@ class ExecutionApprovalService:
         self,
         *,
         identity: Identity,
-        state: ExecutionApprovalState | None = None,
+        state: HeldExecutionState | None = None,
         agent_id: str | None = None,
         cursor: str | None = None,
         limit: int = 25,
-    ) -> Page[ExecutionApprovalView]:
+    ) -> Page[HeldExecutionView]:
         cursor_dt: datetime | None = None
         cursor_id: str | None = None
         if cursor is not None:
             cursor_dt, cursor_id = decode_cursor(cursor)
-        filters = build_access_filters(identity, ExecutionApproval)
+        filters = build_access_filters(identity, HeldExecution)
         async with self._ctx.admin_db.session() as session:
-            rows = await ExecutionApprovalRepository.list_all(
+            rows = await HeldExecutionRepository.list_all(
                 session,
                 state=state.value if state is not None else None,
                 agent_id=agent_id,
@@ -117,7 +117,7 @@ class ExecutionApprovalService:
             )
         has_more = len(rows) > limit
         data = [
-            ExecutionApprovalView.model_validate(r).model_copy(
+            HeldExecutionView.model_validate(r).model_copy(
                 update={"execution_status": _execution_status(statuses.get(r.job_id))}
             )
             for r in rows[:limit]
@@ -125,18 +125,18 @@ class ExecutionApprovalService:
         next_cursor = encode_cursor(data[-1].created_at, data[-1].id) if has_more else None
         return Page(data=data, has_more=has_more, next_cursor=next_cursor)
 
-    async def get(self, approval_id: str, *, identity: Identity) -> ExecutionApprovalDetailView:
-        filters = build_access_filters(identity, ExecutionApproval)
+    async def get(self, approval_id: str, *, identity: Identity) -> HeldExecutionDetailView:
+        filters = build_access_filters(identity, HeldExecution)
         async with self._ctx.admin_db.session() as session:
-            row = await ExecutionApprovalRepository.get_by_id(session, approval_id, filters=filters)
+            row = await HeldExecutionRepository.get_by_id(session, approval_id, filters=filters)
             if row is None:
-                raise ExecutionApprovalNotFoundError(approval_id)
+                raise HeldExecutionNotFoundError(approval_id)
             agent = await AgentRepository.get_by_id(session, row.agent_id)
             job = await JobRepository.get_held_execution(
                 session, row.job_id, filters=build_access_filters(identity, Job)
             )
-        view = ExecutionApprovalView.model_validate(row)
-        return ExecutionApprovalDetailView(
+        view = HeldExecutionView.model_validate(row)
+        return HeldExecutionDetailView(
             **view.model_dump(exclude={"execution_status"}),
             execution_status=_execution_status(str(job.status) if job is not None else None),
             agent_name=agent.name if agent is not None else None,
@@ -151,16 +151,16 @@ class ExecutionApprovalService:
         the visible approval names (``JobRepository.get_held_execution``), and
         its result row is read only after that lookup succeeds.
         """
-        filters = build_access_filters(identity, ExecutionApproval)
+        filters = build_access_filters(identity, HeldExecution)
         async with self._ctx.admin_db.session() as session:
-            row = await ExecutionApprovalRepository.get_by_id(session, approval_id, filters=filters)
+            row = await HeldExecutionRepository.get_by_id(session, approval_id, filters=filters)
             if row is None:
-                raise ExecutionApprovalNotFoundError(approval_id)
+                raise HeldExecutionNotFoundError(approval_id)
             job = await JobRepository.get_held_execution(
                 session, row.job_id, filters=build_access_filters(identity, Job)
             )
             if job is None:
-                raise ExecutionApprovalNotFoundError(approval_id)
+                raise HeldExecutionNotFoundError(approval_id)
             status = _execution_status(str(job.status)) or ""
             if status not in _RESULT_STATUSES:
                 raise HeldExecutionResultNotReadyError(approval_id, status)
@@ -172,7 +172,7 @@ class ExecutionApprovalService:
                 raise HeldExecutionResultExpiredError(approval_id)
             if (
                 result.available_until is not None
-                and result.available_until < await ExecutionApprovalRepository.now(session)
+                and result.available_until < await HeldExecutionRepository.now(session)
             ):
                 raise HeldExecutionResultExpiredError(approval_id)
         return JobResultService.to_view(result)
@@ -202,30 +202,28 @@ class ExecutionApprovalService:
 
     async def decide(
         self, approval_id: str, body: DecideInput, *, identity: Identity
-    ) -> ExecutionApprovalView:
+    ) -> HeldExecutionView:
         """Approve or deny a pending approval — compare-and-set, first reviewer wins.
 
         In one transaction: approve moves the held job to ``queued``; deny fails
         it with a permission-denied problem as its result. A job that is no
-        longer ``held`` raises ``ExecutionApprovalJobNotHeldError`` and rolls
+        longer ``held`` raises ``HeldExecutionJobNotHeldError`` and rolls
         the decision back, so the approval stays ``pending``. The decision is
         audit-logged and emits ``execution.approval_decided``.
         """
         if identity.actor_type == ActorType.AGENT:
-            raise ExecutionApprovalForbiddenError(
+            raise HeldExecutionForbiddenError(
                 f"Agent '{identity.sub}' cannot decide execution approvals"
             )
         approve = body.decision == ApprovalDecision.APPROVE
-        new_state = ExecutionApprovalState.APPROVED if approve else ExecutionApprovalState.DENIED
-        filters = build_access_filters(identity, ExecutionApproval)
+        new_state = HeldExecutionState.APPROVED if approve else HeldExecutionState.DENIED
+        filters = build_access_filters(identity, HeldExecution)
         async with self._ctx.admin_db.transaction() as session:
-            now = await ExecutionApprovalRepository.now(session)
-            visible = await ExecutionApprovalRepository.get_by_id(
-                session, approval_id, filters=filters
-            )
+            now = await HeldExecutionRepository.now(session)
+            visible = await HeldExecutionRepository.get_by_id(session, approval_id, filters=filters)
             if visible is None:
-                raise ExecutionApprovalNotFoundError(approval_id)
-            updated = await ExecutionApprovalRepository.decide(
+                raise HeldExecutionNotFoundError(approval_id)
+            updated = await HeldExecutionRepository.decide(
                 session,
                 approval_id,
                 new_state=new_state.value,
@@ -237,12 +235,11 @@ class ExecutionApprovalService:
                 # Read the state from the database: the row loaded above is
                 # cached in this session and predates a concurrent settle.
                 state = (
-                    await ExecutionApprovalRepository.get_state(session, approval_id)
-                    or visible.state
+                    await HeldExecutionRepository.get_state(session, approval_id) or visible.state
                 )
-                if state == ExecutionApprovalState.PENDING:
-                    state = ExecutionApprovalState.EXPIRED.value
-                raise ExecutionApprovalAlreadyDecidedError(
+                if state == HeldExecutionState.PENDING:
+                    state = HeldExecutionState.EXPIRED.value
+                raise HeldExecutionAlreadyDecidedError(
                     f"Execution approval '{approval_id}' is already {state}"
                 )
             moved = await JobRepository.transition(
@@ -253,7 +250,7 @@ class ExecutionApprovalService:
             )
             if not moved:
                 # Raising rolls the decision back with the transaction.
-                raise ExecutionApprovalJobNotHeldError(approval_id, updated.job_id)
+                raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
             if not approve:
                 await JobRepository.update(session, updated.job_id, error="approval denied")
                 await JobResultRepository.create(
@@ -267,11 +264,11 @@ class ExecutionApprovalService:
             await AuditRepository.record(
                 session,
                 action=AuditAction.APPROVE if approve else AuditAction.DENY,
-                target_type=AuditTargetType.EXECUTION_APPROVAL,
+                target_type=AuditTargetType.HELD_EXECUTION,
                 target_id=approval_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                before={"state": ExecutionApprovalState.PENDING.value},
+                before={"state": HeldExecutionState.PENDING.value},
                 after={"state": new_state.value},
                 reason=body.reason,
             )
@@ -292,7 +289,7 @@ class ExecutionApprovalService:
                     "path": updated.path,
                 },
             )
-            view = ExecutionApprovalView.model_validate(updated).model_copy(
+            view = HeldExecutionView.model_validate(updated).model_copy(
                 update={
                     "execution_status": (
                         JobStatus.QUEUED.value if approve else JobStatus.FAILED.value
@@ -300,34 +297,34 @@ class ExecutionApprovalService:
                 }
             )
         logger.info(
-            "execution_approval_decided",
+            "held_execution_decided",
             approval_id=approval_id,
             decision=body.decision.value,
             actor_id=identity.sub,
         )
         return view
 
-    async def withdraw(self, approval_id: str, *, identity: Identity) -> ExecutionApprovalView:
+    async def withdraw(self, approval_id: str, *, identity: Identity) -> HeldExecutionView:
         """Withdraw a pending approval — only the identity that filed the hold.
 
         A compare-and-set on ``pending``: in one transaction the approval
         becomes ``withdrawn`` and its held job ``cancelled``, with no result
-        written. Any other caller gets ``ExecutionApprovalNotFoundError``, as
+        written. Any other caller gets ``HeldExecutionNotFoundError``, as
         if the row did not exist; an approval that is no longer pending gets
-        ``ExecutionApprovalAlreadyDecidedError``. The withdrawal is
+        ``HeldExecutionAlreadyDecidedError``. The withdrawal is
         audit-logged and emits ``execution.approval_withdrawn``.
         """
         async with self._ctx.admin_db.transaction() as session:
-            now = await ExecutionApprovalRepository.now(session)
-            row = await ExecutionApprovalRepository.get_by_id(session, approval_id)
+            now = await HeldExecutionRepository.now(session)
+            row = await HeldExecutionRepository.get_by_id(session, approval_id)
             if row is None or row.created_by != identity.sub:
-                raise ExecutionApprovalNotFoundError(approval_id)
-            updated = await ExecutionApprovalRepository.withdraw(
+                raise HeldExecutionNotFoundError(approval_id)
+            updated = await HeldExecutionRepository.withdraw(
                 session, approval_id, created_by=identity.sub, now=now
             )
             if updated is None:
-                state = await ExecutionApprovalRepository.get_state(session, approval_id)
-                raise ExecutionApprovalAlreadyDecidedError(
+                state = await HeldExecutionRepository.get_state(session, approval_id)
+                raise HeldExecutionAlreadyDecidedError(
                     f"Execution approval '{approval_id}' is already {state or row.state}"
                 )
             moved = await JobRepository.transition(
@@ -337,16 +334,16 @@ class ExecutionApprovalService:
                 to_status=JobStatus.CANCELLED,
             )
             if not moved:
-                raise ExecutionApprovalJobNotHeldError(approval_id, updated.job_id)
+                raise HeldExecutionJobNotHeldError(approval_id, updated.job_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.WITHDRAW,
-                target_type=AuditTargetType.EXECUTION_APPROVAL,
+                target_type=AuditTargetType.HELD_EXECUTION,
                 target_id=approval_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                before={"state": ExecutionApprovalState.PENDING.value},
-                after={"state": ExecutionApprovalState.WITHDRAWN.value},
+                before={"state": HeldExecutionState.PENDING.value},
+                after={"state": HeldExecutionState.WITHDRAWN.value},
             )
             await emit_event_best_effort(
                 session,
@@ -364,11 +361,11 @@ class ExecutionApprovalService:
                     "path": updated.path,
                 },
             )
-            view = ExecutionApprovalView.model_validate(updated).model_copy(
+            view = HeldExecutionView.model_validate(updated).model_copy(
                 update={"execution_status": JobStatus.CANCELLED.value}
             )
         logger.info(
-            "execution_approval_withdrawn",
+            "held_execution_withdrawn",
             approval_id=approval_id,
             job_id=view.job_id,
             actor_id=identity.sub,

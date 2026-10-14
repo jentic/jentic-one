@@ -552,8 +552,8 @@ type ConfigSchemaJson struct {
 	// Entitlement corresponds to the JSON schema field "entitlement".
 	Entitlement *EntitlementConfig `json:"entitlement,omitempty,omitzero" yaml:"entitlement,omitempty" mapstructure:"entitlement,omitempty"`
 
-	// ExecutionApprovals corresponds to the JSON schema field "execution_approvals".
-	ExecutionApprovals *ExecutionApprovalsConfig `json:"execution_approvals,omitempty,omitzero" yaml:"execution_approvals,omitempty" mapstructure:"execution_approvals,omitempty"`
+	// HeldExecutions corresponds to the JSON schema field "held_executions".
+	HeldExecutions *HeldExecutionsConfig `json:"held_executions,omitempty,omitzero" yaml:"held_executions,omitempty" mapstructure:"held_executions,omitempty"`
 
 	// Ingest corresponds to the JSON schema field "ingest".
 	Ingest *IngestConfig `json:"ingest,omitempty,omitzero" yaml:"ingest,omitempty" mapstructure:"ingest,omitempty"`
@@ -1188,7 +1188,7 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 // An execute call matching a permission rule with “effect="require-approval"“
 // is enqueued as a “held“ job with a “pending“ approval; a reviewer (the
 // agent's owner or an “org:admin“) approves or denies it, or it expires.
-type ExecutionApprovalsConfig struct {
+type HeldExecutionsConfig struct {
 	// Maximum pending approvals per agent. An execute call that would file another
 	// hold beyond this is denied with the ``approval_pending_limit_reached`` problem
 	// type.
@@ -1204,12 +1204,12 @@ type ExecutionApprovalsConfig struct {
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
+func (j *HeldExecutionsConfig) UnmarshalJSON(value []byte) error {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return err
 	}
-	type Plain ExecutionApprovalsConfig
+	type Plain HeldExecutionsConfig
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
@@ -1232,7 +1232,7 @@ func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
 	if 0 >= plain.TtlSeconds {
 		return fmt.Errorf("field %s: must be > %v", "ttl_seconds", 0)
 	}
-	*j = ExecutionApprovalsConfig(plain)
+	*j = HeldExecutionsConfig(plain)
 	return nil
 }
 

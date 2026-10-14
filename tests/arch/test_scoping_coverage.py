@@ -15,7 +15,7 @@ import ast
 
 import pytest
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.scoping.filters import (
     _OWNED_AGENT_ACTOR_MODELS as _ADMIN_OWNED_AGENT_ACTOR_MODELS,
@@ -133,9 +133,9 @@ def test_admin_owned_agent_actor_models_are_owner_scoped() -> None:
 
 
 @pytest.mark.arch
-def test_execution_approvals_are_scoped_like_their_jobs() -> None:
+def test_held_executions_are_scoped_like_their_jobs() -> None:
     """A held call's approval is as visible as its job: to the filing agent, the
     agent's owner and org:admin. It names the held request (method, path,
     credential), so it must never be readable more widely than the job."""
-    assert _ADMIN_OWNER_MODELS[ExecutionApproval] is ExecutionApproval.agent_id
-    assert {Job, ExecutionApproval} <= _ADMIN_OWNED_AGENT_ACTOR_MODELS
+    assert _ADMIN_OWNER_MODELS[HeldExecution] is HeldExecution.agent_id
+    assert {Job, HeldExecution} <= _ADMIN_OWNED_AGENT_ACTOR_MODELS

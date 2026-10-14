@@ -396,7 +396,7 @@ def s02_deny_with_reason(w: World, o: Outcome) -> None:
 def _audit(w: World, target_id: str) -> list[dict[str, Any]]:
     r = w.admin.get(
         "/audit",
-        params={"target_type": "execution_approval", "target_id": target_id, "limit": 50},
+        params={"target_type": "held_execution", "target_id": target_id, "limit": 50},
     )
     expect(r.status_code == 200, "GET /audit", r.text)
     return list(r.json()["data"])
@@ -423,7 +423,7 @@ def s03_expiry(w: World, o: Outcome) -> None:
     hid = held["held_execution_id"]
     psql(
         w.env,
-        "UPDATE admin.execution_approvals SET expires_at = now() - interval '1 second' "
+        "UPDATE admin.held_executions SET expires_at = now() - interval '1 second' "
         f"WHERE id = '{hid}'",
     )
     # Before the sweep runs, a decision on the lapsed hold is already refused.
@@ -1000,10 +1000,10 @@ def _migrate(w: World, code: str) -> None:
 def s15_migration_round_trip(w: World, o: Outcome) -> None:
     """Downgrade below the ask tier (ask -> deny, held -> cancelled), then upgrade back."""
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=150")
-    # The held call's job, read while execution_approvals still exists.
+    # The held call's job, read while held_executions still exists.
     job_id = psql(
         w.env,
-        f"SELECT job_id FROM admin.execution_approvals WHERE id = '{held['held_execution_id']}'",
+        f"SELECT job_id FROM admin.held_executions WHERE id = '{held['held_execution_id']}'",
     )
     expect(bool(job_id), "the held execution names its job", job_id)
     stack = str(ROOT / "tests/e2e_manual/ask_tier/stack.sh")
@@ -1032,10 +1032,9 @@ def s15_migration_round_trip(w: World, o: Outcome) -> None:
         expect(status == "cancelled", "the held job was cancelled", status)
         tables = psql(
             w.env,
-            "SELECT count(*) FROM information_schema.tables "
-            "WHERE table_name = 'execution_approvals'",
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'held_executions'",
         )
-        expect(tables == "0", "execution_approvals dropped", tables)
+        expect(tables == "0", "held_executions dropped", tables)
     finally:
         _migrate(
             w, "from jentic_one.migrations.run import upgrade; upgrade('admin'); upgrade('control')"

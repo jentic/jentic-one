@@ -1,4 +1,4 @@
-"""Repository for ExecutionApproval rows — flush-only, never commits."""
+"""Repository for HeldExecution rows — flush-only, never commits."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.shared.db.utils import db_now
 
 _PENDING = "pending"
 
 
-class ExecutionApprovalRepository:
+class HeldExecutionRepository:
     """Data access for execution approvals."""
 
     @staticmethod
@@ -29,9 +29,9 @@ class ExecutionApprovalRepository:
         approval_id: str,
         *,
         filters: Sequence[ColumnElement[bool]] | None = None,
-    ) -> ExecutionApproval | None:
+    ) -> HeldExecution | None:
         """The approval row, or None when missing or excluded by ``filters``."""
-        stmt = select(ExecutionApproval).where(ExecutionApproval.id == approval_id)
+        stmt = select(HeldExecution).where(HeldExecution.id == approval_id)
         for f in filters or ():
             stmt = stmt.where(f)
         result = await session.execute(stmt)
@@ -47,24 +47,21 @@ class ExecutionApprovalRepository:
         cursor_created_at: datetime | None = None,
         cursor_id: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
-    ) -> list[ExecutionApproval]:
+    ) -> list[HeldExecution]:
         """Approvals newest first, keyset-paginated on ``(created_at, id)``."""
-        stmt = select(ExecutionApproval)
+        stmt = select(HeldExecution)
         for f in filters or ():
             stmt = stmt.where(f)
         if state is not None:
-            stmt = stmt.where(ExecutionApproval.state == state)
+            stmt = stmt.where(HeldExecution.state == state)
         if agent_id is not None:
-            stmt = stmt.where(ExecutionApproval.agent_id == agent_id)
+            stmt = stmt.where(HeldExecution.agent_id == agent_id)
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
-                (ExecutionApproval.created_at < cursor_created_at)
-                | (
-                    (ExecutionApproval.created_at == cursor_created_at)
-                    & (ExecutionApproval.id < cursor_id)
-                )
+                (HeldExecution.created_at < cursor_created_at)
+                | ((HeldExecution.created_at == cursor_created_at) & (HeldExecution.id < cursor_id))
             )
-        stmt = stmt.order_by(ExecutionApproval.created_at.desc(), ExecutionApproval.id.desc())
+        stmt = stmt.order_by(HeldExecution.created_at.desc(), HeldExecution.id.desc())
         result = await session.execute(stmt.limit(limit))
         return list(result.scalars().all())
 
@@ -77,18 +74,18 @@ class ExecutionApprovalRepository:
         decided_by: str,
         decision_reason: str | None,
         now: datetime,
-    ) -> ExecutionApproval | None:
+    ) -> HeldExecution | None:
         """Compare-and-set a pending, unexpired approval to ``new_state``.
 
         Returns the updated row, or None when the row is missing, already
         decided, or past ``expires_at`` — the first reviewer wins.
         """
         stmt = (
-            update(ExecutionApproval)
+            update(HeldExecution)
             .where(
-                ExecutionApproval.id == approval_id,
-                ExecutionApproval.state == _PENDING,
-                ExecutionApproval.expires_at > now,
+                HeldExecution.id == approval_id,
+                HeldExecution.state == _PENDING,
+                HeldExecution.expires_at > now,
             )
             .values(
                 state=new_state,
@@ -96,7 +93,7 @@ class ExecutionApprovalRepository:
                 decided_by=decided_by,
                 decision_reason=decision_reason,
             )
-            .returning(ExecutionApproval)
+            .returning(HeldExecution)
             .execution_options(synchronize_session=False, populate_existing=True)
         )
         result = await session.execute(stmt)
@@ -109,21 +106,21 @@ class ExecutionApprovalRepository:
         *,
         created_by: str,
         now: datetime,
-    ) -> ExecutionApproval | None:
+    ) -> HeldExecution | None:
         """Compare-and-set a pending approval filed by ``created_by`` to ``withdrawn``.
 
         Returns the updated row, or None when the row is missing, filed by
         someone else, or no longer pending.
         """
         stmt = (
-            update(ExecutionApproval)
+            update(HeldExecution)
             .where(
-                ExecutionApproval.id == approval_id,
-                ExecutionApproval.created_by == created_by,
-                ExecutionApproval.state == _PENDING,
+                HeldExecution.id == approval_id,
+                HeldExecution.created_by == created_by,
+                HeldExecution.state == _PENDING,
             )
             .values(state="withdrawn", decided_at=now, decided_by=created_by)
-            .returning(ExecutionApproval)
+            .returning(HeldExecution)
             .execution_options(synchronize_session=False, populate_existing=True)
         )
         result = await session.execute(stmt)
@@ -133,6 +130,6 @@ class ExecutionApprovalRepository:
     async def get_state(session: AsyncSession, approval_id: str) -> str | None:
         """The approval's current ``state`` read from the database, or None when missing."""
         result = await session.execute(
-            select(ExecutionApproval.state).where(ExecutionApproval.id == approval_id)
+            select(HeldExecution.state).where(HeldExecution.id == approval_id)
         )
         return result.scalar_one_or_none()

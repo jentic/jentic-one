@@ -808,7 +808,7 @@
       "title": "EntitlementConfig",
       "type": "object"
     },
-    "ExecutionApprovalsConfig": {
+    "HeldExecutionsConfig": {
       "description": "Require-approval holds: held execution jobs awaiting a human reviewer.\n\nAn execute call matching a permission rule with ``effect=\"require-approval\"``\nis enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the\nagent's owner or an ``org:admin``) approves or denies it, or it expires.",
       "properties": {
         "max_pending_per_agent": {
@@ -833,7 +833,7 @@
           "type": "integer"
         }
       },
-      "title": "ExecutionApprovalsConfig",
+      "title": "HeldExecutionsConfig",
       "type": "object"
     },
     "IdempotencyConfig": {
@@ -2012,8 +2012,8 @@
     "entitlement": {
       "$ref": "#/$defs/EntitlementConfig"
     },
-    "execution_approvals": {
-      "$ref": "#/$defs/ExecutionApprovalsConfig"
+    "held_executions": {
+      "$ref": "#/$defs/HeldExecutionsConfig"
     },
     "ingest": {
       "$ref": "#/$defs/IngestConfig"

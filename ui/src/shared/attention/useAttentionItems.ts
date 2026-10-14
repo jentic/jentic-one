@@ -69,7 +69,7 @@ import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
 import { CREDENTIALS_READ, OWNER_CREDENTIALS_READ, useCanAccess } from '@/shared/auth/useCanAccess';
 
 export type AttentionKind =
-	'agent' | 'oauth_client' | 'connect_request' | 'execution_approval' | 'credential' | 'event';
+	'agent' | 'oauth_client' | 'connect_request' | 'held_execution' | 'credential' | 'event';
 
 /** Higher sorts first. Failures outrank approvals; approvals outrank setup nags. */
 export type AttentionUrgency = 3 | 2 | 1;
@@ -233,8 +233,8 @@ export function useAttentionItems(): AttentionState {
 				const oldest = group.approvals[0];
 				const name = actors.resolve(group.agentId) ?? group.agentId;
 				out.push({
-					key: `execution_approval:${group.agentId}`,
-					kind: 'execution_approval',
+					key: `held_execution:${group.agentId}`,
+					kind: 'held_execution',
 					urgency: 2,
 					title: `${name} is waiting for you to approve ${summariseHeldCalls(group.approvals)}`,
 					detail:

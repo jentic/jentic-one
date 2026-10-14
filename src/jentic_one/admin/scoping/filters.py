@@ -10,8 +10,8 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.users import User
@@ -28,10 +28,10 @@ _OWNER_MODELS: dict[type[Any], Any] = {
     Event: Event.actor_id,
     AuditEntry: AuditEntry.actor_id,
     OAuthClientGrant: OAuthClientGrant.user_id,
-    # ExecutionApproval rows are owned by the agent that created the hold.
+    # HeldExecution rows are owned by the agent that created the hold.
     # The human owner of that agent can see their agent's approval rows too
     # (via the _OWNED_AGENT_ACTOR_MODELS check).
-    ExecutionApproval: ExecutionApproval.agent_id,
+    HeldExecution: HeldExecution.agent_id,
 }
 
 # Extra subject columns matched the same way as the owner column. An event names
@@ -59,7 +59,7 @@ _DELEGATION_PERMISSIONS: dict[type[Any], str] = {
 # their own changes plus those made by their agents. An OAuth grant bound to one
 # of the caller's agents is visible to the caller even when someone else consented.
 _OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset(
-    {Job, ExecutionRecord, Event, AuditEntry, OAuthClientGrant, ExecutionApproval}
+    {Job, ExecutionRecord, Event, AuditEntry, OAuthClientGrant, HeldExecution}
 )
 
 

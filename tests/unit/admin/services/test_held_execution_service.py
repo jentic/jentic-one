@@ -1,4 +1,4 @@
-"""Unit tests for ExecutionApprovalService guards that run before any DB access.
+"""Unit tests for HeldExecutionService guards that run before any DB access.
 
 The decide state machine (compare-and-set, job release/fail, audit, event)
 is DB-backed and covered by ``tests/integration/admin/services``.
@@ -9,21 +9,21 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from jentic_one.admin.services.errors import ExecutionApprovalForbiddenError
-from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
-from jentic_one.admin.services.schemas.execution_approvals import DecideInput
+from jentic_one.admin.services.errors import HeldExecutionForbiddenError
+from jentic_one.admin.services.held_execution_service import HeldExecutionService
+from jentic_one.admin.services.schemas.held_executions import DecideInput
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.actors import ActorType
-from jentic_one.shared.models.execution_approvals import ApprovalDecision
+from jentic_one.shared.models.held_executions import ApprovalDecision
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("permissions", [[], ["org:admin"]])
 async def test_decide_refuses_agent_callers_whatever_their_scopes(permissions: list[str]) -> None:
     """An agent never decides — even one granted org:admin — and is refused before any DB call."""
-    svc = object.__new__(ExecutionApprovalService)
+    svc = object.__new__(HeldExecutionService)
     agent = Identity(sub="agnt_1", permissions=permissions, actor_type=ActorType.AGENT)
-    with pytest.raises(ExecutionApprovalForbiddenError):
+    with pytest.raises(HeldExecutionForbiddenError):
         await svc.decide("held_001", DecideInput(decision=ApprovalDecision.APPROVE), identity=agent)
 
 

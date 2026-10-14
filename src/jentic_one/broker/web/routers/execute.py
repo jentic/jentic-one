@@ -959,7 +959,7 @@ async def _handle_hold(
             type="approval_hold_unavailable",
             instance=request.url.path,
         )
-    cfg = ctx.config.execution_approvals
+    cfg = ctx.config.held_executions
     credential_id = authorization.selected_credential.credential_id
     parsed_url = urlparse(ctx_req.upstream_url)
     path = parsed_url.path

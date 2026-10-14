@@ -6,10 +6,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from jentic_one.shared.models.execution_approvals import ApprovalDecision
+from jentic_one.shared.models.held_executions import ApprovalDecision
 
 
-class ExecutionApprovalView(BaseModel):
+class HeldExecutionView(BaseModel):
     """One execution approval row."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -48,7 +48,7 @@ class HeldRequestView(BaseModel):
     body_truncated: bool = False
 
 
-class ExecutionApprovalDetailView(ExecutionApprovalView):
+class HeldExecutionDetailView(HeldExecutionView):
     """An approval plus the agent context and the held request."""
 
     agent_name: str | None = None

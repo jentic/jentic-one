@@ -23,7 +23,7 @@ import {
 	type HeldExecutionListResponse,
 	type HeldExecutionDetailResponse,
 	type HeldExecutionResponse,
-	type ExecutionApprovalState,
+	type HeldExecutionState,
 } from '@/shared/api';
 
 // Re-export types so module pages never need to reach into @/shared/api directly.
@@ -77,7 +77,7 @@ function toApprovalsError(error: unknown, fallback: string): ApprovalsApiError {
 }
 
 export interface ListApprovalsParams {
-	state?: ExecutionApprovalState | null;
+	state?: HeldExecutionState | null;
 	agentId?: string | null;
 	cursor?: string | null;
 	limit?: number;

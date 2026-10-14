@@ -2,8 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ExecutionApprovalState } from './ExecutionApprovalState';
 import type { HeldExecutionLinksResponse } from './HeldExecutionLinksResponse';
+import type { HeldExecutionState } from './HeldExecutionState';
 /**
  * A call held for a human decision, and where it stands.
  */
@@ -84,7 +84,7 @@ export type HeldExecutionResponse = {
     /**
      * The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
      */
-    state: ExecutionApprovalState;
+    state: HeldExecutionState;
     /**
      * Trace id of the held call.
      */

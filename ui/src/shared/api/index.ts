@@ -266,7 +266,7 @@ export type { HeldExecutionDetailResponse } from '@/shared/api/generated/models/
 export type { HeldExecutionLinksResponse } from '@/shared/api/generated/models/HeldExecutionLinksResponse';
 export type { HeldRequestResponse } from '@/shared/api/generated/models/HeldRequestResponse';
 export { ApprovalDecision } from '@/shared/api/generated/models/ApprovalDecision';
-export { ExecutionApprovalState } from '@/shared/api/generated/models/ExecutionApprovalState';
+export { HeldExecutionState } from '@/shared/api/generated/models/HeldExecutionState';
 export type { DecideHeldExecutionRequest } from '@/shared/api/generated/models/DecideHeldExecutionRequest';
 // Connect sessions — the open requests an agent is waiting on a human for.
 // Read by the credentials api tier (`listOpenConnectRequests`) for the

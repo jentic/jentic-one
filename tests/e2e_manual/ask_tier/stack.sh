@@ -98,7 +98,7 @@ broker:
 ingest:
   egress:
     allowed_private_subnets: ["127.0.0.0/8"]
-execution_approvals:
+held_executions:
   max_pending_per_agent: 3
   ttl_seconds: $APPROVAL_TTL_S
 worker:

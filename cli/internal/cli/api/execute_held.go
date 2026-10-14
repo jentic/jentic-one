@@ -176,7 +176,7 @@ func (a *app) followHeld(cmd *cobra.Command, opts *executeOptions, ref *heldRef,
 				return outErr
 			}
 		}
-		approved := timedOut.held.State != control.ExecutionApprovalStatePending
+		approved := timedOut.held.State != control.HeldExecutionStatePending
 		ux.RenderHeldUnfinished(ctx, a.Err, ref.notice(), heldUnfinishedHeadline(timedOut.held, opts.timeout))
 		return heldStillPendingErr(ref, timedOut.held, opts.timeout, approved)
 	}
@@ -190,7 +190,7 @@ func (a *app) followHeld(cmd *cobra.Command, opts *executeOptions, ref *heldRef,
 }
 
 func heldUnfinishedHeadline(h *control.HeldExecutionDetailResponse, waited time.Duration) string {
-	if h.State == control.ExecutionApprovalStatePending {
+	if h.State == control.HeldExecutionStatePending {
 		return fmt.Sprintf("Still held after %s — this call is waiting for a human decision:", waited)
 	}
 	return fmt.Sprintf("Approved, not finished after %s — the call is %s:", waited, valueOr(heldExecutionStatus(h), "queued"))
@@ -282,7 +282,7 @@ func heldExecutionStatus(h *control.HeldExecutionDetailResponse) string {
 func heldExecutionFinished(h *control.HeldExecutionDetailResponse) bool {
 	status := heldExecutionStatus(h)
 	if status == "" {
-		return h.State != control.ExecutionApprovalStatePending
+		return h.State != control.HeldExecutionStatePending
 	}
 	return agentops.IsFinishedHeldStatus(status)
 }
@@ -384,7 +384,7 @@ func heldExecuteResult(ctx context.Context, client *control.ClientWithResponses,
 		"state":             string(held.State),
 		"execution_status":  status,
 	}
-	if status == agentops.HeldStatusCancelled || held.State == control.ExecutionApprovalStateWithdrawn {
+	if status == agentops.HeldStatusCancelled || held.State == control.HeldExecutionStateWithdrawn {
 		return nil, &ux.CodedError{
 			Code:       ux.CodeBrokerDenied,
 			Msg:        fmt.Sprintf("held execution %s was withdrawn; the call never ran", held.Id),

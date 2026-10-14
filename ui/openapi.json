@@ -1797,7 +1797,7 @@
           "provider_config",
           "oauth_client",
           "oauth_grant",
-          "execution_approval",
+          "held_execution",
           "oauth_app_registration"
         ],
         "title": "AuditTargetType",
@@ -4159,18 +4159,6 @@
         "title": "EventSeverity",
         "type": "string"
       },
-      "ExecutionApprovalState": {
-        "description": "Lifecycle of an execution approval; every state but ``pending`` is terminal.",
-        "enum": [
-          "pending",
-          "approved",
-          "denied",
-          "expired",
-          "withdrawn"
-        ],
-        "title": "ExecutionApprovalState",
-        "type": "string"
-      },
       "ExecutionListResponse": {
         "description": "Paginated list of executions.",
         "properties": {
@@ -4807,7 +4795,7 @@
             "type": "string"
           },
           "state": {
-            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "$ref": "#/components/schemas/HeldExecutionState",
             "description": "The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`."
           },
           "trace_id": {
@@ -5095,7 +5083,7 @@
             "type": "string"
           },
           "state": {
-            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "$ref": "#/components/schemas/HeldExecutionState",
             "description": "The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`."
           },
           "trace_id": {
@@ -5141,6 +5129,18 @@
         ],
         "title": "HeldExecutionResponse",
         "type": "object"
+      },
+      "HeldExecutionState": {
+        "description": "Lifecycle of an execution approval; every state but ``pending`` is terminal.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "expired",
+          "withdrawn"
+        ],
+        "title": "HeldExecutionState",
+        "type": "string"
       },
       "HeldRequestResponse": {
         "description": "The held call exactly as it runs if approved (credentials are injected at run time).",
@@ -31354,7 +31354,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/ExecutionApprovalState"
+                  "$ref": "#/components/schemas/HeldExecutionState"
                 },
                 {
                   "type": "null"

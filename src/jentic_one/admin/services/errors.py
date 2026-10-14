@@ -65,7 +65,7 @@ class EventNotFoundError(NotFoundError):
         self.event_id = event_id
 
 
-class ExecutionApprovalNotFoundError(NotFoundError):
+class HeldExecutionNotFoundError(NotFoundError):
     """Raised when an execution approval does not exist."""
 
     def __init__(self, approval_id: str) -> None:
@@ -73,11 +73,11 @@ class ExecutionApprovalNotFoundError(NotFoundError):
         self.approval_id = approval_id
 
 
-class ExecutionApprovalAlreadyDecidedError(AdminServiceError):
+class HeldExecutionAlreadyDecidedError(AdminServiceError):
     """Raised when a decide action targets a non-pending approval."""
 
 
-class ExecutionApprovalJobNotHeldError(AdminServiceError):
+class HeldExecutionJobNotHeldError(AdminServiceError):
     """Raised when a pending approval's job is no longer ``held``.
 
     The decision (or withdrawal) is rolled back: an approval never settles
@@ -92,7 +92,7 @@ class ExecutionApprovalJobNotHeldError(AdminServiceError):
         self.job_id = job_id
 
 
-class ExecutionApprovalForbiddenError(AdminServiceError):
+class HeldExecutionForbiddenError(AdminServiceError):
     """Raised when a caller is not permitted to decide an approval (e.g. agent actor)."""
 
 

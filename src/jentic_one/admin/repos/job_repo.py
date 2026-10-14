@@ -9,7 +9,7 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
 from jentic_one.shared.models import JobKind, JobStatus
@@ -178,8 +178,8 @@ class JobRepository:
         return and_(
             Job.kind == JobKind.EXECUTION.value,
             exists().where(
-                ExecutionApproval.job_id == Job.id,
-                ExecutionApproval.agent_id == Job.created_by,
+                HeldExecution.job_id == Job.id,
+                HeldExecution.agent_id == Job.created_by,
             ),
         )
 

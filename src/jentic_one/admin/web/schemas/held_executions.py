@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from jentic_one.shared.models.execution_approvals import ApprovalDecision, ExecutionApprovalState
+from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
 
 #: Where a held call stands, from held through to its outcome.
 HeldExecutionStatus = Literal["held", "queued", "running", "completed", "failed", "cancelled"]
@@ -45,7 +45,7 @@ class HeldExecutionResponse(BaseModel):
     matched_rule_id: str | None = Field(
         default=None, description="The require-approval permission rule that held the call."
     )
-    state: ExecutionApprovalState = Field(
+    state: HeldExecutionState = Field(
         description="The decision: `pending` until a reviewer acts, then `approved`, "
         "`denied`, `expired` or `withdrawn`."
     )

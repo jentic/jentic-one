@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DecideHeldExecutionRequest } from '../models/DecideHeldExecutionRequest';
-import type { ExecutionApprovalState } from '../models/ExecutionApprovalState';
 import type { HeldExecutionDetailResponse } from '../models/HeldExecutionDetailResponse';
 import type { HeldExecutionListResponse } from '../models/HeldExecutionListResponse';
 import type { HeldExecutionResponse } from '../models/HeldExecutionResponse';
+import type { HeldExecutionState } from '../models/HeldExecutionState';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -29,7 +29,7 @@ export class HeldExecutionsService {
         /**
          * Only return held executions in this decision state, e.g. `pending`.
          */
-        state?: (ExecutionApprovalState | null),
+        state?: (HeldExecutionState | null),
         /**
          * Only return held executions filed by this agent.
          */

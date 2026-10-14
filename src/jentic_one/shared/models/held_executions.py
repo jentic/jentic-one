@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class ExecutionApprovalState(StrEnum):
+class HeldExecutionState(StrEnum):
     """Lifecycle of an execution approval; every state but ``pending`` is terminal."""
 
     PENDING = "pending"

@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 from starlette.requests import Request
 
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.broker.core.exceptions import ApprovalPendingLimitError
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
@@ -142,7 +142,7 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     assert envelope["review_url"].endswith(f"/app/agents/approvals/{held_id}")
 
     async with ctx.admin_db.session() as session:
-        row = await session.get(ExecutionApproval, held_id)
+        row = await session.get(HeldExecution, held_id)
         assert row is not None
         job = await session.get(Job, row.job_id)
         events = (
@@ -237,13 +237,13 @@ async def test_pending_cap_is_a_distinct_403_denial(
     integration_context: Context, clean: None
 ) -> None:
     ctx = integration_context
-    ctx.config.execution_approvals.max_pending_per_agent = 1
+    ctx.config.held_executions.max_pending_per_agent = 1
     try:
         await _hold(ctx, b'{"n": 1}')
         with pytest.raises(ApprovalPendingLimitError) as exc:
             await _hold(ctx, b'{"n": 2}')
     finally:
-        ctx.config.execution_approvals.max_pending_per_agent = 10
+        ctx.config.held_executions.max_pending_per_agent = 10
     problem = broker_error_problem(exc.value)
     assert status_for_broker_error(exc.value) == 403
     assert problem["type"] == "approval_pending_limit_reached"
@@ -259,14 +259,14 @@ async def test_identical_retry_at_the_pending_cap_joins_its_hold(
     """The join runs before the cap: retrying a call that is already held
     returns its hold even when the agent has no pending slot left."""
     ctx = integration_context
-    ctx.config.execution_approvals.max_pending_per_agent = 1
+    ctx.config.held_executions.max_pending_per_agent = 1
     try:
         first = await _hold(ctx, b'{"n": 1}')
         again = await _hold(ctx, b'{"n": 1}')
         with pytest.raises(ApprovalPendingLimitError):
             await _hold(ctx, b'{"n": 2}')
     finally:
-        ctx.config.execution_approvals.max_pending_per_agent = 10
+        ctx.config.held_executions.max_pending_per_agent = 10
     assert again["held_execution_id"] == first["held_execution_id"]
     async with ctx.admin_db.session() as session:
         jobs = (await session.execute(select(Job))).scalars().all()

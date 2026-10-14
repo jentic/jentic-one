@@ -1,6 +1,6 @@
-"""add held job status and execution_approvals table
+"""add held job status and held_executions table
 
-Adds the ``execution_approvals`` table to the admin schema. The ``held`` job
+Adds the ``held_executions`` table to the admin schema. The ``held`` job
 status needs no schema change: ``jobs.status`` is a ``VARCHAR`` and the value
 set is enforced by the application enum.
 
@@ -32,7 +32,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     pg = op.get_bind().dialect.name == "postgresql"
     op.create_table(
-        "execution_approvals",
+        "held_executions",
         sa.Column(
             "id",
             sa.String(30),
@@ -67,18 +67,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["job_id"], ["jobs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_held_executions_agent_state", "held_executions", ["agent_id", "state"])
+    op.create_index("ix_held_executions_created_at", "held_executions", ["created_at"])
+    op.create_index("ix_held_executions_created_by", "held_executions", ["created_by"])
+    op.create_index("ix_held_executions_job_id", "held_executions", ["job_id"])
+    op.create_index("ix_held_executions_state_expires", "held_executions", ["state", "expires_at"])
     op.create_index(
-        "ix_execution_approvals_agent_state", "execution_approvals", ["agent_id", "state"]
-    )
-    op.create_index("ix_execution_approvals_created_at", "execution_approvals", ["created_at"])
-    op.create_index("ix_execution_approvals_created_by", "execution_approvals", ["created_by"])
-    op.create_index("ix_execution_approvals_job_id", "execution_approvals", ["job_id"])
-    op.create_index(
-        "ix_execution_approvals_state_expires", "execution_approvals", ["state", "expires_at"]
-    )
-    op.create_index(
-        "uq_execution_approvals_pending_fingerprint",
-        "execution_approvals",
+        "uq_held_executions_pending_fingerprint",
+        "held_executions",
         ["request_fingerprint"],
         unique=True,
         postgresql_where=sa.text("state = 'pending'"),
@@ -93,10 +89,10 @@ def downgrade() -> None:
             " error = 'approval tier removed by downgrade' WHERE status = 'held'"
         )
     )
-    op.drop_index("uq_execution_approvals_pending_fingerprint", table_name="execution_approvals")
-    op.drop_index("ix_execution_approvals_state_expires", table_name="execution_approvals")
-    op.drop_index("ix_execution_approvals_job_id", table_name="execution_approvals")
-    op.drop_index("ix_execution_approvals_created_by", table_name="execution_approvals")
-    op.drop_index("ix_execution_approvals_created_at", table_name="execution_approvals")
-    op.drop_index("ix_execution_approvals_agent_state", table_name="execution_approvals")
-    op.drop_table("execution_approvals")
+    op.drop_index("uq_held_executions_pending_fingerprint", table_name="held_executions")
+    op.drop_index("ix_held_executions_state_expires", table_name="held_executions")
+    op.drop_index("ix_held_executions_job_id", table_name="held_executions")
+    op.drop_index("ix_held_executions_created_by", table_name="held_executions")
+    op.drop_index("ix_held_executions_created_at", table_name="held_executions")
+    op.drop_index("ix_held_executions_agent_state", table_name="held_executions")
+    op.drop_table("held_executions")

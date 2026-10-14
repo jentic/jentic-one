@@ -41,12 +41,12 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from jentic_one.admin.services.errors import (
-    ExecutionApprovalNotFoundError,
+    HeldExecutionNotFoundError,
     HeldExecutionResultNotReadyError,
     JobNotCompletedError,
     JobNotFoundError,
 )
-from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
+from jentic_one.admin.services.held_execution_service import HeldExecutionService
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
@@ -1283,10 +1283,10 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
     filing agent, its owner, or ``org:admin``).
     """
     _require_db(env.ctx, "admin", "held execution polling")
-    svc = ExecutionApprovalService(env.ctx)
+    svc = HeldExecutionService(env.ctx)
     try:
         view = await svc.get(held_execution_id, identity=env.identity)
-    except ExecutionApprovalNotFoundError:
+    except HeldExecutionNotFoundError:
         raise ToolError(
             CODE_RESOLVE_FAILED,
             f"held execution {held_execution_id!r} not found",

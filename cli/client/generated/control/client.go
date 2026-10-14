@@ -137,8 +137,8 @@ const (
 	AuditTargetTypeCredential           AuditTargetType = "credential"
 	AuditTargetTypeCredentialBinding    AuditTargetType = "credential_binding"
 	AuditTargetTypeEvent                AuditTargetType = "event"
-	AuditTargetTypeExecutionApproval    AuditTargetType = "execution_approval"
 	AuditTargetTypeExecutionRecord      AuditTargetType = "execution_record"
+	AuditTargetTypeHeldExecution        AuditTargetType = "held_execution"
 	AuditTargetTypeInviteToken          AuditTargetType = "invite_token"
 	AuditTargetTypeJob                  AuditTargetType = "job"
 	AuditTargetTypeNote                 AuditTargetType = "note"
@@ -174,9 +174,9 @@ func (e AuditTargetType) Valid() bool {
 		return true
 	case AuditTargetTypeEvent:
 		return true
-	case AuditTargetTypeExecutionApproval:
-		return true
 	case AuditTargetTypeExecutionRecord:
+		return true
+	case AuditTargetTypeHeldExecution:
 		return true
 	case AuditTargetTypeInviteToken:
 		return true
@@ -459,33 +459,6 @@ func (e EventSeverity) Valid() bool {
 	}
 }
 
-// Defines values for ExecutionApprovalState.
-const (
-	ExecutionApprovalStateApproved  ExecutionApprovalState = "approved"
-	ExecutionApprovalStateDenied    ExecutionApprovalState = "denied"
-	ExecutionApprovalStateExpired   ExecutionApprovalState = "expired"
-	ExecutionApprovalStatePending   ExecutionApprovalState = "pending"
-	ExecutionApprovalStateWithdrawn ExecutionApprovalState = "withdrawn"
-)
-
-// Valid indicates whether the value is a known member of the ExecutionApprovalState enum.
-func (e ExecutionApprovalState) Valid() bool {
-	switch e {
-	case ExecutionApprovalStateApproved:
-		return true
-	case ExecutionApprovalStateDenied:
-		return true
-	case ExecutionApprovalStateExpired:
-		return true
-	case ExecutionApprovalStatePending:
-		return true
-	case ExecutionApprovalStateWithdrawn:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ExistingCredentialConfirmSessionRequestKind.
 const (
 	ExistingCredential ExistingCredentialConfirmSessionRequestKind = "existing_credential"
@@ -579,6 +552,33 @@ func (e HeldExecutionResponseExecutionStatus) Valid() bool {
 	case HeldExecutionResponseExecutionStatusQueued:
 		return true
 	case HeldExecutionResponseExecutionStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HeldExecutionState.
+const (
+	HeldExecutionStateApproved  HeldExecutionState = "approved"
+	HeldExecutionStateDenied    HeldExecutionState = "denied"
+	HeldExecutionStateExpired   HeldExecutionState = "expired"
+	HeldExecutionStatePending   HeldExecutionState = "pending"
+	HeldExecutionStateWithdrawn HeldExecutionState = "withdrawn"
+)
+
+// Valid indicates whether the value is a known member of the HeldExecutionState enum.
+func (e HeldExecutionState) Valid() bool {
+	switch e {
+	case HeldExecutionStateApproved:
+		return true
+	case HeldExecutionStateDenied:
+		return true
+	case HeldExecutionStateExpired:
+		return true
+	case HeldExecutionStatePending:
+		return true
+	case HeldExecutionStateWithdrawn:
 		return true
 	default:
 		return false
@@ -2586,9 +2586,6 @@ type EventResponse struct {
 // EventSeverity Severity level for platform events.
 type EventSeverity string
 
-// ExecutionApprovalState Lifecycle of an execution approval; every state but “pending“ is terminal.
-type ExecutionApprovalState string
-
 // ExecutionListResponse Paginated list of executions.
 type ExecutionListResponse struct {
 	// Data The page of execution records.
@@ -2824,7 +2821,7 @@ type HeldExecutionDetailResponse struct {
 	ReviewUrl string `json:"review_url"`
 
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
-	State ExecutionApprovalState `json:"state"`
+	State HeldExecutionState `json:"state"`
 
 	// TraceId Trace id of the held call.
 	TraceId *string `json:"trace_id,omitempty"`
@@ -2918,7 +2915,7 @@ type HeldExecutionResponse struct {
 	ReviewUrl string `json:"review_url"`
 
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
-	State ExecutionApprovalState `json:"state"`
+	State HeldExecutionState `json:"state"`
 
 	// TraceId Trace id of the held call.
 	TraceId *string `json:"trace_id,omitempty"`
@@ -2929,6 +2926,9 @@ type HeldExecutionResponse struct {
 
 // HeldExecutionResponseExecutionStatus defines model for HeldExecutionResponse.ExecutionStatus.
 type HeldExecutionResponseExecutionStatus string
+
+// HeldExecutionState Lifecycle of an execution approval; every state but “pending“ is terminal.
+type HeldExecutionState string
 
 // HeldRequestResponse The held call exactly as it runs if approved (credentials are injected at run time).
 type HeldRequestResponse struct {
@@ -5710,7 +5710,7 @@ type ListExecutionsParams struct {
 // ListHeldExecutionsParams defines parameters for ListHeldExecutions.
 type ListHeldExecutionsParams struct {
 	// State Only return held executions in this decision state, e.g. `pending`.
-	State *ExecutionApprovalState `form:"state,omitempty" json:"state,omitempty"`
+	State *HeldExecutionState `form:"state,omitempty" json:"state,omitempty"`
 
 	// AgentId Only return held executions filed by this agent.
 	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`

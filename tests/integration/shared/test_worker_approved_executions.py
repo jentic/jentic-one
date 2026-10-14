@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from sqlalchemy import delete, select
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.config import WorkerConfig
@@ -82,7 +82,7 @@ async def _job(admin_db: DatabaseSession, *, approved: bool, **fields: Any) -> s
         await session.flush()
         if approved:
             session.add(
-                ExecutionApproval(
+                HeldExecution(
                     job_id=job.id,
                     agent_id="agnt_worker",
                     credential_id="cred_worker",
@@ -181,9 +181,7 @@ async def test_approved_result_is_retained_and_linked(
     assert timedelta(seconds=_RETENTION_S - 60) < window < timedelta(seconds=_RETENTION_S + 60)
     async with admin_db.session() as session:
         approval = (
-            await session.execute(
-                select(ExecutionApproval).where(ExecutionApproval.job_id == job_id)
-            )
+            await session.execute(select(HeldExecution).where(HeldExecution.job_id == job_id))
         ).scalar_one()
     assert approval.execution_id == f"exec_{job_id[-20:]}"
 

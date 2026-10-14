@@ -11,7 +11,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import {
-	ExecutionApprovalState,
+	HeldExecutionState,
 	HeldExecutionsService,
 	sharedQueryKeys,
 	type HeldExecutionResponse,
@@ -61,7 +61,7 @@ export async function listPendingApprovals(): Promise<PendingApprovals> {
 	let truncated = false;
 	for (let page = 0; page < MAX_PAGES; page++) {
 		const res = await HeldExecutionsService.listHeldExecutions({
-			state: ExecutionApprovalState.PENDING,
+			state: HeldExecutionState.PENDING,
 			limit: PAGE_LIMIT,
 			cursor,
 		});

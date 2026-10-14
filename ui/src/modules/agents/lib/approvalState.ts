@@ -2,7 +2,7 @@
  * Held-execution vocabulary for the Approvals module — the single place the
  * list and detail pages read a decision state's or a call status's label and
  * badge variant from. `ApprovalStateValue` mirrors the backend
- * `ExecutionApprovalState` enum (the decision); `CallStatusValue` mirrors a
+ * `HeldExecutionState` enum (the decision); `CallStatusValue` mirrors a
  * held execution's `execution_status` (where the call stands).
  */
 export type ApprovalStateValue = 'pending' | 'approved' | 'denied' | 'expired' | 'withdrawn';

@@ -7,7 +7,7 @@ Runs against the integration databases (PostgreSQL by default, SQLite under
   head; downgrading below it narrows ``effect`` back to 10 characters after
   ``70ff607085b4`` rewrote every ``require-approval`` rule to ``deny``, and
   leaves ``allow`` / ``deny`` rules untouched;
-- admin ``3306fb9172f1`` drops ``execution_approvals`` on downgrade and
+- admin ``3306fb9172f1`` drops ``held_executions`` on downgrade and
   cancels any ``held`` job first, since nothing can release it afterwards.
 
 Each re-upgrade restores the migrated shape.
@@ -173,7 +173,7 @@ async def test_admin_round_trip_cancels_held_jobs(
     )
     await _exec(
         admin_db,
-        "INSERT INTO execution_approvals (id, job_id, agent_id, credential_id, api_vendor,"
+        "INSERT INTO held_executions (id, job_id, agent_id, credential_id, api_vendor,"
         " api_name, api_version, method, path, request_fingerprint, state, expires_at)"
         " VALUES ('held_mrt', 'job_mrt_held', 'agnt_mrt', 'cred_mrt', 'v', 'n', '1', 'GET',"
         " '/x', 'fp_mrt', 'pending', CURRENT_TIMESTAMP)",
@@ -181,7 +181,7 @@ async def test_admin_round_trip_cancels_held_jobs(
 
     await asyncio.to_thread(command.downgrade, cfg, _ADMIN_PARENT)
 
-    assert "execution_approvals" not in await _table_names(admin_db)
+    assert "held_executions" not in await _table_names(admin_db)
     async with admin_db.session() as session:
         result = await session.execute(
             text("SELECT id, status FROM jobs WHERE id LIKE 'job_mrt_%'")
@@ -190,4 +190,4 @@ async def test_admin_round_trip_cancels_held_jobs(
     assert rows == {"job_mrt_held": "cancelled", "job_mrt_done": "completed"}
 
     await asyncio.to_thread(command.upgrade, cfg, "head")
-    assert "execution_approvals" in await _table_names(admin_db)
+    assert "held_executions" in await _table_names(admin_db)

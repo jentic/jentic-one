@@ -23,7 +23,7 @@ import {
 	type HeldExecutionResponse,
 } from '@/shared/api';
 
-export { ApprovalDecision, ExecutionApprovalState } from '@/shared/api';
+export { ApprovalDecision, HeldExecutionState } from '@/shared/api';
 export { ApprovalsApiError, HELD_EXECUTION_ERRORS } from '@/modules/agents/api/approvals-client';
 
 /** How often the review page re-reads a call that is approved but not yet finished. */

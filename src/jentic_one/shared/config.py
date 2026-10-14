@@ -1980,7 +1980,7 @@ class EntitlementConfig(BaseModel):
         return self
 
 
-class ExecutionApprovalsConfig(BaseModel):
+class HeldExecutionsConfig(BaseModel):
     """Require-approval holds: held execution jobs awaiting a human reviewer.
 
     An execute call matching a permission rule with ``effect="require-approval"``
@@ -2046,7 +2046,7 @@ class AppConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
-    execution_approvals: ExecutionApprovalsConfig = Field(default_factory=ExecutionApprovalsConfig)
+    held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
