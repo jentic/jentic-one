@@ -320,6 +320,7 @@ def test_every_path_item_and_request_body_has_a_description(
     ]
     assert not missing, "Missing descriptions:\n" + "\n".join(missing)
 
+
 def test_every_operation_documents_a_default_problem_response(
     generated_control_spec: dict[str, Any],
 ) -> None:
