@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Broker API
-  version: beta.1
+  version: "0.42.2" # x-release-please-version
   summary: Secure execution proxy for upstream APIs — credentials never leave the Broker.
   contact:
     name: Jentic Platform Team
@@ -101,26 +101,32 @@ paths:
       operationId: getHealth
       summary: Service health probe
       description: |
-        Liveness / readiness probe for the Broker service. Returns `200`
-        with a small `application/health+json` body (IETF Health Check
-        Response Format draft) when the broker can accept traffic.
+        Unauthenticated liveness probe for the Broker service. Returns `200`
+        with a small JSON body while the process is serving requests,
+        reporting the surface name and the running Jentic One release.
         Intended for load balancers, container orchestrators, and uptime
         monitors — not for human or agent consumption beyond green/red
-        signalling.
+        signalling. Use `/ready` for saturation-aware readiness.
       security: []
       responses:
         "200":
-          description: Service is healthy and ready to accept traffic.
+          description: Service is up and serving requests.
           content:
-            application/health+json:
+            application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
               examples:
                 healthy:
                   summary: Broker reporting healthy.
                   value:
-                    status: pass
-                    version: beta.1
+                    status: ok
+                    surface: broker
+                    version: "0.42.2" # x-release-please-version
+                notEntitled:
+                  summary: Metered marketplace deployment whose entitlement lapsed.
+                  value:
+                    status: not_entitled
+                    reason: Subscription for this deployment is not active.
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         "429":
@@ -779,31 +785,39 @@ components:
       title: HealthResponse
       summary: Service health probe response.
       description: |
-        Body returned by `GET /health` when the Broker is ready to
-        accept traffic. Shape follows the IETF [Health Check Response
-        Format for HTTP APIs](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check)
-        draft (`application/health+json`). Intentionally minimal —
-        clients treat `200` + `status: pass` as the green signal; the
-        body is informational.
+        Body returned by `GET /health` while the Broker process is
+        serving requests. Intentionally minimal — clients treat `200` +
+        `status: ok` as the green signal; the body is informational.
       required:
         - status
       properties:
         status:
           type: string
           description: |
-            Health indicator per the IETF Health Check draft.
-            `pass` — service is healthy. `fail` — service is unhealthy.
-            `warn` — service is healthy but with concerns. The Broker
-            returns `pass` on every `200`; `fail` / `warn` are reserved
-            for future degraded-mode reporting.
-          enum: [pass, fail, warn]
+            `ok` while the process is serving requests. A metered
+            marketplace deployment whose entitlement lapsed answers
+            `not_entitled` (still HTTP `200`, so orchestrators don't
+            restart it).
+          enum: [ok, not_entitled]
           examples:
-            - pass
+            - ok
+        surface:
+          type: string
+          description: Name of the surface reporting health; always `broker`. Absent on the `not_entitled` body.
+          examples:
+            - broker
         version:
           type: string
-          description: Service build version, mirrors `info.version` in this spec.
+          description: |
+            Running Jentic One release (the same version as `info.version`
+            in this spec). Absent on the `not_entitled` body.
           examples:
-            - beta.1
+            - "0.42.2" # x-release-please-version
+        reason:
+          type: string
+          description: Why the deployment is not entitled. Present only on the `not_entitled` body.
+          examples:
+            - Subscription for this deployment is not active.
     ReadinessResponse:
       type: object
       title: ReadinessResponse

@@ -17,19 +17,16 @@ import (
 
 // Defines values for HealthResponseStatus.
 const (
-	Fail HealthResponseStatus = "fail"
-	Pass HealthResponseStatus = "pass"
-	Warn HealthResponseStatus = "warn"
+	NotEntitled HealthResponseStatus = "not_entitled"
+	Ok          HealthResponseStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the HealthResponseStatus enum.
 func (e HealthResponseStatus) Valid() bool {
 	switch e {
-	case Fail:
+	case NotEntitled:
 		return true
-	case Pass:
-		return true
-	case Warn:
+	case Ok:
 		return true
 	default:
 		return false
@@ -78,36 +75,43 @@ type AsyncQueuedResponse struct {
 	JobId string `json:"job_id"`
 }
 
-// HealthResponse Body returned by `GET /health` when the Broker is ready to
-// accept traffic. Shape follows the IETF [Health Check Response
-// Format for HTTP APIs](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check)
-// draft (`application/health+json`). Intentionally minimal —
-// clients treat `200` + `status: pass` as the green signal; the
-// body is informational.
+// HealthResponse Body returned by `GET /health` while the Broker process is
+// serving requests. Intentionally minimal — clients treat `200` +
+// `status: ok` as the green signal; the body is informational.
 type HealthResponse struct {
-	// Status Health indicator per the IETF Health Check draft.
-	// `pass` — service is healthy. `fail` — service is unhealthy.
-	// `warn` — service is healthy but with concerns. The Broker
-	// returns `pass` on every `200`; `fail` / `warn` are reserved
-	// for future degraded-mode reporting.
+	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
+	//
+	// Examples: Subscription for this deployment is not active.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status `ok` while the process is serving requests. A metered
+	// marketplace deployment whose entitlement lapsed answers
+	// `not_entitled` (still HTTP `200`, so orchestrators don't
+	// restart it).
 	//
 	//
-	// Examples: pass
+	// Examples: ok
 	Status HealthResponseStatus `json:"status"`
 
-	// Version Service build version, mirrors `info.version` in this spec.
+	// Surface Name of the surface reporting health; always `broker`. Absent on the `not_entitled` body.
 	//
-	// Examples: beta.1
+	// Examples: broker
+	Surface *string `json:"surface,omitempty"`
+
+	// Version Running Jentic One release (the same version as `info.version`
+	// in this spec). Absent on the `not_entitled` body.
+	//
+	//
+	// Examples: 0.42.2
 	Version *string `json:"version,omitempty"`
 }
 
-// HealthResponseStatus Health indicator per the IETF Health Check draft.
-// `pass` — service is healthy. `fail` — service is unhealthy.
-// `warn` — service is healthy but with concerns. The Broker
-// returns `pass` on every `200`; `fail` / `warn` are reserved
-// for future degraded-mode reporting.
+// HealthResponseStatus `ok` while the process is serving requests. A metered
+// marketplace deployment whose entitlement lapsed answers
+// `not_entitled` (still HTTP `200`, so orchestrators don't
+// restart it).
 //
-// Examples: pass
+// Examples: ok
 type HealthResponseStatus string
 
 // ReadinessResponse Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the
@@ -1140,12 +1144,12 @@ type ClientInterface interface {
 
 	// GetHealth Service health probe
 	//
-	// Liveness / readiness probe for the Broker service. Returns `200`
-	// with a small `application/health+json` body (IETF Health Check
-	// Response Format draft) when the broker can accept traffic.
+	// Unauthenticated liveness probe for the Broker service. Returns `200`
+	// with a small JSON body while the process is serving requests,
+	// reporting the surface name and the running Jentic One release.
 	// Intended for load balancers, container orchestrators, and uptime
 	// monitors — not for human or agent consumption beyond green/red
-	// signalling.
+	// signalling. Use `/ready` for saturation-aware readiness.
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1238,12 +1242,12 @@ type ClientInterface interface {
 
 // GetHealth Service health probe
 //
-// Liveness / readiness probe for the Broker service. Returns `200`
-// with a small `application/health+json` body (IETF Health Check
-// Response Format draft) when the broker can accept traffic.
+// Unauthenticated liveness probe for the Broker service. Returns `200`
+// with a small JSON body while the process is serving requests,
+// reporting the surface name and the running Jentic One release.
 // Intended for load balancers, container orchestrators, and uptime
 // monitors — not for human or agent consumption beyond green/red
-// signalling.
+// signalling. Use `/ready` for saturation-aware readiness.
 //
 // Corresponds with GET /health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2182,12 +2186,12 @@ type ClientWithResponsesInterface interface {
 
 	// GetHealthWithResponse Service health probe
 	//
-	// Liveness / readiness probe for the Broker service. Returns `200`
-	// with a small `application/health+json` body (IETF Health Check
-	// Response Format draft) when the broker can accept traffic.
+	// Unauthenticated liveness probe for the Broker service. Returns `200`
+	// with a small JSON body while the process is serving requests,
+	// reporting the surface name and the running Jentic One release.
 	// Intended for load balancers, container orchestrators, and uptime
 	// monitors — not for human or agent consumption beyond green/red
-	// signalling.
+	// signalling. Use `/ready` for saturation-aware readiness.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2303,8 +2307,8 @@ type GetHealthHTTPResp503Headers struct {
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// ApplicationhealthJSON200 the response for an HTTP 200 `application/health+json` response
-	ApplicationhealthJSON200 *HealthResponse
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HealthResponse
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
 	ApplicationproblemJSON429 *TooManyRequests
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -2319,9 +2323,9 @@ type GetHealthHTTPResp struct {
 	Headers503 *GetHealthHTTPResp503Headers
 }
 
-// GetApplicationhealthJSON200 returns the response for an HTTP 200 `application/health+json` response
-func (r GetHealthHTTPResp) GetApplicationhealthJSON200() *HealthResponse {
-	return r.ApplicationhealthJSON200
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetHealthHTTPResp) GetJSON200() *HealthResponse {
+	return r.JSON200
 }
 
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
@@ -3627,12 +3631,12 @@ func (r ExecutePutHTTPResp) ContentType() string {
 
 // GetHealthWithResponse Service health probe
 //
-// Liveness / readiness probe for the Broker service. Returns `200`
-// with a small `application/health+json` body (IETF Health Check
-// Response Format draft) when the broker can accept traffic.
+// Unauthenticated liveness probe for the Broker service. Returns `200`
+// with a small JSON body while the process is serving requests,
+// reporting the surface name and the running Jentic One release.
 // Intended for load balancers, container orchestrators, and uptime
 // monitors — not for human or agent consumption beyond green/red
-// signalling.
+// signalling. Use `/ready` for saturation-aware readiness.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3805,7 +3809,7 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationhealthJSON200 = &dest
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest TooManyRequests
