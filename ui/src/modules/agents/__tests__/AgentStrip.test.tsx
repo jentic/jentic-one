@@ -20,7 +20,11 @@ import { isApplePlatform } from '@/shared/lib/keyboard';
 import { smartInitials } from '@/shared/lib/smartInitials';
 import { AgentInitialsProvider } from '@/shared/ui';
 import type { AgentEntity } from '@/modules/agents/api';
-import { AgentStrip, compensatedScrollLeft } from '@/modules/agents/components/flat/AgentStrip';
+import {
+	AgentStrip,
+	compensatedScrollLeft,
+	returnedTabScrollLeft,
+} from '@/modules/agents/components/flat/AgentStrip';
 import { FOLD_MOTION } from '@/modules/agents/components/flat/useStickyFold';
 
 /** Every instance recorded; `fireTabs` hands the rail's one entries for tabs. */
@@ -650,6 +654,217 @@ describe('AgentStrip', () => {
 		await user.click(screen.getByTestId('strip-left-chip'));
 		expect((scrollBy.mock.calls[0][0] as ScrollToOptions).behavior).toBe('auto');
 	});
+
+	describe('recent first', () => {
+		/** The rail's agents after the waiting group, in DOM order. */
+		const railRest = () =>
+			[...screen.getByTestId('strip-scroller').querySelectorAll('[data-strip-tab]')]
+				.map((t) => t.getAttribute('data-strip-tab'))
+				.filter((id) => id !== 'w1');
+		const pinned = () =>
+			within(screen.getByTestId('strip-pin')).getByRole('tab').getAttribute('data-agent-id');
+		const railTab = (id: string) =>
+			screen
+				.getByTestId('strip-scroller')
+				.querySelector<HTMLElement>(`[data-strip-tab="${id}"]`)!;
+
+		it('slides the agent just left into the first place after the pin', async () => {
+			const user = userEvent.setup();
+			renderStrip({}, true);
+			expect(pinned()).toBe('alpha');
+			expect(railRest()).toEqual([
+				'bravo',
+				'charlie',
+				'delta',
+				'echo',
+				'foxtrot',
+				'golf',
+				'hotel',
+				'india',
+				'juliet',
+			]);
+			await user.click(railTab('delta'));
+			expect(pinned()).toBe('delta');
+			// alpha, just left, is N+1; the rest keep the fleet's order.
+			expect(railRest()).toEqual([
+				'alpha',
+				'bravo',
+				'charlie',
+				'echo',
+				'foxtrot',
+				'golf',
+				'hotel',
+				'india',
+				'juliet',
+			]);
+		});
+
+		it('keeps repeated switches in most-recent-first order', async () => {
+			const user = userEvent.setup();
+			renderStrip({}, true);
+			await user.click(railTab('delta'));
+			await user.click(railTab('charlie'));
+			expect(pinned()).toBe('charlie');
+			expect(railRest().slice(0, 4)).toEqual(['delta', 'alpha', 'bravo', 'echo']);
+			// Back to an agent already in the history: it leaves the rail, and
+			// the one just left takes N+1.
+			await user.click(railTab('alpha'));
+			expect(pinned()).toBe('alpha');
+			expect(railRest().slice(0, 4)).toEqual(['charlie', 'delta', 'bravo', 'echo']);
+		});
+
+		it('keeps waiting agents first, whatever was switched to last', async () => {
+			const user = userEvent.setup();
+			renderStrip({}, true);
+			await user.click(railTab('juliet'));
+			const rail = [
+				...screen.getByTestId('strip-scroller').querySelectorAll('[data-strip-tab]'),
+			].map((t) => t.getAttribute('data-strip-tab'));
+			expect(rail.slice(0, 2)).toEqual(['w1', 'alpha']);
+			expect(screen.getByTestId('strip-pending-label')).toBeInTheDocument();
+		});
+
+		it('leaves the picker in the fleet order', async () => {
+			const user = userEvent.setup();
+			renderStrip({}, true);
+			await user.click(railTab('india'));
+			await user.click(railTab('delta'));
+			await user.keyboard(cmdK);
+			const dialog = await screen.findByRole('dialog', { name: 'Switch agent' });
+			const names = within(dialog)
+				.getAllByRole('option')
+				.map((o) => o.getAttribute('data-agent-id') ?? o.textContent);
+			const index = (n: string) => names.findIndex((t) => t?.includes(n));
+			// Fleet order: alpha … india … juliet, not india/alpha first.
+			expect(index('alpha')).toBeLessThan(index('bravo'));
+			expect(index('bravo')).toBeLessThan(index('india'));
+			expect(index('india')).toBeLessThan(index('juliet'));
+		});
+
+		it('survives a reload', async () => {
+			const user = userEvent.setup();
+			const first = renderStrip({}, true);
+			await user.click(railTab('foxtrot'));
+			await user.click(railTab('charlie'));
+			first.unmount();
+			// Remounted on the agent last shown, the history reads back.
+			renderStrip({ initial: 'charlie' }, true);
+			expect(railRest().slice(0, 3)).toEqual(['foxtrot', 'alpha', 'bravo']);
+		});
+
+		it('ignores an unreadable or stale history', () => {
+			window.localStorage.setItem('agents.stripRecent', '{not json');
+			const { unmount } = renderStrip({}, true);
+			expect(railRest()[0]).toBe('bravo');
+			unmount();
+			window.localStorage.setItem('agents.stripRecent', JSON.stringify(['gone', 'echo']));
+			renderStrip({}, true);
+			// `gone` is no longer in the fleet; `echo` still leads after the pin.
+			expect(railRest().slice(0, 2)).toEqual(['echo', 'bravo']);
+		});
+
+		it('brings the rail back to its start, so the agent just left lands in view', async () => {
+			const user = userEvent.setup();
+			// Narrow enough that the rail overflows, wide enough that alpha's
+			// place after the pin shows with the rail at its start.
+			await page.viewport(900, 900);
+			renderStrip({}, true);
+			const scroller = screen.getByTestId('strip-scroller');
+			expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+			// Reaching a far tab scrolls the rail along to it…
+			scroller.scrollLeft = 400;
+			expect(scroller.scrollLeft).toBeGreaterThan(0);
+			await user.click(railTab('hotel'));
+			// …and the switch returns it to the start, where alpha now sits next
+			// to the pin rather than off behind it.
+			expect(scroller.scrollLeft).toBe(0);
+			expect(railRest()[0]).toBe('alpha');
+		});
+
+		it('scrolls the agent just left into view past the pin and a long waiting group', async () => {
+			const user = userEvent.setup();
+			await page.viewport(900, 900);
+			const waiting = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6'].map((id) =>
+				agent(id, `waiting-agent-${id}`, 'pending'),
+			);
+			const agents = [...waiting, ...FLEET.filter((a) => a.status !== 'pending')];
+			renderStrip({ agents }, true);
+			const scroller = screen.getByTestId('strip-scroller');
+			expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+			scroller.scrollLeft = scroller.scrollWidth;
+			expect(scroller.scrollLeft).toBeGreaterThan(0);
+			await user.click(railTab('juliet'));
+			const rail = [...scroller.querySelectorAll('[data-strip-tab]')].map((t) =>
+				t.getAttribute('data-strip-tab'),
+			);
+			// alpha returns right after the waiting group, which alone overflows
+			// the rail's first view…
+			expect(rail.slice(0, 7)).toEqual([...waiting.map((a) => a.id), 'alpha']);
+			expect(scroller.scrollLeft).toBeGreaterThan(0);
+			// …so the rail scrolls to show it just past the pin, clear of the stack.
+			const tab = railTab('alpha').getBoundingClientRect();
+			const pin = screen.getByTestId('strip-pin').getBoundingClientRect();
+			const stack = screen.getByTestId('strip-stack').getBoundingClientRect();
+			expect(tab.left).toBeGreaterThanOrEqual(pin.right);
+			expect(tab.right).toBeLessThanOrEqual(stack.left);
+		});
+
+		it('a pick the parent does not apply leaves no scroll for a later switch made elsewhere', async () => {
+			const user = userEvent.setup();
+			await page.viewport(900, 900);
+			function Ignoring() {
+				const [selected, setSelected] = useState<string | null>('alpha');
+				return (
+					<AgentInitialsProvider initials={smartInitials(FLEET)}>
+						<AgentStrip
+							agents={FLEET}
+							selectedId={selected}
+							onSelect={() => {}}
+							setupGaps={EMPTY}
+							apiCounts={API_COUNTS}
+							filter=""
+						/>
+						<button type="button" onClick={() => setSelected('echo')}>
+							select echo elsewhere
+						</button>
+					</AgentInitialsProvider>
+				);
+			}
+			renderWithProviders(
+				<MotionConfig reducedMotion="always">
+					<Ignoring />
+				</MotionConfig>,
+			);
+			const scroller = screen.getByTestId('strip-scroller');
+			expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+			scroller.scrollLeft = 120;
+			expect(scroller.scrollLeft).toBeGreaterThan(0);
+			// A pick that never lands: the selection stays on alpha.
+			await user.click(railTab('hotel'));
+			expect(pinned()).toBe('alpha');
+			// (Focusing the far tab may have scrolled it along.)
+			const before = scroller.scrollLeft;
+			await user.click(screen.getByRole('button', { name: 'select echo elsewhere' }));
+			expect(pinned()).toBe('echo');
+			// No leftover intent from the unapplied pick moves the rail.
+			expect(scroller.scrollLeft).toBe(before);
+		});
+
+		it('holds the visible tabs still when the agent just left is filtered out', async () => {
+			const user = userEvent.setup();
+			// Narrow, so the five matching tabs overflow the rail.
+			await page.viewport(520, 900);
+			// `alpha` (pinned) doesn't match, so it won't return to the rail.
+			renderStrip({ filter: 'o' }, true);
+			const scroller = screen.getByTestId('strip-scroller');
+			expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+			scroller.scrollLeft = 40;
+			await user.click(railTab('bravo'));
+			expect(railRest()).not.toContain('alpha');
+			// No jump back to the start: with nothing returning, the rail holds.
+			expect(scroller.scrollLeft).toBeGreaterThan(0);
+		});
+	});
 });
 
 describe('compensatedScrollLeft (a switch keeps the visible tabs still)', () => {
@@ -681,5 +896,21 @@ describe('compensatedScrollLeft (a switch keeps the visible tabs still)', () => 
 		).toBe(550);
 		expect(compensatedScrollLeft({ ...base, anchorBefore: 700, anchorAfter: 100 })).toBe(0);
 		expect(compensatedScrollLeft({ ...base, anchorBefore: null, anchorAfter: 900 })).toBe(500);
+	});
+});
+
+describe('returnedTabScrollLeft (the agent just left shows after a switch)', () => {
+	const base = { viewport: 800, startInset: 180, endInset: 220, maxScrollLeft: 2000 };
+
+	it('goes to the start when the tab shows there', () => {
+		expect(returnedTabScrollLeft({ ...base, tabStart: 300, tabEnd: 420 })).toBe(0);
+		expect(returnedTabScrollLeft({ ...base, tabStart: 460, tabEnd: 580 })).toBe(0);
+	});
+
+	it('otherwise sits the tab just past the left end, within the scroll range', () => {
+		expect(returnedTabScrollLeft({ ...base, tabStart: 900, tabEnd: 1020 })).toBe(720);
+		expect(
+			returnedTabScrollLeft({ ...base, tabStart: 900, tabEnd: 1020, maxScrollLeft: 500 }),
+		).toBe(500);
 	});
 });

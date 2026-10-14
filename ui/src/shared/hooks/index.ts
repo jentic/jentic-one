@@ -25,8 +25,9 @@ export type {
 	PendingOverlayCounts,
 } from '@/shared/hooks/usePendingOverlayCounts';
 export { useResizableWidth } from '@/shared/hooks/useResizableWidth';
-export { usePersistedChoice } from '@/shared/hooks/usePersistedChoice';
 export type { ResizableWidth, UseResizableWidthOptions } from '@/shared/hooks/useResizableWidth';
+export { usePersistedChoice } from '@/shared/hooks/usePersistedChoice';
+export { useRecentIds } from '@/shared/hooks/useRecentIds';
 export { useHoverIntent, HOVER_INTENT, HOVER_INTENT_IGNORE } from '@/shared/hooks/useHoverIntent';
 export type { HoverIntentOptions } from '@/shared/hooks/useHoverIntent';
 export { usePinStack } from '@/shared/hooks/usePinStack';

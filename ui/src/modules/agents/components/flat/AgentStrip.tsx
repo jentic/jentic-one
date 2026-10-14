@@ -5,10 +5,13 @@
  *   - LEFT: the selected agent's tab, pinned on a raised layer and left out of
  *     the scroll list. It owns the notch into the agent card below, so the notch
  *     never moves with the rail. A switch flies the new tab into the pin and the
- *     old one back to its sorted place. A `‹ N` chip at the pin's edge counts
- *     the tabs scrolled behind it and pages back.
+ *     old one into the first place after the pin and any waiting agents, and
+ *     scrolls the rail so it shows there: the agents switched between stay
+ *     side by side. A `‹ N` chip at the pin's edge counts the tabs
+ *     scrolled behind it and pages back.
  *   - MIDDLE: the scrolling tabs — avatar, lifecycle glyph, name, API-count
- *     badge, "· N to set up". Waiting agents lead under "Waiting".
+ *     badge, "· N to set up". Waiting agents lead under "Waiting"; the rest are
+ *     recent first (persisted across reloads), then in the fleet's order.
  *   - RIGHT: up to five circles for the next agents off-screen to the right, in
  *     order, then `+N` (the exact rest) — or, with nothing off to the right, a
  *     search button — opening the agent picker (also ⌘K / Ctrl+K).
@@ -43,7 +46,7 @@ import {
 import type { ActorStatus } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { commandChordLabel, commandChordShortcut } from '@/shared/lib/keyboard';
-import { useCommandHotkey, useMediaQuery } from '@/shared/hooks';
+import { useCommandHotkey, useMediaQuery, useRecentIds } from '@/shared/hooks';
 import type { AgentEntity } from '@/modules/agents/api';
 import {
 	agentGist,
@@ -52,6 +55,7 @@ import {
 	matchesAgent,
 	plural,
 } from '@/modules/agents/lib/stripSummary';
+import { STRIP_RECENT_STORAGE_KEY, recentFirst } from '@/modules/agents/lib/stripOrder';
 import { AgentHoverCard, type AgentFacts } from '@/modules/agents/components/flat/AgentHoverCard';
 import { AgentPicker } from '@/modules/agents/components/flat/AgentPicker';
 import { useStripLinkage } from '@/modules/agents/components/flat/useStripLinkage';
@@ -127,6 +131,33 @@ export function compensatedScrollLeft({
 	if (scrollLeft <= 0) return 0;
 	const next = scrollLeft + (anchorAfter - anchorBefore);
 	return Math.min(Math.max(0, next), Math.max(0, maxScrollLeft));
+}
+
+/**
+ * The scroll offset that shows the agent just left, back in the rail after a
+ * switch: `tabStart`/`tabEnd` are its edges in the scroller's content box.
+ * When it already shows with the rail at its start (`viewport` less the
+ * `endInset` the right end covers), the rail goes to its start; otherwise the
+ * tab sits just past the left end (`startInset`: the pin, the `‹ N` chip and
+ * its fade), clamped to the scroller's range.
+ */
+export function returnedTabScrollLeft({
+	tabStart,
+	tabEnd,
+	viewport,
+	startInset,
+	endInset,
+	maxScrollLeft,
+}: {
+	tabStart: number;
+	tabEnd: number;
+	viewport: number;
+	startInset: number;
+	endInset: number;
+	maxScrollLeft: number;
+}): number {
+	if (tabEnd <= viewport - endInset) return 0;
+	return Math.min(Math.max(0, tabStart - startInset), Math.max(0, maxScrollLeft));
 }
 
 /** Non-active states whose verdict is in: their tabs read struck through.
@@ -411,14 +442,20 @@ export function AgentStrip({
 	);
 
 	// The scroll list: the filter's matches less the pinned selection. Pending
-	// tabs lead, so DOM order and arrow-key traversal agree with the groups.
+	// tabs lead, so DOM order and arrow-key traversal agree with the groups;
+	// the rest are recent first, so the agent just left sits next to the pin
+	// (`stripOrder`). The history persists across reloads.
+	const recent = useRecentIds(STRIP_RECENT_STORAGE_KEY, selectedId);
 	const list = useMemo(() => {
 		const matched = agents.filter((a) => a.id !== selectedId && matchesAgent(a, filter));
 		return {
 			pending: matched.filter((a) => a.status === 'pending'),
-			rest: matched.filter((a) => a.status !== 'pending'),
+			rest: recentFirst(
+				matched.filter((a) => a.status !== 'pending'),
+				recent,
+			),
 		};
-	}, [agents, filter, selectedId]);
+	}, [agents, filter, selectedId, recent]);
 	const order = useMemo(() => [...list.pending, ...list.rest].map((a) => a.id), [list]);
 	const nothingMatches = order.length === 0 && filter.trim() !== '';
 	// Roving order: the pin, then the rail.
@@ -444,45 +481,88 @@ export function AgentStrip({
 		return () => window.clearTimeout(t);
 	}, [settledId, selectedId, reduced]);
 
-	// Scroll anchoring across a switch: the first tab showing past the pin is
-	// read just before the switch and held where it was just after, so the tabs
-	// in view don't lurch as the picked one leaves and the old pin returns
-	// somewhere before them. Only the gap the picked tab leaves closes.
-	const anchorRef = useRef<{ id: string; x: number } | null>(null);
+	// Scroll across a switch. The agent just left returns to the rail's head
+	// (recent first, after any waiting agents — or among them, if it waits
+	// itself), so the rail brings that tab into view beside the pin: back to
+	// the start when it shows there, else scrolled so it sits just past the pin.
+	// Its neighbours slide to make room in the same spring as the flight. When
+	// it doesn't return (the filter hides it), the first tab showing past the
+	// pin is read just before the switch and held where it was just after, so
+	// the tabs in view don't lurch; only the gap the picked tab leaves closes.
+	// The pin's width, measured below: the scroller's start padding.
+	const [pinPx, setPinPx] = useState(0);
+	const switchRef = useRef<{
+		from: string | null;
+		to: string;
+		anchor: { id: string; x: number } | null;
+	} | null>(null);
+	// The selection as of the last render: read by the stable handlers below,
+	// and at the picker's close time (a pick has just moved it).
+	const selectedRef = useRef(selectedId);
+	selectedRef.current = selectedId;
 	const contentX = (sc: HTMLElement, el: HTMLElement) =>
 		el.getBoundingClientRect().left - sc.getBoundingClientRect().left + sc.scrollLeft;
 	const captureAnchor = useCallback((pickedId: string) => {
-		anchorRef.current = null;
 		const sc = scrollerRef.current;
 		const pin = pinRef.current;
-		if (!sc) return;
-		const start = (pin?.getBoundingClientRect().right ?? sc.getBoundingClientRect().left) + 1;
-		for (const el of sc.querySelectorAll<HTMLElement>('[data-strip-tab]')) {
-			const id = el.dataset.stripTab;
-			if (!id || id === pickedId) continue;
-			if (el.getBoundingClientRect().right > start) {
-				anchorRef.current = { id, x: contentX(sc, el) };
-				return;
+		let anchor: { id: string; x: number } | null = null;
+		if (sc) {
+			const start =
+				(pin?.getBoundingClientRect().right ?? sc.getBoundingClientRect().left) + 1;
+			for (const el of sc.querySelectorAll<HTMLElement>('[data-strip-tab]')) {
+				const id = el.dataset.stripTab;
+				if (!id || id === pickedId) continue;
+				if (el.getBoundingClientRect().right > start) {
+					anchor = { id, x: contentX(sc, el) };
+					break;
+				}
 			}
 		}
+		switchRef.current = { from: selectedRef.current, to: pickedId, anchor };
 	}, []);
 	useLayoutEffect(() => {
-		const anchor = anchorRef.current;
-		anchorRef.current = null;
+		const intent = switchRef.current;
+		switchRef.current = null;
 		const sc = scrollerRef.current;
-		if (!anchor || !sc) return;
+		// Only the switch it was captured for: a pick the parent didn't apply
+		// leaves nothing behind to move the rail on a later change made elsewhere.
+		if (!sc || !intent || intent.to !== selectedId) return;
+		// The scroller's start padding (`pinPx`) catches up with the new pin's
+		// width only after this effect, shifting every content position read
+		// here by the difference: fold it in now.
+		const pinNow = pinRef.current?.offsetWidth ?? 0;
+		const padShift = pinNow - pinPx;
+		const maxScrollLeft = sc.scrollWidth - sc.clientWidth + padShift;
+		const back = intent.from
+			? sc.querySelector<HTMLElement>(`[data-strip-tab="${CSS.escape(intent.from)}"]`)
+			: null;
+		if (back) {
+			// `revealTab`'s left end, with the `‹ N` chip that shows once the
+			// rail has scrolled.
+			const tabStart = contentX(sc, back) + padShift;
+			sc.scrollLeft = returnedTabScrollLeft({
+				tabStart,
+				tabEnd: tabStart + back.offsetWidth,
+				viewport: sc.clientWidth,
+				startInset: pinNow + (compact ? 0 : CHIP_PX) + FADE_PX,
+				endInset: stackPx + FADE_PX / 2,
+				maxScrollLeft,
+			});
+			return;
+		}
+		const { anchor } = intent;
+		if (!anchor) return;
 		const el = sc.querySelector<HTMLElement>(`[data-strip-tab="${CSS.escape(anchor.id)}"]`);
 		sc.scrollLeft = compensatedScrollLeft({
 			scrollLeft: sc.scrollLeft,
 			anchorBefore: anchor.x,
-			anchorAfter: el ? contentX(sc, el) : null,
-			maxScrollLeft: sc.scrollWidth - sc.clientWidth,
+			anchorAfter: el ? contentX(sc, el) + padShift : null,
+			maxScrollLeft,
 		});
-	}, [selectedId]);
+	}, [selectedId, compact, stackPx, pinPx]);
 
 	// The pin's width insets the rail and the observer; re-measured as fonts,
 	// counts or the selection change it.
-	const [pinPx, setPinPx] = useState(0);
 	useLayoutEffect(() => {
 		const pin = pinRef.current;
 		if (!pin) {
@@ -592,10 +672,6 @@ export function AgentStrip({
 	// A pick made from the card's name hands focus to the new card's name (the
 	// old one leaves with its card): holds the old name's element until then.
 	const refocusSwitcher = useRef<HTMLElement | null>(null);
-	// The selection as of the last render: read by the stable handlers below,
-	// and at the picker's close time (a pick has just moved it).
-	const selectedRef = useRef(selectedId);
-	selectedRef.current = selectedId;
 	const onActivate = useCallback(
 		(id: string) => {
 			const active = document.activeElement;
