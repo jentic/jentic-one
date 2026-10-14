@@ -90,7 +90,7 @@ const (
 	defaultPollTimeoutSeconds = 30
 	// maxPollTimeoutSeconds caps get_execution_result's wait, inside a
 	// host's tool-call timeout.
-	maxPollTimeoutSeconds = 60
+	maxPollTimeoutSeconds = 30
 )
 
 // getExecutionResultParams declares the poll tool's argument table: exactly
@@ -1088,8 +1088,8 @@ var getExecutionResultSchema = map[string]any{
 			"minimum": 0,
 			"maximum": maxPollTimeoutSeconds,
 			"default": defaultPollTimeoutSeconds,
-			"description": "Optional. Wait up to this many seconds (default 30, max 60; larger values are " +
-				"capped at 60) for the call to finish, re-polling and returning as soon as it has. " +
+			"description": "Optional. Wait up to this many seconds (default and max 30; larger values are " +
+				"capped at 30) for the call to finish, re-polling and returning as soon as it has. " +
 				"0 returns the current status at once.",
 		},
 	},
@@ -1147,8 +1147,8 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			tool: &mcp.Tool{
 				Name:  "get_execution_result",
 				Title: "Poll a held or asynchronous execution",
-				Description: "Poll a held or asynchronous execution, waiting up to timeout seconds (default 30, " +
-					"max 60; 0 answers at once) and returning as soon as the call has finished. Pass " +
+				Description: "Poll a held or asynchronous execution, waiting up to timeout seconds (default and " +
+					"max 30; 0 answers at once) and returning as soon as the call has finished. Pass " +
 					"held_execution_id for a 202 HELD response (human approval required): returns " +
 					"{held_execution_id, state, status, review_url, expires_at, ...} — state is the decision " +
 					"(pending, approved, denied, expired, withdrawn), status where the call stands (held, queued, " +

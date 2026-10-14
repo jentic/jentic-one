@@ -58,7 +58,7 @@ HELD_AGENT_DIRECTIVE = (
     "This call needs human approval. Most important: show the user the review_url, "
     "since they cannot approve it without that link, and end your turn so they see it. "
     "Do not call get_execution_result until the user replies; then call it once with "
-    "held_execution_id. It waits up to 30 seconds by default (timeout, max 60). If it is "
+    "held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is "
     "still held, show the user the review_url again and end your turn again. Do not "
     "re-send the call."
 )

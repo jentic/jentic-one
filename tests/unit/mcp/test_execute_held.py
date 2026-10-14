@@ -303,7 +303,7 @@ async def test_get_execution_result_wait_returns_early_once_terminal(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held", "queued", "completed"])
-    payload = _json(await _get_result(_env(), timeout=60))
+    payload = _json(await _get_result(_env(), timeout=30))
     assert payload["status"] == "completed"
     assert polled == ["exap_1", "exap_1", "exap_1"]
 

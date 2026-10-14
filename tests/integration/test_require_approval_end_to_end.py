@@ -262,7 +262,7 @@ async def test_approved_call_runs_once_and_its_result_reaches_the_agent(
     assert held.json()["execution_status"] == JobStatus.COMPLETED
     assert result.status_code == 200, result.text
 
-    polled = await _mcp_result(ctx, parties.agent, held_id, timeout=60)
+    polled = await _mcp_result(ctx, parties.agent, held_id, timeout=30)
     assert polled["status"] == JobStatus.COMPLETED
     assert "result" in polled
     assert polled["review_url"].endswith(f"/app/agents/approvals/{held_id}")

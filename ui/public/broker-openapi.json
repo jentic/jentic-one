@@ -199,7 +199,7 @@
                     "self": "https://control.your-instance.example/executions/holds/exap_abc123",
                     "withdraw": "https://control.your-instance.example/executions/holds/exap_abc123:withdraw"
                   },
-                  "agent_directive": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds by default (timeout, max 60). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
+                  "agent_directive": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
                   "expires_at": "2026-10-06T12:00:00Z",
                   "held_execution_id": "exap_abc123",
                   "review_url": "https://your-instance.example/app/agents/approvals/exap_abc123",

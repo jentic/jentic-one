@@ -334,9 +334,10 @@ func TestPollTimeout(t *testing.T) {
 		{map[string]any{}, 30 * time.Second},
 		{map[string]any{"timeout": 0}, 0},
 		{map[string]any{"timeout": -3}, 0},
-		{map[string]any{"timeout": 45}, 45 * time.Second},
-		{map[string]any{"timeout": 60}, 60 * time.Second},
-		{map[string]any{"timeout": 600}, 60 * time.Second},
+		{map[string]any{"timeout": 15}, 15 * time.Second},
+		{map[string]any{"timeout": 30}, 30 * time.Second},
+		{map[string]any{"timeout": 60}, 30 * time.Second},
+		{map[string]any{"timeout": 600}, 30 * time.Second},
 	} {
 		if got := pollTimeout(tc.args); got != tc.want {
 			t.Errorf("pollTimeout(%v) = %v, want %v", tc.args, got, tc.want)

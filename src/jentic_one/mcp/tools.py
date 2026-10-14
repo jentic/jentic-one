@@ -1222,7 +1222,7 @@ _GET_EXECUTION_RESULT_PARAMS = [
 #: get_execution_result's ``timeout`` in seconds when the caller sets none, and
 #: its cap (Go: ``defaultPollTimeoutSeconds`` / ``maxPollTimeoutSeconds``).
 DEFAULT_POLL_TIMEOUT_SECONDS = 30
-MAX_POLL_TIMEOUT_SECONDS = 60
+MAX_POLL_TIMEOUT_SECONDS = 30
 
 
 async def handle_get_execution_result(
@@ -1232,8 +1232,8 @@ async def handle_get_execution_result(
 
     ``held_execution_id`` (from a held 202) reads through the held execution
     itself; ``job_id`` (from an async 202) reads the job. It re-polls until the
-    call has finished or ``timeout`` seconds lapse — 30 when absent, capped at
-    60; ``0`` polls once and answers at once.
+    call has finished or ``timeout`` seconds lapse — 30 when absent, and at most
+    30; ``0`` polls once and answers at once.
     """
     args = normalize_tool_args(arguments, _GET_EXECUTION_RESULT_PARAMS)
     held_execution_id = args.get("held_execution_id", "")

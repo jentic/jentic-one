@@ -101,7 +101,7 @@ Both MCP servers relay the held envelope unchanged, so the agent gets the same
   once the user replies — call `get_execution_result` with the
   `held_execution_id`.
 - **`get_execution_result`** takes an optional `timeout` in seconds (default
-  30, maximum 60; `0` checks once): the server re-polls the held execution and
+  and maximum 30; `0` checks once): the server re-polls the held execution and
   returns as soon as the call has finished, or where it stands when the timeout
   lapses. Every answer names the `held_execution_id`, the `review_url` and
   `expires_at`; one that comes back before the call has finished also carries
