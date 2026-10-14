@@ -1,5 +1,5 @@
 import { ArrowUpRight, Check } from 'lucide-react';
-import { AppLink, Badge, Card, CardBody, CardHeader, CardTitle } from '@/shared/ui';
+import { AppLink, Badge } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import {
 	CALL_STATUS_LABELS,
@@ -11,6 +11,7 @@ import {
 	type CallStatusValue,
 	type CallStep,
 } from '@/modules/agents/lib/approvalState';
+import { ReviewPanel, ReviewSection } from '@/modules/agents/components/approvals/ReviewLayout';
 
 /** The last path segment of a HAL link (`/executions/exec_1` → `exec_1`). */
 function idFromLink(link: string | null | undefined): string | null {
@@ -56,16 +57,15 @@ export function CallStatusCard({
 	const current: CallStep | null = status ? callStep(status) : null;
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="flex flex-wrap items-center gap-2">
-					Call status
-					{status && (approved || state === 'pending') && (
-						<CallStatusBadge status={status} />
-					)}
-				</CardTitle>
-			</CardHeader>
-			<CardBody className="flex flex-col gap-3">
+		<ReviewSection
+			title="Status"
+			action={
+				status && (approved || state === 'pending') ? (
+					<CallStatusBadge status={status} />
+				) : null
+			}
+		>
+			<ReviewPanel className="flex flex-col gap-3">
 				<p className="text-sm">{describeCallStatus(state, status)}</p>
 				{approved && current && (
 					<ol aria-label="Call progress" className="flex flex-wrap items-center gap-2">
@@ -132,8 +132,8 @@ export function CallStatusCard({
 						<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
 					</AppLink>
 				)}
-			</CardBody>
-		</Card>
+			</ReviewPanel>
+		</ReviewSection>
 	);
 }
 

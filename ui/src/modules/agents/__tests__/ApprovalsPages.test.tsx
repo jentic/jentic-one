@@ -52,14 +52,24 @@ describe('Approvals pages', () => {
 		await checkA11y(container);
 	});
 
-	it('shows the agent, owner, matched rule and the held request body', async () => {
+	it('shows the call by name, never by id, with the held request body on demand', async () => {
 		const { container } = renderDetail('held_pending1');
-		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
-		expect(screen.getByText('usr_owner')).toBeInTheDocument();
-		expect(screen.getByText('apr_hold_posts')).toBeInTheDocument();
+		expect(await screen.findByText('/v1/charges')).toBeInTheDocument();
+		const call = screen.getByRole('region', { name: 'The call' });
+		expect(within(call).getByText('scout')).toBeInTheDocument();
+		expect(within(call).getByText('Expires')).toBeInTheDocument();
+		// Ids stay out of the page; only "Copy reference" carries one.
+		for (const id of ['apr_hold_posts', 'cred_stripe', 'agnt_scout', 'held_pending1']) {
+			expect(screen.queryByText(id)).not.toBeInTheDocument();
+		}
+		expect(
+			screen.getByRole('button', { name: 'Copy held execution reference' }),
+		).toBeInTheDocument();
 		expect(
 			screen.getByText('POST https://api.stripe.com/v1/charges?expand=balance'),
 		).toBeInTheDocument();
+		expect(screen.queryByLabelText('Request body')).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Show body' }));
 		const body = screen.getByLabelText('Request body');
 		expect(body.textContent).toContain('"amount": 500');
 		await checkA11y(container);
@@ -69,10 +79,10 @@ describe('Approvals pages', () => {
 		// The mock store answers 422 to anything but approve/deny and records
 		// the decision, so the outcome card proves what was sent.
 		renderDetail('held_pending1');
-		await screen.findByText('POST /v1/charges');
+		await screen.findByText('/v1/charges');
 		await userEvent.type(screen.getByLabelText('Reason (optional)'), 'looks right');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
-		expect(await screen.findByText('Outcome')).toBeInTheDocument();
+		expect(await screen.findByText('Decided by')).toBeInTheDocument();
 		expect(screen.getByText('looks right')).toBeInTheDocument();
 		expect(screen.getAllByText('Approved').length).toBeGreaterThan(0);
 		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
@@ -109,7 +119,7 @@ describe('Approvals pages', () => {
 			),
 		);
 		renderDetail('held_pending1');
-		await screen.findByText('POST /v1/charges');
+		await screen.findByText('/v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
 		expect(await screen.findByText(/already denied/)).toBeInTheDocument();
 	});
@@ -168,7 +178,7 @@ describe('Approvals pages', () => {
 			),
 		);
 		const { container } = renderDetail('held_pending1');
-		await screen.findByText('POST /v1/charges');
+		await screen.findByText('/v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
 		expect(await screen.findByText(/can't decide it/)).toBeInTheDocument();
 		expect(screen.getByText(/Only the agent's owner or an org admin/)).toBeInTheDocument();
@@ -179,17 +189,18 @@ describe('Approvals pages', () => {
 		await checkA11y(container);
 	});
 
-	it('shows a pending call as held', async () => {
+	it('shows a pending call with its time left and the decision, without progress', async () => {
 		renderDetail('held_pending1');
-		const card = await screen.findByRole('heading', { name: /Call status/ });
-		expect(card).toHaveTextContent('Held');
-		expect(screen.getByText(/held until someone approves or denies it/)).toBeInTheDocument();
+		await screen.findByText('/v1/charges');
+		expect(screen.getByText(/^in \d+ h$/)).toBeInTheDocument();
+		expect(screen.getByRole('region', { name: 'Decision' })).toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: /Call status/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole('list', { name: 'Call progress' })).not.toBeInTheDocument();
 	});
 
 	it('moves an approved call to queued and follows it through its steps', async () => {
 		renderDetail('held_pending1');
-		await screen.findByText('POST /v1/charges');
+		await screen.findByText('/v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
 		const progress = await screen.findByRole('list', { name: 'Call progress' });
 		const current = within(progress)

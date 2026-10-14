@@ -2,9 +2,12 @@
  * Approval detail page — `/app/agents/approvals/:id`, a subsection of Agents.
  *
  * The review page an agent's held call links to (`GET /executions/holds/{id}`).
- * Shows who filed it (agent and owner), the matched rule, the exact request
- * that runs if approved (method, URL, body), and where the call stands (held,
- * approved, running, its outcome) with the execution record once it has run.
+ * Laid out like Monitor's execution trace: the call first (what it does, on
+ * which API, for which agent and credential, how long it has left), then the
+ * decision, then the exact request that runs if approved. Everything is named
+ * for a person — agents, owners, credentials and reviewers by name, times as
+ * "5 min ago" — and the raw ids stay reachable only through "Copy reference".
+ *
  * A pending, unexpired held execution offers Approve and Deny to anyone who
  * can see it; the server decides who may act (the agent's owner or an org
  * admin) and a refused decision (403) is explained in place. A decided one is
@@ -12,21 +15,26 @@
  */
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { ArrowLeft, CheckSquare } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, CheckSquare } from 'lucide-react';
 import {
+	AppLink,
 	Button,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
+	CopyButton,
 	EmptyState,
 	Label,
+	MethodBadge,
 	PageHeader,
 	PageShell,
 	SkeletonRows,
 	Textarea,
+	Tooltip,
+	VendorIcon,
 } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
+import { useOptionalCurrentUser } from '@/shared/auth';
+import { useCredential } from '@/shared/credentials/api';
+import { useActorDirectory } from '@/shared/hooks';
+import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	ApprovalDecision,
 	ApprovalsApiError,
@@ -37,20 +45,12 @@ import {
 import { ApprovalStateBadge } from '@/modules/agents/components/approvals/ApprovalStateBadge';
 import { ApprovalsHelp } from '@/modules/agents/components/approvals/ApprovalsHelp';
 import { CallStatusCard } from '@/modules/agents/components/approvals/CallStatusCard';
+import {
+	ReviewPanel,
+	ReviewRow,
+	ReviewSection,
+} from '@/modules/agents/components/approvals/ReviewLayout';
 import { isDecidable } from '@/modules/agents/lib/approvalState';
-
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="flex flex-col gap-0.5">
-			<dt className="text-muted-foreground text-xs tracking-wider uppercase">{label}</dt>
-			<dd className="text-sm break-all">{value}</dd>
-		</div>
-	);
-}
-
-function Mono({ children }: { children: React.ReactNode }) {
-	return <span className="font-mono text-xs">{children}</span>;
-}
 
 /** Pretty-print a JSON body; anything else is shown verbatim. */
 function formatBody(body: string): string {
@@ -61,13 +61,52 @@ function formatBody(body: string): string {
 	}
 }
 
+/** "in 23 h", "in 40 min", or "Expired" — how long a pending call has left. */
+function expiresIn(iso: string): string {
+	const minutes = Math.round((Date.parse(iso) - Date.now()) / 60_000);
+	if (Number.isNaN(minutes)) return '—';
+	if (minutes <= 0) return 'Expired';
+	if (minutes < 60) return `in ${minutes} min`;
+	const hours = Math.floor(minutes / 60);
+	return hours < 48 ? `in ${hours} h` : `in ${Math.floor(hours / 24)} days`;
+}
+
+/**
+ * Names for the people on the page: "You" for the signed-in viewer, the
+ * directory's name otherwise, and a plain label when neither is known — never
+ * the raw id.
+ */
+function useActorNames(ids: (string | null | undefined)[]) {
+	const viewer = useOptionalCurrentUser()?.id;
+	const { resolve } = useActorDirectory(ids);
+	return (id: string | null | undefined, fallback: string): string => {
+		if (!id) return fallback;
+		if (id === viewer) return 'You';
+		return resolve(id) ?? fallback;
+	};
+}
+
+/** "5 min ago" from the shared compact age ("5m"). */
+function ago(iso: string): string {
+	const age = timeAgo(iso);
+	return age === 'now' ? 'just now' : `${age} ago`;
+}
+
 export default function ApprovalDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
 	const [reason, setReason] = useState('');
+	const [showBody, setShowBody] = useState(false);
 
 	const { data: approval, isLoading, error } = useApproval(id);
 	const decide = useDecideApproval();
+	// The credential's name; a reviewer who can't read it sees a plain label.
+	const credential = useCredential(approval?.credential_id);
+	const nameOf = useActorNames([
+		approval?.agent_id,
+		approval?.agent_owner_id,
+		approval?.decided_by,
+	]);
 
 	const decidable = approval ? isDecidable(approval.state, approval.expires_at) : false;
 	const notReviewer = error instanceof ApprovalsApiError && error.status === 404;
@@ -85,11 +124,19 @@ export default function ApprovalDetailPage() {
 		);
 	}
 
+	const shownState =
+		approval && approval.state === 'pending' && !decidable ? 'expired' : approval?.state;
+	const agentName = approval?.agent_name ?? nameOf(approval?.agent_id, 'An agent');
+
 	return (
 		<PageShell width="reading">
 			<PageHeader
 				title="Review held call"
-				subtitle="An agent's call is waiting on a human decision."
+				subtitle={
+					approval
+						? `${agentName} wants to make this call. It runs once if approved.`
+						: "An agent's call is waiting on a human decision."
+				}
 				actions={
 					<>
 						<Button
@@ -122,138 +169,84 @@ export default function ApprovalDetailPage() {
 			) : !approval ? (
 				<EmptyState icon={<CheckSquare className="h-8 w-8" />} title="Approval not found" />
 			) : (
-				<>
-					<Card>
-						<CardHeader>
-							<CardTitle className="flex flex-wrap items-center gap-2">
-								<ApprovalStateBadge
-									state={
-										approval.state === 'pending' && !decidable
-											? 'expired'
-											: approval.state
+				<div className="space-y-6">
+					<ReviewSection title="The call">
+						<ReviewPanel>
+							<div className="flex items-start gap-2">
+								<MethodBadge method={approval.method} />
+								<p className="text-foreground min-w-0 flex-1 font-mono text-[13px] break-all">
+									{approval.path}
+								</p>
+								{shownState && <ApprovalStateBadge state={shownState} />}
+							</div>
+							<div className="mt-3">
+								<ReviewRow
+									label="API"
+									value={
+										<span className="inline-flex items-center gap-1.5">
+											<VendorIcon
+												name={approval.api_name}
+												vendor={approval.api_vendor}
+												size="sm"
+												className="h-5 w-5 rounded text-[7px]"
+											/>
+											{approval.api_name}
+										</span>
 									}
 								/>
-								<span className="font-mono">
-									{approval.method} {approval.path}
-								</span>
-							</CardTitle>
-						</CardHeader>
-						<CardBody>
-							<dl className="grid gap-4 sm:grid-cols-2">
-								<DetailRow
+								<ReviewRow
 									label="Agent"
 									value={
-										<>
-											{approval.agent_name ?? 'Unknown agent'}{' '}
-											<Mono>({approval.agent_id})</Mono>
-										</>
+										approval.agent_name ??
+										nameOf(approval.agent_id, 'Unknown agent')
 									}
 								/>
-								<DetailRow
+								<ReviewRow
 									label="Owner"
 									value={
-										approval.agent_owner_id ? (
-											<Mono>{approval.agent_owner_id}</Mono>
-										) : (
-											'No owner — org admins review'
-										)
+										approval.agent_owner_id
+											? nameOf(approval.agent_owner_id, 'Unknown user')
+											: 'No owner — org admins review'
 									}
 								/>
-								<DetailRow
-									label="API"
-									value={`${approval.api_vendor}/${approval.api_name} ${approval.api_version}`}
-								/>
-								<DetailRow label="Operation" value={approval.operation_id ?? '—'} />
-								<DetailRow
-									label="Matched rule"
-									value={
-										approval.matched_rule_id ? (
-											<Mono>{approval.matched_rule_id}</Mono>
-										) : (
-											'—'
-										)
-									}
-								/>
-								<DetailRow
+								<ReviewRow
 									label="Credential"
-									value={<Mono>{approval.credential_id}</Mono>}
+									value={
+										credential.data?.name ?? 'A credential bound to this agent'
+									}
 								/>
-								<DetailRow
+								<ReviewRow
 									label="Requested"
-									value={new Date(approval.created_at).toLocaleString()}
+									value={
+										<Tooltip content={formatTimestamp(approval.created_at)}>
+											{ago(approval.created_at)}
+										</Tooltip>
+									}
 								/>
-								<DetailRow
-									label="Expires"
-									value={new Date(approval.expires_at).toLocaleString()}
-								/>
-							</dl>
-						</CardBody>
-					</Card>
-
-					<Card>
-						<CardHeader>
-							<CardTitle>Request</CardTitle>
-						</CardHeader>
-						<CardBody className="flex flex-col gap-3">
-							{approval.request ? (
-								<>
-									<p className="font-mono text-sm break-all">
-										{approval.request.method} {approval.request.url}
-									</p>
-									{approval.request.body ? (
-										<pre
-											aria-label="Request body"
-											className="bg-muted max-h-96 overflow-auto rounded p-3 font-mono text-xs"
-										>
-											{formatBody(approval.request.body)}
-										</pre>
-									) : (
-										<p className="text-muted-foreground text-sm">
-											No request body.
-										</p>
-									)}
-									{approval.request.body_truncated && (
-										<p className="text-muted-foreground text-xs">
-											The body is shortened for display; the full body runs if
-											approved.
-										</p>
-									)}
-								</>
-							) : (
-								<p className="text-muted-foreground text-sm">
-									The held request is no longer available.
-								</p>
-							)}
-						</CardBody>
-					</Card>
-
-					<CallStatusCard
-						state={
-							approval.state === 'pending' && !decidable ? 'expired' : approval.state
-						}
-						executionStatus={approval.execution_status}
-						executionId={approval.execution_id}
-						executionLink={approval._links.execution}
-					/>
+								{approval.state === 'pending' && (
+									<ReviewRow
+										label="Expires"
+										value={
+											<Tooltip content={formatTimestamp(approval.expires_at)}>
+												{expiresIn(approval.expires_at)}
+											</Tooltip>
+										}
+									/>
+								)}
+							</div>
+						</ReviewPanel>
+					</ReviewSection>
 
 					{decidable && decideForbidden ? (
-						<Card>
-							<CardHeader>
-								<CardTitle>Decision</CardTitle>
-							</CardHeader>
-							<CardBody>
-								<p role="alert" className="text-muted-foreground text-sm">
-									You can see this call but can&apos;t decide it. Only the
-									agent&apos;s owner or an org admin can approve or deny it.
-								</p>
-							</CardBody>
-						</Card>
+						<ReviewSection title="Decision">
+							<p role="alert" className="text-muted-foreground text-sm">
+								You can see this call but can&apos;t decide it. Only the
+								agent&apos;s owner or an org admin can approve or deny it.
+							</p>
+						</ReviewSection>
 					) : decidable ? (
-						<Card>
-							<CardHeader>
-								<CardTitle>Decision</CardTitle>
-							</CardHeader>
-							<CardBody className="flex flex-col gap-4">
+						<ReviewSection title="Decision">
+							<ReviewPanel className="flex flex-col gap-4">
 								<div>
 									<Label htmlFor="reason">Reason (optional)</Label>
 									<Textarea
@@ -261,7 +254,7 @@ export default function ApprovalDetailPage() {
 										placeholder="Recorded with your decision…"
 										value={reason}
 										onChange={(e) => setReason(e.target.value)}
-										rows={3}
+										rows={2}
 										maxLength={500}
 										className="mt-1"
 									/>
@@ -284,42 +277,114 @@ export default function ApprovalDetailPage() {
 										Approve and run
 									</Button>
 								</div>
-							</CardBody>
-						</Card>
-					) : (
-						approval.decided_at && (
-							<Card>
-								<CardHeader>
-									<CardTitle>Outcome</CardTitle>
-								</CardHeader>
-								<CardBody>
-									<dl className="grid gap-4 sm:grid-cols-2">
-										<DetailRow
-											label="Decided by"
-											value={
-												approval.decided_by ? (
-													<Mono>{approval.decided_by}</Mono>
-												) : (
-													'—'
-												)
-											}
-										/>
-										<DetailRow
-											label="Decided at"
-											value={new Date(approval.decided_at).toLocaleString()}
-										/>
-										{approval.decision_reason && (
-											<DetailRow
-												label="Reason"
-												value={approval.decision_reason}
-											/>
-										)}
-									</dl>
-								</CardBody>
-							</Card>
-						)
+							</ReviewPanel>
+						</ReviewSection>
+					) : null}
+
+					{approval.state !== 'pending' && (
+						<CallStatusCard
+							state={shownState ?? approval.state}
+							executionStatus={approval.execution_status}
+							executionId={approval.execution_id}
+							executionLink={approval._links.execution}
+						/>
 					)}
-				</>
+
+					{approval.decided_at && approval.state !== 'pending' && (
+						<ReviewSection title="Decision">
+							<ReviewPanel>
+								<ReviewRow
+									label="Decided by"
+									value={nameOf(approval.decided_by, 'Unknown user')}
+								/>
+								<ReviewRow
+									label="When"
+									value={
+										<Tooltip content={formatTimestamp(approval.decided_at)}>
+											{ago(approval.decided_at)}
+										</Tooltip>
+									}
+								/>
+								{approval.decision_reason && (
+									<ReviewRow label="Reason" value={approval.decision_reason} />
+								)}
+							</ReviewPanel>
+						</ReviewSection>
+					)}
+
+					<ReviewSection
+						title="Request"
+						action={
+							approval.request?.body ? (
+								<Button
+									variant="ghost"
+									size="xs"
+									onClick={() => setShowBody((v) => !v)}
+									aria-expanded={showBody}
+								>
+									{showBody ? 'Hide body' : 'Show body'}
+								</Button>
+							) : null
+						}
+					>
+						{approval.request ? (
+							<ReviewPanel className="flex flex-col gap-3">
+								<p className="font-mono text-xs break-all">
+									{approval.request.method} {approval.request.url}
+								</p>
+								{approval.request.body ? (
+									showBody && (
+										<pre
+											aria-label="Request body"
+											className="bg-surface-inset max-h-96 overflow-auto rounded p-3 font-mono text-xs"
+										>
+											{formatBody(approval.request.body)}
+										</pre>
+									)
+								) : (
+									<p className="text-muted-foreground text-xs">
+										No request body.
+									</p>
+								)}
+								{showBody && approval.request.body_truncated && (
+									<p className="text-muted-foreground text-xs">
+										The body is shortened for display; the full body runs if
+										approved.
+									</p>
+								)}
+							</ReviewPanel>
+						) : (
+							<p className="text-muted-foreground text-sm">
+								The held request is no longer available.
+							</p>
+						)}
+					</ReviewSection>
+
+					<footer className="text-muted-foreground flex flex-wrap items-center justify-between gap-2 text-xs">
+						<p>
+							An Ask rule on this agent&apos;s access to {approval.api_name} holds
+							calls like this one for review.{' '}
+							<AppLink
+								href={ROUTE_PATHS.agentTab(approval.agent_id)}
+								className="text-primary inline-flex items-center gap-0.5 font-medium hover:underline"
+							>
+								Review the agent&apos;s rules
+								<ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+							</AppLink>
+						</p>
+						<span className="inline-flex items-center gap-1">
+							Copy reference
+							<CopyButton
+								value={approval.id}
+								size="icon"
+								variant="ghost"
+								className="h-6 w-6 shrink-0"
+								ariaLabel="Copy held execution reference"
+								toastMessage="Reference copied"
+							/>
+						</span>
+					</footer>
+				</div>
 			)}
 		</PageShell>
 	);
