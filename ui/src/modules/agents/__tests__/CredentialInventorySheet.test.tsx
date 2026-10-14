@@ -506,6 +506,11 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 			);
 			// The section is named by its API, so assistive tech hears the grouping too.
 			expect(slack).toHaveAccessibleName(/Slack/);
+			// A card with an edge, like the single cards beside it, and as wide as
+			// the grid — on the sheet's own surface it would otherwise vanish.
+			expect(slack).toHaveAttribute('data-surface', 'card');
+			expect(getComputedStyle(slack).outlineWidth).toBe('1px');
+			expect(slack.parentElement).toHaveClass('col-span-full');
 			expect(within(slack).getAllByTestId('credential-card')).toHaveLength(3);
 			expect(slack).toHaveTextContent(/Any of these can be bound to an agent/);
 			// Two rows share a name, so the id tail is what sets them apart.
