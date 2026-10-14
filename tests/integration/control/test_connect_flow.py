@@ -17,6 +17,7 @@ from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientC
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
+from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.schemas.connect import (
@@ -25,12 +26,37 @@ from jentic_one.control.services.credentials.schemas.connect import (
     ConnectRequest,
 )
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
+from jentic_one.control.services.credentials.state import decode_state
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, PipedreamProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
 
 pytestmark = pytest.mark.integration
+
+_OWNER = Identity(sub="usr_test", permissions=["credentials:write"])
+_OTHER_USER = Identity(sub="usr_someone_else", permissions=["credentials:write"])
+_ADMIN = Identity(sub="usr_admin", permissions=["org:admin"])
+_DELEGATED_AGENT = Identity(
+    sub="agnt_delegated",
+    actor_type=ActorType.AGENT,
+    parent_actor_id=_OWNER.sub,
+    permissions=["credentials:write", "owner:credentials:read"],
+)
+_AGENT_WITHOUT_DELEGATION = Identity(
+    sub="agnt_undelegated",
+    actor_type=ActorType.AGENT,
+    parent_actor_id=_OWNER.sub,
+    permissions=["credentials:write"],
+)
+_AGENT_OF_OTHER_OWNER = Identity(
+    sub="agnt_other_owner",
+    actor_type=ActorType.AGENT,
+    parent_actor_id=_OTHER_USER.sub,
+    permissions=["credentials:write", "owner:credentials:read"],
+)
 
 
 @pytest.fixture()
@@ -64,7 +90,7 @@ async def _create_oauth2_credential(ctx: Context, *, provider: str = "static") -
             api_name="test-api",
             api_version="v1",
             provider=provider,
-            created_by="usr_test",
+            created_by=_OWNER.sub,
         )
         return credential.id
 
@@ -138,7 +164,7 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         assert snapshot is not None
         updated_at_before = snapshot.updated_at
 
-    challenge = await svc.begin(credential_id, ConnectRequest(scopes=["read"]))
+    challenge = await svc.begin(credential_id, ConnectRequest(scopes=["read"]), identity=_OWNER)
     assert isinstance(challenge, AuthCodeChallenge)
     assert "https://idp.example.com/authorize" in challenge.authorize_url
     assert challenge.state
@@ -194,7 +220,7 @@ async def test_direct_oauth2_derived_redirect_uri_round_trips(
     svc = ConnectService(ctx)
     derived = "http://127.0.0.1:8020/credentials/oauth/callback"
     challenge = await svc.begin(
-        credential_id, ConnectRequest(scopes=["read"]), redirect_uri=derived
+        credential_id, ConnectRequest(scopes=["read"]), identity=_OWNER, redirect_uri=derived
     )
     assert isinstance(challenge, AuthCodeChallenge)
     # The non-default port made it into the authorize URL.
@@ -232,7 +258,7 @@ async def test_direct_oauth2_replay_rejected(
     await _attach_oauth_client(ctx, credential_id)
 
     svc = ConnectService(ctx)
-    challenge = await svc.begin(credential_id, ConnectRequest())
+    challenge = await svc.begin(credential_id, ConnectRequest(), identity=_OWNER)
     assert isinstance(challenge, AuthCodeChallenge)
 
     token_response = {
@@ -258,6 +284,112 @@ async def test_direct_oauth2_replay_rejected(
         assert token is not None
         decrypted = ctx.encryption.decrypt(token.encrypted_access_token)
         assert decrypted == "at_1"
+
+
+async def test_connect_refuses_a_credential_the_caller_does_not_own(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Connecting writes tokens onto the credential, so a non-owner gets 404.
+
+    Otherwise a second user could attach their own vendor account to someone
+    else's credential and every agent bound to it would act as that account.
+    """
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback"
+        )
+    )
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    await _attach_oauth_client(ctx, credential_id)
+
+    with pytest.raises(CredentialNotFoundError):
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=_OTHER_USER)
+
+    async with ctx.control_db.session() as session:
+        assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
+
+
+async def test_org_admin_may_connect_any_credential(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback"
+        )
+    )
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    await _attach_oauth_client(ctx, credential_id)
+
+    challenge = await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=_ADMIN)
+    assert isinstance(challenge, AuthCodeChallenge)
+
+
+async def _connectable_credential(ctx: Context) -> str:
+    """Create an owner-held direct-OAuth2 credential ready for ``begin``."""
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback"
+        )
+    )
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    await _attach_oauth_client(ctx, credential_id)
+    return credential_id
+
+
+async def test_owner_delegated_agent_may_connect_its_owners_credential(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+
+    challenge = await ConnectService(ctx).begin(
+        credential_id, ConnectRequest(), identity=_DELEGATED_AGENT
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [_AGENT_WITHOUT_DELEGATION, _AGENT_OF_OTHER_OWNER],
+    ids=["missing-owner-scope", "different-parent"],
+)
+async def test_agent_without_owner_delegation_cannot_connect(
+    integration_context: Context, clean_connect_tables: None, identity: Identity
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+
+    with pytest.raises(CredentialNotFoundError):
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=identity)
+
+
+async def test_sole_agent_id_in_request_extra_is_ignored(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """``sole_agent_id`` is honoured only from the keyword, never from ``extra``.
+
+    ``extra`` is caller-supplied on ``POST /credentials/{id}/connect``.
+    """
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    svc = ConnectService(ctx)
+    smuggled = ConnectRequest(extra={"sole_agent_id": "agnt_injected"})
+
+    ignored = await svc.begin(credential_id, smuggled, identity=_OWNER)
+    assert isinstance(ignored, AuthCodeChallenge)
+    assert decode_state(secret, ignored.state).sole_agent_id is None
+
+    explicit = await svc.begin(
+        credential_id, smuggled, identity=_OWNER, sole_agent_id="agnt_explicit"
+    )
+    assert isinstance(explicit, AuthCodeChallenge)
+    assert decode_state(secret, explicit.state).sole_agent_id == "agnt_explicit"
 
 
 # --- Pipedream connect flow tests ---
@@ -298,7 +430,7 @@ async def test_pipedream_connect_and_callback_stores_account_ref(
         )
         mock_client_cls.return_value = mock_client
 
-        challenge = await svc.begin(credential_id, ConnectRequest())
+        challenge = await svc.begin(credential_id, ConnectRequest(), identity=_OWNER)
 
     assert isinstance(challenge, AuthCodeChallenge)
     assert "pipedream.com" in challenge.authorize_url
@@ -401,7 +533,7 @@ async def test_pipedream_replay_rejected(
         )
         mock_client_cls.return_value = mock_client
 
-        challenge = await svc.begin(credential_id, ConnectRequest())
+        challenge = await svc.begin(credential_id, ConnectRequest(), identity=_OWNER)
 
     assert isinstance(challenge, AuthCodeChallenge)
     await svc.complete(challenge.state, ConnectCallback(account_id="acct_1"))

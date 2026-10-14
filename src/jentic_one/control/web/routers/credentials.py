@@ -1049,12 +1049,9 @@ async def connect_credential(
         challenge = await svc.begin(
             credential_id,
             connect_req,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type,
+            identity=identity,
             redirect_uri=redirect_uri,
         )
-    except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:

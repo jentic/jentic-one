@@ -24,7 +24,7 @@ class CredentialRepository:
         *,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> Credential | None:
-        if filters is None:
+        if not filters:
             return await session.get(Credential, credential_id)
         stmt = select(Credential).where(Credential.id == credential_id)
         for f in filters:
