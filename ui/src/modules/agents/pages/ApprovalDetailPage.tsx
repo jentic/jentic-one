@@ -96,7 +96,7 @@ export default function ApprovalDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
 	const [reason, setReason] = useState('');
-	const [showBody, setShowBody] = useState(false);
+	const [showBody, setShowBody] = useState(true);
 
 	const { data: approval, isLoading, error } = useApproval(id);
 	const decide = useDecideApproval();
@@ -170,7 +170,7 @@ export default function ApprovalDetailPage() {
 				<EmptyState icon={<CheckSquare className="h-8 w-8" />} title="Approval not found" />
 			) : (
 				<div className="space-y-6">
-					<ReviewSection title="The call">
+					<ReviewSection title="Held call">
 						<ReviewPanel>
 							<div className="flex items-start gap-2">
 								<MethodBadge method={approval.method} />
@@ -202,7 +202,7 @@ export default function ApprovalDetailPage() {
 									}
 								/>
 								<ReviewRow
-									label="Owner"
+									label="Agent owner"
 									value={
 										approval.agent_owner_id
 											? nameOf(approval.agent_owner_id, 'Unknown user')
@@ -237,83 +237,8 @@ export default function ApprovalDetailPage() {
 						</ReviewPanel>
 					</ReviewSection>
 
-					{decidable && decideForbidden ? (
-						<ReviewSection title="Decision">
-							<p role="alert" className="text-muted-foreground text-sm">
-								You can see this call but can&apos;t decide it. Only the
-								agent&apos;s owner or an org admin can approve or deny it.
-							</p>
-						</ReviewSection>
-					) : decidable ? (
-						<ReviewSection title="Decision">
-							<ReviewPanel className="flex flex-col gap-4">
-								<div>
-									<Label htmlFor="reason">Reason (optional)</Label>
-									<Textarea
-										id="reason"
-										placeholder="Recorded with your decision…"
-										value={reason}
-										onChange={(e) => setReason(e.target.value)}
-										rows={2}
-										maxLength={500}
-										className="mt-1"
-									/>
-								</div>
-								<div className="flex gap-3">
-									<Button
-										type="button"
-										variant="danger"
-										onClick={() => handleDecide(ApprovalDecision.DENY)}
-										disabled={decide.isPending}
-									>
-										Deny
-									</Button>
-									<Button
-										type="button"
-										variant="primary"
-										onClick={() => handleDecide(ApprovalDecision.APPROVE)}
-										disabled={decide.isPending}
-									>
-										Approve and run
-									</Button>
-								</div>
-							</ReviewPanel>
-						</ReviewSection>
-					) : null}
-
-					{approval.state !== 'pending' && (
-						<CallStatusCard
-							state={shownState ?? approval.state}
-							executionStatus={approval.execution_status}
-							executionId={approval.execution_id}
-							executionLink={approval._links.execution}
-						/>
-					)}
-
-					{approval.decided_at && approval.state !== 'pending' && (
-						<ReviewSection title="Decision">
-							<ReviewPanel>
-								<ReviewRow
-									label="Decided by"
-									value={nameOf(approval.decided_by, 'Unknown user')}
-								/>
-								<ReviewRow
-									label="When"
-									value={
-										<Tooltip content={formatTimestamp(approval.decided_at)}>
-											{ago(approval.decided_at)}
-										</Tooltip>
-									}
-								/>
-								{approval.decision_reason && (
-									<ReviewRow label="Reason" value={approval.decision_reason} />
-								)}
-							</ReviewPanel>
-						</ReviewSection>
-					)}
-
 					<ReviewSection
-						title="Request"
+						title="What it will send"
 						action={
 							approval.request?.body ? (
 								<Button
@@ -359,6 +284,81 @@ export default function ApprovalDetailPage() {
 							</p>
 						)}
 					</ReviewSection>
+
+					{decidable && decideForbidden ? (
+						<ReviewSection title="Your decision">
+							<p role="alert" className="text-muted-foreground text-sm">
+								You can see this call but can&apos;t decide it. Only the
+								agent&apos;s owner or an org admin can approve or deny it.
+							</p>
+						</ReviewSection>
+					) : decidable ? (
+						<ReviewSection title="Your decision">
+							<ReviewPanel className="flex flex-col gap-4">
+								<div>
+									<Label htmlFor="reason">Reason (optional)</Label>
+									<Textarea
+										id="reason"
+										placeholder="Recorded with your decision…"
+										value={reason}
+										onChange={(e) => setReason(e.target.value)}
+										rows={2}
+										maxLength={500}
+										className="mt-1"
+									/>
+								</div>
+								<div className="flex gap-3">
+									<Button
+										type="button"
+										variant="danger"
+										onClick={() => handleDecide(ApprovalDecision.DENY)}
+										disabled={decide.isPending}
+									>
+										Deny
+									</Button>
+									<Button
+										type="button"
+										variant="primary"
+										onClick={() => handleDecide(ApprovalDecision.APPROVE)}
+										disabled={decide.isPending}
+									>
+										Approve and run
+									</Button>
+								</div>
+							</ReviewPanel>
+						</ReviewSection>
+					) : null}
+
+					{approval.state !== 'pending' && (
+						<CallStatusCard
+							state={shownState ?? approval.state}
+							executionStatus={approval.execution_status}
+							executionId={approval.execution_id}
+							executionLink={approval._links.execution}
+						/>
+					)}
+
+					{approval.decided_at && approval.state !== 'pending' && (
+						<ReviewSection title="Outcome">
+							<ReviewPanel>
+								<ReviewRow
+									label="Decided by"
+									value={nameOf(approval.decided_by, 'Unknown user')}
+								/>
+								<ReviewRow
+									label="When"
+									value={
+										<Tooltip content={formatTimestamp(approval.decided_at)}>
+											{ago(approval.decided_at)}
+										</Tooltip>
+									}
+								/>
+								{approval.decision_reason && (
+									<ReviewRow label="Reason" value={approval.decision_reason} />
+								)}
+							</ReviewPanel>
+						</ReviewSection>
+					)}
 
 					<footer className="text-muted-foreground flex flex-wrap items-center justify-between gap-2 text-xs">
 						<p>

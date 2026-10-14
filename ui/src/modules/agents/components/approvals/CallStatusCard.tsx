@@ -58,7 +58,7 @@ export function CallStatusCard({
 
 	return (
 		<ReviewSection
-			title="Status"
+			title="Progress"
 			action={
 				status && (approved || state === 'pending') ? (
 					<CallStatusBadge status={status} />

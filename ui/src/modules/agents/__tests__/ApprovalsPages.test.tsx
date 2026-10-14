@@ -52,10 +52,10 @@ describe('Approvals pages', () => {
 		await checkA11y(container);
 	});
 
-	it('shows the call by name, never by id, with the held request body on demand', async () => {
+	it('shows the call by name, never by id, with the held request body', async () => {
 		const { container } = renderDetail('held_pending1');
 		expect(await screen.findByText('/v1/charges')).toBeInTheDocument();
-		const call = screen.getByRole('region', { name: 'The call' });
+		const call = screen.getByRole('region', { name: 'Held call' });
 		expect(within(call).getByText('scout')).toBeInTheDocument();
 		expect(within(call).getByText('Expires')).toBeInTheDocument();
 		// Ids stay out of the page; only "Copy reference" carries one.
@@ -68,10 +68,11 @@ describe('Approvals pages', () => {
 		expect(
 			screen.getByText('POST https://api.stripe.com/v1/charges?expand=balance'),
 		).toBeInTheDocument();
-		expect(screen.queryByLabelText('Request body')).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole('button', { name: 'Show body' }));
+		// The request is what the reviewer approves: its body shows by default.
 		const body = screen.getByLabelText('Request body');
 		expect(body.textContent).toContain('"amount": 500');
+		await userEvent.click(screen.getByRole('button', { name: 'Hide body' }));
+		expect(screen.queryByLabelText('Request body')).not.toBeInTheDocument();
 		await checkA11y(container);
 	});
 
@@ -193,7 +194,7 @@ describe('Approvals pages', () => {
 		renderDetail('held_pending1');
 		await screen.findByText('/v1/charges');
 		expect(screen.getByText(/^in \d+ h$/)).toBeInTheDocument();
-		expect(screen.getByRole('region', { name: 'Decision' })).toBeInTheDocument();
+		expect(screen.getByRole('region', { name: 'Your decision' })).toBeInTheDocument();
 		expect(screen.queryByRole('heading', { name: /Call status/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole('list', { name: 'Call progress' })).not.toBeInTheDocument();
 	});
