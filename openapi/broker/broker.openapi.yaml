@@ -745,6 +745,116 @@ components:
         examples:
           - cred_abc123
   schemas:
+    BrokerProblem:
+      title: BrokerProblem
+      description: |
+        RFC 9457 Problem Details body for every Broker error. Extends the
+        shared Jentic `ProblemDetails` schema with the Broker's
+        agent-recovery members: `error_origin` says *who* failed, and
+        `agent_directive` (when present) is a machine-actionable recovery
+        instruction an agent can follow without parsing prose. `title`
+        repeats `detail` on Broker-originated errors.
+      allOf:
+        - $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+        - type: object
+          properties:
+            error_origin:
+              type: string
+              enum: [broker, upstream]
+              description: |
+                Who failed: `broker` (the Broker itself — overloaded,
+                misconfigured, or rejecting the request shape) or
+                `upstream` (the external API — down, rate-limited, or
+                returning an error). Mirrored in the `Jentic-Error-Origin`
+                response header. Absent on authentication errors.
+              examples:
+                - broker
+            agent_directive:
+              $ref: "#/components/schemas/AgentDirective"
+            candidates:
+              type: array
+              description: |
+                The caller's own credentials that matched ambiguously
+                (`ambiguous_credential_binding`, `ambiguous_credential`) or
+                that a credential-selection header failed to match
+                (`credential_id_not_found`, `credential_name_not_found`).
+                Pick one and resend with `Jentic-Credential-Id`.
+              items:
+                $ref: "#/components/schemas/CredentialCandidate"
+            intent_id:
+              type: string
+              description: |
+                Correlation id for a `credential_not_provisioned` denial,
+                also carried in `agent_directive.parameters.intent_id`, so
+                the human hand-off can be tied back to this request.
+              examples:
+                - intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
+    AgentDirective:
+      type: object
+      title: AgentDirective
+      description: |
+        Machine-actionable recovery instruction embedded in a Broker
+        problem body. The fixed `strategy` vocabulary lets an agent
+        hard-code its recovery loop — e.g. on `wait` sleep
+        `parameters.retry_after_seconds`; on `modify_headers` add
+        `parameters.headers` and retry once; on `prompt_human` stop and
+        relay `human_readable_instruction` to the user.
+      required:
+        - strategy
+        - parameters
+        - human_readable_instruction
+      properties:
+        strategy:
+          type: string
+          enum: [wait, retry, modify_headers, prompt_human, switch_toolkit, fatal]
+          description: Recovery strategy the agent should apply.
+          examples:
+            - modify_headers
+        parameters:
+          type: object
+          additionalProperties: true
+          description: |
+            Strategy-specific inputs (e.g. `headers` for `modify_headers`,
+            `retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`
+            for `prompt_human`). Empty when the strategy needs none.
+        human_readable_instruction:
+          type: string
+          description: Plain-language instruction an agent can relay to a human or follow itself.
+          examples:
+            - Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates.
+    CredentialCandidate:
+      type: object
+      title: CredentialCandidate
+      description: |
+        One of the caller's own credentials, distinguishable even when names
+        collide. Holds no secret material — `last4` is the last four
+        characters of the credential **id**.
+      required:
+        - id
+        - name
+        - last4
+      properties:
+        id:
+          type: string
+          description: Stable credential id; send it as `Jentic-Credential-Id` to pick this credential.
+          examples:
+            - cred_01HXAMPLE7Q2
+        name:
+          type: string
+          description: Credential display name (not guaranteed unique).
+          examples:
+            - github-work
+        last4:
+          type: string
+          description: Last four characters of the credential id, as a display hint.
+          examples:
+            - 7Q2a
+        created_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the credential was created, to tell same-named candidates apart.
+          examples:
+            - "2026-09-01T00:00:00Z"
     AsyncQueuedResponse:
       type: object
       title: AsyncQueuedResponse
@@ -993,7 +1103,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             invalid_upstream_url:
               summary: Upstream URL rejected by the broker's egress policy.
@@ -1013,7 +1123,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             invalid_token:
               summary: Token missing, unknown, revoked, or expired.
@@ -1034,7 +1144,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             insufficient_scope:
               summary: Token lacks the `capabilities:execute` permission.
@@ -1076,7 +1186,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             operation_not_found:
               summary: Upstream URL does not match any registered API operation.
@@ -1107,7 +1217,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             ambiguous_credential_binding:
               summary: Two bound credentials cover the API; pick one with a header.
@@ -1171,7 +1281,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             credential_not_provisioned:
               summary: No credential connected for the API; ask a human to connect one.
@@ -1201,7 +1311,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             unknown_revision_pin:
               summary: Jentic-Revision pins a revision that does not exist.
@@ -1243,7 +1353,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             rate_limit_exceeded:
               summary: Caller exhausted their per-actor rate-limit window.
@@ -1262,7 +1372,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             server_error:
               summary: Unhandled broker-side failure (details are logged, never echoed).
@@ -1290,7 +1400,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             server_at_capacity:
               summary: Instance shed the request at its in-flight admission cap.
@@ -1318,7 +1428,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             payload_too_large:
               summary: Request body exceeded the per-Content-Type size cap.
@@ -1334,7 +1444,7 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
           examples:
             upstream_timeout:
               summary: Upstream did not respond within the broker's deadline.

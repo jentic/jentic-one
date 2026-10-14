@@ -164,7 +164,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -225,7 +225,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -257,7 +257,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -280,7 +280,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -484,7 +484,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -507,7 +507,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -530,7 +530,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -552,7 +552,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -584,7 +584,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -617,7 +617,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -668,7 +668,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -691,7 +691,7 @@
               }
             },
             "schema": {
-              "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+              "$ref": "#/components/schemas/BrokerProblem"
             }
           }
         },
@@ -699,6 +699,45 @@
       }
     },
     "schemas": {
+      "AgentDirective": {
+        "description": "Machine-actionable recovery instruction embedded in a Broker\nproblem body. The fixed `strategy` vocabulary lets an agent\nhard-code its recovery loop — e.g. on `wait` sleep\n`parameters.retry_after_seconds`; on `modify_headers` add\n`parameters.headers` and retry once; on `prompt_human` stop and\nrelay `human_readable_instruction` to the user.\n",
+        "properties": {
+          "human_readable_instruction": {
+            "description": "Plain-language instruction an agent can relay to a human or follow itself.",
+            "examples": [
+              "Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates."
+            ],
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "description": "Strategy-specific inputs (e.g. `headers` for `modify_headers`,\n`retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`\nfor `prompt_human`). Empty when the strategy needs none.\n",
+            "type": "object"
+          },
+          "strategy": {
+            "description": "Recovery strategy the agent should apply.",
+            "enum": [
+              "wait",
+              "retry",
+              "modify_headers",
+              "prompt_human",
+              "switch_toolkit",
+              "fatal"
+            ],
+            "examples": [
+              "modify_headers"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "strategy",
+          "parameters",
+          "human_readable_instruction"
+        ],
+        "title": "AgentDirective",
+        "type": "object"
+      },
       "AsyncQueuedResponse": {
         "description": "Returned as the `202` body on async executions. The Broker\ndoes not expose a polling surface of its own; `_links.self`\nis an absolute URL into the platform's control plane, where\nthe queued work surfaces as a `kind: execution` job. Poll\nthat URL for status, and follow its `_links.result` to\ncollect the upstream response body once `status` is\n`completed`.\n",
         "properties": {
@@ -736,6 +775,92 @@
         ],
         "summary": "Handle returned when the Broker queues an upstream call for async execution.",
         "title": "AsyncQueuedResponse",
+        "type": "object"
+      },
+      "BrokerProblem": {
+        "allOf": [
+          {
+            "$ref": "https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml"
+          },
+          {
+            "properties": {
+              "agent_directive": {
+                "$ref": "#/components/schemas/AgentDirective"
+              },
+              "candidates": {
+                "description": "The caller's own credentials that matched ambiguously\n(`ambiguous_credential_binding`, `ambiguous_credential`) or\nthat a credential-selection header failed to match\n(`credential_id_not_found`, `credential_name_not_found`).\nPick one and resend with `Jentic-Credential-Id`.\n",
+                "items": {
+                  "$ref": "#/components/schemas/CredentialCandidate"
+                },
+                "type": "array"
+              },
+              "error_origin": {
+                "description": "Who failed: `broker` (the Broker itself — overloaded,\nmisconfigured, or rejecting the request shape) or\n`upstream` (the external API — down, rate-limited, or\nreturning an error). Mirrored in the `Jentic-Error-Origin`\nresponse header. Absent on authentication errors.\n",
+                "enum": [
+                  "broker",
+                  "upstream"
+                ],
+                "examples": [
+                  "broker"
+                ],
+                "type": "string"
+              },
+              "intent_id": {
+                "description": "Correlation id for a `credential_not_provisioned` denial,\nalso carried in `agent_directive.parameters.intent_id`, so\nthe human hand-off can be tied back to this request.\n",
+                "examples": [
+                  "intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "RFC 9457 Problem Details body for every Broker error. Extends the\nshared Jentic `ProblemDetails` schema with the Broker's\nagent-recovery members: `error_origin` says *who* failed, and\n`agent_directive` (when present) is a machine-actionable recovery\ninstruction an agent can follow without parsing prose. `title`\nrepeats `detail` on Broker-originated errors.\n",
+        "title": "BrokerProblem"
+      },
+      "CredentialCandidate": {
+        "description": "One of the caller's own credentials, distinguishable even when names\ncollide. Holds no secret material — `last4` is the last four\ncharacters of the credential **id**.\n",
+        "properties": {
+          "created_at": {
+            "description": "When the credential was created, to tell same-named candidates apart.",
+            "examples": [
+              "2026-09-01T00:00:00Z"
+            ],
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Stable credential id; send it as `Jentic-Credential-Id` to pick this credential.",
+            "examples": [
+              "cred_01HXAMPLE7Q2"
+            ],
+            "type": "string"
+          },
+          "last4": {
+            "description": "Last four characters of the credential id, as a display hint.",
+            "examples": [
+              "7Q2a"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Credential display name (not guaranteed unique).",
+            "examples": [
+              "github-work"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "last4"
+        ],
+        "title": "CredentialCandidate",
         "type": "object"
       },
       "HealthResponse": {
