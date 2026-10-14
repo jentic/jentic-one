@@ -19,16 +19,11 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import JobStatus
 
-#: Job statuses whose result row is readable: completed jobs, and failed jobs
-#: whose failure was recorded as a problem body.
-_RESULT_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED})
-
 
 class JobResultService:
     """Manages job result retrieval.
 
-    A result is readable once the job is ``completed`` or ``failed`` with a
-    recorded problem body. It is visible exactly when its parent job is: the job lookup is
+    A result is visible exactly when its parent job is: the job lookup is
     scoped to the caller (``build_access_filters`` on ``Job``), so another
     actor's result is reported as a missing job (``JobNotFoundError`` -> 404).
     """
@@ -43,24 +38,20 @@ class JobResultService:
             if job is None:
                 raise JobNotFoundError(job_id)
 
-            if job.status not in _RESULT_STATUSES:
+            if job.status != JobStatus.COMPLETED:
                 raise JobNotCompletedError(job_id)
 
             result = await JobResultRepository.get_by_job_id(session, job_id)
             if result is None:
-                # A failed job carries a result only when its failure has a
-                # problem body (e.g. a denied or expired approval).
-                if job.status == JobStatus.FAILED:
-                    raise JobNotCompletedError(job_id)
                 raise JobResultExpiredError(job_id)
 
             if result.available_until is not None and result.available_until < datetime.now(UTC):
                 raise JobResultExpiredError(job_id)
 
-        return self._to_view(result)
+        return self.to_view(result)
 
     @staticmethod
-    def _to_view(result: Any) -> JobResultView:
+    def to_view(result: Any) -> JobResultView:
         raw_body: bytes | None = None
         if hasattr(result, "content_type") and result.content_type:
             raw_body = json.dumps(result.body).encode() if result.body else b""

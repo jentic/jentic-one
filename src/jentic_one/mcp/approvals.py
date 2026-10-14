@@ -85,17 +85,13 @@ def front_door(caps: dict[str, Any], protocol_version: str | None = None) -> str
 
 
 def seal_request_state(encryption: Any, *, envelope: dict[str, Any], agent_id: str) -> str:
-    """AEAD-seal the retry state: the held job, the approval, the agent, an expiry."""
-    approval = envelope["approval"]
+    """AEAD-seal the retry state: the held execution, the agent, an expiry."""
     state = {
         "v": _STATE_VERSION,
-        "job_id": envelope["job_id"],
+        "held_execution_id": envelope["held_execution_id"],
         "agent_id": agent_id,
-        "approval": {
-            "id": approval["id"],
-            "review_url": approval["review_url"],
-            "expires_at": approval["expires_at"],
-        },
+        "review_url": envelope["review_url"],
+        "expires_at": envelope["expires_at"],
         "links": envelope.get("_links", {}),
         "exp": int(time.time() + SHORT_WAIT_SECONDS * 20),
     }
@@ -115,17 +111,20 @@ def open_request_state(encryption: Any, token: str, *, agent_id: str) -> dict[st
     exp = state.get("exp")
     if not isinstance(exp, int) or exp < time.time():
         return None
-    if not isinstance(state.get("job_id"), str) or not isinstance(state.get("approval"), dict):
+    if not isinstance(state.get("held_execution_id"), str) or not isinstance(
+        state.get("review_url"), str
+    ):
         return None
     return state
 
 
 def envelope_from_state(state: dict[str, Any], directive: str) -> dict[str, Any]:
-    """Rebuild the held envelope a retry answers with while the job is still held."""
+    """Rebuild the held envelope a retry answers with while the call is still held."""
     return {
-        "job_id": state["job_id"],
         "status": "held",
-        "approval": state["approval"],
+        "held_execution_id": state["held_execution_id"],
+        "review_url": state["review_url"],
+        "expires_at": state["expires_at"],
         "agent_directive": directive,
         "_links": state.get("links") or {},
     }

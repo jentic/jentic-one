@@ -61,9 +61,8 @@ from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
     AsyncQueuedResponseLinks,
     ExecuteRequestContext,
-    HeldApprovalResponse,
-    HeldExecutionLinks,
-    HeldExecutionResponse,
+    HeldExecutionAcceptedLinks,
+    HeldExecutionAcceptedResponse,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
@@ -1021,7 +1020,7 @@ async def _handle_hold(
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
                 data={
-                    "approval_id": hold.approval_id,
+                    "held_execution_id": hold.approval_id,
                     "agent_id": identity.sub,
                     "method": ctx_req.method,
                     "path": path,
@@ -1041,15 +1040,14 @@ async def _handle_hold(
         method=ctx_req.method,
     )
     base = ctx.config.broker.jobs_api_base_url or ""
-    resp_body = HeldExecutionResponse(
-        job_id=hold.job_id,
-        approval=HeldApprovalResponse(
-            id=hold.approval_id, review_url=review_url, expires_at=hold.expires_at
-        ),
+    held = f"{base}/executions/holds/{hold.approval_id}"
+    resp_body = HeldExecutionAcceptedResponse(
+        held_execution_id=hold.approval_id,
+        review_url=review_url,
+        expires_at=hold.expires_at,
         agent_directive=HELD_AGENT_DIRECTIVE,
-        links=HeldExecutionLinks(
-            self_link=f"{base}/jobs/{hold.job_id}",
-            withdraw=f"{base}/executions/approvals/{hold.approval_id}:withdraw",
+        links=HeldExecutionAcceptedLinks(
+            self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
         ),
     )
     return Response(

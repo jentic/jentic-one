@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
 from jentic_one.shared.models import JobKind, JobStatus
@@ -164,6 +165,51 @@ class JobRepository:
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    def _held_execution_filter() -> ColumnElement[bool]:
+        """The one predicate the holds surface reads jobs through.
+
+        A job matches only if it is an execution job that a require-approval
+        hold filed: an approval row names it, filed by the agent that created
+        the job. The holds routes need no ``jobs:*`` permission, so this keeps
+        them to the held execution behind each hold and never any other job.
+        """
+        return and_(
+            Job.kind == JobKind.EXECUTION.value,
+            exists().where(
+                ExecutionApproval.job_id == Job.id,
+                ExecutionApproval.agent_id == Job.created_by,
+            ),
+        )
+
+    @staticmethod
+    async def get_held_execution(
+        session: AsyncSession,
+        job_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]],
+    ) -> Job | None:
+        """The held execution job ``job_id``, or ``None`` if it is not one or not visible."""
+        stmt = select(Job).where(Job.id == job_id, JobRepository._held_execution_filter(), *filters)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def held_execution_statuses(
+        session: AsyncSession,
+        job_ids: Sequence[str],
+        *,
+        filters: Sequence[ColumnElement[bool]],
+    ) -> dict[str, str]:
+        """Each visible held execution job's status, keyed by job id; others are absent."""
+        if not job_ids:
+            return {}
+        stmt = select(Job.id, Job.status).where(
+            Job.id.in_(job_ids), JobRepository._held_execution_filter(), *filters
+        )
+        result = await session.execute(stmt)
+        return {job_id: str(status) for job_id, status in result.all()}
 
     @staticmethod
     async def get_child_job_ids(session: AsyncSession, parent_job_id: str) -> list[str]:

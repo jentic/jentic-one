@@ -481,16 +481,18 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Execution Approvals",
+        "name": "Held Executions",
         "description": (
-            "Human-approval gate for held broker executions. When a permission rule carries "
-            "`effect: require-approval`, the broker enqueues the job in a `held` state and "
-            "files an `ExecutionApproval` row. A reviewer — the invoking agent's owner or any "
-            "`org:admin` — calls `POST /executions/approvals/{id}:decide` to approve or deny.\n\n"
-            "Approve flips the held job to `queued` so the worker picks it up; deny marks it "
-            "`failed` with a permission-denied result body. Unreviewed approvals expire "
-            "automatically after the configured TTL. The invoking agent (or any `AGENT` actor) "
-            "may never decide; decisions are always human-authenticated."
+            "Executions held for human approval. When a call matches a permission rule with "
+            "`effect: require-approval`, the broker does not run it: it answers `202` with a "
+            "held execution (`exap_…`) and a review link. A reviewer, the agent's owner or any "
+            "`org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.\n\n"
+            "An approved call runs once; `GET /executions/holds/{id}` reports where it stands and "
+            "`GET /executions/holds/{id}/result` returns the call's execution document, or the problem "
+            "explaining why it never ran (denied, expired or refused at run time). A held execution nobody "
+            "decides expires after the configured window. Agents may never decide; the agent "
+            "that filed one may withdraw it. Each caller sees only the held executions it may "
+            "review or filed."
         ),
     },
     {
@@ -730,7 +732,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Actors",
             "Permissions",
             "Executions",
-            "Execution Approvals",
+            "Held Executions",
             "Jobs",
             "Events",
             "Audit",
@@ -926,7 +928,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/lookup"), "Lookup"),
     (re.compile(r"^/notes"), "Notes"),
     (re.compile(r"^/monitoring"), "Monitoring"),
-    (re.compile(r"^/executions/approvals"), "Execution Approvals"),
+    (re.compile(r"^/executions/holds"), "Held Executions"),
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),

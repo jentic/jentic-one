@@ -6,8 +6,9 @@ and admin DB:
 1. the broker's hold path answers the 202 held envelope;
 2. the agent's owner decides through the admin HTTP API;
 3. the worker claims the released job and runs it exactly once;
-4. the agent reads the outcome back — over ``GET /jobs/{id}`` and through the
-   MCP ``get_execution_result`` tool (with a bounded wait).
+4. the agent reads the outcome back — over ``GET /executions/holds/{id}`` (and
+   its ``/result``) and through the MCP ``get_execution_result`` tool (with a
+   bounded wait), holding no ``jobs:*`` permission.
 
 The upstream leg is a recording execution handler: the broker's real
 upstream call is covered by its own suites.
@@ -122,10 +123,10 @@ async def parties(integration_context: Context) -> AsyncGenerator[_Parties, None
         )
         owner_id, agent_id = owner.id, agent.id
     yield _Parties(
-        owner=Identity(sub=owner_id, email="e2e-owner@test.local", permissions=["jobs:write"]),
+        owner=Identity(sub=owner_id, email="e2e-owner@test.local", permissions=[]),
         agent=Identity(
             sub=agent_id,
-            permissions=["jobs:read"],
+            permissions=[],
             actor_type=ActorType.AGENT,
             parent_actor_id=owner_id,
         ),
@@ -205,11 +206,15 @@ def _worker(ctx: Context, handler: _RecordingHandler) -> WorkerLoop:
     )
 
 
-async def _mcp_result(ctx: Context, agent: Identity, job_id: str, **extra: Any) -> dict[str, Any]:
+async def _mcp_result(
+    ctx: Context, agent: Identity, held_execution_id: str, **extra: Any
+) -> dict[str, Any]:
     env = CallEnv(
         ctx=ctx, identity=agent, credential="at_e2e", base_url="https://testserver", session_id=None
     )
-    result = await dispatch_mcp_tool_call(env, "get_execution_result", {"job_id": job_id, **extra})
+    result = await dispatch_mcp_tool_call(
+        env, "get_execution_result", {"held_execution_id": held_execution_id, **extra}
+    )
     assert isinstance(result, mcp_types.CallToolResult)
     (content,) = result.content
     assert isinstance(content, mcp_types.TextContent)
@@ -221,18 +226,18 @@ async def test_approved_call_runs_once_and_its_result_reaches_the_agent(
 ) -> None:
     ctx = integration_context
     envelope = await _broker_holds(ctx, parties.agent)
-    job_id, approval_id = envelope["job_id"], envelope["approval"]["id"]
+    held_id = envelope["held_execution_id"]
     assert envelope["status"] == "held"
 
     # Before a decision: the worker leaves the held job alone, and the agent's
     # poll answers "held".
     handler = _RecordingHandler()
     assert await _worker(ctx, handler)._tick() is False
-    assert (await _mcp_result(ctx, parties.agent, job_id))["status"] == JobStatus.HELD
+    assert (await _mcp_result(ctx, parties.agent, held_id))["status"] == JobStatus.HELD
 
     async with _admin_client(ctx, parties.owner) as client:
         decided = await client.post(
-            f"/executions/approvals/{approval_id}:decide", json={"decision": "approve"}
+            f"/executions/holds/{held_id}:decide", json={"decision": "approve"}
         )
     assert decided.status_code == 200, decided.text
     assert decided.json()["state"] == "approved"
@@ -243,13 +248,13 @@ async def test_approved_call_runs_once_and_its_result_reaches_the_agent(
     assert handler.calls == 1
 
     async with _admin_client(ctx, parties.agent) as client:
-        job = await client.get(f"/jobs/{job_id}")
-        result = await client.get(f"/jobs/{job_id}/result")
-    assert job.status_code == 200, job.text
-    assert job.json()["status"] == JobStatus.COMPLETED
+        held = await client.get(f"/executions/holds/{held_id}")
+        result = await client.get(f"/executions/holds/{held_id}/result")
+    assert held.status_code == 200, held.text
+    assert held.json()["execution_status"] == JobStatus.COMPLETED
     assert result.status_code == 200, result.text
 
-    polled = await _mcp_result(ctx, parties.agent, job_id, wait_seconds=30)
+    polled = await _mcp_result(ctx, parties.agent, held_id, wait=30_000)
     assert polled["status"] == JobStatus.COMPLETED
     assert "result" in polled
 
@@ -259,11 +264,11 @@ async def test_denied_call_never_runs_and_the_agent_reads_the_denial(
 ) -> None:
     ctx = integration_context
     envelope = await _broker_holds(ctx, parties.agent)
-    job_id, approval_id = envelope["job_id"], envelope["approval"]["id"]
+    held_id = envelope["held_execution_id"]
 
     async with _admin_client(ctx, parties.owner) as client:
         decided = await client.post(
-            f"/executions/approvals/{approval_id}:decide",
+            f"/executions/holds/{held_id}:decide",
             json={"decision": "deny", "reason": "not this one"},
         )
     assert decided.status_code == 200, decided.text
@@ -272,6 +277,6 @@ async def test_denied_call_never_runs_and_the_agent_reads_the_denial(
     assert await _worker(ctx, handler)._tick() is False
     assert handler.calls == 0
 
-    polled = await _mcp_result(ctx, parties.agent, job_id)
+    polled = await _mcp_result(ctx, parties.agent, held_id)
     assert polled["status"] == JobStatus.FAILED
     assert polled["result"]["status"] == 403

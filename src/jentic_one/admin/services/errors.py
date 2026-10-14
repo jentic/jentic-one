@@ -69,7 +69,7 @@ class ExecutionApprovalNotFoundError(NotFoundError):
     """Raised when an execution approval does not exist."""
 
     def __init__(self, approval_id: str) -> None:
-        super().__init__(f"Execution approval '{approval_id}' not found")
+        super().__init__(f"Held execution '{approval_id}' not found")
         self.approval_id = approval_id
 
 
@@ -86,8 +86,7 @@ class ExecutionApprovalJobNotHeldError(AdminServiceError):
 
     def __init__(self, approval_id: str, job_id: str) -> None:
         super().__init__(
-            f"Execution approval '{approval_id}' cannot settle: its job '{job_id}' "
-            "is no longer held"
+            f"Held execution '{approval_id}' cannot settle: its call is no longer held"
         )
         self.approval_id = approval_id
         self.job_id = job_id
@@ -95,6 +94,23 @@ class ExecutionApprovalJobNotHeldError(AdminServiceError):
 
 class ExecutionApprovalForbiddenError(AdminServiceError):
     """Raised when a caller is not permitted to decide an approval (e.g. agent actor)."""
+
+
+class HeldExecutionResultNotReadyError(AdminServiceError):
+    """Raised when a held execution has not finished, so it has no result yet."""
+
+    def __init__(self, approval_id: str, status: str) -> None:
+        super().__init__(f"Held execution '{approval_id}' has no result yet: its call is {status}")
+        self.approval_id = approval_id
+        self.status = status
+
+
+class HeldExecutionResultExpiredError(AdminServiceError):
+    """Raised when a held execution's result has passed its retention window."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(f"Held execution '{approval_id}' result is no longer available")
+        self.approval_id = approval_id
 
 
 class ConflictError(AdminServiceError):

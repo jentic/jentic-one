@@ -28,7 +28,12 @@ from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos import AgentRepository, UserRepository
+from jentic_one.admin.repos import (
+    AgentRepository,
+    JobRepository,
+    JobResultRepository,
+    UserRepository,
+)
 from jentic_one.admin.services.errors import (
     ExecutionApprovalAlreadyDecidedError,
     ExecutionApprovalForbiddenError,
@@ -37,7 +42,6 @@ from jentic_one.admin.services.errors import (
     JobAwaitingApprovalError,
 )
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
-from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.execution_approvals import DecideInput
 from jentic_one.admin.web.app import create_app
@@ -52,7 +56,7 @@ from jentic_one.shared.jobs.hold import (
     file_hold,
 )
 from jentic_one.shared.jobs.worker import WorkerLoop
-from jentic_one.shared.models import ActorStatus, ActorType, InviteState, JobStatus
+from jentic_one.shared.models import ActorStatus, ActorType, InviteState, JobKind, JobStatus
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.models.execution_approvals import ApprovalDecision
 from jentic_one.shared.web.deps import resolve_identity
@@ -113,18 +117,17 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
         # An ownerless agent: its approvals are reviewable by org:admin only.
         await session.execute(update(Agent).where(Agent.id == orphan_id).values(owner_id=None))
     yield _Actors(
-        owner=Identity(sub=owner_id, email="exap-owner@test.local", permissions=["jobs:write"]),
-        outsider=Identity(sub="usr_exap_outsider", permissions=["jobs:read", "jobs:write"]),
+        # No jobs:* permissions anywhere: the held executions surface needs none.
+        owner=Identity(sub=owner_id, email="exap-owner@test.local", permissions=[]),
+        outsider=Identity(sub="usr_exap_outsider", permissions=[]),
         admin=Identity(sub="usr_exap_admin", permissions=["org:admin"]),
         agent=Identity(
             sub=agent_id,
-            permissions=["jobs:read", "jobs:write"],
+            permissions=[],
             actor_type=ActorType.AGENT,
             parent_actor_id=owner_id,
         ),
-        ownerless_agent=Identity(
-            sub=orphan_id, permissions=["jobs:read"], actor_type=ActorType.AGENT
-        ),
+        ownerless_agent=Identity(sub=orphan_id, permissions=[], actor_type=ActorType.AGENT),
     )
     await _clean()
     async with ctx.admin_db.transaction() as session:
@@ -192,8 +195,9 @@ async def _client(ctx: Context, identity: Identity | None) -> AsyncIterator[Asyn
         yield c
 
 
-async def _result_body(ctx: Context, job_id: str, identity: Identity) -> dict[str, Any]:
-    view = await JobResultService(ctx).get(job_id, identity=identity)
+async def _result_body(ctx: Context, approval_id: str, identity: Identity) -> dict[str, Any]:
+    """A held execution's result, read through the held execution (never by job id)."""
+    view = await ExecutionApprovalService(ctx).get_result(approval_id, identity=identity)
     return view.body
 
 
@@ -317,10 +321,10 @@ async def test_a_decision_whose_job_is_no_longer_held_is_rolled_back(
 
     async with _client(ctx, actors.owner) as client:
         resp = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": decision.value}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": decision.value}
         )
     assert resp.status_code == 409
-    assert resp.json()["type"].endswith("execution_approval_job_not_held")
+    assert resp.json()["type"].endswith("held_execution_not_held")
 
 
 async def test_a_withdrawal_whose_job_is_no_longer_held_is_rolled_back(
@@ -378,10 +382,10 @@ async def test_deny_fails_the_job_with_a_readable_permission_denied_result(
     )
     job = await _job(ctx, hold.job_id)
     assert job.status == JobStatus.FAILED
-    body = await _result_body(ctx, hold.job_id, actors.agent)
+    body = await _result_body(ctx, hold.approval_id, actors.agent)
     assert body["type"] == "approval_denied"
     assert body["status"] == 403
-    assert body["approval"] == {"id": hold.approval_id, "state": "denied"}
+    assert body["held_execution"] == {"id": hold.approval_id, "state": "denied"}
     assert "wrong account" in body["detail"]
 
 
@@ -563,7 +567,7 @@ async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_eve
     assert audit.action == "withdraw"
     assert audit.actor_id == actors.agent.sub
     (event,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_WITHDRAWN]
-    assert event.data["approval_id"] == hold.approval_id
+    assert event.data["held_execution_id"] == hold.approval_id
     assert "body" not in json.dumps(event.data)
     with pytest.raises(ExecutionApprovalAlreadyDecidedError):
         await ExecutionApprovalService(ctx).decide(
@@ -656,7 +660,7 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
 
     assert (await _approval(ctx, lapsed.approval_id)).state == "expired"
     assert (await _job(ctx, lapsed.job_id)).status == JobStatus.FAILED
-    body = await _result_body(ctx, lapsed.job_id, actors.owner)
+    body = await _result_body(ctx, lapsed.approval_id, actors.owner)
     assert body["type"] == "approval_expired"
     assert body["status"] == 403
     assert (await _approval(ctx, live.approval_id)).state == "pending"
@@ -690,7 +694,7 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     assert audit.job_id == lapsed.job_id
     (event,) = events
     assert event.job_id == lapsed.job_id
-    assert event.data["approval_id"] == lapsed.approval_id
+    assert event.data["held_execution_id"] == lapsed.approval_id
     assert event.data["path"] == "/v1/lapsed"
 
 
@@ -699,7 +703,9 @@ async def test_jobs_cancel_route_answers_409_for_a_held_job(
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    async with _client(ctx, actors.agent) as client:
+    # The jobs routes keep their own gate; the agent needs jobs:write to try.
+    agent = actors.agent.model_copy(update={"permissions": ["jobs:write"]})
+    async with _client(ctx, agent) as client:
         resp = await client.post(f"/jobs/{hold.job_id}:cancel")
     assert resp.status_code == 409
     assert resp.headers["content-type"].startswith("application/problem+json")
@@ -713,12 +719,14 @@ async def test_withdraw_route_withdraws_for_the_filing_agent(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, actors.agent) as client:
-        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+        resp = await client.post(f"/executions/holds/{hold.approval_id}:withdraw")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["id"] == hold.approval_id
     assert body["state"] == "withdrawn"
-    assert body["_links"]["job"].endswith(f"/jobs/{hold.job_id}")
+    assert body["execution_status"] == "cancelled"
+    assert "job_id" not in body
+    assert body["_links"].get("withdraw") is None
     assert (await _job(ctx, hold.job_id)).status == JobStatus.CANCELLED
     assert await _job_result_count(ctx, hold.job_id) == 0
 
@@ -729,7 +737,7 @@ async def test_withdraw_route_rejects_an_unauthenticated_caller(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, None) as client:
-        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+        resp = await client.post(f"/executions/holds/{hold.approval_id}:withdraw")
     assert resp.status_code == 401
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
@@ -741,7 +749,7 @@ async def test_withdraw_route_answers_404_to_anyone_but_the_filer(
     hold = await _hold(ctx, actors.agent)
     for caller in (actors.outsider, actors.ownerless_agent, actors.owner, actors.admin):
         async with _client(ctx, caller) as client:
-            resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+            resp = await client.post(f"/executions/holds/{hold.approval_id}:withdraw")
         assert resp.status_code == 404, caller.sub
         assert resp.headers["content-type"].startswith("application/problem+json")
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
@@ -757,9 +765,9 @@ async def test_withdraw_route_answers_409_once_settled(
         hold.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
     )
     async with _client(ctx, actors.agent) as client:
-        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+        resp = await client.post(f"/executions/holds/{hold.approval_id}:withdraw")
     assert resp.status_code == 409
-    assert resp.json()["type"].endswith("execution_approval_already_decided")
+    assert resp.json()["type"].endswith("held_execution_already_settled")
     assert (await _job(ctx, hold.job_id)).status == JobStatus.FAILED
 
 
@@ -769,10 +777,10 @@ async def test_approval_routes_reject_an_unauthenticated_caller(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, None) as client:
-        listed = await client.get("/executions/approvals")
-        detail = await client.get(f"/executions/approvals/{hold.approval_id}")
+        listed = await client.get("/executions/holds")
+        detail = await client.get(f"/executions/holds/{hold.approval_id}")
         decided = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": "approve"}
         )
     assert (listed.status_code, detail.status_code, decided.status_code) == (401, 401, 401)
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
@@ -787,7 +795,7 @@ async def test_list_route_shows_each_reviewer_only_what_they_may_review(
 
     async def _ids(identity: Identity, query: str = "") -> set[str]:
         async with _client(ctx, identity) as client:
-            resp = await client.get(f"/executions/approvals{query}")
+            resp = await client.get(f"/executions/holds{query}")
         assert resp.status_code == 200, resp.text
         return {row["id"] for row in resp.json()["data"]}
 
@@ -803,17 +811,21 @@ async def test_get_route_returns_the_detail_and_hides_it_from_outsiders(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, actors.owner) as client:
-        resp = await client.get(f"/executions/approvals/{hold.approval_id}")
+        resp = await client.get(f"/executions/holds/{hold.approval_id}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["id"] == hold.approval_id
     assert body["state"] == "pending"
     assert body["agent_owner_id"] == actors.owner.sub
     assert body["request"]["body"] == _BODY.decode()
-    assert body["_links"]["job"].endswith(f"/jobs/{hold.job_id}")
+    assert body["execution_status"] == "held"
+    assert "job_id" not in body
+    assert "job" not in body["_links"]
+    assert body["_links"]["withdraw"].endswith(f"/executions/holds/{hold.approval_id}:withdraw")
+    assert body["_links"].get("result") is None
 
     async with _client(ctx, actors.outsider) as client:
-        hidden = await client.get(f"/executions/approvals/{hold.approval_id}")
+        hidden = await client.get(f"/executions/holds/{hold.approval_id}")
     assert hidden.status_code == 404
     assert hidden.headers["content-type"].startswith("application/problem+json")
 
@@ -825,11 +837,11 @@ async def test_decide_route_approves_for_the_owner_and_conflicts_after(
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, actors.owner) as client:
         resp = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide",
+            f"/executions/holds/{hold.approval_id}:decide",
             json={"decision": "approve", "reason": "looks right"},
         )
         again = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "deny"}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": "deny"}
         )
     assert resp.status_code == 200, resp.text
     assert resp.json()["state"] == "approved"
@@ -846,13 +858,13 @@ async def test_decide_route_denies_with_a_readable_result(
     hold = await _hold(ctx, actors.agent)
     async with _client(ctx, actors.admin) as client:
         resp = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide",
+            f"/executions/holds/{hold.approval_id}:decide",
             json={"decision": "deny", "reason": "not today"},
         )
     assert resp.status_code == 200, resp.text
     assert resp.json()["state"] == "denied"
     assert (await _job(ctx, hold.job_id)).status == JobStatus.FAILED
-    assert (await _result_body(ctx, hold.job_id, actors.admin))["status"] == 403
+    assert (await _result_body(ctx, hold.approval_id, actors.admin))["status"] == 403
 
 
 async def test_decide_route_refuses_agents_and_hides_from_outsiders(
@@ -863,15 +875,15 @@ async def test_decide_route_refuses_agents_and_hides_from_outsiders(
     admin_agent = actors.agent.model_copy(update={"permissions": ["org:admin"]})
     async with _client(ctx, admin_agent) as client:
         as_agent = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": "approve"}
         )
     async with _client(ctx, actors.outsider) as client:
         as_outsider = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": "approve"}
         )
     async with _client(ctx, actors.owner) as client:
         malformed = await client.post(
-            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "maybe"}
+            f"/executions/holds/{hold.approval_id}:decide", json={"decision": "maybe"}
         )
     assert as_agent.status_code == 403
     assert as_outsider.status_code == 404
@@ -880,33 +892,118 @@ async def test_decide_route_refuses_agents_and_hides_from_outsiders(
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
 
 
-async def test_job_routes_link_a_held_execution_to_its_approval(
+async def test_job_routes_carry_nothing_about_held_executions(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """Jobs are how a held call runs, not part of its surface: no approval fields on /jobs."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    owner = actors.owner.model_copy(update={"permissions": ["jobs:read"]})
+    async with _client(ctx, owner) as client:
+        detail = await client.get(f"/jobs/{hold.job_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert "approval_id" not in body
+    assert "approval" not in body["_links"]
+
+
+async def test_an_agent_with_no_permissions_follows_its_own_held_call(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """The filing agent reads its held call and, once denied, the outcome — no jobs:read."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.agent) as client:
+        detail = await client.get(f"/executions/holds/{hold.approval_id}")
+        early = await client.get(f"/executions/holds/{hold.approval_id}/result")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["execution_status"] == "held"
+    assert early.status_code == 409
+    assert early.json()["type"].endswith("held_execution_result_not_ready")
+
+    await ExecutionApprovalService(ctx).decide(
+        hold.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
+    )
+    async with _client(ctx, actors.agent) as client:
+        settled = await client.get(f"/executions/holds/{hold.approval_id}")
+        result = await client.get(f"/executions/holds/{hold.approval_id}/result")
+    assert settled.json()["execution_status"] == "failed"
+    assert settled.json()["_links"]["result"].endswith(
+        f"/executions/holds/{hold.approval_id}/result"
+    )
+    assert result.status_code == 200, result.text
+    assert result.headers["content-type"].startswith("application/problem+json")
+    assert result.json()["held_execution"] == {"id": hold.approval_id, "state": "denied"}
+
+
+async def test_the_result_route_returns_the_upstream_response_once_run(
     integration_context: Context, actors: _Actors
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
+    await ExecutionApprovalService(ctx).decide(
+        hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
+    )
     async with ctx.admin_db.transaction() as session:
-        other = Job(
+        await JobRepository.transition(
+            session, hold.job_id, from_status=JobStatus.QUEUED, to_status=JobStatus.COMPLETED
+        )
+        await JobResultRepository.create(
+            session,
+            job_id=hold.job_id,
+            kind=JobKind.EXECUTION.value,
+            body={"id": "ch_1"},
+            content_type="application/json",
+            created_by=actors.agent.sub,
+        )
+    async with _client(ctx, actors.owner) as client:
+        result = await client.get(f"/executions/holds/{hold.approval_id}/result")
+    assert result.status_code == 200, result.text
+    assert result.json() == {"id": "ch_1"}
+
+
+async def test_a_held_execution_never_reaches_a_job_that_is_not_its_held_execution(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """The guard: an approval row naming any other job exposes none of that job.
+
+    The held executions routes take no jobs permission, so a row that pointed
+    at an import job — or at another agent's job — must show no status and no
+    result for it.
+    """
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with ctx.admin_db.transaction() as session:
+        foreign = Job(
             kind="import",
-            status=JobStatus.QUEUED,
+            status=JobStatus.COMPLETED,
             payload={},
             created_by=actors.agent.sub,
             actor_type=actors.agent.actor_type.value,
         )
-        session.add(other)
+        session.add(foreign)
         await session.flush()
-        other_id = other.id
-    owner = actors.owner.model_copy(update={"permissions": ["jobs:read"]})
-    async with _client(ctx, owner) as client:
-        detail = await client.get(f"/jobs/{hold.job_id}")
-        listed = await client.get("/jobs")
-        plain = await client.get(f"/jobs/{other_id}")
-    assert detail.status_code == 200, detail.text
-    body = detail.json()
-    assert body["approval_id"] == hold.approval_id
-    assert body["_links"]["approval"].endswith(f"/executions/approvals/{hold.approval_id}")
-    rows = {row["job_id"]: row for row in listed.json()["data"]}
-    assert rows[hold.job_id]["approval_id"] == hold.approval_id
-    assert rows[other_id]["approval_id"] is None
-    assert plain.json()["approval_id"] is None
-    assert plain.json()["_links"].get("approval") is None
+        await JobResultRepository.create(
+            session,
+            job_id=foreign.id,
+            kind="import",
+            body={"payload": "import result"},
+            created_by=actors.agent.sub,
+        )
+        await session.execute(
+            update(ExecutionApproval)
+            .where(ExecutionApproval.id == hold.approval_id)
+            .values(job_id=foreign.id)
+        )
+    for caller in (actors.agent, actors.owner, actors.admin):
+        async with _client(ctx, caller) as client:
+            detail = await client.get(f"/executions/holds/{hold.approval_id}")
+            listed = await client.get("/executions/holds")
+            result = await client.get(f"/executions/holds/{hold.approval_id}/result")
+        assert detail.status_code == 200, caller.sub
+        assert detail.json()["execution_status"] is None
+        assert detail.json()["request"] is None
+        rows = {row["id"]: row for row in listed.json()["data"]}
+        assert rows[hold.approval_id]["execution_status"] is None
+        assert result.status_code == 404, caller.sub
+        assert "import result" not in result.text

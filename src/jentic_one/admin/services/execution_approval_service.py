@@ -1,11 +1,17 @@
-"""Execution approval service — list, read, decide on and withdraw held executions.
+"""Hold service — list, read, decide on and withdraw held executions, and read their result.
 
-Visibility follows jobs (``build_access_filters``): ``org:admin`` sees every
-approval, a user sees approvals filed by agents they own, an agent sees its
-own. Deciding needs that same reviewer visibility — the agent's owner or an
-``org:admin``; an ownerless agent's approvals are admin-only — and is refused
-outright for any agent caller, whatever its scopes. Withdrawing is open only
-to the identity that filed the hold.
+A hold is an execution a require-approval rule parked for a human, stored as an
+approval row over a held execution job. Visibility follows ``build_access_filters``:
+``org:admin`` sees every hold, a user sees holds filed by agents they own, an
+agent sees its own. Deciding needs that same reviewer visibility — the agent's
+owner or an ``org:admin``; an ownerless agent's holds are admin-only — and is
+refused outright for any agent caller, whatever its scopes. Withdrawing is open
+only to the identity that filed the hold.
+
+The holds routes take no ``jobs:*`` permission, so the service reads a hold's
+job only through ``JobRepository.get_held_execution`` and
+``held_execution_statuses``: the held execution job its approval names, under
+the caller's job visibility too. No hold reaches any other job.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from typing import Any
 import structlog
 
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import AgentRepository, AuditRepository, JobResultRepository
 from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
 from jentic_one.admin.repos.job_repo import JobRepository
@@ -28,13 +35,17 @@ from jentic_one.admin.services.errors import (
     ExecutionApprovalForbiddenError,
     ExecutionApprovalJobNotHeldError,
     ExecutionApprovalNotFoundError,
+    HeldExecutionResultExpiredError,
+    HeldExecutionResultNotReadyError,
 )
+from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.schemas.execution_approvals import (
     DecideInput,
     ExecutionApprovalDetailView,
     ExecutionApprovalView,
     HeldRequestView,
 )
+from jentic_one.admin.services.schemas.jobs import JobResultView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -53,6 +64,20 @@ logger = structlog.get_logger(__name__)
 
 #: Cap on the held body shown to a reviewer; the page notes the truncation.
 _MAX_REVIEW_BODY_BYTES = 64 << 10
+
+#: A hold's call has a result once its job is completed, or failed with a
+#: recorded problem (a denied or expired approval, or a run-time refusal).
+_RESULT_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
+
+
+def _execution_status(job_status: str | None) -> str | None:
+    """A held execution job's status as the holds surface names it.
+
+    ``dead_letter`` is a worker retry detail: to a hold it is a failed call.
+    """
+    if job_status == JobStatus.DEAD_LETTER.value:
+        return JobStatus.FAILED.value
+    return job_status
 
 
 class ExecutionApprovalService:
@@ -85,8 +110,18 @@ class ExecutionApprovalService:
                 cursor_id=cursor_id,
                 filters=filters,
             )
+            statuses = await JobRepository.held_execution_statuses(
+                session,
+                [r.job_id for r in rows[:limit]],
+                filters=build_access_filters(identity, Job),
+            )
         has_more = len(rows) > limit
-        data = [ExecutionApprovalView.model_validate(r) for r in rows[:limit]]
+        data = [
+            ExecutionApprovalView.model_validate(r).model_copy(
+                update={"execution_status": _execution_status(statuses.get(r.job_id))}
+            )
+            for r in rows[:limit]
+        ]
         next_cursor = encode_cursor(data[-1].created_at, data[-1].id) if has_more else None
         return Page(data=data, has_more=has_more, next_cursor=next_cursor)
 
@@ -97,14 +132,50 @@ class ExecutionApprovalService:
             if row is None:
                 raise ExecutionApprovalNotFoundError(approval_id)
             agent = await AgentRepository.get_by_id(session, row.agent_id)
-            job = await JobRepository.get_by_id(session, row.job_id)
+            job = await JobRepository.get_held_execution(
+                session, row.job_id, filters=build_access_filters(identity, Job)
+            )
         view = ExecutionApprovalView.model_validate(row)
         return ExecutionApprovalDetailView(
-            **view.model_dump(),
+            **view.model_dump(exclude={"execution_status"}),
+            execution_status=_execution_status(str(job.status) if job is not None else None),
             agent_name=agent.name if agent is not None else None,
             agent_owner_id=agent.owner_id if agent is not None else None,
             request=self._held_request(job.payload if job is not None else None),
         )
+
+    async def get_result(self, approval_id: str, *, identity: Identity) -> JobResultView:
+        """The finished call's result: the upstream response, or why it never ran.
+
+        Read through the hold, never by job id: the job is the held execution
+        the visible approval names (``JobRepository.get_held_execution``), and
+        its result row is read only after that lookup succeeds.
+        """
+        filters = build_access_filters(identity, ExecutionApproval)
+        async with self._ctx.admin_db.session() as session:
+            row = await ExecutionApprovalRepository.get_by_id(session, approval_id, filters=filters)
+            if row is None:
+                raise ExecutionApprovalNotFoundError(approval_id)
+            job = await JobRepository.get_held_execution(
+                session, row.job_id, filters=build_access_filters(identity, Job)
+            )
+            if job is None:
+                raise ExecutionApprovalNotFoundError(approval_id)
+            status = _execution_status(str(job.status)) or ""
+            if status not in _RESULT_STATUSES:
+                raise HeldExecutionResultNotReadyError(approval_id, status)
+            result = await JobResultRepository.get_by_job_id(session, job.id)
+            if result is None:
+                if status == JobStatus.FAILED.value:
+                    # A failure with no recorded problem body has nothing to show.
+                    raise HeldExecutionResultNotReadyError(approval_id, status)
+                raise HeldExecutionResultExpiredError(approval_id)
+            if (
+                result.available_until is not None
+                and result.available_until < await ExecutionApprovalRepository.now(session)
+            ):
+                raise HeldExecutionResultExpiredError(approval_id)
+        return JobResultService.to_view(result)
 
     def _held_request(self, payload: dict[str, Any] | None) -> HeldRequestView | None:
         """Decrypt the held job payload into what the reviewer is approving.
@@ -214,14 +285,20 @@ class ExecutionApprovalService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
                 data={
-                    "approval_id": approval_id,
+                    "held_execution_id": approval_id,
                     "agent_id": updated.agent_id,
                     "decision": body.decision.value,
                     "method": updated.method,
                     "path": updated.path,
                 },
             )
-            view = ExecutionApprovalView.model_validate(updated)
+            view = ExecutionApprovalView.model_validate(updated).model_copy(
+                update={
+                    "execution_status": (
+                        JobStatus.QUEUED.value if approve else JobStatus.FAILED.value
+                    )
+                }
+            )
         logger.info(
             "execution_approval_decided",
             approval_id=approval_id,
@@ -281,13 +358,15 @@ class ExecutionApprovalService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
                 data={
-                    "approval_id": approval_id,
+                    "held_execution_id": approval_id,
                     "agent_id": updated.agent_id,
                     "method": updated.method,
                     "path": updated.path,
                 },
             )
-            view = ExecutionApprovalView.model_validate(updated)
+            view = ExecutionApprovalView.model_validate(updated).model_copy(
+                update={"execution_status": JobStatus.CANCELLED.value}
+            )
         logger.info(
             "execution_approval_withdrawn",
             approval_id=approval_id,

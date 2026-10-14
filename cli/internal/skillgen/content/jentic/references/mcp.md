@@ -170,22 +170,25 @@ execute {"operation_id": "POST:https://api.example.com/v1/things", "inputs": {"l
 execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range}", "inputs": {"id": "ABC", "range": "A1:Z10"}}
 ```
 
-**The job-poll idiom.** A held or async execution does not answer inline: a
-202 HELD response (human approval required) or a tracked import returns a
-**job envelope** (`{job_id, status, …}`). For a held call, the most important step is to
-**show the user its `approval.review_url`** — a reviewer signs in there to approve or deny
-it — and end your turn so the user sees the link. **Do not call
+**The poll idiom.** A held or async execution does not answer inline. A
+202 HELD response (human approval required) returns a `held_execution_id`;
+an async execution or a tracked import returns a **job envelope**
+(`{job_id, status, …}`). For a held call, the most important step is to
+**show the user its `review_url`** — a reviewer signs in there to approve or
+deny it — and end your turn so the user sees the link. **Do not call
 `get_execution_result` until the user replies**; then call it **once** with
-the job id and `wait_seconds: 30`; it returns early once the status is
-terminal (`completed`, `failed`, `cancelled`, `dead_letter`). If it is still
-held, tell the user it is waiting for approval and end your turn again. A `failed` held call carries the permission-denied problem
-(denied or expired) as its result. A tracked import is polled the same way:
+the `held_execution_id` and `wait: 30000` (milliseconds); it returns early once
+the call has finished (`completed`, `failed`, `cancelled`). If it is still
+held, tell the user it is waiting for approval and end your turn again. A
+`failed` held call carries the permission-denied problem (denied or expired)
+as its result. A tracked import is polled the same way with its `job_id`:
 
 ```
-get_execution_result {"job_id": "<id from the held response>", "wait_seconds": 30}
+get_execution_result {"held_execution_id": "<id from the held response>", "wait": 30000}
+get_execution_result {"job_id": "<id from an async or import response>"}
 ```
 
-**Never re-send the original call while a job is pending** — approval
+**Never re-send the original call while it is pending** — approval
 happens out-of-band, and re-sending duplicates the side effect. A client
 that supports URL-mode elicitation may instead be asked to open the review
 page for the user; its accept only means the link was opened — the

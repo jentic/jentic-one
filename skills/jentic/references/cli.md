@@ -233,17 +233,18 @@ jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{ra
 ```
 
 **A call held for human approval exits 3** (`TIMEOUT_PENDING`). stdout
-carries the held envelope (`body.job_id`, `body.approval.review_url`); stderr
+carries the held envelope (`body.held_execution_id`, `body.review_url`); stderr
 repeats the review link. Show the user the `review_url`, end your turn, and
-once they reply collect the outcome with `jentic jobs wait <job_id>` — never
-re-send the call. `jobs wait` (and `execute --wait`) prints the result
+once they reply collect the outcome with
+`jentic holds wait <held_execution_id>` — never re-send the call.
+`holds wait` (and `execute --wait`) prints the result
 exactly like a call that ran at once (exit 0), or the denial/expiry (exit 2);
 it exits 3 again if the call is still held when `--timeout` (default 10m)
 lapses.
 
 ```
 jentic execute POST:https://api.example.com/v1/orders -d '{"n":1}'   # exit 3: held, prints review_url
-jentic jobs wait <job_id> --timeout 2m                                 # after the user decides
+jentic holds wait <held_execution_id> --timeout 2m                    # after the user decides
 ```
 
 **Diagnose an `execute` failure by its symptom, not the exit code alone.** A

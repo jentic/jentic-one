@@ -20,9 +20,8 @@ __all__ = [
     "AsyncQueuedResponse",
     "AsyncQueuedResponseLinks",
     "ExecuteRequestContext",
-    "HeldApprovalResponse",
-    "HeldExecutionLinks",
-    "HeldExecutionResponse",
+    "HeldExecutionAcceptedLinks",
+    "HeldExecutionAcceptedResponse",
 ]
 
 
@@ -39,34 +38,30 @@ class AsyncQueuedResponse(BaseModel):
     links: AsyncQueuedResponseLinks = Field(serialization_alias="_links")
 
 
-class HeldApprovalResponse(BaseModel):
-    """The approval a held execution waits on."""
+class HeldExecutionAcceptedLinks(BaseModel):
+    """Links on a held execution: where it stands, its eventual result, and withdrawal."""
 
-    id: str = Field(description="Approval id (`exap_…`).")
+    self_link: str = Field(
+        serialization_alias="self",
+        description="The held execution: its decision and where the call stands.",
+    )
+    result: str = Field(description="The call's outcome once it has finished.")
+    withdraw: str = Field(description="`POST` here to withdraw the call before it is decided.")
+
+
+class HeldExecutionAcceptedResponse(BaseModel):
+    """202 body for a call held for human approval.
+
+    The call has not run. A reviewer approves or denies it on ``review_url``;
+    the agent follows ``_links.self`` to see where it stands and
+    ``_links.result`` for the outcome.
+    """
+
+    status: Literal["held"] = "held"
+    held_execution_id: str = Field(description="Held execution id (`exap_…`).")
     review_url: str = Field(
         description="Review page a signed-in reviewer opens to approve or deny the call."
     )
-    expires_at: datetime = Field(
-        description="When the approval expires undecided and the job fails."
-    )
-
-
-class HeldExecutionLinks(AsyncQueuedResponseLinks):
-    """Links on a held execution: the job to poll and the route that abandons it."""
-
-    withdraw: str = Field(
-        description="`POST` here to withdraw the approval and cancel the held job."
-    )
-
-
-class HeldExecutionResponse(AsyncQueuedResponse):
-    """202 body for an execution held for human approval.
-
-    Extends the async-queued shape, so a client reading only ``job_id`` and
-    ``_links.self`` polls it exactly like any other async execution.
-    """
-
-    links: HeldExecutionLinks = Field(serialization_alias="_links")
-    status: Literal["held"] = "held"
-    approval: HeldApprovalResponse
+    expires_at: datetime = Field(description="When the call expires undecided and fails.")
     agent_directive: str
+    links: HeldExecutionAcceptedLinks = Field(serialization_alias="_links")

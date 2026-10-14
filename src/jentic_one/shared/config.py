@@ -2116,7 +2116,7 @@ def broker_links_root_on_broker(config: AppConfig) -> bool:
     ``broker.jobs_api_base_url`` is unset: a held call's ``review_url`` and the
     ``_links`` of held and async executions then fall back to the broker's own
     request origin, where the review page, ``/jobs`` and
-    ``/executions/approvals`` are not served.
+    ``/executions/holds`` are not served.
     """
     return (
         "broker" in config.apps

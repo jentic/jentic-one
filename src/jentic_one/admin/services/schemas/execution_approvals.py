@@ -34,6 +34,9 @@ class ExecutionApprovalView(BaseModel):
     execution_id: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    #: Where the held call stands: ``held`` until decided, then ``queued``,
+    #: ``running`` and a terminal ``completed``, ``failed`` or ``cancelled``.
+    execution_status: str | None = None
 
 
 class HeldRequestView(BaseModel):

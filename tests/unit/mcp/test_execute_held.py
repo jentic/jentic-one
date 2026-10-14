@@ -32,15 +32,16 @@ from jentic_one.shared.models import ActorType
 
 _KEY = base64.b64encode(b"k" * 32).decode()
 _ENVELOPE = {
-    "job_id": "job_held1",
     "status": "held",
-    "approval": {
-        "id": "exap_1",
-        "review_url": "https://jentic.example/app/agents/approvals/exap_1",
-        "expires_at": "2026-10-07T00:00:00Z",
-    },
+    "held_execution_id": "exap_1",
+    "review_url": "https://jentic.example/app/agents/approvals/exap_1",
+    "expires_at": "2026-10-07T00:00:00Z",
     "agent_directive": HELD_AGENT_DIRECTIVE,
-    "_links": {"self": "https://jentic.example/jobs/job_held1"},
+    "_links": {
+        "self": "https://jentic.example/executions/holds/exap_1",
+        "result": "https://jentic.example/executions/holds/exap_1/result",
+        "withdraw": "https://jentic.example/executions/holds/exap_1:withdraw",
+    },
 }
 
 
@@ -52,6 +53,7 @@ def _env(
     *,
     sub: str = "agnt_1",
     protocol_version: str | None = _MODERN,
+    permissions: list[str] | None = None,
 ) -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
@@ -67,7 +69,7 @@ def _env(
     )
     return CallEnv(
         ctx=ctx,
-        identity=Identity(sub=sub, permissions=["jobs:read"], actor_type=ActorType.AGENT),
+        identity=Identity(sub=sub, permissions=permissions or [], actor_type=ActorType.AGENT),
         credential="jak_test",
         base_url="https://auth.example.com",
         session_id=None,
@@ -101,21 +103,33 @@ def held_broker(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
 
 @pytest.fixture()
 def job_polls(monkeypatch: pytest.MonkeyPatch) -> Callable[[list[str]], list[str]]:
-    """Stub the job poll with a sequence of statuses and a zero-length wait cadence."""
+    """Stub the held-execution poll with a sequence of statuses and a zero-length wait cadence.
+
+    The job poll is stubbed too, recording into the same list, so a test that
+    expects only held-execution polls sees any stray job poll.
+    """
     seen: list[str] = []
 
     def install(statuses: list[str]) -> list[str]:
         queue = list(statuses)
 
-        async def poll(env: CallEnv, job_id: str) -> dict[str, Any]:
-            seen.append(job_id)
-            status = queue.pop(0) if len(queue) > 1 else queue[0]
-            payload: dict[str, Any] = {"job_id": job_id, "kind": "execution", "status": status}
+        def next_status() -> str:
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+        async def poll_held(env: CallEnv, held_execution_id: str) -> dict[str, Any]:
+            seen.append(held_execution_id)
+            status = next_status()
+            payload: dict[str, Any] = {"held_execution_id": held_execution_id, "status": status}
             if status == "failed":
                 payload["result"] = {"type": "approval_denied", "status": 403}
             return payload
 
-        monkeypatch.setattr(tools_mod, "job_poll_payload", poll)
+        async def poll_job(env: CallEnv, job_id: str) -> dict[str, Any]:
+            seen.append(job_id)
+            return {"job_id": job_id, "kind": "execution", "status": next_status()}
+
+        monkeypatch.setattr(tools_mod, "held_execution_poll_payload", poll_held)
+        monkeypatch.setattr(tools_mod, "job_poll_payload", poll_job)
         return seen
 
     monkeypatch.setattr(approvals, "SHORT_WAIT_POLL_SECONDS", 0.0)
@@ -174,10 +188,10 @@ async def test_url_elicitation_client_gets_an_input_required_result(
     assert request.params.url == "https://jentic.example/app/agents/approvals/exap_1"
     assert "POST /v1/charges" in request.params.message
     assert result.request_state
-    assert "job_held1" not in result.request_state
+    assert "exap_1" not in result.request_state
 
 
-async def test_url_elicitation_retry_reads_the_job_and_never_resends(
+async def test_url_elicitation_retry_reads_the_held_execution_and_never_resends(
     held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]], monkeypatch
 ) -> None:
     caps: dict[str, Any] = {"elicitation": {"url": {}}}
@@ -198,7 +212,8 @@ async def test_url_elicitation_retry_reads_the_job_and_never_resends(
     still = await _execute(replace(env, request_state=first.request_state))
     held = _json(still)
     assert held["body"]["status"] == "held"
-    assert held["body"]["approval"] == _ENVELOPE["approval"]
+    assert held["body"]["held_execution_id"] == "exap_1"
+    assert held["body"]["review_url"] == _ENVELOPE["review_url"]
     assert held["body"]["agent_directive"] == HELD_AGENT_DIRECTIVE
     assert len(held_broker) == 1
 
@@ -261,7 +276,7 @@ async def test_a_legacy_wire_client_declaring_url_elicitation_gets_the_held_resu
 
 async def _get_result(env: CallEnv, **extra: Any) -> Any:
     return await dispatch_mcp_tool_call(
-        env, "get_execution_result", {"job_id": "job_held1", **extra}
+        env, "get_execution_result", {"held_execution_id": "exap_1", **extra}
     )
 
 
@@ -271,22 +286,46 @@ async def test_get_execution_result_without_wait_polls_once(
     polled = job_polls(["held", "completed"])
     payload = _json(await _get_result(_env()))
     assert payload["status"] == "held"
-    assert polled == ["job_held1"]
+    assert polled == ["exap_1"]
 
 
 async def test_get_execution_result_wait_returns_early_once_terminal(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held", "queued", "completed"])
-    payload = _json(await _get_result(_env(), wait_seconds=30))
+    payload = _json(await _get_result(_env(), wait=30_000))
     assert payload["status"] == "completed"
-    assert len(polled) == 3
+    assert polled == ["exap_1", "exap_1", "exap_1"]
 
 
 async def test_get_execution_result_negative_wait_answers_at_once(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held"])
-    payload = _json(await _get_result(_env(), wait_seconds=-5))
+    payload = _json(await _get_result(_env(), wait=-5))
     assert payload["status"] == "held"
-    assert polled == ["job_held1"]
+    assert polled == ["exap_1"]
+
+
+async def test_get_execution_result_job_id_polls_the_job(
+    job_polls: Callable[[list[str]], list[str]],
+) -> None:
+    """An async (non-held) execution still polls by its job id."""
+    polled = job_polls(["completed"])
+    payload = _json(
+        await dispatch_mcp_tool_call(_env(), "get_execution_result", {"job_id": "job_async1"})
+    )
+    assert payload["job_id"] == "job_async1"
+    assert polled == ["job_async1"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [{}, {"held_execution_id": "exap_1", "job_id": "job_async1"}],
+)
+async def test_get_execution_result_requires_exactly_one_id(
+    job_polls: Callable[[list[str]], list[str]], arguments: dict[str, Any]
+) -> None:
+    job_polls(["held"])
+    with pytest.raises(MCPError):
+        await dispatch_mcp_tool_call(_env(), "get_execution_result", arguments)

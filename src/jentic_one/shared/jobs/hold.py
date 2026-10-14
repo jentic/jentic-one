@@ -58,7 +58,7 @@ HELD_AGENT_DIRECTIVE = (
     "This call needs human approval. Most important: show the user the review_url, "
     "since they cannot approve it without that link, and end your turn so they see it. "
     "Do not call get_execution_result until the user replies; then call it once with "
-    "job_id and wait_seconds: 30. If it is still held, tell the user it is waiting for "
+    "held_execution_id and wait: 30000. If it is still held, tell the user it is waiting for "
     "approval and end your turn again. Do not re-send the call."
 )
 
@@ -310,7 +310,7 @@ def _approval_problem(
         "error_origin": "broker",
     }
     if approval_id is not None:
-        body["approval"] = {"id": approval_id, "state": state}
+        body["held_execution"] = {"id": approval_id, "state": state}
     return body
 
 
@@ -467,7 +467,7 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
             actor_id=agent_id,
             actor_type=actor_type,
             data={
-                "approval_id": approval_id,
+                "held_execution_id": approval_id,
                 "agent_id": agent_id,
                 "method": method,
                 "path": path,

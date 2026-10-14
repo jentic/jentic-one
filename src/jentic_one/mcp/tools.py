@@ -39,10 +39,16 @@ from jentic.problem_details import Forbidden, Unauthorized
 from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
-from jentic_one.admin.services.errors import JobNotCompletedError, JobNotFoundError
+from jentic_one.admin.services.errors import (
+    ExecutionApprovalNotFoundError,
+    HeldExecutionResultNotReadyError,
+    JobNotCompletedError,
+    JobNotFoundError,
+)
+from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
-from jentic_one.admin.services.schemas.jobs import JobView
+from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
@@ -1143,7 +1149,7 @@ async def _answer_held(
             env.ctx.encryption, envelope=envelope, agent_id=env.identity.sub
         )
         return approvals.url_elicitation_result(
-            review_url=envelope["approval"]["review_url"],
+            review_url=envelope["review_url"],
             message=approvals.review_message(method, path),
             request_state=state,
         )
@@ -1151,7 +1157,7 @@ async def _answer_held(
 
 
 async def _resume_held(env: CallEnv, token: str) -> ToolCallResult:
-    """A URL-elicitation retry: the job's result if terminal, else short wait then held result.
+    """A URL-elicitation retry: the call's result if finished, else short wait then held result.
 
     The elicitation response the client sends back is consent to open the
     review page only — it never decides the approval.
@@ -1159,8 +1165,8 @@ async def _resume_held(env: CallEnv, token: str) -> ToolCallResult:
     state = approvals.open_request_state(env.ctx.encryption, token, agent_id=env.identity.sub)
     if state is None:
         raise invalid_params("Invalid or expired requestState")
-    _log_front_door(env, "url_elicitation_retry", {"job_id": state["job_id"]})
-    terminal = await approvals.short_wait(_poller(env), state["job_id"])
+    _log_front_door(env, "url_elicitation_retry", {"held_execution_id": state["held_execution_id"]})
+    terminal = await approvals.short_wait(_held_poller(env), state["held_execution_id"])
     if terminal is not None:
         return tool_result(env.ctx, terminal)
     envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
@@ -1178,7 +1184,7 @@ def _log_front_door(env: CallEnv, door: str, envelope: dict[str, Any]) -> None:
     logger.info(
         "mcp_held_execution_front_door",
         front_door=door,
-        job_id=envelope.get("job_id"),
+        held_execution_id=envelope.get("held_execution_id"),
         client_name=env.client_name,
         client_version=env.client_version,
         actor_id=env.identity.sub,
@@ -1203,39 +1209,50 @@ def _header_kvs(obj: dict[str, Any] | None) -> list[tuple[str, str]]:
 # ── get_execution_result ──────────────────────────────────────────────────────
 
 _GET_EXECUTION_RESULT_PARAMS = [
+    ParamSpec("held_execution_id", "string", ("held_execution",)),
     ParamSpec("job_id", "string", ("id", "job")),
-    ParamSpec("wait_seconds", "int"),
+    ParamSpec("wait", "int"),
 ]
 
-#: Cap on get_execution_result's ``wait_seconds`` (Go: ``maxPollWaitSeconds``).
-MAX_POLL_WAIT_SECONDS = 30
+#: Cap on get_execution_result's ``wait``, in milliseconds (Go: ``maxPollWaitMillis``).
+MAX_POLL_WAIT_MS = 30_000
 
 
 async def handle_get_execution_result(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
-    """GET /jobs/{id} (+ /result) in-process (Go: ``handleGetExecutionResult``).
+    """Poll a held execution, or an async execution's job (Go: ``handleGetExecutionResult``).
 
-    ``wait_seconds`` absent or zero polls once and answers at once; otherwise
-    the job is re-polled until terminal or the wait (capped at
-    ``MAX_POLL_WAIT_SECONDS``) lapses.
+    ``held_execution_id`` (from a held 202) reads through the held execution
+    itself; ``job_id`` (from an async 202) reads the job. ``wait`` absent or
+    zero polls once and answers at once; otherwise it re-polls until the call
+    has finished or ``wait`` milliseconds (capped at ``MAX_POLL_WAIT_MS``) lapse.
     """
     args = normalize_tool_args(arguments, _GET_EXECUTION_RESULT_PARAMS)
+    held_execution_id = args.get("held_execution_id", "")
     job_id = args.get("job_id", "")
-    if not job_id:
+    if bool(held_execution_id) == bool(job_id):
         raise invalid_params(
-            'get_execution_result requires "job_id" (aliases: "id", "job"): the job id '
-            "from a held (202) execute response"
+            'get_execution_result requires exactly one of "held_execution_id" (from a held '
+            '202 execute response) or "job_id" (aliases: "id", "job"; from an async one)'
         )
-    wait = min(max(int(args.get("wait_seconds", 0)), 0), MAX_POLL_WAIT_SECONDS)
-    return tool_result(env.ctx, await _poll_job_until_terminal(env, job_id, float(wait)))
+    wait_ms = min(max(int(args.get("wait", 0)), 0), MAX_POLL_WAIT_MS)
+    if held_execution_id:
+        poll = _held_poller(env)
+        target = held_execution_id
+    else:
+        poll = _poller(env)
+        target = job_id
+    return tool_result(env.ctx, await _poll_until_finished(poll, target, wait_ms / 1000))
 
 
-async def _poll_job_until_terminal(env: CallEnv, job_id: str, wait: float) -> dict[str, Any]:
-    """Poll the job, re-polling until terminal or ``wait`` lapses; zero polls once."""
+async def _poll_until_finished(
+    poll: Callable[[str], Awaitable[dict[str, Any]]], target: str, wait: float
+) -> dict[str, Any]:
+    """Poll ``target``, re-polling until finished or ``wait`` seconds lapse; zero polls once."""
     deadline = time.monotonic() + wait
     while True:
-        payload = await job_poll_payload(env, job_id)
+        payload = await poll(target)
         if payload.get("status") in approvals.TERMINAL_JOB_STATUSES:
             return payload
         remaining = deadline - time.monotonic()
@@ -1244,12 +1261,61 @@ async def _poll_job_until_terminal(env: CallEnv, job_id: str, wait: float) -> di
         await asyncio.sleep(min(approvals.SHORT_WAIT_POLL_SECONDS, remaining))
 
 
+async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> dict[str, Any]:
+    """The poll payload for one held execution.
+
+    ``{held_execution_id, state, status, execution_id?, result?}`` — ``state``
+    is the decision, ``status`` where the call stands, and the result rides
+    once the call has finished: the upstream response, or the problem
+    explaining why it never ran. Needs no ``jobs:*`` permission: visibility is
+    the held execution's own (the filing agent, its owner, or ``org:admin``).
+    """
+    _require_db(env.ctx, "admin", "held execution polling")
+    svc = ExecutionApprovalService(env.ctx)
+    try:
+        view = await svc.get(held_execution_id, identity=env.identity)
+    except ExecutionApprovalNotFoundError:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"held execution {held_execution_id!r} not found",
+            actionable="Re-check the id — it is the held_execution_id of the held (202) "
+            "execute response — and call get_execution_result again with the exact value.",
+            next_tool="get_execution_result",
+        ) from None
+    payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "held_execution_id": view.id,
+        "state": view.state,
+        "status": view.execution_status,
+    }
+    if view.execution_id:
+        payload["execution_id"] = view.execution_id
+    if view.execution_status in (_JOB_COMPLETED, _JOB_FAILED):
+        try:
+            result = await svc.get_result(held_execution_id, identity=env.identity)
+        except HeldExecutionResultNotReadyError:
+            return payload
+        except Exception as exc:
+            payload["result_error"] = (
+                f"the call finished but its result could not be fetched: {exc}"
+            )
+            return payload
+        _attach_result_view(result, payload)
+    return payload
+
+
+def _held_poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:
+    async def poll(held_execution_id: str) -> dict[str, Any]:
+        return await held_execution_poll_payload(env, held_execution_id)
+
+    return poll
+
+
 async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
     """The poll payload for one job (Go: ``handleGetExecutionResult`` body).
 
     ``{job_id, kind, status, error?, execution_id?, result?}`` — the result
-    rides once the job is terminal with one (``completed``, or a ``failed``
-    held execution whose result is its permission-denied problem).
+    rides once the job is ``completed``.
     """
     require_permissions(env.identity, ["jobs:read"])
     _require_db(env.ctx, "admin", "job polling")
@@ -1260,7 +1326,7 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
         raise ToolError(
             CODE_RESOLVE_FAILED,
             f"job {job_id!r} not found",
-            actionable="Re-check the job id — it is carried by the held (202) execute "
+            actionable="Re-check the job id — it is carried by the async (202) execute "
             "response — and call get_execution_result again with the exact value.",
             next_tool="get_execution_result",
         ) from None
@@ -1293,9 +1359,7 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
         payload["error"] = job.error
     if job.execution_id:
         payload["execution_id"] = job.execution_id
-    if job.status == _JOB_COMPLETED or (
-        job.status == _JOB_FAILED and job.kind == _JOB_KIND_EXECUTION
-    ):
+    if job.status == _JOB_COMPLETED:
         await _attach_job_result(env, job_id, payload)
     return payload
 
@@ -1314,6 +1378,11 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
     except Exception as exc:
         payload["result_error"] = f"the job completed but its result could not be fetched: {exc}"
         return
+    _attach_result_view(view, payload)
+
+
+def _attach_result_view(view: JobResultView, payload: dict[str, Any]) -> None:
+    """Attach a result document, size-capped: the upstream body, or JSON for other kinds."""
     raw: bytes
     if view.kind == "execution" and view.content_type and view.raw_body is not None:
         raw = view.raw_body

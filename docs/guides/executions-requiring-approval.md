@@ -37,26 +37,25 @@ A held call answers **202 Accepted** with the held envelope:
 
 ```json
 {
-  "job_id": "job_…",
   "status": "held",
-  "approval": {
-    "id": "exap_…",
-    "review_url": "https://<host>/app/agents/approvals/exap_…",
-    "expires_at": "…"
-  },
+  "held_execution_id": "exap_…",
+  "review_url": "https://<host>/app/agents/approvals/exap_…",
+  "expires_at": "…",
   "agent_directive": "This call needs human approval. …",
   "_links": {
-    "self": "https://<host>/jobs/job_…",
-    "withdraw": "https://<host>/executions/approvals/exap_…:withdraw"
+    "self": "https://<host>/executions/holds/exap_…",
+    "result": "https://<host>/executions/holds/exap_…/result",
+    "withdraw": "https://<host>/executions/holds/exap_…:withdraw"
   }
 }
 ```
 
-The agent shows the user `approval.review_url`, then polls
-`GET /jobs/{job_id}` until the job is terminal and reads
-`GET /jobs/{job_id}/result`:
+The agent shows the user `review_url`, then follows `_links.self`
+(`GET /executions/holds/{held_execution_id}`) until `execution_status` says the
+call has finished, and reads `_links.result`
+(`GET /executions/holds/{held_execution_id}/result`):
 
-| Job status | Meaning | Result |
+| `execution_status` | Meaning | Result |
 | --- | --- | --- |
 | `held` | Waiting for a reviewer | — |
 | `queued` / `running` | Approved; the call is about to run or running | — |
@@ -64,8 +63,11 @@ The agent shows the user `approval.review_url`, then polls
 | `failed` | Denied, expired, or the approved run failed | A problem: `approval_denied`, `approval_expired`, or the run's failure |
 | `cancelled` | Withdrawn by the agent | — |
 
-An identical call while one is pending joins the existing hold (same
-`job_id`) instead of filing another, even when the agent is at its cap. Each
+Following its own held call needs no permission beyond being the agent that
+made it.
+
+An identical call while one is pending joins the existing held execution (same
+`held_execution_id`) instead of filing another, even when the agent is at its cap. Each
 agent may have at most `execution_approvals.max_pending_per_agent` pending
 approvals; past that a new held call is refused with **403**
 `approval_pending_limit_reached`.
@@ -79,8 +81,8 @@ credential itself.
 ### From the CLI (`jentic execute`)
 
 `jentic execute` prints the held envelope as its data, shows the review link
-on stderr and exits **3** (`TIMEOUT_PENDING`). `jentic jobs wait <job_id>`
-then waits for the decision and prints the outcome exactly as `execute`
+on stderr and exits **3** (`TIMEOUT_PENDING`).
+`jentic holds wait <held_execution_id>` then waits for the decision and prints the outcome exactly as `execute`
 prints a call that ran at once: the upstream response (exit 0) or the denial
 or expiry (exit 2). `jentic execute --wait [--timeout 10m]` does both in one
 command. Neither re-sends the call; either exits 3 again if the call is still
@@ -93,11 +95,12 @@ Both MCP servers relay the held envelope unchanged, so the agent gets the same
 
 - **Every client** gets the held result at once from `execute`. The directive
   asks the agent to show the user the review link and end its turn, then —
-  once the user replies — call `get_execution_result` with the `job_id` and
-  `wait_seconds: 30`.
-- **`get_execution_result`** takes an optional `wait_seconds` (0–30): the
-  server re-polls the job and returns as soon as it is terminal, or the
-  current status when the wait lapses. Omit it to read the status at once.
+  once the user replies — call `get_execution_result` with the
+  `held_execution_id` and `wait: 30000`.
+- **`get_execution_result`** takes an optional `wait` in milliseconds
+  (0–30000): the server re-polls the held execution and returns as soon as the
+  call has finished, or where it stands when the wait lapses. Omit it to read
+  the status at once.
 - **Clients declaring URL-mode elicitation** (`elicitation.url`) are instead
   asked to open the review page for the user. The client's accept only means
   the link was opened — it never decides the approval. The retry reads the
@@ -121,23 +124,27 @@ body). The page needs the reviewer's own sign-in; the URL carries no token.
   (**Review**). It has no Cancel action: a held call settles only through its
   approval.
 
-The same actions are available over the admin API:
+The same actions are available over the admin API. None of these routes
+needs a `jobs:*` permission: each caller sees the held executions of agents it
+owns (an org admin sees all, an agent sees its own), and who may act is
+checked per call.
 
 | Route | Who | Effect |
 | --- | --- | --- |
-| `GET /executions/approvals` | Owner / admin (`jobs:read`) | List, filterable by `state` |
-| `GET /executions/approvals/{id}` | Owner / admin (`jobs:read`) | The approval and its held request |
-| `POST /executions/approvals/{id}:decide` | Owner / admin with `jobs:write` (never an agent) | `{"decision": "approve" \| "deny", "reason": "…"}` |
-| `POST /executions/approvals/{id}:withdraw` | The agent that filed it (`jobs:read`) | Withdraw a pending approval; the job is `cancelled` |
+| `GET /executions/holds` | The filing agent, its owner, or an org admin | List, filterable by `state` and `agent_id` |
+| `GET /executions/holds/{id}` | The filing agent, its owner, or an org admin | The decision, where the call stands, and the held request |
+| `GET /executions/holds/{id}/result` | The filing agent, its owner, or an org admin | The outcome once finished (**409** before) |
+| `POST /executions/holds/{id}:decide` | The owner or an org admin (never an agent) | `{"decision": "approve" \| "deny", "reason": "…"}` |
+| `POST /executions/holds/{id}:withdraw` | The agent that filed it | Withdraw a pending held execution; it never runs |
 
-Deciding or withdrawing a settled approval answers **409**. Each decision,
+Deciding or withdrawing a settled held execution answers **409**. Each decision,
 withdrawal and expiry is audit-logged and emits an event
 (`execution.approval_requested` when filed, `execution.approval_decided`,
 `execution.approval_withdrawn`, `execution.approval_expired`).
 
 ## Lifecycle
 
-| Approval | Job | How |
+| `state` | `execution_status` | How |
 | --- | --- | --- |
 | `pending` | `held` | The broker files the hold |
 | `approved` | `held` → `queued` → `running` → `completed` / `failed` | A reviewer approves |

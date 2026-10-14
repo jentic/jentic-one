@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.repos import AuditRepository, ExecutionApprovalRepository, JobRepository
+from jentic_one.admin.repos import AuditRepository, JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import JobAwaitingApprovalError, JobNotFoundError
@@ -54,12 +54,12 @@ class JobService:
                 until=filter.to,
                 filters=access_filters,
             )
-            has_more = len(jobs) > limit
-            if has_more:
-                jobs = jobs[:limit]
-            approvals = await ExecutionApprovalRepository.ids_by_job(session, [j.id for j in jobs])
 
-        views = [self._to_view(j, approval_id=approvals.get(j.id)) for j in jobs]
+        has_more = len(jobs) > limit
+        if has_more:
+            jobs = jobs[:limit]
+
+        views = [self._to_view(j) for j in jobs]
         next_cursor = None
         if has_more and jobs:
             next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id)
@@ -70,10 +70,9 @@ class JobService:
         access_filters = build_access_filters(identity, Job)
         async with self._ctx.admin_db.session() as session:
             job = await JobRepository.get_by_id(session, job_id, filters=access_filters)
-            if job is None:
-                raise JobNotFoundError(job_id)
-            approvals = await ExecutionApprovalRepository.ids_by_job(session, [job_id])
-        return self._to_view(job, approval_id=approvals.get(job_id))
+        if job is None:
+            raise JobNotFoundError(job_id)
+        return self._to_view(job)
 
     async def cancel(self, job_id: str, *, identity: Identity) -> JobView:
         access_filters = build_access_filters(identity, Job)
@@ -82,9 +81,9 @@ class JobService:
             if job is None:
                 raise JobNotFoundError(job_id)
             if job.status == JobStatus.HELD and job.kind == JobKind.EXECUTION:
-                # A held execution awaits its approval and settles only through
-                # it (decide, withdraw or expiry), never through the generic jobs
-                # surface. Held jobs of any other kind cancel normally.
+                # A held execution settles only through its hold (decide,
+                # withdraw or expiry): cancelling the job here would strand the
+                # hold. Held jobs of any other kind cancel normally.
                 raise JobAwaitingApprovalError(job_id)
 
             cancelled = await JobRepository.cancel_if_active(
@@ -108,14 +107,13 @@ class JobService:
         return await self.get_by_id(job_id, identity=identity)
 
     @staticmethod
-    def _to_view(job: Any, *, approval_id: str | None = None) -> JobView:
+    def _to_view(job: Any) -> JobView:
         return JobView(
             id=job.id,
             kind=job.kind,
             status=job.status,
             parent_job_id=job.parent_job_id,
             execution_id=job.execution_id,
-            approval_id=approval_id,
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,

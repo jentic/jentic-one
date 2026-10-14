@@ -124,21 +124,27 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     ctx = integration_context
     envelope = await _hold(ctx)
 
-    assert set(envelope) == {"job_id", "status", "approval", "agent_directive", "_links"}
+    assert set(envelope) == {
+        "status",
+        "held_execution_id",
+        "review_url",
+        "expires_at",
+        "agent_directive",
+        "_links",
+    }
     assert envelope["status"] == "held"
     assert envelope["agent_directive"] == HELD_AGENT_DIRECTIVE
-    assert envelope["_links"]["self"].endswith(f"/jobs/{envelope['job_id']}")
-    approval = envelope["approval"]
-    assert set(envelope["_links"]) == {"self", "withdraw"}
-    assert envelope["_links"]["withdraw"].endswith(
-        f"/executions/approvals/{approval['id']}:withdraw"
-    )
-    assert set(approval) == {"id", "review_url", "expires_at"}
-    assert approval["review_url"].endswith(f"/app/agents/approvals/{approval['id']}")
+    held_id = envelope["held_execution_id"]
+    assert set(envelope["_links"]) == {"self", "result", "withdraw"}
+    assert envelope["_links"]["self"].endswith(f"/executions/holds/{held_id}")
+    assert envelope["_links"]["result"].endswith(f"/executions/holds/{held_id}/result")
+    assert envelope["_links"]["withdraw"].endswith(f"/executions/holds/{held_id}:withdraw")
+    assert envelope["review_url"].endswith(f"/app/agents/approvals/{held_id}")
 
     async with ctx.admin_db.session() as session:
-        job = await session.get(Job, envelope["job_id"])
-        row = await session.get(ExecutionApproval, approval["id"])
+        row = await session.get(ExecutionApproval, held_id)
+        assert row is not None
+        job = await session.get(Job, row.job_id)
         events = (
             (
                 await session.execute(
@@ -168,7 +174,7 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
 
     (event,) = events
     assert event.requires_action is True
-    assert event.data["review_url"] == approval["review_url"]
+    assert event.data["review_url"] == envelope["review_url"]
     assert event.data["method"] == "POST"
     assert event.data["path"] == "/v1/charges"
     assert "body" not in json.dumps(event.data)
@@ -186,14 +192,12 @@ async def test_held_links_root_on_the_admin_api_origin(
     monkeypatch.setattr(ctx, "_config", ctx.config.model_copy(update={"broker": broker}))
     envelope = await _hold(ctx)
 
-    approval_id = envelope["approval"]["id"]
-    assert (
-        envelope["approval"]["review_url"]
-        == f"http://ui.local:8000/app/agents/approvals/{approval_id}"
-    )
+    held_id = envelope["held_execution_id"]
+    assert envelope["review_url"] == f"http://ui.local:8000/app/agents/approvals/{held_id}"
     assert envelope["_links"] == {
-        "self": f"http://ui.local:8000/jobs/{envelope['job_id']}",
-        "withdraw": f"http://ui.local:8000/executions/approvals/{approval_id}:withdraw",
+        "self": f"http://ui.local:8000/executions/holds/{held_id}",
+        "result": f"http://ui.local:8000/executions/holds/{held_id}/result",
+        "withdraw": f"http://ui.local:8000/executions/holds/{held_id}:withdraw",
     }
     async with ctx.admin_db.session() as session:
         (event,) = (
@@ -205,7 +209,7 @@ async def test_held_links_root_on_the_admin_api_origin(
             .scalars()
             .all()
         )
-    assert event.data["review_url"] == envelope["approval"]["review_url"]
+    assert event.data["review_url"] == envelope["review_url"]
     assert "broker.local" not in json.dumps(envelope)
 
 
@@ -215,8 +219,7 @@ async def test_identical_retry_joins_without_a_second_event(
     ctx = integration_context
     first = await _hold(ctx)
     again = await _hold(ctx)
-    assert again["job_id"] == first["job_id"]
-    assert again["approval"]["id"] == first["approval"]["id"]
+    assert again["held_execution_id"] == first["held_execution_id"]
     async with ctx.admin_db.session() as session:
         count = len(
             (
@@ -264,8 +267,7 @@ async def test_identical_retry_at_the_pending_cap_joins_its_hold(
             await _hold(ctx, b'{"n": 2}')
     finally:
         ctx.config.execution_approvals.max_pending_per_agent = 10
-    assert again["job_id"] == first["job_id"]
-    assert again["approval"]["id"] == first["approval"]["id"]
+    assert again["held_execution_id"] == first["held_execution_id"]
     async with ctx.admin_db.session() as session:
         jobs = (await session.execute(select(Job))).scalars().all()
     assert len(jobs) == 1
@@ -281,11 +283,11 @@ async def test_a_different_query_or_body_files_a_new_hold(
     no_query = await _hold(ctx)
     other_body = await _hold(ctx, body=b'{"amount": 501}', query="a=1&b=2")
 
-    assert reordered["approval"]["id"] == first["approval"]["id"]
+    assert reordered["held_execution_id"] == first["held_execution_id"]
     ids = {
-        first["approval"]["id"],
-        other_query["approval"]["id"],
-        no_query["approval"]["id"],
-        other_body["approval"]["id"],
+        first["held_execution_id"],
+        other_query["held_execution_id"],
+        no_query["held_execution_id"],
+        other_body["held_execution_id"],
     }
     assert len(ids) == 4

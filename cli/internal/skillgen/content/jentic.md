@@ -218,18 +218,18 @@ search step. The broker authenticates you and injects the stored
 upstream credential server-side; credentials never pass through your
 session.
 
-A held or async execution does not answer inline: it returns a **job
-envelope** (`{job_id, status, …}`). A call held for human approval answers
-`status: "held"` with an `approval.review_url`: **show the user that link**
-— a reviewer signs in there to approve or deny it. Poll the job until its
-status is terminal (`completed` ran it; `failed` with a permission-denied
-problem means denied or expired; `cancelled` means withdrawn) — and **never
-re-send the original call while a job is pending**: approval happens
-out-of-band, and re-sending duplicates the side effect. To abandon a held
-call instead, `POST` its `_links.withdraw`
-(`/executions/approvals/{approval.id}:withdraw`; CLI `jentic api POST …`):
-the job ends `cancelled` and the call never runs. A held job cannot be
-cancelled through `/jobs`.
+An async execution does not answer inline: it returns a **job envelope**
+(`{job_id, status, …}`) to poll. A call held for human approval answers
+`status: "held"` with a `held_execution_id` and a `review_url`: **show the
+user that link** — a reviewer signs in there to approve or deny it. Follow
+`_links.self` (`/executions/holds/{held_execution_id}`) until its
+`execution_status` has finished (`completed` ran it; `failed` with a
+permission-denied problem means denied or expired; `cancelled` means
+withdrawn), then read `_links.result` — and **never re-send the original call
+while it is pending**: approval happens out-of-band, and re-sending duplicates
+the side effect. To abandon a held call instead, `POST` its `_links.withdraw`
+(`/executions/holds/{held_execution_id}:withdraw`; CLI `jentic api POST …`):
+the call never runs.
 
 A denied or failed execute carries a coded recovery (the CLI's stderr
 `agent_directive` + exit codes; MCP's coded error envelopes). Follow the
