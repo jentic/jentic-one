@@ -338,6 +338,7 @@ def test_every_operation_documents_a_default_problem_response(
     ]
     assert not bad, "Operations without a Problem Details default response:\n" + "\n".join(bad)
 
+
 def test_oauth2_scheme_matches_the_authorization_server(
     generated_control_spec: dict[str, Any],
 ) -> None:
