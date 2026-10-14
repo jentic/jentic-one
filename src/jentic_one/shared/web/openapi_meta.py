@@ -1239,6 +1239,10 @@ def install_openapi_metadata(app: FastAPI) -> None:
             _summarise_path_item(path_item)
             _describe_path_item(path_item)
 
+        _compose_component_examples(components.get("schemas", {}))
+        _propagate_examples(schema.get("paths", {}), components.get("schemas", {}))
+        _add_oneof_discriminators(schema, components.get("schemas", {}))
+
         app.openapi_schema = schema
         return schema
 
@@ -1314,3 +1318,215 @@ def _describe_request_body(operation: dict[str, Any], schemas: dict[str, Any]) -
     op_id = operation.get("operationId")
     if op_id:
         body["description"] = f"Request payload for the `{op_id}` operation."
+
+
+_MISSING = object()
+
+
+def _example_for(schema: Any, schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    """One example for ``schema``, or ``_MISSING`` if it cannot be built from leaves.
+
+    Uses the schema's own ``examples``/``example``, else follows a ``$ref`` to the
+    component (composing it if needed), else the first ``anyOf``/``oneOf`` branch
+    that yields one, else builds an array from ``items`` or an object from its
+    properties. ``stack`` stops recursion through self-referencing models.
+    """
+    if not isinstance(schema, dict):
+        return _MISSING
+    if schema.get("examples"):
+        return schema["examples"][0]
+    if "example" in schema:
+        return schema["example"]
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        name = ref.rsplit("/", 1)[-1]
+        if name in stack or name not in schemas:
+            return _MISSING
+        return _component_example(name, schemas, stack)
+    for key in ("anyOf", "oneOf"):
+        for branch in schema.get(key) or []:
+            if isinstance(branch, dict) and branch.get("type") == "null":
+                continue
+            value = _example_for(branch, schemas, stack)
+            if value is not _MISSING:
+                return value
+    if schema.get("type") == "array":
+        item = _example_for(schema.get("items"), schemas, stack)
+        return _MISSING if item is _MISSING else [item]
+    if "properties" in schema:
+        return _object_example(schema, schemas, stack)
+    return _MISSING
+
+
+def _object_example(schema: dict[str, Any], schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    """An object example from its properties; ``_MISSING`` if a required one has none."""
+    required = set(schema.get("required") or [])
+    value: dict[str, Any] = {}
+    for prop, prop_schema in (schema.get("properties") or {}).items():
+        example = _example_for(prop_schema, schemas, stack)
+        if example is _MISSING:
+            if prop in required:
+                return _MISSING
+            continue
+        value[prop] = example
+    return value
+
+
+def _component_example(name: str, schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    component = schemas[name]
+    if component.get("examples"):
+        return component["examples"][0]
+    if "example" in component:
+        return component["example"]
+    if "properties" not in component:
+        return _example_for(component, schemas, (*stack, name))
+    return _object_example(component, schemas, (*stack, name))
+
+
+def _compose_component_examples(schemas: dict[str, Any]) -> None:
+    """Give object components and their nested-model properties a composed example.
+
+    Field-level ``examples=`` sit on leaf properties; a property typed as another
+    model (``$ref``, ``list[Model]``, ``Model | None``) and the component as a
+    whole have none. Composing them from the leaves keeps one source of truth —
+    a composed value is valid exactly when its leaves are, which the arch tests
+    check — while giving readers (and agents) a complete, realistic object.
+    Components that already declare ``examples`` are left as written.
+    """
+    for name, component in schemas.items():
+        if not isinstance(component, dict) or "properties" not in component:
+            continue
+        for prop_schema in component["properties"].values():
+            if not isinstance(prop_schema, dict) or "examples" in prop_schema:
+                continue
+            if "example" in prop_schema:
+                continue
+            value = _example_for(prop_schema, schemas, (name,))
+            if value is not _MISSING:
+                prop_schema["examples"] = [value]
+        if "examples" not in component and "example" not in component:
+            value = _object_example(component, schemas, (name,))
+            if value is not _MISSING and value:
+                component["examples"] = [value]
+
+
+def _variant_tag(ref: str, schemas: dict[str, Any], prop: str) -> str | None:
+    """The single constant value ``prop`` takes in the ``$ref``'d variant, if any."""
+    variant = schemas.get(ref.rsplit("/", 1)[-1]) or {}
+    spec = (variant.get("properties") or {}).get(prop) or {}
+    if "const" in spec:
+        return str(spec["const"])
+    enum = spec.get("enum")
+    return str(enum[0]) if isinstance(enum, list) and len(enum) == 1 else None
+
+
+def _add_oneof_discriminators(node: Any, schemas: dict[str, Any]) -> None:
+    """Declare the discriminator Pydantic omits for a callable-discriminated union.
+
+    A union discriminated by a callable (``Discriminator(fn)``) — used where one
+    variant may omit the tag and is selected by default — renders as a bare
+    ``oneOf`` of ``$ref`` schemas. When every variant pins the same property to a
+    distinct constant, that property *is* the discriminator; declare it (with
+    the explicit mapping) so clients can deserialise without trial-matching.
+    """
+    if isinstance(node, list):
+        for item in node:
+            _add_oneof_discriminators(item, schemas)
+        return
+    if not isinstance(node, dict):
+        return
+    for value in node.values():
+        _add_oneof_discriminators(value, schemas)
+    variants = node.get("oneOf")
+    if "discriminator" in node or not isinstance(variants, list) or len(variants) < 2:
+        return
+    refs = [v["$ref"] for v in variants if isinstance(v, dict) and isinstance(v.get("$ref"), str)]
+    if len(refs) != len(variants):
+        return
+    first = schemas.get(refs[0].rsplit("/", 1)[-1]) or {}
+    for prop in first.get("properties") or {}:
+        tags = [_variant_tag(r, schemas, prop) for r in refs]
+        if all(tags) and len(set(tags)) == len(tags):
+            node["discriminator"] = {
+                "propertyName": prop,
+                "mapping": dict(zip(tags, refs, strict=True)),
+            }
+            return
+
+
+_JSON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list,),
+    "object": (dict,),
+}
+
+
+def _matches_type(value: Any, branch: dict[str, Any]) -> bool:
+    """Whether ``value`` has the JSON type ``branch`` declares (bool is not a number)."""
+    kinds = _JSON_TYPES.get(branch.get("type", ""))
+    if kinds is None or (isinstance(value, bool) and bool not in kinds):
+        return False
+    return isinstance(value, kinds)
+
+
+def _seed_schema_example(target: dict[str, Any], value: Any) -> None:
+    """Put ``value`` on a parameter schema and on each typed branch it satisfies."""
+    target.setdefault("examples", [value])
+    for key in ("anyOf", "oneOf"):
+        for branch in target.get(key) or []:
+            if isinstance(branch, dict) and _matches_type(value, branch):
+                _seed_schema_example(branch, value)
+    items = target.get("items")
+    if isinstance(items, dict) and isinstance(value, list) and value:
+        _seed_schema_example(items, value[0])
+
+
+def _first_example(holder: dict[str, Any]) -> Any:
+    """The first example value declared on a parameter or schema, else ``_MISSING``."""
+    if "example" in holder:
+        return holder["example"]
+    examples = holder.get("examples")
+    if isinstance(examples, dict) and examples:
+        first = next(iter(examples.values()))
+        return first.get("value", _MISSING) if isinstance(first, dict) else _MISSING
+    if isinstance(examples, list) and examples:
+        return examples[0]
+    return _MISSING
+
+
+def _propagate_examples(paths: dict[str, Any], schemas: dict[str, Any]) -> None:
+    """Surface existing examples where clients look for them.
+
+    A parameter's example lives on the parameter (a named map for the docs UI);
+    JSON-Schema-driven tooling reads ``schema.examples`` instead, so mirror it
+    there. A JSON request/response that references a component with an example
+    gets that example on the media type, so it renders without resolution.
+    Nothing is invented: every value is one the spec already declares.
+    """
+    for path_item in paths.values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            for param in operation.get("parameters") or []:
+                value = _first_example(param)
+                if value is not _MISSING and isinstance(param.get("schema"), dict):
+                    _seed_schema_example(param["schema"], value)
+            bodies = [operation.get("requestBody") or {}]
+            bodies += list((operation.get("responses") or {}).values())
+            for body in bodies:
+                for media_type, media in (body.get("content") or {}).items():
+                    if "json" not in media_type or "example" in media or "examples" in media:
+                        continue
+                    media_schema = media.get("schema") or {}
+                    ref = media_schema.get("$ref")
+                    source = (
+                        schemas.get(ref.rsplit("/", 1)[-1], {})
+                        if isinstance(ref, str)
+                        else media_schema
+                    )
+                    value = _first_example(source)
+                    if value is not _MISSING:
+                        media["example"] = value

@@ -367,3 +367,96 @@ def test_authenticated_operations_accept_bearer_or_oauth2(
         if operation.get("security") not in ([], [{"BearerAuth": []}, {"OAuth2": []}])
     ]
     assert not bad, "Unexpected security requirements:\n" + "\n".join(bad)
+
+
+def test_every_component_property_example_validates(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Each property's ``examples`` (hand-written or composed) validates against that property."""
+    schemas: dict[str, Any] = (generated_control_spec.get("components") or {}).get("schemas") or {}
+    violations: list[str] = []
+    missing: list[str] = []
+    for name, schema in schemas.items():
+        if "properties" in schema and not (schema.get("examples") or "example" in schema):
+            missing.append(name)
+        for prop, prop_schema in (schema.get("properties") or {}).items():
+            subject = {k: v for k, v in prop_schema.items() if k not in ("examples", "example")}
+            subject["components"] = {"schemas": schemas}
+            validator = jsonschema.Draft202012Validator(subject)
+            for example in prop_schema.get("examples") or []:
+                for error in validator.iter_errors(example):
+                    violations.append(f"{name}.{prop}: {error.message}")
+    assert not violations, "Property examples that fail their schema:\n" + "\n".join(violations)
+    assert not missing, (
+        "Object components without an example (give their leaf fields `examples=`):\n"
+        + "\n".join(missing)
+    )
+
+
+def test_media_examples_validate_against_their_schema(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Every request/response media ``example`` (mirrored from its component) fits its schema."""
+    schemas: dict[str, Any] = (generated_control_spec.get("components") or {}).get("schemas") or {}
+    violations: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        bodies = {"requestBody": operation.get("requestBody") or {}}
+        bodies.update(operation.get("responses") or {})
+        for where, body in bodies.items():
+            for media_type, media in (body.get("content") or {}).items():
+                if "example" not in media:
+                    continue
+                subject = dict(media.get("schema") or {})
+                subject["components"] = {"schemas": schemas}
+                validator = jsonschema.Draft202012Validator(subject)
+                for error in validator.iter_errors(media["example"]):
+                    violations.append(f"{method} {path} {where} {media_type}: {error.message}")
+    assert not violations, "Media examples that fail their schema:\n" + "\n".join(violations)
+
+
+def test_parameter_schema_examples_match_the_parameter(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """A parameter's ``schema.examples`` mirrors (never contradicts) its documented example."""
+    mismatched: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        for param in operation.get("parameters") or []:
+            documented = [entry.get("value") for entry in (param.get("examples") or {}).values()]
+            schema_examples = (param.get("schema") or {}).get("examples")
+            if documented and schema_examples and schema_examples[0] not in documented:
+                mismatched.append(f"{method} {path} {param.get('name')}")
+    assert not mismatched, "Parameter schema examples diverge from the parameter:\n" + "\n".join(
+        mismatched
+    )
+
+
+def test_oneof_discriminator_mappings_match_variant_constants(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Each discriminator mapping entry points at a variant that pins that tag value."""
+    schemas: dict[str, Any] = (generated_control_spec.get("components") or {}).get("schemas") or {}
+    problems: list[str] = []
+
+    def walk(node: Any, where: str) -> None:
+        if isinstance(node, list):
+            for index, item in enumerate(node):
+                walk(item, f"{where}/{index}")
+            return
+        if not isinstance(node, dict):
+            return
+        discriminator = node.get("discriminator")
+        if isinstance(discriminator, dict) and "oneOf" in node:
+            prop = discriminator["propertyName"]
+            for tag, ref in (discriminator.get("mapping") or {}).items():
+                variant = schemas.get(ref.rsplit("/", 1)[-1]) or {}
+                spec = (variant.get("properties") or {}).get(prop) or {}
+                pinned = spec.get("const", (spec.get("enum") or [None])[0])
+                if pinned != tag:
+                    problems.append(f"{where}: {tag!r} -> {ref} pins {pinned!r}")
+        for key, value in node.items():
+            walk(value, f"{where}/{key}")
+
+    walk(generated_control_spec, "")
+    assert not problems, "Discriminator mappings inconsistent with variants:\n" + "\n".join(
+        problems
+    )

@@ -108,7 +108,7 @@ async def get_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -129,7 +129,7 @@ async def update_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -160,7 +160,7 @@ async def approve_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -185,7 +185,7 @@ async def deny_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -210,7 +210,7 @@ async def rotate_oauth_client_secret(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -235,7 +235,7 @@ async def deactivate_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],
@@ -262,7 +262,7 @@ async def delete_oauth_client(
     id: Annotated[
         str,
         Path(
-            description="Internal ID of the OAuth client (not its public `client_id`).",
+            description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
             openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
         ),
     ],

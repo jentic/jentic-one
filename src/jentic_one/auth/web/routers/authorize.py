@@ -2218,16 +2218,19 @@ async def consent_submit(
         ...,
         json_schema_extra=SENSITIVE,
         description="Single-use consent handle embedded in the consent page.",
+        examples=[ex.OPAQUE_TOKEN],
     ),
     action: str = Form(
         ...,
         description="`approve` or `deny`; any value other than `deny` is treated as approval.",
+        examples=["approve"],
     ),
     agent_id: str | None = Form(
         default=None,
         description=(
             "ID of the agent to connect the client to; sent only by the agent-picker consent page."
         ),
+        examples=[ex.AGENT_ID],
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
@@ -2428,14 +2431,18 @@ async def consent_agent_create(
         ...,
         json_schema_extra=SENSITIVE,
         description="Single-use consent handle embedded in the consent page.",
+        examples=[ex.OPAQUE_TOKEN],
     ),
     create_state: str = Form(
         ...,
         json_schema_extra=SENSITIVE,
         description="Signed single-use agent-creation token embedded in the consent page.",
+        examples=[ex.SIGNED_FLOW_STATE],
     ),
     agent_name: str = Form(
-        ..., description="Name for the new agent; surrounding whitespace is trimmed."
+        ...,
+        description="Name for the new agent; surrounding whitespace is trimmed.",
+        examples=["invoice-reconciler"],
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),

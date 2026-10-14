@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ class VendorSummaryResponse(BaseModel):
     # is the vendor slug. Lets the picker render one card per registration
     # even when multiple registrations share an ``api_vendor``.
     entry_id: str = Field(
+        examples=[ex.OAUTH_APP_REGISTRATION_ID],
         description=(
             "Stable per-row key: the registration ID for admin registrations, else the vendor key."
         ),
@@ -57,26 +59,34 @@ class VendorSummaryResponse(BaseModel):
     # threaded onto ``POST /integrations:connect`` as the pin.
     registration_id: str | None = Field(
         default=None,
+        examples=[ex.OAUTH_APP_REGISTRATION_ID],
         description=(
             "ID of the admin OAuth app registration behind "
             "this row; null for platform-shipped vendors."
         ),
     )
     # Vendor slug shared by every registration for the same vendor.
-    key: str = Field(description="Vendor registry key shared by every registration for the vendor.")
+    key: str = Field(
+        description="Vendor registry key shared by every registration for the vendor.",
+        examples=[ex.VENDOR_KEY],
+    )
     # Config-side fully-qualified vendor id (``<host>/<api-id>``) when
     # available; falls back to ``key`` for DB-only vendors.
     vendor: str = Field(
+        examples=["github.com/api.github.com"],
         description=(
             "Fully-qualified vendor ID (`<host>/<api-id>`) when known; otherwise the vendor key."
         ),
     )
     # Vendor's family display name (e.g. "Gmail"). Two admin registrations
     # for the same vendor share this.
-    display_name: str = Field(description="Vendor's display name (e.g. 'Gmail').")
+    display_name: str = Field(
+        description="Vendor's display name (e.g. 'Gmail').", examples=["GitHub"]
+    )
     # Per-row human label. For DB rows this is the admin-picked
     # registration name; for config rows this equals ``display_name``.
     name: str = Field(
+        examples=["MyOrg GitHub"],
         description=(
             "Label for this row: the registration name for "
             "admin registrations, else the display name."
@@ -85,12 +95,14 @@ class VendorSummaryResponse(BaseModel):
     # Where this row came from — ``db`` = admin registration, ``config`` =
     # platform-shipped vendor entry.
     source: Literal["db", "config"] = Field(
+        examples=["db"],
         description=(
             "Where the row came from: `db` for an admin registration, "
             "`config` for a platform-shipped vendor."
         ),
     )
     flow_kinds: list[str] = Field(
+        examples=[["authorization_code"]],
         description=(
             "OAuth flow kinds this row supports (`authorization_code`, `device_authorization`)."
         ),
@@ -100,6 +112,7 @@ class VendorSummaryResponse(BaseModel):
     # apps. ``None`` for platform-shipped config rows.
     catalog_api_id: str | None = Field(
         default=None,
+        examples=["github.com/api.github.com"],
         description=(
             "Catalog API (`<domain>/<sub>`) the registration "
             "signs in to; null for platform-shipped vendors."
@@ -123,9 +136,16 @@ class ApiTargetRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    vendor: str = Field(min_length=1, max_length=100, description="API vendor (e.g. 'stripe-com')")
-    name: str = Field(min_length=1, max_length=100, description="API name")
-    version: str = Field(min_length=1, max_length=100, description="API version")
+    vendor: str = Field(
+        min_length=1,
+        max_length=100,
+        description="API vendor (e.g. 'stripe-com')",
+        examples=[ex.API_VENDOR],
+    )
+    name: str = Field(min_length=1, max_length=100, description="API name", examples=[ex.API_NAME])
+    version: str = Field(
+        min_length=1, max_length=100, description="API version", examples=[ex.API_VERSION]
+    )
 
 
 class IntegrationsConnectRequest(BaseModel):
@@ -137,6 +157,7 @@ class IntegrationsConnectRequest(BaseModel):
 
     vendor: str | None = Field(
         default=None,
+        examples=[ex.VENDOR_KEY],
         description="Vendor registry key (e.g. 'github'). Exactly one of vendor or api.",
     )
     # A registry API identity instead of a vendor key. The API's live revision
@@ -153,6 +174,7 @@ class IntegrationsConnectRequest(BaseModel):
     auth_type: str | None = Field(
         default=None,
         max_length=255,
+        examples=["oauth2"],
         description="Declared scheme name or kind to use for an api target",
     )
     # Optional user-facing label for the resulting credential. Defaults to
@@ -162,6 +184,7 @@ class IntegrationsConnectRequest(BaseModel):
     name: str | None = Field(
         default=None,
         max_length=255,
+        examples=["GitHub (work)"],
         description="Label for the resulting credential; defaults to the vendor's display name.",
     )
     # Optional pin to a specific admin-registered OAuth app. When set, the
@@ -172,6 +195,7 @@ class IntegrationsConnectRequest(BaseModel):
     oauth_app_registration_id: str | None = Field(
         default=None,
         max_length=30,
+        examples=[ex.OAUTH_APP_REGISTRATION_ID],
         description=(
             "ID of the admin OAuth app registration to connect through; required when "
             "several active registrations offer the flow."
@@ -180,6 +204,7 @@ class IntegrationsConnectRequest(BaseModel):
     # Required for USER/SA callers, ignored for AGENT callers.
     agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description=(
             "ID of the agent to bind the credential to on confirm; agent callers must omit "
             "it, and when omitted by a user the credential connects unbound."
@@ -192,10 +217,12 @@ class IntegrationsConnectRequest(BaseModel):
     requested_scopes: list[str] = Field(
         default_factory=list,
         max_length=100,
+        examples=[["repo", "read:user"]],
         description="Upstream scopes to request (at most 100).",
     )
     preferred_flow: str | None = Field(
         default=None,
+        examples=["authorization_code"],
         description=(
             "Flow kind to use if the source offers it; defaults to the source's first flow."
         ),
@@ -203,6 +230,7 @@ class IntegrationsConnectRequest(BaseModel):
     reason: str | None = Field(
         default=None,
         max_length=1024,
+        examples=["Needs read access to triage issues in the platform repo."],
         description="Free-text reason for the request, shown to the approver.",
     )
     # As-requested permission rules — typically the initiating agent's ask,
@@ -253,32 +281,49 @@ ConnectSessionState = Literal["created", "awaiting_app", "polling", "connected"]
 class ConnectSessionSummaryResponse(BaseModel):
     """Slim list row for the console — deliberately excludes ``poll_token``."""
 
-    session_id: str = Field(description="Unique ID of the connect session.")
-    state: ConnectSessionState = Field(description="Current lifecycle state of the session.")
-    vendor_key: str = Field(description="Vendor registry key the session connects.")
-    vendor_display_name: str = Field(description="Display name of the vendor.")
+    session_id: str = Field(
+        description="Unique ID of the connect session.", examples=[ex.CONNECT_SESSION_ID]
+    )
+    state: ConnectSessionState = Field(
+        description="Current lifecycle state of the session.", examples=["connected"]
+    )
+    vendor_key: str = Field(
+        description="Vendor registry key the session connects.", examples=[ex.VENDOR_KEY]
+    )
+    vendor_display_name: str = Field(description="Display name of the vendor.", examples=["GitHub"])
     agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description="ID of the agent the credential is bound to on confirm; null when unbound.",
     )
-    requested_by_actor_id: str = Field(description="ID of the actor that started the session.")
+    requested_by_actor_id: str = Field(
+        description="ID of the actor that started the session.", examples=[ex.AGENT_ID]
+    )
     reason: str | None = Field(
-        default=None, description="Free-text reason given when the session was started."
+        default=None,
+        examples=["Needs read access to triage issues in the platform repo."],
+        description="Free-text reason given when the session was started.",
     )
     connected_as: str | None = Field(
         default=None,
+        examples=["octocat"],
         description="Upstream account the credential connected as; null until known.",
     )
     # Reserved: a failed session is deleted on its terminal transition, so a
     # listed row carries no error_code today.
     error_code: str | None = Field(
-        default=None, description="Reserved for a failure code; always null on listed sessions."
+        default=None,
+        examples=["access_denied"],
+        description="Reserved for a failure code; always null on listed sessions.",
     )
-    created_at: datetime = Field(description="When the session was created (RFC 3339).")
+    created_at: datetime = Field(
+        description="When the session was created (RFC 3339).", examples=["2026-01-15T09:30:00Z"]
+    )
     # The session's pending (later connected) credential. Lets a list reader
     # tell a session's own credential apart from an unrelated unfinished one.
     credential_id: str = Field(
-        description="ID of the session's credential (pending until the session connects)."
+        description="ID of the session's credential (pending until the session connects).",
+        examples=[ex.CREDENTIAL_ID],
     )
 
 
@@ -286,9 +331,13 @@ class ConnectSessionListResponse(BaseModel):
     """Cursor-paginated envelope of connect-session summaries."""
 
     data: list[ConnectSessionSummaryResponse] = Field(description="The page of connect sessions.")
-    has_more: bool = Field(description="Whether more results exist after this page.")
+    has_more: bool = Field(
+        description="Whether more results exist after this page.", examples=[True]
+    )
     next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page; null when there are no more results."
+        default=None,
+        examples=[ex.CURSOR],
+        description="Cursor for the next page; null when there are no more results.",
     )
 
 
@@ -314,10 +363,13 @@ class ApiReferenceResponse(BaseModel):
     becomes non-null and the operations endpoint returns 200.
     """
 
-    vendor: str = Field(description="Registry vendor of the API.")
-    name: str | None = Field(description="Registry name of the API; null if not yet known.")
+    vendor: str = Field(description="Registry vendor of the API.", examples=[ex.API_VENDOR])
+    name: str | None = Field(
+        description="Registry name of the API; null if not yet known.", examples=[ex.API_NAME]
+    )
     version: str | None = Field(
-        description="Registry version of the API; null until the catalog import completes."
+        description="Registry version of the API; null until the catalog import completes.",
+        examples=[ex.API_VERSION],
     )
 
 
@@ -412,7 +464,9 @@ class OAuthConfirmSessionRequest(BaseModel):
     """
 
     kind: Literal["oauth"] = Field(
-        default="oauth", description="Confirm variant; `oauth` (the default when omitted)."
+        default="oauth",
+        description="Confirm variant; `oauth` (the default when omitted).",
+        examples=["oauth"],
     )
     # Caps mirror ``IntegrationsConnectRequest`` — the eventual write
     # touches the same broker classification and binding paths, so leaving
@@ -420,7 +474,9 @@ class OAuthConfirmSessionRequest(BaseModel):
     # above any real vendor's scope catalog or a sane per-binding rule
     # count.
     confirmed_scopes: list[str] = Field(
-        max_length=100, description="Upstream scopes the approver confirmed (at most 100)."
+        max_length=100,
+        description="Upstream scopes the approver confirmed (at most 100).",
+        examples=[["repo", "read:user"]],
     )
     permission_rules: list[PermissionRuleSchema] = Field(
         default_factory=list,
@@ -435,6 +491,7 @@ class OAuthConfirmSessionRequest(BaseModel):
     # visible to the user.
     agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description=(
             "Agent to bind when the session has none; ignored if the session already has one."
         ),
@@ -443,6 +500,7 @@ class OAuthConfirmSessionRequest(BaseModel):
     # ``api`` target.
     expected_agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description=(
             "Agent ID from the review the approver saw; a mismatch is 409 review_stale. "
             "Required for an API target."
@@ -451,6 +509,7 @@ class OAuthConfirmSessionRequest(BaseModel):
     digest: str | None = Field(
         default=None,
         max_length=64,
+        examples=[ex.REVIEW_DIGEST],
         description=(
             "Review digest echoed from the review data; a mismatch is 409 review_stale. "
             "Required for an API target."
@@ -469,17 +528,20 @@ class _ReviewedConfirm(BaseModel):
     )
     agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description=(
             "Agent to bind when the session has none; ignored if the session already has one."
         ),
     )
     expected_agent_id: str | None = Field(
         default=None,
+        examples=[ex.AGENT_ID],
         description="Agent ID from the review the approver saw; a mismatch is 409 review_stale.",
     )
     digest: str = Field(
         min_length=1,
         max_length=64,
+        examples=[ex.REVIEW_DIGEST],
         description="Review digest echoed from the review data; a mismatch is 409 review_stale.",
     )
 
@@ -487,37 +549,48 @@ class _ReviewedConfirm(BaseModel):
 class ApiKeyConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_api_key`` session with the API key to store."""
 
-    kind: Literal["api_key"] = Field(description="Confirm variant; always `api_key`.")
+    kind: Literal["api_key"] = Field(
+        description="Confirm variant; always `api_key`.", examples=["api_key"]
+    )
     key: SecretStr = Field(
         min_length=1,
         max_length=8192,
         json_schema_extra=SENSITIVE,
         description="API key to store; write-only.",
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
 
 class BearerConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_bearer`` session with the bearer token to store."""
 
-    kind: Literal["bearer"] = Field(description="Confirm variant; always `bearer`.")
+    kind: Literal["bearer"] = Field(
+        description="Confirm variant; always `bearer`.", examples=["bearer"]
+    )
     token: SecretStr = Field(
         min_length=1,
         max_length=8192,
         json_schema_extra=SENSITIVE,
         description="Bearer token to store; write-only.",
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
 
 class BasicConfirmSessionRequest(_ReviewedConfirm):
     """Confirm a ``manual_basic`` session with the username and password to store."""
 
-    kind: Literal["basic"] = Field(description="Confirm variant; always `basic`.")
-    username: str = Field(min_length=1, max_length=255, description="Username to store.")
+    kind: Literal["basic"] = Field(
+        description="Confirm variant; always `basic`.", examples=["basic"]
+    )
+    username: str = Field(
+        min_length=1, max_length=255, description="Username to store.", examples=["svc-reporting"]
+    )
     password: SecretStr = Field(
         min_length=1,
         max_length=8192,
         json_schema_extra=SENSITIVE,
         description="Password to store; write-only.",
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
 
@@ -533,26 +606,37 @@ class OwnOAuthClientConfirmSessionRequest(_ReviewedConfirm):
     """
 
     kind: Literal["own_oauth_client"] = Field(
-        description="Confirm variant; always `own_oauth_client`."
+        description="Confirm variant; always `own_oauth_client`.", examples=["own_oauth_client"]
     )
     client_id: str = Field(
-        min_length=1, max_length=255, description="Client ID of the approver's OAuth app."
+        min_length=1,
+        max_length=255,
+        description="Client ID of the approver's OAuth app.",
+        examples=["Iv1.a1b2c3d4"],
     )
     client_secret: SecretStr = Field(
         min_length=1,
         max_length=8192,
         json_schema_extra=SENSITIVE,
         description="Client secret of the approver's OAuth app; write-only.",
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     authorize_url: str = Field(
-        min_length=1, max_length=2048, description="Authorization endpoint URL of the OAuth app."
+        min_length=1,
+        max_length=2048,
+        description="Authorization endpoint URL of the OAuth app.",
+        examples=["https://github.com/login/oauth/authorize"],
     )
     token_url: str = Field(
-        min_length=1, max_length=2048, description="Token endpoint URL of the OAuth app."
+        min_length=1,
+        max_length=2048,
+        description="Token endpoint URL of the OAuth app.",
+        examples=["https://github.com/login/oauth/access_token"],
     )
     confirmed_scopes: list[str] = Field(
         default_factory=list,
         max_length=100,
+        examples=[["repo", "read:user"]],
         description="Upstream scopes to request (at most 100).",
     )
 
@@ -561,10 +645,14 @@ class ExistingCredentialConfirmSessionRequest(_ReviewedConfirm):
     """Bind a credential the approver already holds (OAuth only if its grant covers the ask)."""
 
     kind: Literal["existing_credential"] = Field(
-        description="Confirm variant; always `existing_credential`."
+        description="Confirm variant; always `existing_credential`.",
+        examples=["existing_credential"],
     )
     credential_id: str = Field(
-        min_length=1, max_length=30, description="ID of the approver's credential to bind."
+        min_length=1,
+        max_length=30,
+        description="ID of the approver's credential to bind.",
+        examples=[ex.CREDENTIAL_ID],
     )
 
 
@@ -574,11 +662,14 @@ class ReauthorizeConfirmSessionRequest(_ReviewedConfirm):
     Refused when another agent is bound to the credential.
     """
 
-    kind: Literal["reauthorize"] = Field(description="Confirm variant; always `reauthorize`.")
+    kind: Literal["reauthorize"] = Field(
+        description="Confirm variant; always `reauthorize`.", examples=["reauthorize"]
+    )
     credential_id: str = Field(
         min_length=1,
         max_length=30,
         description="ID of the approver's OAuth credential to bind and re-consent.",
+        examples=[ex.CREDENTIAL_ID],
     )
 
 

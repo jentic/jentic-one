@@ -12,7 +12,15 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
+from jentic_one.shared.web import openapi_examples as ex
+
 _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
+
+_EX_CLIENT_NAME = "Cursor"
+_EX_SCOPE = "apis:read capabilities:execute"
+_EX_GRANT_TYPES = ["authorization_code", "refresh_token"]
+_EX_SOFTWARE_ID = "com.example.mcp-client"
+_EX_SOFTWARE_VERSION = "1.4.2"
 
 
 class OAuthClientRegistrationRequest(BaseModel):
@@ -26,6 +34,7 @@ class OAuthClientRegistrationRequest(BaseModel):
         min_length=1,
         max_length=255,
         description="Human-readable client name; self-asserted and not verified by the server.",
+        examples=[_EX_CLIENT_NAME],
     )
     # Native MCP clients are RFC 8252 apps: alongside https (always) and
     # loopback http, §7.1 private-use schemes (e.g. ``cursor://…``,
@@ -39,18 +48,21 @@ class OAuthClientRegistrationRequest(BaseModel):
         "hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted "
         "for native apps (browser-executable and other dangerous schemes are "
         "rejected).",
+        examples=[[ex.REDIRECT_URI]],
     )
     token_endpoint_auth_method: str | None = Field(
         default=None,
         description="Must be 'none' if supplied — this endpoint only registers "
         "public (secret-less, PKCE-only) clients.",
+        examples=["none"],
     )
     grant_types: list[str] | None = Field(
         default=None,
         description="Subset of ['authorization_code', 'refresh_token'].",
+        examples=[_EX_GRANT_TYPES],
     )
     response_types: list[str] | None = Field(
-        default=None, description="Only ['code'] is supported."
+        default=None, description="Only ['code'] is supported.", examples=[["code"]]
     )
     scope: str | None = Field(
         default=None,
@@ -59,6 +71,7 @@ class OAuthClientRegistrationRequest(BaseModel):
             "Space-separated scopes requested as the client's ceiling (at most 100 tokens);"
             " capped to the scopes the server grants OAuth clients, and the full set when omitted."
         ),
+        examples=[_EX_SCOPE],
     )
     software_id: str | None = Field(
         default=None,
@@ -67,9 +80,13 @@ class OAuthClientRegistrationRequest(BaseModel):
             "Stable identifier of the client software; with the redirect URIs it is used to"
             " match a repeat registration to the existing client."
         ),
+        examples=[_EX_SOFTWARE_ID],
     )
     software_version: str | None = Field(
-        default=None, max_length=255, description="Version of the client software."
+        default=None,
+        max_length=255,
+        description="Version of the client software.",
+        examples=[_EX_SOFTWARE_VERSION],
     )
     application_type: str | None = Field(
         default=None,
@@ -77,6 +94,7 @@ class OAuthClientRegistrationRequest(BaseModel):
         description="Accepted and echoed ('native' for desktop/CLI apps, per "
         "the 2026-07-28 MCP spec revision); localhost http redirect URIs are "
         "allowed regardless.",
+        examples=["native"],
     )
 
     @field_validator("scope")
@@ -107,34 +125,52 @@ class OAuthClientRegistrationResponse(BaseModel):
     clients retry ``/authorize``, they don't poll).
     """
 
-    client_id: str = Field(description="The client identifier to use in OAuth requests.")
-    client_id_issued_at: int = Field(
-        description="Seconds since the Unix epoch at which the client_id was issued."
+    client_id: str = Field(
+        description="The client identifier to use in OAuth requests.",
+        examples=[ex.OAUTH_PUBLIC_CLIENT_ID],
     )
-    client_name: str = Field(description="The client name as sent in the request.")
-    redirect_uris: list[str] = Field(description="The registered redirect URIs.")
+    client_id_issued_at: int = Field(
+        description="Seconds since the Unix epoch at which the client_id was issued.",
+        examples=[ex.EPOCH_SINCE],
+    )
+    client_name: str = Field(
+        description="The client name as sent in the request.", examples=[_EX_CLIENT_NAME]
+    )
+    redirect_uris: list[str] = Field(
+        description="The registered redirect URIs.", examples=[[ex.REDIRECT_URI]]
+    )
     token_endpoint_auth_method: str = Field(
-        default="none", description="Always `none`: the client is public and uses PKCE."
+        default="none",
+        description="Always `none`: the client is public and uses PKCE.",
+        examples=["none"],
     )
     grant_types: list[str] = Field(
         default=["authorization_code", "refresh_token"],
         description="Grant types the client may use.",
+        examples=[_EX_GRANT_TYPES],
     )
     response_types: list[str] = Field(
-        default=["code"], description="Response types the client may use; always `code`."
+        default=["code"],
+        description="Response types the client may use; always `code`.",
+        examples=[["code"]],
     )
     scope: str = Field(
         description="Space-separated scope ceiling granted to the client "
-        "(the request's scope capped to the MCP tool-scope set)."
+        "(the request's scope capped to the MCP tool-scope set).",
+        examples=[_EX_SCOPE],
     )
     software_id: str | None = Field(
-        default=None, description="The software ID as sent in the request; omitted if not sent."
+        default=None,
+        description="The software ID as sent in the request; omitted if not sent.",
+        examples=[_EX_SOFTWARE_ID],
     )
     software_version: str | None = Field(
         default=None,
         description="The software version as sent in the request; omitted if not sent.",
+        examples=[_EX_SOFTWARE_VERSION],
     )
     application_type: str | None = Field(
         default=None,
         description="The application type as sent in the request; omitted if not sent.",
+        examples=["native"],
     )

@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
 
 INSTANCE_PATH = "/instance"
@@ -58,20 +59,23 @@ class InstanceIdentityResponse(BaseModel):
             "self-hosted install on the operator's own machine/network, 'remote' for "
             "a hosted install run elsewhere. A hint, not an authorization signal; "
             "defaults to 'local'."
-        )
+        ),
+        examples=["remote"],
     )
     canonical_base_url: str = Field(
         description=(
             "The instance's own canonical base URL (auth.canonical_base_url, else "
             "server.public_base_url, else the serving bind origin), with any "
             "userinfo stripped."
-        )
+        ),
+        examples=[ex.BASE_URL],
     )
     host: str = Field(
         description=(
             "Host (and port, when the canonical base URL declares one) parsed from "
             "canonical_base_url; '' if unset or unparseable."
-        )
+        ),
+        examples=["jentic.example.com"],
     )
     instance_id: str | None = Field(
         default=None,
@@ -80,6 +84,7 @@ class InstanceIdentityResponse(BaseModel):
             "install, but not the telemetry id itself. Null when telemetry has not "
             "resolved an id (e.g. telemetry disabled)."
         ),
+        examples=["5f2c9e0b7a41d8c3"],  # pragma: allowlist secret
     )
     mcp_enabled: bool = Field(
         default=False,
@@ -90,6 +95,7 @@ class InstanceIdentityResponse(BaseModel):
             "sensitive: the endpoint's enabled state is observable by probing /mcp "
             "anyway."
         ),
+        examples=[True],
     )
     broker_url: str | None = Field(
         default=None,
@@ -103,6 +109,7 @@ class InstanceIdentityResponse(BaseModel):
             "guidance. Deployment metadata, not a secret — the broker URL is handed "
             "to every client expected to call it (issue #1249)."
         ),
+        examples=["https://broker.jentic.example.com"],
     )
 
 
