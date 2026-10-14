@@ -303,7 +303,7 @@ type CredentialCandidate struct {
 // serving requests. Intentionally minimal — clients treat `200` +
 // `status: ok` as the green signal; the body is informational.
 //
-// Examples: {"status":"ok","surface":"broker","version":"0.42.2"}
+// Examples: {"status":"ok","surface":"broker","version":"0.43.0"}
 type HealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
 	//
@@ -328,7 +328,7 @@ type HealthResponse struct {
 	// in this spec). Absent on the `not_entitled` body.
 	//
 	//
-	// Examples: 0.42.2
+	// Examples: 0.43.0
 	Version *string `json:"version,omitempty"`
 }
 
