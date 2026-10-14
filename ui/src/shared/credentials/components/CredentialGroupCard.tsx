@@ -1,5 +1,5 @@
 import { Layers } from 'lucide-react';
-import { StatusText, VendorIcon } from '@/shared/ui';
+import { Card, StatusText, TruncateWithTooltip, VendorIcon } from '@/shared/ui';
 import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { formatApiReference, type Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
@@ -93,11 +93,11 @@ export function CredentialGroupCard({
 	const repeatedNames = repeatedCredentialNames(credentials);
 
 	return (
-		<section
+		<Card
+			as="section"
 			data-testid="credential-group"
 			aria-labelledby={headingId}
-			title={sameApi ? formatApiReference(unversioned(first.api)) : vendor}
-			className="bg-surface-1 min-w-0 overflow-hidden rounded-lg [--field-bg:var(--surface-field)]"
+			className="min-w-0"
 		>
 			<header className="flex items-start gap-3 p-4 pb-3">
 				<VendorIcon name={vendor} vendor={vendor} size="md" />
@@ -118,7 +118,14 @@ export function CredentialGroupCard({
 						</span>
 					</div>
 					{apiLine && (
-						<p className="text-foreground-sub mt-0.5 truncate text-xs">{apiLine}</p>
+						// The full machine reference (`vendor/name`) on hover or focus,
+						// when the line is cut off.
+						<TruncateWithTooltip
+							className="text-foreground-sub mt-0.5 text-xs"
+							tooltip={sameApi ? formatApiReference(unversioned(first.api)) : vendor}
+						>
+							{apiLine}
+						</TruncateWithTooltip>
 					)}
 					<p className="text-muted-foreground mt-1.5 text-xs leading-snug">
 						{sharedPlacement ? `${sharedPlacement}. ` : ''}
@@ -130,7 +137,11 @@ export function CredentialGroupCard({
 				</div>
 			</header>
 
-			<ul className="divide-hairline-row border-hairline divide-y border-t">
+			{/* The rows sit inside the card's edge: the list is inset, so its
+			    dividers stop short of the outline and a row's hover tint never
+			    runs into it; the row's own padding lines its text up with the
+			    header's. */}
+			<ul className="divide-hairline-row border-hairline-row mx-2 mb-2 divide-y border-t">
 				{credentials.map((cred) => (
 					<CredentialRow
 						key={cred.credential_id}
@@ -146,7 +157,7 @@ export function CredentialGroupCard({
 					/>
 				))}
 			</ul>
-		</section>
+		</Card>
 	);
 }
 
@@ -208,7 +219,10 @@ function CredentialRow({
 	return (
 		<li
 			data-testid="credential-card"
-			className="hover:bg-tint-2 focus-within:bg-tint-2 relative flex items-center gap-3 px-4 py-2.5 transition-colors"
+			// The row stays square so its divider runs straight; the rounded
+			// hover/focus tint is a layer inset inside it, clear of the dividers
+			// and the card's outline.
+			className="hover:before:bg-tint-2 focus-within:before:bg-tint-2 relative flex items-center gap-3 px-2 py-2.5 before:pointer-events-none before:absolute before:inset-x-0 before:inset-y-1 before:rounded-md before:transition-colors before:duration-150 motion-reduce:before:transition-none"
 		>
 			{/* Full-row click target → edit, hidden from the a11y tree so keyboard and
 			    screen-reader users get the one labelled "Edit" button instead. */}
