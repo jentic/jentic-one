@@ -1033,7 +1033,7 @@ func TestMCPGetExecutionResult_PendingJobHasNoResult(t *testing.T) {
 	defer srv.Close()
 
 	s := stampedTestMCPServer(t)
-	res, err := s.handleGetExecutionResult(activeCtx(srv.URL), callToolRequest("get_execution_result", `{"job_id":"job_9"}`))
+	res, err := s.handleGetExecutionResult(activeCtx(srv.URL), callToolRequest("get_execution_result", `{"job_id":"job_9","timeout":0}`))
 	if err != nil {
 		t.Fatalf("handleGetExecutionResult: %v", err)
 	}

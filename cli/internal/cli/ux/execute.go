@@ -27,6 +27,9 @@ type ExecuteEnvelope struct {
 	ExecutionID string `json:"execution_id,omitempty"`
 	// Headers is the single-value projection of the upstream response headers.
 	Headers map[string]string `json:"headers"`
+	// HeldExecutionID names the held execution whose outcome this is, when
+	// the call was held for human approval and followed to its end.
+	HeldExecutionID string `json:"held_execution_id,omitempty"`
 	// SchemaVersion pins the machine-contract envelope shape (AGT-23). Use
 	// NewExecuteEnvelope so it is always stamped: this envelope is written via
 	// the legacy WriteJSON path (its body is arbitrary upstream data), which —
@@ -150,11 +153,12 @@ type HeldNotice struct {
 }
 
 // RenderHeld writes the held-call notice to w (the caller's stderr): the
-// review link a person must open to approve or deny the call, when the
-// hold expires, and how to collect the result.
+// held execution, the review link a person must open to approve or deny the
+// call, when the hold expires, and how to collect the result.
 func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(w, st.Warn.Render("Held — this call needs human approval before it runs:"))
+	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
 	fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
 	fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
 	if n.ExpiresAt != "" {
@@ -164,7 +168,41 @@ func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 		fmt.Fprintln(w, "  waiting for the decision …")
 		return
 	}
-	fmt.Fprintln(w, "  then: "+st.Accent.Render("jentic holds wait "+n.HeldExecutionID)+" (do not re-send the call)")
+	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(n.HeldExecutionID))+" (do not re-send the call)")
+}
+
+// RenderHeldUnfinished writes the notice for a followed held call that has
+// not finished — still held at the timeout, or the poll itself failed — to w
+// (the caller's stderr): headline, the held execution, the review link (when
+// known) and the poll command to run next.
+func RenderHeldUnfinished(ctx context.Context, w io.Writer, n HeldNotice, headline string) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(w, st.Warn.Render(headline))
+	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
+	if n.ReviewURL != "" {
+		fmt.Fprintln(w, "  Show the user this link again if they have not decided; they approve or deny the call there.")
+		fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+	}
+	if n.ExpiresAt != "" {
+		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)
+	}
+	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(n.HeldExecutionID))+" (do not re-send the call)")
+}
+
+// RenderHeldFinished names the held execution a finished outcome belongs to
+// on w (the caller's stderr): a dim one-line note with outcome, or — empty
+// outcome, following a never-ran notice — an indented "held execution:" line.
+func RenderHeldFinished(ctx context.Context, w io.Writer, heldExecutionID, outcome string) {
+	if outcome == "" {
+		fmt.Fprintln(w, "  held execution: "+heldExecutionID)
+		return
+	}
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(w, st.Dim.Render("held execution "+heldExecutionID+": "+outcome))
+}
+
+func heldPollCommand(heldExecutionID string) string {
+	return "jentic executions poll " + heldExecutionID
 }
 
 // Problem types of a held call that never ran: the reviewer denied it, its

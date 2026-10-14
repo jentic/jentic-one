@@ -144,12 +144,12 @@ func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
 func (HeldExecutionDetailResponse) RequiredFields() []string {
-	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "method", "path", "state"}
+	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "method", "path", "review_url", "state"}
 }
 func (HeldExecutionLinksResponse) RequiredFields() []string { return []string{"self"} }
 func (HeldExecutionListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
 func (HeldExecutionResponse) RequiredFields() []string {
-	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "method", "path", "state"}
+	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "method", "path", "review_url", "state"}
 }
 func (HeldRequestResponse) RequiredFields() []string { return []string{"method", "url"} }
 func (InstanceIdentityResponse) RequiredFields() []string {

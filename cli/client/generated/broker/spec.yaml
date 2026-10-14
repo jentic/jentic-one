@@ -1034,8 +1034,9 @@ components:
                   This call needs human approval. Most important: show the user the review_url,
                   since they cannot approve it without that link, and end your turn so they see it.
                   Do not call get_execution_result until the user replies; then call it once with
-                  held_execution_id and wait: 30000. If it is still held, tell the user it is waiting for
-                  approval and end your turn again. Do not re-send the call.
+                  held_execution_id. It waits up to 30 seconds by default (timeout, max 60). If it is
+                  still held, show the user the review_url again and end your turn again. Do not
+                  re-send the call.
                 _links:
                   self: https://control.your-instance.example/executions/holds/exap_abc123
                   result: https://control.your-instance.example/executions/holds/exap_abc123/result

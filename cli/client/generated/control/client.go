@@ -2820,6 +2820,9 @@ type HeldExecutionDetailResponse struct {
 	// Request The held call.
 	Request *HeldRequestResponse `json:"request,omitempty"`
 
+	// ReviewUrl Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+	ReviewUrl string `json:"review_url"`
+
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
 	State ExecutionApprovalState `json:"state"`
 
@@ -2910,6 +2913,9 @@ type HeldExecutionResponse struct {
 
 	// Path Upstream path of the held call.
 	Path string `json:"path"`
+
+	// ReviewUrl Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+	ReviewUrl string `json:"review_url"`
 
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
 	State ExecutionApprovalState `json:"state"`

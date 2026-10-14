@@ -19,6 +19,8 @@ const heldBrokerBody = `{"status":"held","held_execution_id":"exap_9",` +
 	`"result":"https://jentic.example/executions/holds/exap_9/result",` +
 	`"withdraw":"https://jentic.example/executions/holds/exap_9:withdraw"}}`
 
+const mcpReviewURL = "https://jentic.example/app/agents/approvals/exap_9"
+
 // heldServers starts one httptest server answering as both the broker (any
 // path outside /executions/holds and /jobs → the held 202) and the control
 // plane: /executions/holds/exap_9 walks the given execution statuses (state
@@ -40,8 +42,12 @@ func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.In
 			if statuses[i] == "held" {
 				state = "pending"
 			}
+			review := `"review_url":"` + mcpReviewURL + `",`
+			if statuses[i] == "" {
+				review = ""
+			}
 			_, _ = io.WriteString(w, `{"id":"exap_9","state":"`+state+`","execution_status":"`+statuses[i]+`",`+
-				`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+
+				`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+review+
 				`"method":"POST","path":"/v1/charges","expires_at":"2026-10-07T00:00:00Z",`+
 				`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/exap_9"}}`)
 		case r.URL.Path == "/executions/holds/exap_9/result":
@@ -213,11 +219,11 @@ func TestMCPExecuteHeld_URLElicitationRetryReturnsTheFinishedResult(t *testing.T
 	}
 }
 
-func TestMCPGetExecutionResult_NoWaitPollsOnce(t *testing.T) {
+func TestMCPGetExecutionResult_ZeroTimeoutPollsOnce(t *testing.T) {
 	srv, _, polls := heldServers(t, "held", "completed")
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9"}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}
@@ -230,11 +236,68 @@ func TestMCPGetExecutionResult_NoWaitPollsOnce(t *testing.T) {
 	}
 }
 
-func TestMCPGetExecutionResult_WaitReturnsEarlyOnceFinished(t *testing.T) {
+func TestMCPGetExecutionResult_HeldPayloadKeys(t *testing.T) {
+	for _, tc := range []struct {
+		status        string
+		wantDirective bool
+	}{
+		{"held", true}, {"queued", true}, {"running", true},
+		{"completed", false}, {"failed", false}, {"cancelled", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			srv, _, _ := heldServers(t, tc.status)
+			s := heldTestServer(t)
+			res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
+				callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+			if err != nil || res.IsError {
+				t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
+			}
+			payload := decodeToolJSON(t, res)
+			delete(payload, "instance")
+			for _, k := range []string{"schema_version", "held_execution_id", "state", "status", "review_url", "expires_at"} {
+				if _, ok := payload[k]; !ok {
+					t.Errorf("payload = %v, missing %q", payload, k)
+				}
+			}
+			if payload["review_url"] != mcpReviewURL || payload["expires_at"] != "2026-10-07T00:00:00Z" {
+				t.Errorf("payload = %v", payload)
+			}
+			directive, ok := payload["agent_directive"]
+			if ok != tc.wantDirective || (ok && directive != stillHeldAgentDirective) {
+				t.Errorf("status %s: agent_directive = %v (present %v), want present=%v", tc.status, directive, ok, tc.wantDirective)
+			}
+			allowed := map[string]bool{
+				"schema_version": true, "held_execution_id": true, "state": true, "status": true, "review_url": true,
+				"expires_at": true, "execution_id": true, "result": true, "result_error": true, "truncated": true,
+				"total_bytes": true, "agent_directive": true,
+			}
+			for k := range payload {
+				if !allowed[k] {
+					t.Errorf("unexpected payload key %q", k)
+				}
+			}
+		})
+	}
+}
+
+func TestMCPGetExecutionResult_NoReviewURLFromAnOlderServerIsOmitted(t *testing.T) {
+	srv, _, _ := heldServers(t, "")
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
+		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+	if err != nil || res.IsError {
+		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
+	}
+	if payload := decodeToolJSON(t, res); payload["review_url"] != nil {
+		t.Errorf("payload = %v, want no review_url when the server sends none", payload)
+	}
+}
+
+func TestMCPGetExecutionResult_TimeoutReturnsEarlyOnceFinished(t *testing.T) {
 	srv, _, polls := heldServers(t, "held", "queued", "failed")
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution":"exap_9","wait":30000}`))
+		callToolRequest("get_execution_result", `{"held_execution":"exap_9","timeout":60}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}
@@ -244,27 +307,97 @@ func TestMCPGetExecutionResult_WaitReturnsEarlyOnceFinished(t *testing.T) {
 		polls.Load() != 3 {
 		t.Fatalf("payload=%v polls=%d, want the failed hold and its problem after three polls", payload, polls.Load())
 	}
+	if _, ok := payload["agent_directive"]; ok {
+		t.Errorf("payload = %v, want no agent_directive once finished", payload)
+	}
 }
 
-func TestMCPGetExecutionResult_NegativeWaitAnswersAtOnce(t *testing.T) {
+func TestMCPGetExecutionResult_NegativeTimeoutAnswersAtOnce(t *testing.T) {
 	srv, _, polls := heldServers(t, "held")
 	s := heldTestServer(t)
 	ctx := activeCtxWithBroker(srv.URL, srv.URL)
 	res, err := s.handleGetExecutionResult(ctx,
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","wait":-5}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":-5}`))
 	if err != nil || res.IsError || polls.Load() != 1 {
-		t.Fatalf("negative wait: err=%v polls=%d, want one poll and an immediate answer", err, polls.Load())
+		t.Fatalf("negative timeout: err=%v polls=%d, want one poll and an immediate answer", err, polls.Load())
+	}
+	if payload := decodeToolJSON(t, res); payload["agent_directive"] != stillHeldAgentDirective {
+		t.Errorf("payload = %v, want the still-held directive", payload)
+	}
+}
+
+func TestPollTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		args map[string]any
+		want time.Duration
+	}{
+		{map[string]any{}, 30 * time.Second},
+		{map[string]any{"timeout": 0}, 0},
+		{map[string]any{"timeout": -3}, 0},
+		{map[string]any{"timeout": 45}, 45 * time.Second},
+		{map[string]any{"timeout": 60}, 60 * time.Second},
+		{map[string]any{"timeout": 600}, 60 * time.Second},
+	} {
+		if got := pollTimeout(tc.args); got != tc.want {
+			t.Errorf("pollTimeout(%v) = %v, want %v", tc.args, got, tc.want)
+		}
 	}
 }
 
 func TestMCPGetExecutionResult_RequiresExactlyOneID(t *testing.T) {
 	s := heldTestServer(t)
-	for _, args := range []string{`{}`, `{"held_execution_id":"exap_9","job_id":"job_9"}`, `{"wait":1000}`} {
+	for _, args := range []string{`{}`, `{"held_execution_id":"exap_9","job_id":"job_9"}`, `{"timeout":10}`} {
 		if _, err := s.handleGetExecutionResult(activeCtx("http://127.0.0.1:1"),
 			callToolRequest("get_execution_result", args)); err == nil ||
 			!strings.Contains(err.Error(), "exactly one of") {
 			t.Errorf("args %s: err = %v, want invalid params naming both ids", args, err)
 		}
+	}
+}
+
+func TestMCPGetExecutionResult_TransportErrorKeepsTheHeldExecution(t *testing.T) {
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if polls.Add(1) > 1 {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"exap_9","state":"pending","execution_status":"held",`+
+			`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+
+			`"review_url":"`+mcpReviewURL+`","method":"POST","path":"/v1/charges","expires_at":"2026-10-07T00:00:00Z",`+
+			`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/exap_9"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtx(srv.URL),
+		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":5}`))
+	if err != nil || !res.IsError {
+		t.Fatalf("want a soft error, got err=%v result=%s", err, toolResultText(res))
+	}
+	payload := decodeToolJSON(t, res)
+	details, _ := payload["details"].(map[string]any)
+	if payload["error_code"] != "TRANSPORT_ERROR" || payload["next_tool"] != "get_execution_result" ||
+		payload["retryable"] != true || details["held_execution_id"] != "exap_9" || details["review_url"] != mcpReviewURL {
+		t.Errorf("payload = %v", payload)
+	}
+}
+
+func TestMCPGetExecutionResult_TransportErrorOnTheFirstReadNamesTheID(t *testing.T) {
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtx("http://127.0.0.1:1"),
+		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+	if err != nil || !res.IsError {
+		t.Fatalf("want a soft error, got err=%v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	details, _ := payload["details"].(map[string]any)
+	if details["held_execution_id"] != "exap_9" {
+		t.Errorf("payload = %v, want the held execution named", payload)
+	}
+	if _, ok := details["review_url"]; ok {
+		t.Errorf("payload = %v, want no review_url before one was seen", payload)
 	}
 }
 
@@ -287,7 +420,7 @@ func TestMCPGetExecutionResult_UnknownHeldExecutionIsResolveFailed(t *testing.T)
 	}
 }
 
-func TestMCPGetExecutionResult_JobWaitReadsTheJobRoutes(t *testing.T) {
+func TestMCPGetExecutionResult_JobTimeoutReadsTheJobRoutes(t *testing.T) {
 	var polls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -309,7 +442,7 @@ func TestMCPGetExecutionResult_JobWaitReadsTheJobRoutes(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtx(srv.URL),
-		callToolRequest("get_execution_result", `{"job":"job_9","wait":30000}`))
+		callToolRequest("get_execution_result", `{"job":"job_9","timeout":30}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,6 +26,50 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 	// operation) also means the call never reached the upstream (#1429).
 	brokerErr := agentops.BrokerError(res)
 
+	if opts.heldExecutionID != "" {
+		return a.heldExecuteOutput(cmd, opts, res, denial, brokerErr)
+	}
+	return a.renderExecuteOutput(cmd, opts, res, denial, brokerErr)
+}
+
+// heldExecuteOutput renders the finished outcome of a followed held call:
+// exactly like a call that ran at once, with its held execution id named on
+// stderr, in the success envelope and in the error envelope's details.
+func (a *app) heldExecuteOutput(
+	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial, brokerErr *ux.CodedError,
+) error {
+	ran := denial == nil && brokerErr == nil
+	if ran {
+		ux.RenderHeldFinished(cmd.Context(), a.Err, opts.heldExecutionID, fmt.Sprintf("the call ran (HTTP %d)", res.Status))
+	}
+	err := a.renderExecuteOutput(cmd, opts, res, denial, brokerErr)
+	if !ran {
+		ux.RenderHeldFinished(cmd.Context(), a.Err, opts.heldExecutionID, "")
+	}
+	if coded := asCodedOrNil(err); coded != nil {
+		if coded.Details == nil {
+			coded.Details = map[string]any{}
+		}
+		coded.Details["held_execution_id"] = opts.heldExecutionID
+		if !strings.Contains(coded.Msg, opts.heldExecutionID) {
+			coded.Msg = fmt.Sprintf("%s (held execution %s)", coded.Msg, opts.heldExecutionID)
+		}
+	}
+	return err
+}
+
+// asCodedOrNil is err's *ux.CodedError, or nil when it carries none.
+func asCodedOrNil(err error) *ux.CodedError {
+	var coded *ux.CodedError
+	if errors.As(err, &coded) {
+		return coded
+	}
+	return nil
+}
+
+func (a *app) renderExecuteOutput(
+	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial, brokerErr *ux.CodedError,
+) error {
 	if opts.raw {
 		// Redact before streaming, so --raw matches the redaction guarantee of
 		// the JSON and `jentic api` paths (SEC-2). A secret in an upstream body
@@ -48,7 +93,9 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 		// path — its body is arbitrary upstream data, outside ux.Render's
 		// three-layer funnel, so WriteJSON's byte-level redaction backstop
 		// applies.
-		if err := cmdcore.WriteJSON(a.Out, res.Envelope()); err != nil {
+		env := res.Envelope()
+		env.HeldExecutionID = opts.heldExecutionID
+		if err := cmdcore.WriteJSON(a.Out, env); err != nil {
 			return err
 		}
 	} else {
@@ -67,6 +114,9 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 			if detail := problemDetail(res.Body); ux.RenderApprovalOutcome(cmd.Context(), a.Err, denial.ProblemType, detail) {
 				coded := denial.Err()
 				coded.Msg = fmt.Sprintf("this held call never ran (%s)", denial.ProblemType)
+				if opts.heldExecutionID != "" {
+					coded.Msg = fmt.Sprintf("held execution %s never ran (%s)", opts.heldExecutionID, denial.ProblemType)
+				}
 				coded.Details["problem_type"] = denial.ProblemType
 				return coded
 			}

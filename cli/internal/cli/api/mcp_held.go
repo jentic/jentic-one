@@ -57,12 +57,21 @@ const (
 	frontDoorHeldResult     = "held_result"
 )
 
-// heldAgentDirective mirrors the broker's directive for a held call.
+// heldAgentDirective is the held 202 envelope's agent_directive. Kept
+// byte-identical with HELD_AGENT_DIRECTIVE in src/jentic_one/shared/jobs/hold.py.
 const heldAgentDirective = "This call needs human approval. Most important: show the user the review_url, " +
 	"since they cannot approve it without that link, and end your turn so they see it. " +
 	"Do not call get_execution_result until the user replies; then call it once with " +
-	"held_execution_id and wait: 30000. If it is still held, tell the user it is waiting for " +
-	"approval and end your turn again. Do not re-send the call."
+	"held_execution_id. It waits up to 30 seconds by default (timeout, max 60). If it is " +
+	"still held, show the user the review_url again and end your turn again. Do not " +
+	"re-send the call."
+
+// stillHeldAgentDirective is a held poll payload's agent_directive while the
+// call has not finished. Kept byte-identical with STILL_HELD_AGENT_DIRECTIVE
+// in src/jentic_one/shared/jobs/hold.py.
+const stillHeldAgentDirective = "This call is still waiting on human approval. Show the user the review_url again " +
+	"and end your turn. When they reply, call get_execution_result once with this " +
+	"held_execution_id. Do not re-send the call."
 
 // heldState is the sealed requestState of a URL-elicitation round trip.
 type heldState struct {
@@ -249,8 +258,9 @@ func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) m
 		poll = heldWaitPoll
 	}
 	deadline := time.Now().Add(budget)
+	var reviewURL string
 	for {
-		payload, soft := s.heldPollPayload(ctx, heldExecutionID)
+		payload, soft := s.heldPollPayload(ctx, heldExecutionID, &reviewURL)
 		if soft != nil {
 			return nil
 		}

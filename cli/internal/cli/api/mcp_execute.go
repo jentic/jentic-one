@@ -78,18 +78,35 @@ var heldExecutionIDSpec = paramSpec{name: "held_execution_id", aliases: []string
 // not the job — folding them would silently poll the wrong resource.
 var jobIDSpec = paramSpec{name: "job_id", aliases: []string{"id", "job"}, kind: paramString}
 
-// waitSpec is get_execution_result's optional bounded wait, in milliseconds:
-// absent or zero polls once and answers at once; otherwise the tool re-polls
-// until the call has finished or the wait (capped at maxPollWaitMillis)
-// lapses.
-var waitSpec = paramSpec{name: "wait", kind: paramInt}
+// timeoutSpec is get_execution_result's bounded wait, in whole seconds: the
+// tool re-polls until the call has finished or the timeout lapses. Absent is
+// defaultPollTimeoutSeconds; zero (or negative) polls once and answers at
+// once; above maxPollTimeoutSeconds clamps to it.
+var timeoutSpec = paramSpec{name: "timeout", kind: paramInt}
 
-// maxPollWaitMillis caps get_execution_result's wait.
-const maxPollWaitMillis = 30000
+const (
+	// defaultPollTimeoutSeconds is get_execution_result's wait when timeout
+	// is absent.
+	defaultPollTimeoutSeconds = 30
+	// maxPollTimeoutSeconds caps get_execution_result's wait, inside a
+	// host's tool-call timeout.
+	maxPollTimeoutSeconds = 60
+)
 
 // getExecutionResultParams declares the poll tool's argument table: exactly
-// one of held_execution_id and job_id, plus the optional wait.
-var getExecutionResultParams = []paramSpec{heldExecutionIDSpec, jobIDSpec, waitSpec}
+// one of held_execution_id and job_id, plus the optional timeout.
+var getExecutionResultParams = []paramSpec{heldExecutionIDSpec, jobIDSpec, timeoutSpec}
+
+// pollTimeout is get_execution_result's wait for its arguments: the timeout
+// argument in seconds, clamped to [0, maxPollTimeoutSeconds], or
+// defaultPollTimeoutSeconds when absent.
+func pollTimeout(args map[string]any) time.Duration {
+	secs := defaultPollTimeoutSeconds
+	if v, ok := args["timeout"].(int); ok {
+		secs = min(max(v, 0), maxPollTimeoutSeconds)
+	}
+	return time.Duration(secs) * time.Second
+}
 
 // resolveMCPBrokerTarget resolves the broker scheme/host for the MCP execute
 // path. Precedence is a strict subset of executeE's: the environment's
@@ -723,8 +740,7 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 		return nil, invalidParams(errors.New(`get_execution_result requires exactly one of "held_execution_id" ` +
 			`(from a held 202 execute response) or "job_id" (aliases: "id", "job"; from an async one)`))
 	}
-	waitMillis, _ := args["wait"].(int)
-	wait := time.Duration(min(max(waitMillis, 0), maxPollWaitMillis)) * time.Millisecond
+	wait := pollTimeout(args)
 
 	// The call deadline covers the wait on top of the control-plane budget,
 	// so a full wait still leaves room for the last poll.
@@ -733,7 +749,13 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 
 	poll, target := s.jobPollPayload, jobID
 	if heldExecutionID != "" {
-		poll, target = s.heldPollPayload, heldExecutionID
+		// The review link a successful read reports stays known across the
+		// wait, so a later failed read can still hand it back.
+		var reviewURL string
+		poll = func(ctx context.Context, id string) (map[string]any, *mcp.CallToolResult) {
+			return s.heldPollPayload(ctx, id, &reviewURL)
+		}
+		target = heldExecutionID
 	}
 	payload, soft := s.pollUntilFinished(cctx, poll, target, wait)
 	if soft != nil {
@@ -787,14 +809,18 @@ func isTerminalJobStatus(status any) bool {
 // heldPollPayload polls one held execution — GET /executions/holds/{id},
 // plus its /result once the call has finished (completed, or failed: the
 // upstream response, or the problem explaining why it never ran). The
-// payload is {held_execution_id, state, status, execution_id?, result?}:
-// state is the decision, status where the call stands. Kept in parity with
-// the mounted app's held_execution_poll_payload.
-func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string) (map[string]any, *mcp.CallToolResult) {
+// payload is {schema_version, held_execution_id, state, status, review_url,
+// expires_at, execution_id?, result? | result_error? | truncated+total_bytes,
+// agent_directive?}: state is the decision, status where the call stands,
+// and agent_directive (stillHeldAgentDirective) rides only while the call
+// has not finished. review_url is omitted when the control plane sends none.
+// *reviewURL carries the last review link seen, so a failed read still
+// names it. Kept in parity with the mounted app's held_execution_poll_payload.
+func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string, reviewURL *string) (map[string]any, *mcp.CallToolResult) {
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
 		s.logger.Warn("get_execution_result failed", "error", err)
-		return nil, s.softError(cctx, err)
+		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
 	}
 	resp, callErr := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
 	if err := apiErrorFor(resp, callErr); err != nil {
@@ -808,21 +834,24 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 				Msg:  fmt.Sprintf("held execution %q not found", heldExecutionID),
 				Actionable: "Re-check the id — it is the held_execution_id of the held (202) execute response — " +
 					"and call get_execution_result again with the exact value.",
+				Details: map[string]any{"held_execution_id": heldExecutionID},
 			}, "get_execution_result")
 		}
 		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
-		// A transport failure on the recovery path is a retryable
-		// TRANSPORT_ERROR (§3.7 transport row): the poll is a GET.
-		return nil, s.executeTransportError(cctx, classifyTransportErr(err), true)
+		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
 	}
 	if resp.JSON200 == nil {
 		return nil, s.softError(cctx, &ux.CodedError{
-			Code: ux.CodeInternalError,
-			Msg:  fmt.Sprintf("unexpected backend response (status %d)", resp.StatusCode()),
+			Code:    ux.CodeInternalError,
+			Msg:     fmt.Sprintf("unexpected backend response (status %d)", resp.StatusCode()),
+			Details: map[string]any{"held_execution_id": heldExecutionID},
 		})
 	}
 
 	held := resp.JSON200
+	if held.ReviewUrl != "" {
+		*reviewURL = held.ReviewUrl
+	}
 	var status any
 	if held.ExecutionStatus != nil {
 		status = string(*held.ExecutionStatus)
@@ -832,6 +861,10 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 		"held_execution_id": held.Id,
 		"state":             string(held.State),
 		"status":            status,
+		"expires_at":        held.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+	if held.ReviewUrl != "" {
+		payload["review_url"] = held.ReviewUrl
 	}
 	if held.ExecutionId != nil && *held.ExecutionId != "" {
 		payload["execution_id"] = *held.ExecutionId
@@ -839,7 +872,41 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 	if status == agentops.HeldStatusCompleted || status == agentops.HeldStatusFailed {
 		s.attachHeldResult(cctx, client, heldExecutionID, payload)
 	}
+	if !isTerminalJobStatus(status) {
+		payload["agent_directive"] = stillHeldAgentDirective
+	}
 	return payload, nil
+}
+
+// heldPollError is a failed read of a held execution as a soft error that
+// still names the held execution (and its review link, when known), so the
+// agent can relay the link and poll again. The poll is a GET: a transport
+// failure is always retryable (§3.7 transport row).
+func (s *mcpServer) heldPollError(ctx context.Context, heldExecutionID, reviewURL string, err error) *mcp.CallToolResult {
+	coded := asCoded(classifyTransportErr(err))
+	details := map[string]any{"held_execution_id": heldExecutionID}
+	if reviewURL != "" {
+		details["review_url"] = reviewURL
+	}
+	for k, v := range coded.Details {
+		if _, ok := details[k]; !ok {
+			details[k] = v
+		}
+	}
+	wrapped := &ux.CodedError{
+		Code:       coded.Code,
+		Msg:        fmt.Sprintf("failed to read held execution %s: %s", heldExecutionID, coded.Msg),
+		Actionable: coded.Actionable,
+		Details:    details,
+		Cause:      coded.Cause,
+	}
+	if coded.Code != ux.CodeTransportError {
+		return s.softError(ctx, wrapped)
+	}
+	wrapped.Actionable = "The held call is unaffected: it may still be waiting for a human decision. " +
+		"If the user has not approved it yet, show them the review_url again; then call " +
+		"get_execution_result again with this held_execution_id. Do not re-send the call."
+	return s.softErrorExtra(ctx, wrapped, "get_execution_result", map[string]any{"retryable": true})
 }
 
 // attachHeldResult adds a finished held call's result to the payload
@@ -1016,12 +1083,14 @@ var getExecutionResultSchema = map[string]any{
 			"description": "The job to poll (\"id\" and \"job\" are accepted aliases): the job_id of an " +
 				"asynchronous (202) execute response that is not held. Pass exactly one of held_execution_id and job_id.",
 		},
-		"wait": map[string]any{
+		"timeout": map[string]any{
 			"type":    "integer",
 			"minimum": 0,
-			"maximum": maxPollWaitMillis,
-			"description": "Optional. Wait up to this many milliseconds (max 30000) for the call to finish, " +
-				"re-polling and returning as soon as it has. Omit (or 0) to return the current status at once.",
+			"maximum": maxPollTimeoutSeconds,
+			"default": defaultPollTimeoutSeconds,
+			"description": "Optional. Wait up to this many seconds (default 30, max 60; larger values are " +
+				"capped at 60) for the call to finish, re-polling and returning as soon as it has. " +
+				"0 returns the current status at once.",
 		},
 	},
 }
@@ -1051,8 +1120,8 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"error result with recovery directions instead. A 202 response with status \"held\" means " +
 					"the call is HELD for human approval: above all, show the user its review_url (a reviewer " +
 					"signs in there to approve or deny it) and end your turn so they see it; once the user " +
-					"replies, call get_execution_result once with the held_execution_id it carries and wait: 30000 " +
-					"— never re-send the execute. Large bodies are truncated " +
+					"replies, call get_execution_result once with the held_execution_id it carries (it waits up to " +
+					"30 seconds by default) — never re-send the execute. Large bodies are truncated " +
 					"({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see " +
 					"the rest. Prefer execute_read for pure reads — it is approved more readily.",
 				InputSchema: executeInputSchema(true),
@@ -1078,19 +1147,20 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			tool: &mcp.Tool{
 				Name:  "get_execution_result",
 				Title: "Poll a held or asynchronous execution",
-				Description: "Poll a held or asynchronous execution. Pass held_execution_id for a 202 HELD " +
-					"response (human approval required): returns {held_execution_id, state, status, ...} — state is " +
-					"the decision (pending, approved, denied, expired, withdrawn), status where the call stands " +
-					"(held, queued, running, completed, failed, cancelled) — and, once the call has finished, the " +
-					"result: the upstream response, or the problem explaining why it never ran (denied or expired). " +
-					"Above all, show the user the review_url from the held response and end your turn so they see " +
-					"it. Only after the user replies, call this once with the held_execution_id and wait: 30000 (it " +
-					"returns early once the call has finished). If it is still held, tell the user it is waiting " +
-					"for approval and end your turn again. Pass job_id instead for an asynchronous 202 that is not " +
-					"held: returns {job_id, kind, status, ...} and, once \"completed\", the result document. NEVER " +
-					"re-send the execute while a call is pending; approval happens out-of-band and re-sending " +
-					`duplicates the call. Example: {"held_execution_id": "exap_abc123", "wait": 30000}. Omit wait ` +
-					"to read the current status at once.",
+				Description: "Poll a held or asynchronous execution, waiting up to timeout seconds (default 30, " +
+					"max 60; 0 answers at once) and returning as soon as the call has finished. Pass " +
+					"held_execution_id for a 202 HELD response (human approval required): returns " +
+					"{held_execution_id, state, status, review_url, expires_at, ...} — state is the decision " +
+					"(pending, approved, denied, expired, withdrawn), status where the call stands (held, queued, " +
+					"running, completed, failed, cancelled) — and, once the call has finished, the result: the " +
+					"upstream response, or the problem explaining why it never ran (denied or expired). While the " +
+					"call has not finished the payload carries an agent_directive: show the user the review_url " +
+					"again and end your turn. Above all, show the user the review_url from the held response and " +
+					"end your turn so they see it; only after the user replies, call this once with the " +
+					"held_execution_id. Pass job_id instead for an asynchronous 202 that is not held: returns " +
+					"{job_id, kind, status, ...} and, once \"completed\", the result document. NEVER re-send the " +
+					"execute while a call is pending; approval happens out-of-band and re-sending duplicates the " +
+					`call. Example: {"held_execution_id": "exap_abc123"}.`,
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},

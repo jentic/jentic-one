@@ -51,6 +51,9 @@ type executeOptions struct {
 	idempotencyKey string
 	wait           bool
 	timeout        time.Duration
+	// heldExecutionID names the held execution whose finished outcome
+	// executeOutput renders; empty for a call that ran at once.
+	heldExecutionID string
 }
 
 func newExecuteCmd(app *app) *cobra.Command {
@@ -85,11 +88,12 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"for a human instead of running it and answers 202 with the held\n" +
 			"execution and a review_url. execute prints that envelope, shows the\n" +
 			"review link on stderr, and exits 3 (TIMEOUT_PENDING). Show the user the\n" +
-			"link, then collect the outcome with `jentic holds wait\n" +
+			"link, then collect the outcome with `jentic executions poll\n" +
 			"<held_execution_id>` — never re-send the call. With --wait, execute\n" +
-			"waits for the decision itself (up to --timeout) and then prints the\n" +
-			"result exactly as if the call had run at once, or the denial/expiry\n" +
-			"(exit 2).\n\n" +
+			"follows the held call itself (up to --timeout: default 30s, max 5m)\n" +
+			"and then prints the result exactly as if the call had run at once, or\n" +
+			"the denial/expiry (exit 2). Every held outcome names the\n" +
+			"held_execution_id.\n\n" +
 			"Exit codes:\n" +
 			"  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n" +
 			"  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n" +
@@ -111,8 +115,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  jentic execute GET:https://api.example.com/v1/pets --query limit=10 --json\n" +
 			"  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n" +
 			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n" +
-			"  # A call a rule holds for approval: wait up to 15 minutes for the decision:\n" +
-			"  jentic execute POST:https://api.example.com/v1/orders -d '{\"n\":1}' --wait --timeout 15m --json\n" +
+			"  # A call a rule holds for approval: follow it for up to 2 minutes:\n" +
+			"  jentic execute POST:https://api.example.com/v1/orders -d '{\"n\":1}' --wait --timeout 2m --json\n" +
 			"  jentic execute POST:https://api.example.com/v1/pics --form demo=true --form-file images=@face.jpg --json\n" +
 			"  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n" +
 			"  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
@@ -136,20 +140,13 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID for inspect")
 	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker")
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "when the call is held for human approval, wait for the decision and print the result")
-	cmd.Flags().DurationVar(&opts.timeout, "timeout", heldWaitDefault, "how long --wait waits for a held call's decision before exiting 3 (TIMEOUT_PENDING)")
+	addHeldTimeoutFlag(cmd, &opts.timeout, "how long --wait follows a held call before exiting 3 (TIMEOUT_PENDING): a duration (30s, 1m) or seconds (30); max 5m, 0 checks once")
 	planFlags(cmd)
 
 	return cmd
 }
 
 func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
-	if opts.wait && opts.timeout <= 0 {
-		return &ux.CodedError{
-			Code:       ux.CodeMissingArgument,
-			Msg:        fmt.Sprintf("--timeout must be positive, got %s", opts.timeout),
-			Actionable: "Pass a positive --timeout (e.g. --timeout 10m) with --wait.",
-		}
-	}
 	_, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err

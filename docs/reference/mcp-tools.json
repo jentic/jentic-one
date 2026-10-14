@@ -90,7 +90,7 @@
     {
       "name": "execute",
       "title": "Execute an API operation",
-      "description": "Execute an operation through the Jentic broker: the broker authenticates this agent and injects the stored upstream credential server-side — credentials never pass through this session. This is the final step of the flow (whoami → search_apis → inspect_operation → execute): always inspect the contract first, and never execute just to probe whether you have access (call whoami). Example: {\"operation_id\": \"POST:https://api.example.com/v1/pets\", \"inputs\": {\"petId\": \"42\", \"limit\": 10}, \"body\": {\"name\": \"Bob\"}}. Returns {status, headers, body, execution_id}: any HTTP status, including upstream 4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an error result with recovery directions instead. A 202 response with status \"held\" means the call is HELD for human approval: above all, show the user its review_url (a reviewer signs in there to approve or deny it) and end your turn so they see it; once the user replies, call get_execution_result once with the held_execution_id it carries and wait: 30000 — never re-send the execute. Large bodies are truncated ({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see the rest. Prefer execute_read for pure reads — it is approved more readily.",
+      "description": "Execute an operation through the Jentic broker: the broker authenticates this agent and injects the stored upstream credential server-side — credentials never pass through this session. This is the final step of the flow (whoami → search_apis → inspect_operation → execute): always inspect the contract first, and never execute just to probe whether you have access (call whoami). Example: {\"operation_id\": \"POST:https://api.example.com/v1/pets\", \"inputs\": {\"petId\": \"42\", \"limit\": 10}, \"body\": {\"name\": \"Bob\"}}. Returns {status, headers, body, execution_id}: any HTTP status, including upstream 4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an error result with recovery directions instead. A 202 response with status \"held\" means the call is HELD for human approval: above all, show the user its review_url (a reviewer signs in there to approve or deny it) and end your turn so they see it; once the user replies, call get_execution_result once with the held_execution_id it carries (it waits up to 30 seconds by default) — never re-send the execute. Large bodies are truncated ({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see the rest. Prefer execute_read for pure reads — it is approved more readily.",
       "input_schema": {
         "properties": {
           "body": {
@@ -157,7 +157,7 @@
     {
       "name": "get_execution_result",
       "title": "Poll a held or asynchronous execution",
-      "description": "Poll a held or asynchronous execution. Pass held_execution_id for a 202 HELD response (human approval required): returns {held_execution_id, state, status, ...} — state is the decision (pending, approved, denied, expired, withdrawn), status where the call stands (held, queued, running, completed, failed, cancelled) — and, once the call has finished, the result: the upstream response, or the problem explaining why it never ran (denied or expired). Above all, show the user the review_url from the held response and end your turn so they see it. Only after the user replies, call this once with the held_execution_id and wait: 30000 (it returns early once the call has finished). If it is still held, tell the user it is waiting for approval and end your turn again. Pass job_id instead for an asynchronous 202 that is not held: returns {job_id, kind, status, ...} and, once \"completed\", the result document. NEVER re-send the execute while a call is pending; approval happens out-of-band and re-sending duplicates the call. Example: {\"held_execution_id\": \"exap_abc123\", \"wait\": 30000}. Omit wait to read the current status at once.",
+      "description": "Poll a held or asynchronous execution, waiting up to timeout seconds (default 30, max 60; 0 answers at once) and returning as soon as the call has finished. Pass held_execution_id for a 202 HELD response (human approval required): returns {held_execution_id, state, status, review_url, expires_at, ...} — state is the decision (pending, approved, denied, expired, withdrawn), status where the call stands (held, queued, running, completed, failed, cancelled) — and, once the call has finished, the result: the upstream response, or the problem explaining why it never ran (denied or expired). While the call has not finished the payload carries an agent_directive: show the user the review_url again and end your turn. Above all, show the user the review_url from the held response and end your turn so they see it; only after the user replies, call this once with the held_execution_id. Pass job_id instead for an asynchronous 202 that is not held: returns {job_id, kind, status, ...} and, once \"completed\", the result document. NEVER re-send the execute while a call is pending; approval happens out-of-band and re-sending duplicates the call. Example: {\"held_execution_id\": \"exap_abc123\"}.",
       "input_schema": {
         "properties": {
           "held_execution_id": {
@@ -168,9 +168,10 @@
             "description": "The job to poll (\"id\" and \"job\" are accepted aliases): the job_id of an asynchronous (202) execute response that is not held. Pass exactly one of held_execution_id and job_id.",
             "type": "string"
           },
-          "wait": {
-            "description": "Optional. Wait up to this many milliseconds (max 30000) for the call to finish, re-polling and returning as soon as it has. Omit (or 0) to return the current status at once.",
-            "maximum": 30000,
+          "timeout": {
+            "default": 30,
+            "description": "Optional. Wait up to this many seconds (default 30, max 60; larger values are capped at 60) for the call to finish, re-polling and returning as soon as it has. 0 returns the current status at once.",
+            "maximum": 60,
             "minimum": 0,
             "type": "integer"
           }

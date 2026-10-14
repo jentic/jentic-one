@@ -23,8 +23,9 @@ exit: 3
 }
 --- stderr ---
 Held — this call needs human approval before it runs:
+  held execution: exap_held1
   Show the user this link; they approve or deny the call there.
   open: https://console.example/app/agents/approvals/exap_held1
   expires: 2026-10-10T12:00:00Z
-  then: jentic holds wait exap_held1 (do not re-send the call)
-{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/exap_held1) — they approve or deny the call there. Then run `jentic holds wait exap_held1` for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"exap_held1","review_url":"https://console.example/app/agents/approvals/exap_held1"},"error":"the call is held for human approval (held execution exap_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}
+  then: jentic executions poll exap_held1 (do not re-send the call)
+{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/exap_held1) — they approve or deny the call there — and end your turn. When they reply, run `jentic executions poll exap_held1` once for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"exap_held1","next_command":"jentic executions poll exap_held1","review_url":"https://console.example/app/agents/approvals/exap_held1"},"error":"the call is held for human approval (held execution exap_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}
