@@ -26,6 +26,9 @@ export class McpService {
     public static reportMcpConfigRegistration({
         requestBody,
     }: {
+        /**
+         * Report that an MCP config entry was written for one agent runtime.
+         */
         requestBody: McpConfigRegistrationRequest,
     }): CancelablePromise<McpConfigRegistrationResponse> {
         return __request(OpenAPI, {

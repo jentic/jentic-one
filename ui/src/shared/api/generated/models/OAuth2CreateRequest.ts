@@ -12,16 +12,49 @@ import type { RuntimeConfig } from './RuntimeConfig';
  */
 export type OAuth2CreateRequest = {
     api: APIReferenceRequest;
+    /**
+     * Authorization endpoint URL; for the device_code grant, the device authorization endpoint.
+     */
     authorize_url?: (string | null);
+    /**
+     * OAuth client ID; required for non-managed providers.
+     */
     client_id?: (string | null);
+    /**
+     * OAuth client secret; required for non-managed providers except the device_code grant. Stored encrypted; never returned after create.
+     */
     client_secret?: (string | null);
+    /**
+     * OAuth2 grant type (e.g. client_credentials, authorization_code, device_code).
+     */
     grant_type?: string;
+    /**
+     * Human-readable label for the credential.
+     */
     name: string;
+    /**
+     * Credential provider; 'static' for stored secrets.
+     */
     provider?: string;
+    /**
+     * Per-upstream-call overrides; reserved and not currently applied.
+     */
     runtime_config?: (RuntimeConfig | null);
+    /**
+     * OAuth scopes to request.
+     */
     scopes?: (Array<string> | null);
+    /**
+     * OpenAPI server-variable values for URL template substitution (at most 20).
+     */
     server_variables?: (Record<string, string> | null);
+    /**
+     * Token endpoint URL; required for non-managed providers.
+     */
     token_url?: (string | null);
+    /**
+     * Credential type; always `oauth2`.
+     */
     type: string;
 };
 

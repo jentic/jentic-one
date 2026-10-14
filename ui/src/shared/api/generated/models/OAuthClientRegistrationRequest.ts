@@ -10,6 +10,9 @@ export type OAuthClientRegistrationRequest = {
      * Accepted and echoed ('native' for desktop/CLI apps, per the 2026-07-28 MCP spec revision); localhost http redirect URIs are allowed regardless.
      */
     application_type?: (string | null);
+    /**
+     * Human-readable client name; self-asserted and not verified by the server.
+     */
     client_name: string;
     /**
      * Subset of ['authorization_code', 'refresh_token'].
@@ -23,8 +26,17 @@ export type OAuthClientRegistrationRequest = {
      * Only ['code'] is supported.
      */
     response_types?: (Array<string> | null);
+    /**
+     * Space-separated scopes requested as the client's ceiling (at most 100 tokens); capped to the scopes the server grants OAuth clients, and the full set when omitted.
+     */
     scope?: (string | null);
+    /**
+     * Stable identifier of the client software; with the redirect URIs it is used to match a repeat registration to the existing client.
+     */
     software_id?: (string | null);
+    /**
+     * Version of the client software.
+     */
     software_version?: (string | null);
     /**
      * Must be 'none' if supplied — this endpoint only registers public (secret-less, PKCE-only) clients.

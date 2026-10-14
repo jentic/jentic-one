@@ -63,7 +63,9 @@ async def list_permissions(
     ),
 )
 async def set_user_permissions(
-    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     body: SetPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     perm_svc: PermissionService = Depends(get_permission_service),

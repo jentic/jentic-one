@@ -64,7 +64,13 @@ async def register_endpoint(
 
 @router.get("/register/{agent_id}")
 async def poll_status_endpoint(
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     request: Request,
     reg_svc: RegistrationService = Depends(get_registration_service),
 ) -> RegistrationStatusResponse:
@@ -79,7 +85,13 @@ async def poll_status_endpoint(
 
 @router.put("/register/{agent_id}")
 async def update_registration_endpoint(
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     _identity: Identity = get_current_identity(allow_expired_password=True),
 ) -> JSONResponse:
     """Client update not supported — returns 403."""
@@ -88,7 +100,13 @@ async def update_registration_endpoint(
 
 @router.delete("/register/{agent_id}")
 async def delete_registration_endpoint(
-    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     _identity: Identity = get_current_identity(allow_expired_password=True),
 ) -> JSONResponse:
     """Client deletion not supported — returns 403."""

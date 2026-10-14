@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OAuthSessionContinueRequest(BaseModel):
@@ -20,7 +20,9 @@ class OAuthSessionContinueRequest(BaseModel):
     additionally requires an authenticated platform user).
     """
 
-    state: str
+    state: str = Field(
+        description="Signed login carry-through token (`ls`) issued for this authorize request."
+    )
 
 
 class OAuthSessionContinueResponse(BaseModel):
@@ -34,4 +36,6 @@ class OAuthSessionContinueResponse(BaseModel):
     absolute URL.
     """
 
-    redirect_url: str
+    redirect_url: str = Field(
+        description="Relative `/authorize` URL to navigate to in order to resume the flow."
+    )

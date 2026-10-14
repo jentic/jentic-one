@@ -32,8 +32,18 @@ MAX_LOOKUP_ID_LENGTH = 64
 async def list_actors(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     actor_svc: ActorService = Depends(get_actor_service),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=1000, ge=1, le=5000, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=1000,
+        ge=1,
+        le=5000,
+        description="Maximum number of actors to return (1-5000, default 1000).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> ActorListResponse:
     """List users and agents with the minimal fields needed to label them.
 

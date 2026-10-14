@@ -25,6 +25,9 @@ export class OAuthClientsService {
         includeInactive = false,
         approvalStatus,
     }: {
+        /**
+         * Whether to include inactive (disabled, pending or denied) clients; defaults to false.
+         */
         includeInactive?: boolean,
         /**
          * Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.
@@ -60,6 +63,9 @@ export class OAuthClientsService {
     public static createOauthClient({
         requestBody,
     }: {
+        /**
+         * Request body for creating an OAuth client.
+         */
         requestBody: OAuthClientCreateRequest,
     }): CancelablePromise<OAuthClientCreateResponse> {
         return __request(OpenAPI, {
@@ -90,6 +96,9 @@ export class OAuthClientsService {
     public static deactivateOauthClient({
         id,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -118,6 +127,9 @@ export class OAuthClientsService {
     public static getOauthClient({
         id,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
     }): CancelablePromise<OAuthClientResponse> {
         return __request(OpenAPI, {
@@ -147,7 +159,13 @@ export class OAuthClientsService {
         id,
         requestBody,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
+        /**
+         * Request body for updating an OAuth client.
+         */
         requestBody: OAuthClientUpdateRequest,
     }): CancelablePromise<OAuthClientResponse> {
         return __request(OpenAPI, {
@@ -180,6 +198,9 @@ export class OAuthClientsService {
     public static rotateOauthClientSecret({
         id,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
     }): CancelablePromise<OAuthClientRotateSecretResponse> {
         return __request(OpenAPI, {
@@ -211,6 +232,9 @@ export class OAuthClientsService {
     public static approveOauthClient({
         id,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
     }): CancelablePromise<OAuthClientResponse> {
         return __request(OpenAPI, {
@@ -247,6 +271,9 @@ export class OAuthClientsService {
     public static deleteOauthClient({
         id,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -278,7 +305,13 @@ export class OAuthClientsService {
         id,
         requestBody,
     }: {
+        /**
+         * Internal ID of the OAuth client (not its public `client_id`).
+         */
         id: string,
+        /**
+         * Request payload for the `denyOauthClient` operation.
+         */
         requestBody?: (OAuthClientDenyRequest | null),
     }): CancelablePromise<OAuthClientResponse> {
         return __request(OpenAPI, {
@@ -323,6 +356,9 @@ export class OAuthClientsService {
     public static registerOauthClientEndpoint({
         requestBody,
     }: {
+        /**
+         * POST /oauth-clients request body (RFC 7591 client metadata subset).
+         */
         requestBody: OAuthClientRegistrationRequest,
     }): CancelablePromise<OAuthClientRegistrationResponse> {
         return __request(OpenAPI, {

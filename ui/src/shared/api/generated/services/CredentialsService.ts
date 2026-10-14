@@ -40,8 +40,17 @@ export class CredentialsService {
         limit = 50,
         vendor,
     }: {
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of credentials to return (1-200, default 50).
+         */
         limit?: number,
+        /**
+         * Filter to credentials for this API vendor (exact match).
+         */
         vendor?: (string | null),
     }): CancelablePromise<CredentialListResponse> {
         return __request(OpenAPI, {
@@ -71,6 +80,9 @@ export class CredentialsService {
     public static createCredential({
         requestBody,
     }: {
+        /**
+         * Request payload for the `createCredential` operation.
+         */
         requestBody: (BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest | NoAuthCreateRequest | Sigv4CreateRequest),
     }): CancelablePromise<CredentialCreateResponse> {
         return __request(OpenAPI, {
@@ -118,8 +130,17 @@ export class CredentialsService {
         state,
         error,
     }: {
+        /**
+         * Authorization code issued by the identity provider.
+         */
         code?: (string | null),
+        /**
+         * Signed state value issued when the connect flow began.
+         */
         state?: (string | null),
+        /**
+         * OAuth error code from the identity provider when authorization failed.
+         */
         error?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -167,6 +188,9 @@ export class CredentialsService {
     public static deleteCredential({
         credentialId,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -195,6 +219,9 @@ export class CredentialsService {
     public static getCredential({
         credentialId,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
     }): CancelablePromise<CredentialRedactedResponse> {
         return __request(OpenAPI, {
@@ -224,7 +251,13 @@ export class CredentialsService {
         credentialId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * Request payload for the `updateCredential` operation.
+         */
         requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | Sigv4UpdateRequest),
     }): CancelablePromise<CredentialRedactedResponse> {
         return __request(OpenAPI, {
@@ -262,8 +295,17 @@ export class CredentialsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of agents to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<CredentialAgentListResponse> {
         return __request(OpenAPI, {
@@ -297,7 +339,13 @@ export class CredentialsService {
         credentialId,
         agentId,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
@@ -329,8 +377,17 @@ export class CredentialsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
+        /**
+         * Patch permission rules — add and/or remove.
+         */
         requestBody: PermissionsPatchRequest,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
@@ -364,8 +421,17 @@ export class CredentialsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
+        /**
+         * Request payload for the `replaceAgentCredentialPermissions` operation.
+         */
         requestBody: Array<PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
@@ -403,8 +469,17 @@ export class CredentialsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
+        /**
+         * Request body for :test — dry-run a request shape against the binding's rules.
+         */
         requestBody: PermissionTestRequest,
     }): CancelablePromise<PermissionTestResponse> {
         return __request(OpenAPI, {
@@ -439,7 +514,13 @@ export class CredentialsService {
         credentialId,
         agentId,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -479,8 +560,17 @@ export class CredentialsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * ID of the agent bound to the credential.
+         */
         agentId: string,
+        /**
+         * Point a direct agent↔credential binding at a shared rule set.
+         */
         requestBody: RuleSetAttachRequest,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -518,7 +608,13 @@ export class CredentialsService {
         credentialId,
         requestBody,
     }: {
+        /**
+         * ID of the credential.
+         */
         credentialId: string,
+        /**
+         * Request body for initiating a credential connect flow.
+         */
         requestBody: ConnectRequestBody,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

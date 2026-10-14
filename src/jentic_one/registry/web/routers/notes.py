@@ -136,14 +136,48 @@ async def list_notes(
     request: Request,
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
-    api: str | None = Query(default=None, openapi_examples=ex.example(ex.API_REF)),
-    operation_id: str | None = Query(default=None, openapi_examples=ex.example(ex.OPERATION_ID)),
-    execution_id: str | None = Query(default=None, openapi_examples=ex.example(ex.EXECUTION_ID)),
-    credential_id: str | None = Query(default=None, openapi_examples=ex.example(ex.CREDENTIAL_ID)),
-    type: str | None = Query(default=None, openapi_examples=ex.example("usage_hint")),
-    created_by: str | None = Query(default=None, openapi_examples=ex.example(ex.USER_ID)),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of notes to return (1-200).",
+        openapi_examples=ex.example(25),
+    ),
+    api: str | None = Query(
+        default=None,
+        description="Only return notes attached to APIs matching `vendor[:name[:version]]`.",
+        openapi_examples=ex.example(ex.API_REF),
+    ),
+    operation_id: str | None = Query(
+        default=None,
+        description="Only return notes attached to this operation.",
+        openapi_examples=ex.example(ex.OPERATION_ID),
+    ),
+    execution_id: str | None = Query(
+        default=None,
+        description="Only return notes attached to this execution.",
+        openapi_examples=ex.example(ex.EXECUTION_ID),
+    ),
+    credential_id: str | None = Query(
+        default=None,
+        description="Only return notes attached to this credential.",
+        openapi_examples=ex.example(ex.CREDENTIAL_ID),
+    ),
+    type: str | None = Query(
+        default=None,
+        description="Only return notes of this type.",
+        openapi_examples=ex.example("usage_hint"),
+    ),
+    created_by: str | None = Query(
+        default=None,
+        description="Only return notes created by this actor ID.",
+        openapi_examples=ex.example(ex.USER_ID),
+    ),
 ) -> JSONResponse:
     """List notes with optional filters and cursor pagination."""
     svc = NoteService(ctx)
@@ -173,7 +207,9 @@ async def list_notes(
 @router.get("/{note_id}")
 async def get_note(
     request: Request,
-    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
+    note_id: Annotated[
+        str, Path(description="ID of the note.", openapi_examples=ex.example(ex.NOTE_ID))
+    ],
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
@@ -193,12 +229,20 @@ async def get_note(
 @router.patch("/{note_id}")
 async def update_note(
     request: Request,
-    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
+    note_id: Annotated[
+        str, Path(description="ID of the note.", openapi_examples=ex.example(ex.NOTE_ID))
+    ],
     body: NoteUpdateRequest,
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
     if_match: str | None = Header(
-        default=None, alias="if-match", openapi_examples=ex.example(ex.NOTE_ETAG)
+        default=None,
+        alias="if-match",
+        description=(
+            "Expected note revision (the `ETag` value); the request fails with 412 if the "
+            "note has changed."
+        ),
+        openapi_examples=ex.example(ex.NOTE_ETAG),
     ),
 ) -> Response:
     """Update a note (partial). Supports optimistic concurrency via If-Match."""
@@ -240,11 +284,19 @@ async def update_note(
 @router.delete("/{note_id}", status_code=204)
 async def delete_note(
     request: Request,
-    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
+    note_id: Annotated[
+        str, Path(description="ID of the note.", openapi_examples=ex.example(ex.NOTE_ID))
+    ],
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
     if_match: str | None = Header(
-        default=None, alias="if-match", openapi_examples=ex.example(ex.NOTE_ETAG)
+        default=None,
+        alias="if-match",
+        description=(
+            "Expected note revision (the `ETag` value); the request fails with 412 if the "
+            "note has changed."
+        ),
+        openapi_examples=ex.example(ex.NOTE_ETAG),
     ),
 ) -> Response:
     """Delete a note. Supports optimistic concurrency via If-Match."""

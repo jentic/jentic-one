@@ -97,13 +97,34 @@ class PermissionRuleSchema(BasePermissionRuleSchema):
 class PermissionRuleReadSchema(BaseModel):
     """Permission rule response (includes system fields)."""
 
-    effect: Literal["allow", "deny"]
-    methods: list[str] | None = None
-    path: str | None = None
-    match_mode: MatchMode = "regex"
-    operations: list[str] | None = None
-    is_system: bool = Field(alias="_system", default=False)
-    comment: str | None = Field(alias="_comment", default=None)
+    effect: Literal["allow", "deny"] = Field(
+        description="Whether this rule allows or denies the matched request."
+    )
+    methods: list[str] | None = Field(
+        default=None, description="HTTP methods the rule matches; null matches all."
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
+            "null matches all paths."
+        ),
+    )
+    match_mode: MatchMode = Field(
+        default="regex",
+        description="How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+    )
+    operations: list[str] | None = Field(
+        default=None, description="OpenAPI operation IDs the rule matches; null matches all."
+    )
+    is_system: bool = Field(
+        alias="_system",
+        default=False,
+        description="True when the rule is platform-managed rather than user-authored.",
+    )
+    comment: str | None = Field(
+        alias="_comment", default=None, description="Optional note attached to the rule."
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -111,14 +132,24 @@ class PermissionRuleReadSchema(BaseModel):
 class PermissionsPatchRequest(BaseModel):
     """Patch permission rules — add and/or remove."""
 
-    add: list[PermissionRuleSchema] | None = None
-    remove: list[int] | None = None
+    add: list[PermissionRuleSchema] | None = Field(
+        default=None, description="Rules to append after the existing user rules."
+    )
+    remove: list[int] | None = Field(
+        default=None,
+        description=(
+            "Zero-based indexes of user rules (excluding system rules) to delete; "
+            "applied before `add`."
+        ),
+    )
 
 
 class PermissionRuleListResponse(BaseModel):
     """List of permission rules."""
 
-    data: list[PermissionRuleReadSchema]
+    data: list[PermissionRuleReadSchema] = Field(
+        description="The binding's permission rules, in evaluation order."
+    )
 
 
 class PermissionTestRequest(BaseModel):

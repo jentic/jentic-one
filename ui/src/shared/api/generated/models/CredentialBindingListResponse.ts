@@ -7,6 +7,9 @@ import type { CredentialBindingResponse } from './CredentialBindingResponse';
  * List of direct credential bindings.
  */
 export type CredentialBindingListResponse = {
+    /**
+     * The agent's direct credential bindings.
+     */
     data: Array<CredentialBindingResponse>;
 };
 

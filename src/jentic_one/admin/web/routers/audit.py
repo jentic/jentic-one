@@ -48,14 +48,52 @@ def _audit_response(view: AuditView) -> AuditResponse:
 async def list_audit_entries(
     identity: Identity = get_current_identity(required_permissions=["audit:read"]),
     audit_svc: AuditService = Depends(get_audit_service),
-    target_type: AuditTargetType | None = Query(default=None, openapi_examples=ex.example("agent")),
-    target_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
-    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
-    origin: str | None = Query(default=None, openapi_examples=ex.example("dashboard")),
-    since: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_FROM)),
-    until: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    target_type: AuditTargetType | None = Query(
+        default=None,
+        description=(
+            "Only return entries for this target type; must be sent together with `target_id`."
+        ),
+        openapi_examples=ex.example("agent"),
+    ),
+    target_id: str | None = Query(
+        default=None,
+        description=(
+            "Only return entries for this target ID; must be sent together with `target_type`."
+        ),
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    actor_id: str | None = Query(
+        default=None,
+        description="Only return entries made by this actor.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    origin: str | None = Query(
+        default=None,
+        description="Only return entries initiated from this surface, e.g. `dashboard` or `cli`.",
+        openapi_examples=ex.example("dashboard"),
+    ),
+    since: datetime | None = Query(
+        default=None,
+        description="Only return entries that occurred at or after this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_FROM),
+    ),
+    until: datetime | None = Query(
+        default=None,
+        description="Only return entries that occurred at or before this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_TO),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of entries to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> AuditListResponse:
     """List audit entries with optional filters.
 
@@ -84,7 +122,9 @@ async def list_audit_entries(
 
 @router.get("/audit/{audit_id}")
 async def get_audit_entry(
-    audit_id: Annotated[str, Path(openapi_examples=ex.example(ex.AUDIT_ID))],
+    audit_id: Annotated[
+        str, Path(description="ID of the audit entry.", openapi_examples=ex.example(ex.AUDIT_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["audit:read"]),
     audit_svc: AuditService = Depends(get_audit_service),
 ) -> AuditResponse:

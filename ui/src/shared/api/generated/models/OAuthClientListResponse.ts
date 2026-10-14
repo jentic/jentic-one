@@ -7,6 +7,9 @@ import type { OAuthClientResponse } from './OAuthClientResponse';
  * A list of OAuth clients.
  */
 export type OAuthClientListResponse = {
+    /**
+     * The OAuth clients.
+     */
     data: Array<OAuthClientResponse>;
 };
 

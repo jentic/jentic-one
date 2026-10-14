@@ -22,7 +22,13 @@ export class PermissionRuleSetsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of rule sets to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<RuleSetListResponse> {
         return __request(OpenAPI, {
@@ -61,6 +67,9 @@ export class PermissionRuleSetsService {
     public static createPermissionRuleSet({
         requestBody,
     }: {
+        /**
+         * Create a shared permission rule set (theme 5 phase 1, Q-04).
+         */
         requestBody: RuleSetCreateRequest,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -93,6 +102,9 @@ export class PermissionRuleSetsService {
     public static deletePermissionRuleSet({
         ruleSetId,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -122,6 +134,9 @@ export class PermissionRuleSetsService {
     public static getPermissionRuleSet({
         ruleSetId,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -158,7 +173,13 @@ export class PermissionRuleSetsService {
         ruleSetId,
         requestBody,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
+        /**
+         * Rename or re-describe a rule set.
+         */
         requestBody: RuleSetUpdateRequest,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -197,7 +218,13 @@ export class PermissionRuleSetsService {
         ruleSetId,
         requestBody,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
+        /**
+         * Request payload for the `replacePermissionRuleSetRules` operation.
+         */
         requestBody: Array<PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {

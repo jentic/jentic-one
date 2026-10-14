@@ -23,11 +23,21 @@ class TokenRequest(BaseModel):
 class TokenResponse(BaseModel):
     """Token endpoint success response."""
 
-    access_token: str = Field(json_schema_extra=SENSITIVE)
-    refresh_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
-    id_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
-    token_type: str = "bearer"
-    expires_in: int
+    access_token: str = Field(
+        json_schema_extra=SENSITIVE, description="The access token to send as a bearer token."
+    )
+    refresh_token: str | None = Field(
+        default=None,
+        json_schema_extra=SENSITIVE,
+        description="Refresh token for obtaining new tokens; omitted when none was issued.",
+    )
+    id_token: str | None = Field(
+        default=None,
+        json_schema_extra=SENSITIVE,
+        description="OpenID Connect ID token; omitted when none was issued.",
+    )
+    token_type: str = Field(default="bearer", description="Token type; always `bearer`.")
+    expires_in: int = Field(description="Lifetime of the access token, in seconds.")
     scope: str | None = Field(
         default=None,
         description="Space-delimited effective scopes of the minted access token "
@@ -54,9 +64,20 @@ class RevokeRequest(BaseModel):
     JSON arm, where the platform identity scopes the revocation instead.
     """
 
-    token: str = Field(json_schema_extra=SENSITIVE)
-    token_type_hint: str | None = None
-    client_id: str | None = None
+    token: str = Field(json_schema_extra=SENSITIVE, description="The token to revoke.")
+    token_type_hint: str | None = Field(
+        default=None,
+        description=(
+            "Optional hint, `access_token` or `refresh_token`; both types are checked regardless."
+        ),
+    )
+    client_id: str | None = Field(
+        default=None,
+        description=(
+            "Public client's client_id, used on form-encoded requests; ignored on"
+            " bearer-authenticated JSON requests."
+        ),
+    )
 
 
 class IntrospectRequest(BaseModel):
@@ -69,8 +90,19 @@ class IntrospectRequest(BaseModel):
 class IntrospectResponse(BaseModel):
     """RFC 7662 introspection response."""
 
-    active: bool
-    sub: str | None = None
-    scope: str | None = None
-    exp: int | None = None
-    token_type: str | None = None
+    active: bool = Field(description="Whether the token is currently valid.")
+    sub: str | None = Field(
+        default=None, description="ID of the actor the token was issued to; omitted if unknown."
+    )
+    scope: str | None = Field(
+        default=None,
+        description="Space-separated effective scopes of the token; omitted if unknown.",
+    )
+    exp: int | None = Field(
+        default=None,
+        description="Token expiry, in seconds since the Unix epoch; omitted if unknown.",
+    )
+    token_type: str | None = Field(
+        default=None,
+        description="Kind of token: `access_token` or `refresh_token`; omitted if unknown.",
+    )

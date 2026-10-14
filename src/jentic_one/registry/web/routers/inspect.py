@@ -42,7 +42,11 @@ async def inspect_operation(
     revision_id: str | None = Query(
         None, description="Pin to specific revision", openapi_examples=ex.example(ex.REVISION_ID)
     ),
-    detail: Literal["summary", "full"] = Query("summary", openapi_examples=ex.example("summary")),
+    detail: Literal["summary", "full"] = Query(
+        "summary",
+        description="Level of detail to return; only `summary` is currently supported.",
+        openapi_examples=ex.example("summary"),
+    ),
 ) -> Response:
     """Inspect an operation — resolve to full structural detail.
 

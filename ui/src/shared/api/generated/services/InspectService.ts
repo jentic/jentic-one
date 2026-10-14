@@ -35,6 +35,9 @@ export class InspectService {
          * Pin to specific revision
          */
         revisionId?: (string | null),
+        /**
+         * Level of detail to return; only `summary` is currently supported.
+         */
         detail?: 'summary' | 'full',
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

@@ -291,3 +291,31 @@ def test_every_path_item_has_a_summary(generated_control_spec: dict[str, Any]) -
         if not item.get("summary")
     ]
     assert not missing, "Path items without a summary:\n" + "\n".join(missing)
+
+
+def test_every_parameter_has_a_description(generated_control_spec: dict[str, Any]) -> None:
+    """Every path/query/header parameter says what it is — set ``description=`` on the marker."""
+    missing = [
+        f"{method.upper()} {path} {param.get('in')}:{param.get('name')}"
+        for path, method, operation in _operations(generated_control_spec)
+        for param in operation.get("parameters") or []
+        if not param.get("description")
+    ]
+    assert not missing, "Parameters without a description:\n" + "\n".join(missing)
+
+
+def test_every_path_item_and_request_body_has_a_description(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Path items and request bodies carry the descriptions the post-processor fills in."""
+    missing = [
+        path
+        for path, item in (generated_control_spec.get("paths") or {}).items()
+        if not item.get("description")
+    ]
+    missing += [
+        f"{method.upper()} {path} requestBody"
+        for path, method, operation in _operations(generated_control_spec)
+        if "requestBody" in operation and not operation["requestBody"].get("description")
+    ]
+    assert not missing, "Missing descriptions:\n" + "\n".join(missing)

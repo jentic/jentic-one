@@ -10,9 +10,15 @@
  * details out of the registry.
  */
 export type OAuthApprovalStatusResponse = {
+    /**
+     * Approval state of the client: `pending`, `approved` or `denied`.
+     */
     status: OAuthApprovalStatusResponse.status;
 };
 export namespace OAuthApprovalStatusResponse {
+    /**
+     * Approval state of the client: `pending`, `approved` or `denied`.
+     */
     export enum status {
         PENDING = 'pending',
         APPROVED = 'approved',

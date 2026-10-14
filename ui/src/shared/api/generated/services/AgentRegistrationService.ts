@@ -18,6 +18,9 @@ export class AgentRegistrationService {
     public static registerEndpoint({
         requestBody,
     }: {
+        /**
+         * POST /register request body.
+         */
         requestBody: RegisterRequest,
     }): CancelablePromise<RegisterResponse> {
         return __request(OpenAPI, {
@@ -42,6 +45,9 @@ export class AgentRegistrationService {
     public static deleteRegistrationEndpoint({
         agentId,
     }: {
+        /**
+         * ID of the registered agent (its client_id).
+         */
         agentId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -69,6 +75,9 @@ export class AgentRegistrationService {
     public static pollStatusEndpoint({
         agentId,
     }: {
+        /**
+         * ID of the registered agent (its client_id).
+         */
         agentId: string,
     }): CancelablePromise<RegistrationStatusResponse> {
         return __request(OpenAPI, {
@@ -95,6 +104,9 @@ export class AgentRegistrationService {
     public static updateRegistrationEndpoint({
         agentId,
     }: {
+        /**
+         * ID of the registered agent (its client_id).
+         */
         agentId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

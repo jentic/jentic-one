@@ -32,16 +32,25 @@ export type Sigv4CreateRequest = {
      * Credential provider; 'static' for stored secrets.
      */
     provider?: string;
+    /**
+     * Per-upstream-call overrides; reserved and not currently applied.
+     */
     runtime_config?: (RuntimeConfig | null);
     /**
      * AWS secret access key. Stored encrypted; never returned after create.
      */
     secret_access_key: string;
+    /**
+     * OpenAPI server-variable values for URL template substitution (at most 20).
+     */
     server_variables?: (Record<string, string> | null);
     /**
      * Optional temporary-credential session token (STS). Expires; re-save when it does.
      */
     session_token?: (string | null);
+    /**
+     * Credential type; always `sigv4`.
+     */
     type: string;
 };
 

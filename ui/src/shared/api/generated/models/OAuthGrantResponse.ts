@@ -26,6 +26,9 @@ export type OAuthGrantResponse = {
      * Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
      */
     client_origin: (string | null);
+    /**
+     * When the grant was created (RFC 3339).
+     */
     created_at: string;
     /**
      * Grant ID (ksuid, `ocg_` prefix).
@@ -39,6 +42,9 @@ export type OAuthGrantResponse = {
      * The client's public client_id — the same identifier stamped on tokens minted under this grant.
      */
     oauth_client_id: string;
+    /**
+     * When the grant was revoked (RFC 3339); null while it is active.
+     */
     revoked_at: (string | null);
     /**
      * Scopes granted at consent (the D2 intersection).

@@ -13,9 +13,15 @@
  * oracle either.
  */
 export type ConsentAgentStatusResponse = {
+    /**
+     * Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
+     */
     status: ConsentAgentStatusResponse.status;
 };
 export namespace ConsentAgentStatusResponse {
+    /**
+     * Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
+     */
     export enum status {
         PENDING = 'pending',
         APPROVED = 'approved',

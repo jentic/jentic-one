@@ -6,6 +6,9 @@
  * HATEOAS links for an execution record.
  */
 export type ExecutionRecordLinks = {
+    /**
+     * URL of this execution record.
+     */
     self: string;
 };
 

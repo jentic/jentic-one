@@ -77,23 +77,62 @@ async def list_events(
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
     event_svc: EventService = Depends(get_event_service),
     event_type: list[str] | None = Query(
-        default=None, alias="event_type", openapi_examples=ex.example(["import.completed"])
+        default=None,
+        alias="event_type",
+        description="Only return events of one of these types; repeat the parameter for several.",
+        openapi_examples=ex.example(["import.completed"]),
     ),
     severity: list[EventSeverity] | None = Query(
-        default=None, openapi_examples=ex.example(["warning", "error"])
+        default=None,
+        description=(
+            "Only return events with one of these severities; repeat the parameter for several."
+        ),
+        openapi_examples=ex.example(["warning", "error"]),
     ),
-    requires_action: bool | None = Query(default=None, openapi_examples=ex.example(True)),
+    requires_action: bool | None = Query(
+        default=None,
+        description="Only return events whose `requires_action` flag matches.",
+        openapi_examples=ex.example(True),
+    ),
     from_dt: datetime | None = Query(
-        default=None, alias="from", openapi_examples=ex.example(ex.DATETIME_FROM)
+        default=None,
+        alias="from",
+        description="Only return events created at or after this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_FROM),
     ),
     to_dt: datetime | None = Query(
-        default=None, alias="to", openapi_examples=ex.example(ex.DATETIME_TO)
+        default=None,
+        alias="to",
+        description="Only return events created before this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_TO),
     ),
-    trace_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TRACE_ID)),
-    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
-    actor_type: str | None = Query(default=None, openapi_examples=ex.example("agent")),
-    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
-    limit: int = Query(default=25, ge=1, le=100, openapi_examples=ex.example(25)),
+    trace_id: str | None = Query(
+        default=None,
+        description="Only return events with this trace ID.",
+        openapi_examples=ex.example(ex.TRACE_ID),
+    ),
+    actor_id: str | None = Query(
+        default=None,
+        description="Only return events caused by this actor.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    actor_type: str | None = Query(
+        default=None,
+        description="Only return events caused by this kind of actor, e.g. `user` or `agent`.",
+        openapi_examples=ex.example("agent"),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of events to return (1-100, default 25).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> EventListResponse:
     """List events with optional filters."""
     page = await event_svc.list_all(
@@ -123,20 +162,56 @@ async def stream_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
     stream_svc: EventStreamService = Depends(get_event_stream_service),
-    since: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_FROM)),
+    since: datetime | None = Query(
+        default=None,
+        description=(
+            "Stream events created after this time (RFC 3339); defaults to now, and a future "
+            "time is treated as now."
+        ),
+        openapi_examples=ex.example(ex.DATETIME_FROM),
+    ),
     last_event_id: str | None = Header(
-        default=None, alias="Last-Event-ID", openapi_examples=ex.example(ex.EVENT_ID)
+        default=None,
+        alias="Last-Event-ID",
+        description=(
+            "ID of the last event received (`evt_` plus 24 hex characters), to resume a stream "
+            "after it; ignored if the event is not visible to the caller."
+        ),
+        openapi_examples=ex.example(ex.EVENT_ID),
     ),
     event_type: list[str] | None = Query(
-        default=None, alias="event_type", openapi_examples=ex.example(["import.completed"])
+        default=None,
+        alias="event_type",
+        description="Only return events of one of these types; repeat the parameter for several.",
+        openapi_examples=ex.example(["import.completed"]),
     ),
     severity: list[EventSeverity] | None = Query(
-        default=None, openapi_examples=ex.example(["warning", "error"])
+        default=None,
+        description=(
+            "Only return events with one of these severities; repeat the parameter for several."
+        ),
+        openapi_examples=ex.example(["warning", "error"]),
     ),
-    requires_action: bool | None = Query(default=None, openapi_examples=ex.example(True)),
-    trace_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TRACE_ID)),
-    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
-    actor_type: str | None = Query(default=None, openapi_examples=ex.example("agent")),
+    requires_action: bool | None = Query(
+        default=None,
+        description="Only return events whose `requires_action` flag matches.",
+        openapi_examples=ex.example(True),
+    ),
+    trace_id: str | None = Query(
+        default=None,
+        description="Only return events with this trace ID.",
+        openapi_examples=ex.example(ex.TRACE_ID),
+    ),
+    actor_id: str | None = Query(
+        default=None,
+        description="Only return events caused by this actor.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    actor_type: str | None = Query(
+        default=None,
+        description="Only return events caused by this kind of actor, e.g. `user` or `agent`.",
+        openapi_examples=ex.example("agent"),
+    ),
 ) -> StreamingResponse:
     """Stream events as Server-Sent Events."""
     if last_event_id is not None and not _LAST_EVENT_ID_RE.match(last_event_id):
@@ -184,7 +259,9 @@ async def stream_events(
 
 @router.get("/events/{event_id}")
 async def get_event(
-    event_id: Annotated[str, Path(openapi_examples=ex.example(ex.EVENT_ID))],
+    event_id: Annotated[
+        str, Path(description="ID of the event.", openapi_examples=ex.example(ex.EVENT_ID))
+    ],
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
     event_svc: EventService = Depends(get_event_service),
