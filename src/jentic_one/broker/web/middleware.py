@@ -110,6 +110,7 @@ class AdmissionControlMiddleware:
                 "type": "server_at_capacity",
                 "title": "Server at capacity; retry shortly.",
                 "status": 503,
+                "detail": "Server at capacity; retry shortly.",
                 "error_origin": ErrorOrigin.BROKER.value,
             }
         ).encode()

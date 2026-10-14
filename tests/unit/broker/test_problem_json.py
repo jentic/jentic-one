@@ -345,6 +345,7 @@ def test_problem_response_defaults() -> None:
     body = _body(resp)
     assert body["type"] == "about:blank"
     assert body["title"] == "not found"
+    assert body["detail"] == "not found"
     assert body["status"] == 404
     assert body["error_origin"] == "broker"
     assert "agent_directive" not in body

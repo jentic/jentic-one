@@ -226,8 +226,9 @@ def _status_text(status: int) -> str:
 def _problem_reason(problem: dict[str, Any], status: int) -> str:
     """Human-readable reason from a broker problem body (Go: ``problemReason``).
 
-    ``detail`` first (a conformant RFC 9457 body), else ``title`` (where the
-    broker's own ``problem_body`` puts the message), else the status phrase —
+    ``detail`` first (a conformant RFC 9457 body — the broker's own
+    ``problem_body`` sets it), else ``title`` (older bodies put the message
+    only there), else the status phrase —
     with the flattened ``errors`` array appended so a validation 422 names WHICH
     field was wrong instead of only "Request validation failed".
     """

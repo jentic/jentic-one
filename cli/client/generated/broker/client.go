@@ -33,6 +33,24 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for ReadinessResponseReason.
+const (
+	Draining  ReadinessResponseReason = "draining"
+	Saturated ReadinessResponseReason = "saturated"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseReason enum.
+func (e ReadinessResponseReason) Valid() bool {
+	switch e {
+	case Draining:
+		return true
+	case Saturated:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessResponseStatus.
 const (
 	Ready   ReadinessResponseStatus = "ready"
@@ -123,18 +141,35 @@ type ReadinessResponse struct {
 	// Reason Why the instance is unready (present only on `unready`).
 	//
 	// Examples: saturated
-	Reason *string `json:"reason,omitempty"`
+	Reason *ReadinessResponseReason `json:"reason,omitempty"`
 
-	// Saturation In-flight requests as a fraction of the admission cap.
+	// Saturation In-flight requests as a fraction of the admission cap (`0`–`1`,
+	// briefly above `1` at the cap edge). Omitted when the instance is
+	// `draining`.
+	//
 	//
 	// Examples: 0.12
 	Saturation *float32 `json:"saturation,omitempty"`
 
-	// Status Examples: ready
+	// Status `ready` while in-flight load is below the saturation threshold
+	// (HTTP `200`); `unready` once it nears the admission cap (HTTP
+	// `503`) and the load balancer should drain this instance.
+	//
+	//
+	// Examples: ready
 	Status ReadinessResponseStatus `json:"status"`
 }
 
-// ReadinessResponseStatus Examples: ready
+// ReadinessResponseReason Why the instance is unready (present only on `unready`).
+//
+// Examples: saturated
+type ReadinessResponseReason string
+
+// ReadinessResponseStatus `ready` while in-flight load is below the saturation threshold
+// (HTTP `200`); `unready` once it nears the admission cap (HTTP
+// `503`) and the load balancer should drain this instance.
+//
+// Examples: ready
 type ReadinessResponseStatus string
 
 // IdempotencyKey Examples: 5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b
