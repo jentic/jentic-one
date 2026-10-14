@@ -89,17 +89,15 @@ docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
 curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
 
-Prefer a single container? The
-[quickstart Dockerfile](deploy/docker/quickstart/Dockerfile) bakes the same
-settings into the published image. Its entrypoint runs the migrations, then
-starts the control plane and the broker together:
+Prefer one file? The
+[quickstart compose file](deploy/docker/quickstart/docker-compose.yaml) has
+the same settings built in and runs the migrations, the control plane and the
+broker as one stack:
 
 ```bash
-docker build -t jentic-one-quickstart \
-  https://github.com/jentic/jentic-one.git#main:deploy/docker/quickstart
-docker run -d --name jentic -v jentic-data:/data \
-  -p 127.0.0.1:8000:8000 -p 127.0.0.1:8100:8100 jentic-one-quickstart
-docker exec -it jentic python -m jentic_one create-admin --email you@example.com
+curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+docker compose up -d
+docker compose exec app python -m jentic_one create-admin --email you@example.com
 ```
 
 `quickstart.env` turns on anonymous product telemetry
