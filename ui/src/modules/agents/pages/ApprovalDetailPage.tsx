@@ -170,7 +170,7 @@ export default function ApprovalDetailPage() {
 				<EmptyState icon={<CheckSquare className="h-8 w-8" />} title="Approval not found" />
 			) : (
 				<div className="space-y-6">
-					<ReviewSection title="Held call">
+					<ReviewSection title="Operation">
 						<ReviewPanel>
 							<div className="flex items-start gap-2">
 								<MethodBadge method={approval.method} />
@@ -238,7 +238,7 @@ export default function ApprovalDetailPage() {
 					</ReviewSection>
 
 					<ReviewSection
-						title="What it will send"
+						title="Request"
 						action={
 							approval.request?.body ? (
 								<Button

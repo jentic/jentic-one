@@ -55,7 +55,7 @@ describe('Approvals pages', () => {
 	it('shows the call by name, never by id, with the held request body', async () => {
 		const { container } = renderDetail('held_pending1');
 		expect(await screen.findByText('/v1/charges')).toBeInTheDocument();
-		const call = screen.getByRole('region', { name: 'Held call' });
+		const call = screen.getByRole('region', { name: 'Operation' });
 		expect(within(call).getByText('scout')).toBeInTheDocument();
 		expect(within(call).getByText('Expires')).toBeInTheDocument();
 		// Ids stay out of the page; only "Copy reference" carries one.
