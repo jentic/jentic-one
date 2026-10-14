@@ -109,7 +109,7 @@ describe('ScopePicker', () => {
 		expect(screen.queryByLabelText('Search scopes')).not.toBeInTheDocument();
 		// The group header announces the same noun as the picker around it.
 		expect(
-			screen.getByRole('button', { name: /Agents permissions, 0 of 2 selected/ }),
+			screen.getByRole('button', { name: /Agents 0\/2 permissions selected/ }),
 		).toBeInTheDocument();
 
 		await user.type(screen.getByLabelText('Search permissions'), 'nope');

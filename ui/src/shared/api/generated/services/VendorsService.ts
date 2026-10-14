@@ -34,12 +34,18 @@ export class VendorsService {
         });
     }
     /**
-     * Get a vendor's SSO capabilities
-     * Full auth capabilities for one vendor — flows, scopes, classifications.
+     * Get a vendor's OAuth flows and scopes
+     * Describe how to connect a vendor: its OAuth flows and scope catalogue.
      *
-     * Never returns client_secret (authorization-code flow's secret is stripped
-     * at response build time). ``UnknownVendorError`` maps to a 404 problem
-     * detail via the handler registered in ``control/web/app.py``.
+     * `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+     * name, the OAuth `flows` it supports (`authorization_code` and/or
+     * `device_authorization`), and every scope with its `classification`
+     * (`read`, `write` or `admin`), whether it is requested by default, and a
+     * description. Use it to build a connect screen before starting a connect
+     * session. When the vendor has several admin-registered OAuth apps, pass
+     * `oauth_app_registration_id` to pick one; without it the request fails
+     * with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+     * An unknown vendor returns 404 (`unknown_vendor`).
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -47,6 +53,9 @@ export class VendorsService {
         vendorKey,
         oauthAppRegistrationId,
     }: {
+        /**
+         * Vendor registry key.
+         */
         vendorKey: string,
         /**
          * Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.

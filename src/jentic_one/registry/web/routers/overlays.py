@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest
 
@@ -26,6 +27,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import OverlayStatus
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 
 router = APIRouter(prefix="/apis/{vendor}/{name}/{version}/overlays")
@@ -121,17 +123,34 @@ def _build_overlay_list_item(
     )
 
 
-@router.post("", status_code=201, response_model=OverlayResponse)
+@router.post(
+    "", status_code=201, response_model=OverlayResponse, summary="Submit an OpenAPI overlay"
+)
 async def submit_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
     body: OverlaySubmitRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Submit a new overlay for an API."""
+    """Propose a change to an API's spec as an OpenAPI Overlay document.
+
+    An overlay is a list of `actions` that patch the API's OpenAPI document —
+    for example correcting a description or adding a missing parameter.
+    Submitting stores it as `pending`; it changes nothing until an operator
+    confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+    record a `contributed_by` label. The document must be a JSON object with
+    an `actions` array (at most 512 actions, 1 MB), else 422
+    (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
+    """
     target_revision_id: uuid.UUID | None = None
     if body.target_revision_id is not None:
         try:
@@ -157,19 +176,46 @@ async def submit_overlay(
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("", response_model=OverlayListResponse)
+@router.get("", response_model=OverlayListResponse, summary="List an API's overlays")
 async def list_overlays(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    status: str | None = None,
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of overlays to return (1-200).",
+        openapi_examples=ex.example(25),
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Only return overlays in this status: `pending`, `confirmed` or `deprecated`.",
+        openapi_examples=ex.example("confirmed"),
+    ),
 ) -> JSONResponse:
-    """List overlays for an API with optional status filter and cursor pagination."""
+    """List the overlays submitted against an API, newest first.
+
+    Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+    (applied to the served spec) or `deprecated` (retired) — and links to the
+    actions valid in that state. Filter with `status`. Results are
+    cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+    true.
+    """
     svc = OverlayService(ctx)
     try:
         page = await svc.list_page(vendor, name, version, limit=limit, cursor=cursor, status=status)
@@ -188,10 +234,18 @@ async def list_overlays(
 @router.get("/{overlay_id}", response_model=OverlayResponse)
 async def get_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
+    overlay_id: Annotated[
+        str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -203,28 +257,39 @@ async def get_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/{overlay_id}", response_model=OverlayResponse)
+@router.patch("/{overlay_id}", response_model=OverlayResponse, summary="Edit an overlay")
 async def update_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
+    overlay_id: Annotated[
+        str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
+    ],
     body: OverlayUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Update an overlay's document or target revision.
+    """Change an overlay's `document` or `target_revision_id`.
 
-    Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-    ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-    (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-    is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-    the API's served spec (D1). That is an operator action, so it additionally requires
-    ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-    (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-    overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-    if no clean base was recorded to re-apply over.
+    What the edit does depends on the overlay's state:
+
+    - **Pending** (or confirmed but not yet applied): the stored overlay is
+      updated; the served spec is untouched. Requires `apis:write`.
+    - **Confirmed and live**: the edited document is re-applied over the
+      overlay's original base and the result replaces the API's served spec.
+      This also requires `overlays:confirm`, else 403
+      (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+      overlay is no longer the live revision, or
+      (`overlay_rollback_target_missing`) if no clean base was recorded.
+
+    Returns the updated overlay.
     """
     target_revision_id: uuid.UUID | None = None
     if body.target_revision_id is not None:
@@ -251,43 +316,70 @@ async def update_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.delete("/{overlay_id}", status_code=204)
+@router.delete("/{overlay_id}", status_code=204, summary="Deprecate an overlay")
 async def deprecate_overlay(
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
+    overlay_id: Annotated[
+        str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
-    """Deprecate an overlay (soft delete)."""
+    """Retire an overlay so it is no longer offered for confirmation.
+
+    The overlay moves to `deprecated` but is kept, and remains readable for
+    history; nothing is deleted. Deprecating does not rewrite the served
+    spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+    `apis:write`. Returns 204.
+    """
     svc = OverlayService(ctx)
     await svc.deprecate(vendor, name, version, overlay_id, identity=identity)
     return Response(status_code=204)
 
 
-@router.post("/{overlay_id}:confirm", response_model=OverlayResponse)
+@router.post(
+    "/{overlay_id}:confirm",
+    response_model=OverlayResponse,
+    summary="Confirm an overlay and apply it to the served spec",
+)
 async def confirm_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
+    overlay_id: Annotated[
+        str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
+    ],
     body: OverlayConfirmRequest,
     identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Confirm an overlay, materializing it onto the served spec.
+    """Apply a pending overlay, producing a new current revision of the API.
 
-    Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-    re-ingests the base spec with the overlay applied and promotes the result to the
-    current revision), so it is an operator action, not a contributor one (contributors
-    ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-    purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-    owner can grant it to a trusted operator without handing over full admin power.
-    ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-    deliberately excluded from an agent's self-service grantable set so a low-privilege
-    agent cannot escalate into it.
+    The base spec is re-imported with the overlay applied and the result is
+    promoted to the API's current revision, so it is what the API now serves.
+    The overlay becomes `confirmed`. Confirming an already-applied overlay is
+    a no-op that returns it unchanged; a deprecated overlay is refused with
+    409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+    with 409 (`overlay_apply_conflict`).
+
+    Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+    overlays with `apis:write`, and an operator reviews and confirms them.
+    Agents cannot grant themselves this permission. Returns the overlay.
     """
     svc = OverlayService(ctx)
     view = await svc.confirm(
@@ -298,25 +390,40 @@ async def confirm_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.post("/{overlay_id}:rollback", status_code=204)
+@router.post(
+    "/{overlay_id}:rollback",
+    status_code=204,
+    summary="Roll back a confirmed overlay",
+)
 async def rollback_overlay(
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[
+        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
+    ],
+    name: Annotated[
+        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
+    ],
+    version: Annotated[
+        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
+    ],
+    overlay_id: Annotated[
+        str, Path(description="ID of the overlay.", openapi_examples=ex.example(ex.OVERLAY_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
-    """Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+    """Undo a confirmed overlay by restoring the revision it replaced.
 
-    Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-    rewrites the API's served spec (it archives the overlay's materialized revision and
-    promotes the prior revision back to current), so it is the same operator action as
-    confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-    carry a recorded superseded revision that is still restorable; otherwise a 409 is
-    returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-    ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-    restored revision's hosts) and nothing changes.
+    The overlay's revision is archived and the revision it superseded becomes
+    the API's current revision again, so the served spec reverts, and the
+    overlay is marked `deprecated`. Requires `overlays:confirm`, like
+    confirming.
+
+    Preconditions: the overlay is `confirmed`, its revision is still the
+    live one, and the revision it replaced is still restorable. Otherwise
+    nothing changes and 409 is returned: `overlay_conflict`,
+    `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+    another vendor's live API now serves one of the restored revision's
+    hosts. Returns 204.
     """
     svc = OverlayService(ctx)
     await svc.rollback(vendor, name, version, overlay_id, identity=identity)

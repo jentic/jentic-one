@@ -39,9 +39,9 @@ class NoteApiReference(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    vendor: str
-    name: str
-    version: str
+    vendor: str = Field(description="Vendor of the API.")
+    name: str = Field(description="Name of the API within the vendor.")
+    version: str = Field(description="Version of the API.")
 
 
 class NoteResource(BaseModel):
@@ -49,10 +49,21 @@ class NoteResource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    api: NoteApiReference | None = None
-    operation_id: str | None = None
-    execution_id: str | None = None
-    credential_id: str | None = None
+    api: NoteApiReference | None = Field(
+        default=None, description="API to attach the note to; set exactly one resource field."
+    )
+    operation_id: str | None = Field(
+        default=None,
+        description="ID of the operation to attach the note to; set exactly one resource field.",
+    )
+    execution_id: str | None = Field(
+        default=None,
+        description="ID of the execution to attach the note to; set exactly one resource field.",
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description="ID of the credential to attach the note to; set exactly one resource field.",
+    )
 
     @model_validator(mode="after")
     def _exactly_one(self) -> NoteResource:
@@ -73,11 +84,20 @@ class NoteCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     resource: NoteResource
-    type: NoteType | None = None
-    body: str = Field(max_length=4000)
-    confidence: NoteConfidence | None = None
-    source: NoteSource | None = None
-    related_execution_id: str | None = None
+    type: NoteType | None = Field(
+        default=None, description="Category of the note; null if uncategorised."
+    )
+    body: str = Field(max_length=4000, description="Text of the note, up to 4000 characters.")
+    confidence: NoteConfidence | None = Field(
+        default=None, description="Author's confidence in the note; null if not stated."
+    )
+    source: NoteSource | None = Field(
+        default=None,
+        description="Origin of the note (`agent`, `human` or `platform`); null if not stated.",
+    )
+    related_execution_id: str | None = Field(
+        default=None, description="ID of an execution the note relates to; null if none."
+    )
 
 
 class NoteUpdateRequest(BaseModel):
@@ -85,11 +105,23 @@ class NoteUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    body: str | None = Field(default=None, max_length=4000)
-    type: NoteType | None = None
-    confidence: NoteConfidence | None = None
-    source: NoteSource | None = None
-    related_execution_id: str | None = None
+    body: str | None = Field(
+        default=None,
+        max_length=4000,
+        description="New text of the note, up to 4000 characters; may be omitted but not null.",
+    )
+    type: NoteType | None = Field(
+        default=None, description="New category of the note; null clears it."
+    )
+    confidence: NoteConfidence | None = Field(
+        default=None, description="New confidence in the note; null clears it."
+    )
+    source: NoteSource | None = Field(
+        default=None, description="New origin of the note; null clears it."
+    )
+    related_execution_id: str | None = Field(
+        default=None, description="ID of an execution the note relates to; null clears it."
+    )
 
     @model_validator(mode="after")
     def _body_not_null(self) -> NoteUpdateRequest:

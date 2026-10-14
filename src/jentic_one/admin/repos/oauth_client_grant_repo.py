@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
@@ -117,6 +119,7 @@ class OAuthClientGrantRepository:
         limit: int = 50,
         cursor_created_at: datetime | None = None,
         cursor_id: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[OAuthClientGrant]:
         """List grant rows for the grant listing surfaces, newest first.
 
@@ -150,6 +153,8 @@ class OAuthClientGrantRepository:
                     ),
                 )
             )
+        for f in filters or ():
+            stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -210,6 +215,25 @@ class OAuthClientGrantRepository:
         result = await session.execute(stmt)
         await session.flush()
         return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def delete_for_agent(session: AsyncSession, agent_id: str) -> list[str]:
+        """Hard-delete every grant (any status) bound to ``agent_id``.
+
+        The agent-purge sweep. Returns the deleted grant ids so the caller can
+        sweep the rows that reference them by plain id (authorization codes,
+        grant-lineage tokens).
+        """
+        ids_result = await session.execute(
+            select(OAuthClientGrant.id).where(OAuthClientGrant.agent_id == agent_id)
+        )
+        grant_ids = [row[0] for row in ids_result.all()]
+        if grant_ids:
+            await session.execute(
+                delete(OAuthClientGrant).where(OAuthClientGrant.id.in_(grant_ids))
+            )
+            await session.flush()
+        return grant_ids
 
     @staticmethod
     async def touch_last_used(session: AsyncSession, grant_id: str) -> None:

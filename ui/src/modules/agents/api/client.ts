@@ -35,6 +35,7 @@ import {
 	type PermissionTestResponse,
 	type RuleSetResponse,
 } from '@/shared/api';
+import { hasTrace } from '@/shared/lib';
 import {
 	agentToEntity,
 	type AgentEntity,
@@ -534,7 +535,7 @@ export async function replaceAgentPermissions(
 // ---------------------------------------------------------------------------
 
 /** One time bucket of an actor's execution volume. */
-export interface UsageBucketEntity {
+interface UsageBucketEntity {
 	/** Bucket start, unix seconds. */
 	ts: number;
 	total: number;
@@ -633,6 +634,63 @@ export async function fetchCredentialUsageTotals(
 	}
 }
 
+/** Per-credential call figures for one actor on one API over a window. */
+export interface ApiCredentialUsage {
+	total: number;
+	success: number;
+	failed: number;
+	avgMs: number;
+	/** Equal-width call counts across the window, oldest → newest. */
+	trend: number[];
+}
+
+/** One actor's usage of one API: per credential, plus the API-wide latency. */
+export interface ActorApiUsage {
+	/** Credential id → its calls on this API. A credential absent from a
+	 * complete map made no calls in the window. */
+	byCredential: ReadonlyMap<string, ApiCredentialUsage>;
+	/** Percentiles across the actor's calls to this API (every credential). */
+	p50Ms: number | null;
+	p95Ms: number | null;
+}
+
+/**
+ * One actor's calls to one API (`api_id` = `vendor/name`) over the trailing
+ * `sinceDays`, grouped by credential — the "Can call" row's figures. `null` on 403.
+ */
+export async function fetchActorApiUsage(
+	actorId: string,
+	apiId: string,
+	sinceDays = 7,
+): Promise<ActorApiUsage | null> {
+	try {
+		// Same minute-ceiled bounds as `fetchActorUsageDetail`, for the same reasons.
+		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
+		const res = await MonitoringService.getUsageStats({
+			since: until - sinceDays * 86400,
+			until,
+			agentId: actorId,
+			apiId,
+			groupBy: GroupBy.CREDENTIAL,
+			topLimit: CREDENTIAL_USAGE_TOP_LIMIT,
+		});
+		const byCredential = new Map<string, ApiCredentialUsage>();
+		for (const row of res.top) {
+			byCredential.set(row.key, {
+				total: row.total,
+				success: row.success,
+				failed: row.failed,
+				avgMs: row.avg_ms,
+				trend: row.trend,
+			});
+		}
+		return { byCredential, p50Ms: res.stats.p50_ms, p95Ms: res.stats.p95_ms };
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return null;
+		throw toAgentsError(error, 'Failed to load usage statistics.');
+	}
+}
+
 /** One row of an actor's execution feed (a trimmed `ExecutionResponse`). */
 export interface ActorExecutionEntity {
 	id: string;
@@ -656,6 +714,11 @@ export interface ActorExecutionEntity {
 	httpStatus: number | null;
 	error: string | null;
 	startedAt: string;
+	/** The API the call went to; null when the record carries none. */
+	api: { vendor: string; name: string } | null;
+	/** Opens the call's trace in Monitor; null when it ran untraced (or the
+	 * record holds the `"unknown"` placeholder). */
+	traceId: string | null;
 }
 
 /**
@@ -667,9 +730,10 @@ export interface ActorExecutionEntity {
 export async function fetchActorExecutions(
 	actorId: string,
 	limit = 10,
+	from?: string,
 ): Promise<{ items: ActorExecutionEntity[]; hasMore: boolean } | null> {
 	try {
-		const res = await ExecutionsService.listExecutions({ actorId, limit });
+		const res = await ExecutionsService.listExecutions({ actorId, limit, from });
 		return {
 			items: res.data.map((r) => ({
 				id: r.execution_id,
@@ -685,6 +749,9 @@ export async function fetchActorExecutions(
 				httpStatus: r.http_status ?? null,
 				error: r.error ?? null,
 				startedAt: r.started_at,
+				api: r.api ? { vendor: r.api.vendor, name: r.api.name } : null,
+				// The backend's `"unknown"` placeholder opens no trace.
+				traceId: hasTrace(r.trace_id) ? r.trace_id : null,
 			})),
 			hasMore: res.has_more,
 		};

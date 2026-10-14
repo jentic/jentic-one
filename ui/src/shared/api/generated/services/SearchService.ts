@@ -17,6 +17,9 @@ export class SearchService {
     public static searchOperations({
         requestBody,
     }: {
+        /**
+         * POST /search request body.
+         */
         requestBody: SearchRequest,
     }): CancelablePromise<SearchResponse> {
         return __request(OpenAPI, {

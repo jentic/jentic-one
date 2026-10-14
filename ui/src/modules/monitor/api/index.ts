@@ -16,7 +16,6 @@ export {
 	useEventFeed,
 	useAudit,
 	useActorForTrace,
-	useActorForJob,
 	useActors,
 	monitorKeys,
 } from '@/modules/monitor/api/hooks';

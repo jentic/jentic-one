@@ -24,6 +24,7 @@ import { cn } from '@/shared/lib/utils';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
 import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
+import { clipName } from '@/modules/agents/lib/agentName';
 
 /** The dock surfaces a verb can open (hosted by the flat surface's sheets).
  * All agent-scoped — the org-wide inventory is a page-level surface. */
@@ -284,10 +285,13 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 		try {
 			await setServing.mutateAsync({ id: agent.id, serving: next });
 			if (next) {
-				toast({ title: `${agent.name} is serving traffic again`, variant: 'success' });
+				toast({
+					title: `${clipName(agent.name)} is serving traffic again`,
+					variant: 'success',
+				});
 			} else {
 				toast({
-					title: `${agent.name} is no longer serving traffic`,
+					title: `${clipName(agent.name)} is no longer serving traffic`,
 					description: 'It stays fully editable while disabled.',
 					variant: 'success',
 					action: {
@@ -299,7 +303,7 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 							try {
 								await setServing.mutateAsync({ id: agent.id, serving: true });
 								toast({
-									title: `${agent.name} is serving traffic again`,
+									title: `${clipName(agent.name)} is serving traffic again`,
 									variant: 'success',
 								});
 							} catch (error) {
@@ -307,7 +311,7 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 								toast({
 									title: refreshFailed
 										? error.message
-										: `Couldn't re-enable ${agent.name}`,
+										: `Couldn't re-enable ${clipName(agent.name)}`,
 									description: refreshFailed
 										? 'Reload to see its current state.'
 										: error instanceof Error
@@ -331,7 +335,7 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				});
 			} else {
 				toast({
-					title: `Couldn't update ${agent.name}`,
+					title: `Couldn't update ${clipName(agent.name)}`,
 					description: error instanceof Error ? error.message : undefined,
 					variant: 'error',
 				});
@@ -359,8 +363,8 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				aria-pressed={serving}
 				aria-label={
 					serving
-						? `Disable ${agent.name} — stop serving traffic`
-						: `Enable ${agent.name} — start serving traffic`
+						? `Serving — disable ${agent.name} to stop serving traffic`
+						: `Not serving — enable ${agent.name} to start serving traffic`
 				}
 				data-testid="dock-serving-toggle"
 				className={cn(

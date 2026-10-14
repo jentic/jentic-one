@@ -644,9 +644,8 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 type ControlConnectConfig struct {
 	// Allow connect sessions that target a registry API (rather than a
 	// vendor-registry key), where a human enters the credential, or brings an OAuth
-	// app, when approving them in the dashboard. While off, `:connect` refuses API
-	// targets with `manual_flows_disabled`. Turn it on only after every control
-	// replica runs a release that understands them.
+	// app, when approving them in the dashboard. On by default; while off, `:connect`
+	// refuses API targets with `manual_flows_disabled`.
 	ManualFlowsEnabled bool `json:"manual_flows_enabled,omitempty,omitzero" yaml:"manual_flows_enabled,omitempty" mapstructure:"manual_flows_enabled,omitempty"`
 
 	// Hours an API-target connect session (a human-entered credential, or an OAuth
@@ -682,7 +681,7 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["manual_flows_enabled"]; !ok || v == nil {
-		plain.ManualFlowsEnabled = false
+		plain.ManualFlowsEnabled = true
 	}
 	if v, ok := raw["manual_flows_ttl_hours"]; !ok || v == nil {
 		plain.ManualFlowsTtlHours = 72

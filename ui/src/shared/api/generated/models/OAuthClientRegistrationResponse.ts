@@ -11,22 +11,49 @@
  * clients retry ``/authorize``, they don't poll).
  */
 export type OAuthClientRegistrationResponse = {
+    /**
+     * The application type as sent in the request; omitted if not sent.
+     */
     application_type?: (string | null);
+    /**
+     * The client identifier to use in OAuth requests.
+     */
     client_id: string;
     /**
      * Seconds since the Unix epoch at which the client_id was issued.
      */
     client_id_issued_at: number;
+    /**
+     * The client name as sent in the request.
+     */
     client_name: string;
+    /**
+     * Grant types the client may use.
+     */
     grant_types?: Array<string>;
+    /**
+     * The registered redirect URIs.
+     */
     redirect_uris: Array<string>;
+    /**
+     * Response types the client may use; always `code`.
+     */
     response_types?: Array<string>;
     /**
      * Space-separated scope ceiling granted to the client (the request's scope capped to the MCP tool-scope set).
      */
     scope: string;
+    /**
+     * The software ID as sent in the request; omitted if not sent.
+     */
     software_id?: (string | null);
+    /**
+     * The software version as sent in the request; omitted if not sent.
+     */
     software_version?: (string | null);
+    /**
+     * Always `none`: the client is public and uses PKCE.
+     */
     token_endpoint_auth_method?: string;
 };
 

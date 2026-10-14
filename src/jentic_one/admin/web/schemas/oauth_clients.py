@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -62,13 +62,26 @@ class OAuthClientCreateRequest(BaseModel):
 class OAuthClientUpdateRequest(BaseModel):
     """Request body for updating an OAuth client."""
 
-    name: str | None = Field(default=None, max_length=255)
-    description: str | None = None
-    redirect_uris: list[Annotated[str, Field(max_length=2048)]] | None = Field(
-        default=None, min_length=1, max_length=20
+    name: str | None = Field(
+        default=None, max_length=255, description="New name for the client; null means no change."
     )
-    active: bool | None = None
-    require_consent: bool | None = None
+    description: str | None = Field(
+        default=None, description="New description for the client; null means no change."
+    )
+    redirect_uris: list[Annotated[str, Field(max_length=2048)]] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+        description="Replacement list of allowed OAuth callback URLs; null means no change.",
+    )
+    active: bool | None = Field(
+        default=None,
+        description="False disables the client and true re-enables it; null means no change.",
+    )
+    require_consent: bool | None = Field(
+        default=None,
+        description="Whether to show a consent screen during authorization; null means no change.",
+    )
     allowed_scopes: list[str] | None = Field(
         default=None,
         description="Scope restriction list. Null means no change; "
@@ -77,42 +90,46 @@ class OAuthClientUpdateRequest(BaseModel):
     )
 
 
+_OAUTH_CLIENT_EXAMPLE: dict[str, JsonValue] = {
+    "id": "oac_2NxYz...",
+    "client_id": "oc_abc123...",
+    "name": "my-app-production",
+    "description": "My application production deployment",
+    "redirect_uris": ["https://app.example.com/auth/callback"],
+    "allowed_scopes": ["agents:read", "credentials:read"],
+    "active": True,
+    "require_consent": True,
+    "token_endpoint_auth_method": "client_secret_basic",
+    "consent_model": "user",
+    "registration_source": "admin",
+    # Non-null example values throughout: FastAPI's OpenAPI encoder strips
+    # ``None`` from examples, which would drop these required-but-nullable
+    # fields and make the example fail its own schema.
+    "software_id": "com.example.my-app",
+    "approval_status": "approved",
+    "active_grant_count": 0,
+    "created_at": "2026-08-18T12:00:00Z",
+    "updated_at": "2026-08-18T12:00:00Z",
+    "created_by": "usr_abc123",
+}
+
+
 class OAuthClientResponse(BaseModel):
     """An OAuth client in API responses."""
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "id": "oac_2NxYz...",
-                    "client_id": "oc_abc123...",
-                    "name": "my-app-production",
-                    "description": "My application production deployment",
-                    "redirect_uris": ["https://app.example.com/auth/callback"],
-                    "active": True,
-                    "require_consent": True,
-                    "token_endpoint_auth_method": "client_secret_basic",
-                    "consent_model": "user",
-                    "registration_source": "admin",
-                    "software_id": None,
-                    "approval_status": "approved",
-                    "created_at": "2026-08-18T12:00:00Z",
-                    "updated_at": None,
-                    "created_by": "usr_abc123",
-                }
-            ]
-        }
-    )
+    model_config = ConfigDict(json_schema_extra={"examples": [_OAUTH_CLIENT_EXAMPLE]})
 
     id: str = Field(description="Internal ID (ksuid).")
     client_id: str = Field(description="Public client identifier used in OAuth flows.")
-    name: str
-    description: str | None
-    redirect_uris: list[str]
+    name: str = Field(description="Human-readable name for the client.")
+    description: str | None = Field(description="Description of the client; null if none.")
+    redirect_uris: list[str] = Field(description="Allowed OAuth callback URLs.")
     allowed_scopes: list[str] | None = Field(
         description="Scopes this client may request. Null means unrestricted."
     )
-    active: bool
+    active: bool = Field(
+        description="Whether the client is enabled; false for disabled, pending or denied clients."
+    )
     require_consent: bool = Field(
         description="Whether a consent screen is shown during authorization."
     )
@@ -140,13 +157,28 @@ class OAuthClientResponse(BaseModel):
         "Computed on the read endpoints (list/get); "
         "write-path responses report 0.",
     )
-    created_at: datetime
-    updated_at: datetime | None
-    created_by: str | None
+    created_at: datetime = Field(description="When the client was created (RFC 3339).")
+    updated_at: datetime | None = Field(
+        description="When the client was last updated (RFC 3339); null if never updated."
+    )
+    created_by: str | None = Field(
+        description="ID of the actor that created the client; null if not recorded."
+    )
 
 
 class OAuthClientCreateResponse(OAuthClientResponse):
     """Returned on creation — includes the one-time plaintext client secret."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    **_OAUTH_CLIENT_EXAMPLE,
+                    "client_secret": "<redacted>",  # pragma: allowlist secret
+                }
+            ]
+        }
+    )
 
     client_secret: str | None = Field(
         description="The client secret. Shown only once at creation — store it "
@@ -177,4 +209,4 @@ class OAuthClientRotateSecretResponse(BaseModel):
 class OAuthClientListResponse(BaseModel):
     """A list of OAuth clients."""
 
-    data: list[OAuthClientResponse]
+    data: list[OAuthClientResponse] = Field(description="The OAuth clients.")

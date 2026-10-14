@@ -40,7 +40,13 @@ export class IntegrationsService {
          * Filter by vendor registry key
          */
         vendor?: (string | null),
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of sessions to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<ConnectSessionListResponse> {
         return __request(OpenAPI, {
@@ -80,9 +86,12 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
-         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
     }): CancelablePromise<any> {
@@ -108,6 +117,20 @@ export class IntegrationsService {
     }
     /**
      * Poll a connect session's status
+     * Poll the lifecycle status of a connect session.
+     *
+     * Returns the session's current ``status`` and, once it has connected, the
+     * resulting ``credential_id``, the account it ``connected_as``, and the
+     * ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+     * SPA poll this after ``:connect`` until the status is terminal.
+     *
+     * Auth is intentionally lightweight: the caller must be authenticated with
+     * ``credentials:connect`` or ``credentials:write``, but the real capability
+     * that scopes the response is the session's ``poll_token`` (or being the
+     * target agent's owner / ``org:admin``). An agent handed the token by
+     * ``:connect`` can poll without full session-read rights. A missing session,
+     * a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+     * 403, so the endpoint is not a session-id enumeration oracle.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -115,9 +138,12 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
-         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
     }): CancelablePromise<any> {
@@ -162,9 +188,12 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
-         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
     }): CancelablePromise<void> {
@@ -211,10 +240,16 @@ export class IntegrationsService {
         requestBody,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
+        /**
+         * Request payload for the `confirmConnectSession` operation.
+         */
         requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest),
         /**
-         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
     }): CancelablePromise<any> {
@@ -258,6 +293,9 @@ export class IntegrationsService {
     public static rejectConnectSession({
         sessionId,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -293,6 +331,9 @@ export class IntegrationsService {
     public static integrationsConnect({
         requestBody,
     }: {
+        /**
+         * Start connecting a credential for a vendor or a registry API.
+         */
         requestBody: IntegrationsConnectRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

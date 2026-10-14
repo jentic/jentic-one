@@ -9,9 +9,11 @@ owner-or-admin check) the per-agent "Connected clients" panel.
 
 from __future__ import annotations
 
+from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import AgentRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView, grant_to_view
 from jentic_one.shared.auth.identity import Identity
@@ -68,6 +70,11 @@ class OAuthGrantAdminService:
     ) -> Page[OAuthGrantView]:
         """List grants newest-first, filtered by agent/client/user/status.
 
+        Scoped to the caller (``build_access_filters`` on ``OAuthClientGrant``):
+        ``org:admin`` sees every grant; anyone else sees grants they consented
+        to, grants bound to themselves (an agent caller), and grants bound to
+        agents they own. The query filters narrow within that set, never widen it.
+
         ``client_id`` is the public client identifier (the join key grants
         store, D3). Each item carries the display fields: client name,
         redirect-URI origin, scopes, consenting ``user_id`` (G10), created,
@@ -85,6 +92,7 @@ class OAuthGrantAdminService:
         if cursor is not None:
             cursor_dt, cursor_id = decode_cursor_str(cursor)
 
+        access_filters = build_access_filters(identity, OAuthClientGrant)
         async with self._ctx.admin_db.session() as session:
             grants = await OAuthClientGrantRepository.list_grants(
                 session,
@@ -95,6 +103,7 @@ class OAuthGrantAdminService:
                 limit=limit + 1,
                 cursor_created_at=cursor_dt,
                 cursor_id=cursor_id,
+                filters=access_filters,
             )
             has_more = len(grants) > limit
             if has_more:

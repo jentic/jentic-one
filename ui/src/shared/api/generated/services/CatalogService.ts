@@ -32,12 +32,33 @@ export class CatalogService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Search text matched against entry IDs; results are ranked by match quality.
+         */
         q?: (string | null),
+        /**
+         * Only return entries already imported into the registry.
+         */
         registeredOnly?: boolean,
+        /**
+         * Only return entries not yet imported; cannot be combined with `registered_only` or `outdated_only`.
+         */
         unregisteredOnly?: boolean,
+        /**
+         * Only return imported entries with an upstream update available.
+         */
         outdatedOnly?: boolean,
+        /**
+         * Treat entries whose update notification is snoozed as outdated.
+         */
         includeSnoozed?: boolean,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of entries to return (1-200).
+         */
         limit?: number,
     }): CancelablePromise<CatalogListResponse> {
         return __request(OpenAPI, {
@@ -71,6 +92,9 @@ export class CatalogService {
     public static getCatalogEntry({
         apiId,
     }: {
+        /**
+         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         */
         apiId: string,
     }): CancelablePromise<CatalogEntryResponse> {
         return __request(OpenAPI, {
@@ -106,10 +130,25 @@ export class CatalogService {
         tag,
         q,
     }: {
+        /**
+         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         */
         apiId: string,
+        /**
+         * Number of matching operations to skip.
+         */
         offset?: number,
+        /**
+         * Maximum number of operations to return (0-200).
+         */
         limit?: number,
+        /**
+         * Only return operations with a tag containing this text (case-insensitive).
+         */
         tag?: (string | null),
+        /**
+         * Only return operations whose method, path, summary or operation ID contains this text (case-insensitive).
+         */
         q?: (string | null),
     }): CancelablePromise<OperationPreviewListResponse> {
         return __request(OpenAPI, {
@@ -143,6 +182,9 @@ export class CatalogService {
     public static importCatalogEntry({
         apiId,
     }: {
+        /**
+         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         */
         apiId: string,
     }): CancelablePromise<ApiImportResponse> {
         return __request(OpenAPI, {
@@ -177,7 +219,13 @@ export class CatalogService {
         apiId,
         requestBody,
     }: {
+        /**
+         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         */
         apiId: string,
+        /**
+         * Request payload for the `snoozeCatalogEntry` operation.
+         */
         requestBody?: (CatalogSnoozeRequest | null),
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -208,6 +256,9 @@ export class CatalogService {
     public static unsnoozeCatalogEntry({
         apiId,
     }: {
+        /**
+         * Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded.
+         */
         apiId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {

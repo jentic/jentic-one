@@ -17,6 +17,9 @@
  * additionally requires an authenticated platform user).
  */
 export type OAuthSessionContinueRequest = {
+    /**
+     * Signed login carry-through token (`ls`) issued for this authorize request.
+     */
     state: string;
 };
 

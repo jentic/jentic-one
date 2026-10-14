@@ -16,26 +16,16 @@
  *     value) the panel's measured default width.
  */
 import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from 'react';
+import { readLocalPreference, writeLocalPreference } from '@/shared/lib/localPreference';
 
 function readWidth(key: string): number | null {
-	if (typeof window === 'undefined') return null;
-	try {
-		const raw = window.localStorage.getItem(key);
-		const n = raw == null ? NaN : Number(raw);
-		return Number.isFinite(n) && n > 0 ? n : null;
-	} catch {
-		return null;
-	}
+	const raw = readLocalPreference(key);
+	const n = raw == null ? NaN : Number(raw);
+	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function writeWidth(key: string, value: number | null) {
-	if (typeof window === 'undefined') return;
-	try {
-		if (value == null) window.localStorage.removeItem(key);
-		else window.localStorage.setItem(key, String(Math.round(value)));
-	} catch {
-		/* storage unavailable (private mode / quota) — the width just won't persist */
-	}
+	writeLocalPreference(key, value == null ? null : String(Math.round(value)));
 }
 
 export interface UseResizableWidthOptions {

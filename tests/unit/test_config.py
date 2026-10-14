@@ -124,20 +124,20 @@ def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert config.logging.http_wire_trace is True
 
 
-def test_control_connect_manual_flows_default_off_and_env_overrides(
+def test_control_connect_manual_flows_default_on_and_env_overrides(
     config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
 ):
     config = load_config(config_file)
-    assert config.control.connect.manual_flows_enabled is False
+    assert config.control.connect.manual_flows_enabled is True
     assert config.control.connect.manual_flows_ttl_hours == 72
 
     env = {
-        "JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED": "true",
+        "JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED": "false",
         "JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_TTL_HOURS": "24",
     }
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
-    assert config.control.connect.manual_flows_enabled is True
+    assert config.control.connect.manual_flows_enabled is False
     assert config.control.connect.manual_flows_ttl_hours == 24
 
     from_yaml = tmp_path / "manual.yaml"

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
@@ -18,6 +20,7 @@ from jentic_one.admin.web.schemas.oauth_clients import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import not_found
 
 router = APIRouter()
@@ -74,7 +77,13 @@ async def create_oauth_client(
 async def list_oauth_clients(
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:read"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
-    include_inactive: bool = False,
+    include_inactive: bool = Query(
+        default=False,
+        description=(
+            "Whether to include inactive (disabled, pending or denied) clients; defaults to false."
+        ),
+        openapi_examples=ex.example(True),
+    ),
     approval_status: str | None = Query(
         default=None,
         description=(
@@ -82,6 +91,7 @@ async def list_oauth_clients(
             "Filtering on pending or denied implies include_inactive=true — "
             "those rows are always inactive until approved."
         ),
+        openapi_examples=ex.example("pending"),
     ),
 ) -> OAuthClientListResponse:
     """List all registered OAuth clients, optionally filtered by approval status."""
@@ -95,7 +105,13 @@ async def list_oauth_clients(
     responses=not_found(),
 )
 async def get_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:read"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientResponse:
@@ -110,7 +126,13 @@ async def get_oauth_client(
     responses=not_found(),
 )
 async def update_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     body: OAuthClientUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
@@ -135,7 +157,13 @@ async def update_oauth_client(
     responses=not_found(),
 )
 async def approve_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientResponse:
@@ -154,7 +182,13 @@ async def approve_oauth_client(
     responses=not_found(),
 )
 async def deny_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     body: OAuthClientDenyRequest | None = None,
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
@@ -173,7 +207,13 @@ async def deny_oauth_client(
     responses=not_found(),
 )
 async def rotate_oauth_client_secret(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> OAuthClientRotateSecretResponse:
@@ -192,7 +232,13 @@ async def rotate_oauth_client_secret(
     responses=not_found(),
 )
 async def deactivate_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> Response:
@@ -213,7 +259,13 @@ async def deactivate_oauth_client(
     responses=not_found(),
 )
 async def delete_oauth_client(
-    id: str,
+    id: Annotated[
+        str,
+        Path(
+            description="Internal ID of the OAuth client (not its public `client_id`).",
+            openapi_examples=ex.example(ex.OAUTH_CLIENT_RECORD_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:write"]),
     svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> Response:

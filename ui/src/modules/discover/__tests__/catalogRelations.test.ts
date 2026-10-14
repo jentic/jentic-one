@@ -79,12 +79,17 @@ describe('credentialsCoveringEntry', () => {
 		expect(ids(credentialsCoveringEntry(ARTICLE_SEARCH, [raw]))).toEqual(['nyt_raw']);
 	});
 
-	it('a credential created from the catalog pick (vendor + whole api_id as name) covers it', () => {
-		const picked = scoped('nyt_pick', {
+	it('a credential scoped to the name the import registers (the sub segment) covers it', () => {
+		const picked = scoped('nyt_pick', { vendor: 'nytimes-com', name: 'article-search' });
+		expect(ids(credentialsCoveringEntry(ARTICLE_SEARCH, [picked]))).toEqual(['nyt_pick']);
+	});
+
+	it('the vendor-doubled name a fresh import no longer registers does not cover it', () => {
+		const doubled = scoped('nyt_doubled', {
 			vendor: 'nytimes-com',
 			name: 'nytimes-com-article-search',
 		});
-		expect(ids(credentialsCoveringEntry(ARTICLE_SEARCH, [picked]))).toEqual(['nyt_pick']);
+		expect(ids(credentialsCoveringEntry(ARTICLE_SEARCH, [doubled]))).toEqual([]);
 	});
 
 	it('an exact catalog_api_id match counts even when the scope differs', () => {

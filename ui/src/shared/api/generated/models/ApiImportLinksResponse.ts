@@ -6,6 +6,9 @@
  * Hypermedia links for an import response.
  */
 export type ApiImportLinksResponse = {
+    /**
+     * URL of the import job to poll for progress.
+     */
     self: string;
 };
 

@@ -113,7 +113,9 @@ async def test_user_lifecycle(integration_context: Context) -> None:
     assert login_result2.access_token
 
     # Step 8: List users
-    page = await user_svc.list_all()
+    page = await user_svc.list_all(
+        identity=Identity(sub=admin_id, email="test@local", permissions=["org:admin"])
+    )
     user_ids_in_page = [u.id for u in page.data]
     assert user_id in user_ids_in_page
 

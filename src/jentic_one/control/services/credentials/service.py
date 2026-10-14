@@ -97,7 +97,13 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.permissions.evaluation import (
+    PermissionRule,
+    first_matching_rule,
+    normalize_methods,
+)
 from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -219,6 +225,7 @@ class CredentialService:
         # identity at execute time (#775), and stores github.com as github-com
         # rather than a dead-on-arrival identity (#746).
         api_scope = self._canonical_api_scope(payload.api)
+        api_scope = await self._catalog_registered_scope(api_scope, payload.catalog_api_id)
 
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
@@ -782,24 +789,38 @@ class CredentialService:
                     session, agent_id, credential_id
                 )
 
-        method_upper = method.upper()
-        for idx, rule in enumerate(rules):
-            rule_methods = rule.methods
-            rule_path = rule.path
-            rule_ops = rule.operations
-            is_condition_less = rule_methods is None and rule_path is None and rule_ops is None
-            if is_condition_less and rule.effect.lower() in ("allow", "require-approval"):
-                continue
-            if rule_methods is not None:
-                methods_set = {m.upper() for m in rule_methods}
-                if method_upper not in methods_set:
-                    continue
-            if rule_path is not None:
-                matcher = compile_matcher(rule_path, str(rule.match_mode or "regex"))
-                if matcher is not None and not matcher.matches(path):
-                    continue
-            if rule_ops is not None and (operation_id is None or operation_id not in rule_ops):
-                continue
+        # The broker refuses a path whose dot segments are spelled ambiguously
+        # (``ambiguous_path``) before any rule runs; the dry-run must not
+        # report such a path as allowed.
+        if has_ambiguous_traversal(path):
+            return PermissionTestResult(
+                allowed=False,
+                matched=False,
+                effect=None,
+                rule_index=None,
+                credential_id=None,
+                is_system=None,
+            )
+        compiled = [
+            PermissionRule(
+                effect=rule.effect,
+                methods=normalize_methods(rule.methods),
+                path=compile_matcher(rule.path, str(rule.match_mode or "regex")),
+                operations=tuple(rule.operations) if rule.operations is not None else None,
+            )
+            for rule in rules
+        ]
+        # The broker enforces on the normalized server-relative path; normalize
+        # the dry-run input the same way so ``/%61dmin`` previews as ``/admin``.
+        idx = first_matching_rule(
+            compiled,
+            method=method,
+            path=normalize_path(path),
+            operation_id=operation_id,
+            binding=f"{agent_id}:{credential_id}",
+        )
+        if idx is not None:
+            rule = rules[idx]
             return PermissionTestResult(
                 allowed=rule.effect.lower() == "allow",
                 matched=True,
@@ -1517,6 +1538,49 @@ class CredentialService:
                     f"api.{axis} '{value}' is not an identity — it looks like a spec path"
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
+
+    async def _catalog_registered_scope(
+        self, scope: CredentialScope, catalog_api_id: str | None
+    ) -> CredentialScope:
+        """The scope naming the API actually imported from ``catalog_api_id``.
+
+        A client picking a catalog entry derives the API name from its id, and
+        that derivation is not the importer's: a ``domain/sub`` entry registers
+        under its sub segment (or its whole id when sub segments collide), and an
+        API imported by an older release keeps the name it was created with. The
+        imported row is the authority, so when one carries this catalog id and
+        the same vendor, its name replaces the client's. A vendor-wide scope (no
+        name) and a scope on another vendor are the caller's choice and stay.
+        Best effort, like the coverage check: no registry DB, a slow one, or no
+        imported row leaves the scope as given.
+        """
+        if not catalog_api_id or scope.name is None or not self._ctx.has_db("registry"):
+            return scope
+        try:
+            async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
+                async with self._ctx.registry_db.session() as session:
+                    registered = await RegistryApiLookupRepository.identity_for_catalog_api_id(
+                        session, catalog_api_id
+                    )
+        except Exception:
+            logger.warning(
+                "credential_catalog_identity_lookup_failed",
+                catalog_api_id=catalog_api_id,
+                exc_info=True,
+            )
+            return scope
+        if registered is None:
+            return scope
+        vendor, name = registered
+        if vendor != scope.vendor or name == scope.name:
+            return scope
+        logger.info(
+            "credential_catalog_identity_resolved",
+            catalog_api_id=catalog_api_id,
+            requested_name=scope.name,
+            registered_name=name,
+        )
+        return CredentialScope(vendor=vendor, name=name, version=scope.version)
 
     async def _unmatched_scope_warning(
         self, scope: CredentialScope

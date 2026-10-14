@@ -1,10 +1,10 @@
 /**
  * Job record — the detail for one async job.
  *
- * Shows the job's state and timing, the execution it produced (if any), its
- * resolved actor (from the audit log via `job_id` — jobs carry no actor on
- * the wire) and a "View in audit" link. Cancel is org:admin-only and offered
- * only while the job is still queued or running.
+ * Shows the job's state and timing, the execution it produced (if any), who
+ * enqueued it (`actor_id`/`actor_type` straight off the job record) and a
+ * "View in audit" link. Cancel is org:admin-only and offered only while the
+ * job is still queued or running.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -15,7 +15,6 @@ import {
 	isCancellableJob,
 	isTerminalJobStatus,
 	toJobStatus,
-	useActorForJob,
 	useCancelJob,
 	useJob,
 } from '@/modules/monitor/api';
@@ -30,13 +29,10 @@ import { formatTimestamp } from '@/modules/monitor/lib/format';
 import { monitorHref } from '@/modules/monitor/lib/links';
 import { formatSpan, jobKindLabel, jobSentence } from '@/modules/monitor/lib/logVocabulary';
 import { ORG_ADMIN, usePermission } from '@/modules/monitor/lib/usePermission';
-import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 
 export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameContext }) {
 	const query = useJob(jobId);
 	const isAdmin = usePermission(ORG_ADMIN);
-	const canReadAudit = useCanAccess(AUDIT_READ);
-	const { actor } = useActorForJob(jobId, { canReadAudit });
 	const cancel = useCancelJob();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -134,19 +130,15 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 						}
 					>
 						<div className="text-sm">
-							{actor ? (
-								actor.actorId ? (
-									<ActorLabel
-										actorId={actor.actorId}
-										actorType={actor.actorType}
-										className="font-medium"
-									/>
-								) : (
-									<span className="font-medium">{actor.actorType}</span>
-								)
+							{job.actor_id ? (
+								<ActorLabel
+									actorId={job.actor_id}
+									actorType={job.actor_type}
+									className="font-medium"
+								/>
 							) : (
 								<span className="text-muted-foreground">
-									No actor recorded in the audit log for this job.
+									No actor recorded for this job.
 								</span>
 							)}
 						</div>

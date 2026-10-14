@@ -75,13 +75,14 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		const sheet = await openSheet(user);
 
 		expect(sheet.getByRole('heading', { name: 'Permissions' })).toBeInTheDocument();
-		expect(sheet.getByText('support-agent')).toBeInTheDocument();
+		// Named in the sheet's subtitle and in its copy.
+		expect(sheet.getAllByText('support-agent').length).toBeGreaterThan(0);
 
 		// The copy names the two permission models users conflate —
 		// platform (control-plane) permissions vs. what the agent may call
-		// upstream (the tiles).
+		// upstream (its "Can call" rows).
 		expect(sheet.getByText(/control plane/)).toBeInTheDocument();
-		expect(sheet.getByText(/API tiles on the main screen/)).toBeInTheDocument();
+		expect(sheet.getByText(/Can call\u201d rows/)).toBeInTheDocument();
 
 		// PermissionsCard: agnt_active_1's seeded platform grants render as chips.
 		const scopeList = await sheet.findByRole('list', { name: 'Granted permissions' });

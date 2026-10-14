@@ -509,6 +509,8 @@ describe('CredentialInventorySheet — credential flows', () => {
 			expect(
 				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
 			).toBeVisible();
+			// Only the approval: the inventory does not open underneath it.
+			expect(screen.queryByRole('heading', { name: 'Credentials' })).not.toBeInTheDocument();
 			// Stripped while the wizard is still open: history, bookmarks and a
 			// shared screen never keep the session id. The selection survives.
 			await waitFor(() => {
@@ -526,8 +528,9 @@ describe('CredentialInventorySheet — credential flows', () => {
 					screen.queryByRole('dialog', { name: /^Approve integration$/ }),
 				).not.toBeInTheDocument(),
 			);
-			// Backing out of the approval leaves the operator in the inventory.
-			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
+			// The approval opened on its own: backing out lands on the Agents page,
+			// with no credential inventory left open behind it.
+			expect(screen.queryByRole('heading', { name: 'Credentials' })).not.toBeInTheDocument();
 		});
 
 		it('opens from the link exactly as the backend mints it (session id only)', async () => {

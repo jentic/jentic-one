@@ -7,6 +7,9 @@ import type { ProviderDiscoveryEntryResponse } from './ProviderDiscoveryEntryRes
  * Discovery response listing all available credential providers.
  */
 export type ProviderDiscoveryResponse = {
+    /**
+     * The available credential providers.
+     */
     providers: Array<ProviderDiscoveryEntryResponse>;
 };
 

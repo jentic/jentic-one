@@ -13,7 +13,7 @@ without the approval tier has no way to release one, and an application
 without ``JobStatus.HELD`` cannot read the status.
 
 Revision ID: 3306fb9172f1
-Revises: d2e3f4a5b6c7
+Revises: 6ae76df5ece5
 Create Date: 2026-10-05
 
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "3306fb9172f1"  # pragma: allowlist secret
-down_revision: str | None = "d2e3f4a5b6c7"  # pragma: allowlist secret
+down_revision: str | None = "6ae76df5ece5"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

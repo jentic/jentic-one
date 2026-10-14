@@ -41,13 +41,13 @@ _Total endpoints: **186**._
 | GET | `/apis` | `apis:read` | agent | List Apis |
 | GET | `/apis/{vendor}/{name}/{version}` | `apis:read` | agent | Get Api |
 | GET | `/apis/{vendor}/{name}/{version}/openapi` | `apis:read` | agent | Get Api Spec |
-| GET | `/apis/{vendor}/{name}/{version}/operations` | `apis:read` | agent | List Api Operations |
-| GET | `/apis/{vendor}/{name}/{version}/overlays` | `apis:read` | agent | List Overlays |
+| GET | `/apis/{vendor}/{name}/{version}/operations` | `apis:read` | agent | List the operations an API currently serves |
+| GET | `/apis/{vendor}/{name}/{version}/overlays` | `apis:read` | agent | List an API's overlays |
 | GET | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:read` | agent | Get Overlay |
-| GET | `/apis/{vendor}/{name}/{version}/revisions` | `apis:read` | agent | List Api Revisions |
-| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:read` | agent | Get Api Revision |
-| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi` | `apis:read` | agent | Get Api Revision Spec |
-| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations` | `apis:read` | agent | List Api Revision Operations |
+| GET | `/apis/{vendor}/{name}/{version}/revisions` | `apis:read` | agent | List an API's revisions |
+| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:read` | agent | Get an API revision |
+| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi` | `apis:read` | agent | Download an API revision's OpenAPI document |
+| GET | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations` | `apis:read` | agent | List the operations in an API revision |
 | GET | `/apis/{vendor}/{name}/{version}/security-schemes` | `apis:read` | agent | List security schemes for an API |
 
 ### `broker`
@@ -109,7 +109,7 @@ _Total endpoints: **186**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
-| GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
+| GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's OAuth flows and scopes |
 
 ## Operator-facing (typically a human operator / admin) (46)
 
@@ -118,21 +118,21 @@ _Total endpoints: **186**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/actors` | `users:read` | operator | List Actors |
+| GET | `/actors` | `users:read` | operator | List users and agents |
 
 ### `agents`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/agents` | `agents:read` | operator | List Agents |
-| POST | `/agents` | `agents:write` | operator | Create Agent |
+| GET | `/agents` | `agents:read` | operator | List visible agents |
+| POST | `/agents` | `agents:write` | operator | Create an agent |
 | DELETE | `/agents/{agent_id}` | `agents:write` | operator | Archive Agent |
-| PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update Agent |
-| GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get Agent Api Key Info |
-| GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get Agent Api Key History |
-| POST | `/agents/{agent_id}/credentials` | `agents:write` | operator | Bind Credential |
-| DELETE | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Unbind Credential |
-| POST | `/agents/{agent_id}/credentials/{credential_id}:resume` | `agents:write` | operator | Resume Credential Binding |
+| PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update an agent |
+| GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get an agent's API key metadata |
+| GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get an agent's API key history |
+| POST | `/agents/{agent_id}/credentials` | `agents:write` | operator | Bind a credential to an agent |
+| DELETE | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Suspend or remove a credential binding |
+| POST | `/agents/{agent_id}/credentials/{credential_id}:resume` | `agents:write` | operator | Resume a suspended credential binding |
 | PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Update Agent Jwks |
 | GET | `/agents/{agent_id}/permissions` | `agents:read` | operator | Get Agent Permissions |
 | PUT | `/agents/{agent_id}/permissions` | `agents:write` | operator | Replace Agent Permissions |
@@ -148,8 +148,8 @@ _Total endpoints: **186**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `overlays:confirm` | operator | Confirm Overlay |
-| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback` | `overlays:confirm` | operator | Rollback Overlay |
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `overlays:confirm` | operator | Confirm an overlay and apply it to the served spec |
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback` | `overlays:confirm` | operator | Roll back a confirmed overlay |
 
 ### `audit`
 
@@ -246,9 +246,9 @@ _Total endpoints: **186**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/agents/{agent_id}` | _any authenticated_ | any | Get Agent |
-| GET | `/agents/{agent_id}/credentials` | _any authenticated_ | any | List Credentials |
-| GET | `/agents/{agent_id}/oauth-grants` | _any authenticated_ | any | List agent OAuth grants |
+| GET | `/agents/{agent_id}` | _any authenticated_ | any | Get an agent |
+| GET | `/agents/{agent_id}/credentials` | _any authenticated_ | any | List an agent's credential bindings |
+| GET | `/agents/{agent_id}/oauth-grants` | _any authenticated_ | any | List an agent's connected OAuth clients |
 
 ### `apis`
 
@@ -257,11 +257,11 @@ _Total endpoints: **186**._
 | POST | `/apis` | `apis:write` | any | Import Apis |
 | DELETE | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Delete Api |
 | PATCH | `/apis/{vendor}/{name}/{version}` | `apis:write` | any | Update Api |
-| POST | `/apis/{vendor}/{name}/{version}/overlays` | `apis:write` | any | Submit Overlay |
-| DELETE | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Deprecate Overlay |
-| PATCH | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Update Overlay |
-| DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete Revision |
-| POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive Revision |
+| POST | `/apis/{vendor}/{name}/{version}/overlays` | `apis:write` | any | Submit an OpenAPI overlay |
+| DELETE | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Deprecate an overlay |
+| PATCH | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Edit an overlay |
+| DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete an archived API revision |
+| POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive an API revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
 
 ### `connect-sessions`
@@ -366,14 +366,14 @@ _Total endpoints: **186**._
 | POST | `/permission-rule-sets` | `credentials:write` | any | Create permission rule set |
 | DELETE | `/permission-rule-sets/{rule_set_id}` | `credentials:write` | any | Delete permission rule set |
 | GET | `/permission-rule-sets/{rule_set_id}` | `credentials:read`, `owner:credentials:read` | any | Get permission rule set |
-| PATCH | `/permission-rule-sets/{rule_set_id}` | `credentials:write` | any | Update permission rule set |
-| PUT | `/permission-rule-sets/{rule_set_id}/rules` | `credentials:write` | any | Replace rule set rules |
+| PATCH | `/permission-rule-sets/{rule_set_id}` | `credentials:write` | any | Rename or re-describe a permission rule set |
+| PUT | `/permission-rule-sets/{rule_set_id}/rules` | `credentials:write` | any | Replace all rules in a permission rule set |
 
 ### `permissions`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/permissions` | _any authenticated_ | any | List Permissions |
+| GET | `/permissions` | _any authenticated_ | any | List the permission catalogue |
 
 ### `register`
 
@@ -405,8 +405,8 @@ _Total endpoints: **186**._
 |---|---|---|---|---|
 | GET | `/.well-known/jwks.json` | _public — no auth_ | — | JSON Web Key Set |
 | GET | `/.well-known/oauth-authorization-server` | _public — no auth_ | — | OAuth authorization server metadata |
-| GET | `/.well-known/oauth-authorization-server/mcp` | _public — no auth_ | — | OAuth authorization server metadata for the MCP resource |
-| GET | `/.well-known/oauth-protected-resource` | _public — no auth_ | — | OAuth protected resource metadata (root alias for the MCP resource) |
+| GET | `/.well-known/oauth-authorization-server/mcp` | _public — no auth_ | — | Get OAuth authorization server metadata for MCP clients |
+| GET | `/.well-known/oauth-protected-resource` | _public — no auth_ | — | Get MCP protected resource metadata (root fallback) |
 | GET | `/.well-known/oauth-protected-resource/mcp` | _public — no auth_ | — | OAuth protected resource metadata for the MCP resource |
 
 ### `admin`

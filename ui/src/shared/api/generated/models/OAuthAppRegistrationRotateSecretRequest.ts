@@ -6,6 +6,9 @@
  * Rotate the client secret on an auth-code registration.
  */
 export type OAuthAppRegistrationRotateSecretRequest = {
+    /**
+     * New OAuth client secret; stored encrypted and never returned.
+     */
     client_secret: string;
 };
 

@@ -218,6 +218,10 @@ class CredentialService:
                     api_version=api.version,
                     credential_owner=resolved.created_by,
                     credential_name=resolved.name,
+                    # The resolver that authenticated this caller already read
+                    # the agent row, so the summary can name the actor the way
+                    # it names the credential (#1543); empty degrades to the id.
+                    actor_name=identity.actor_name,
                     # Sanitised: emit_event raises on a malformed trace_id, and
                     # a 500 here would fail the whole execute request (#903).
                     trace_id=valid_trace_id_or_none(trace_id),

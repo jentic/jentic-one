@@ -5,6 +5,8 @@ interface ImportMetaEnv {
 	readonly VITE_ENABLE_MSW?: string;
 	/** With MSW on, `review` layers `src/mocks/scenarios/review.ts` over the defaults. */
 	readonly VITE_MSW_SCENARIO?: string;
+	/** With MSW on, '1' layers the hand-review dev fixtures (`installDevSeed`). */
+	readonly VITE_MSW_DEV_SEED?: string;
 }
 
 interface ImportMeta {

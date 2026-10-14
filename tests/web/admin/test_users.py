@@ -219,7 +219,7 @@ async def reader_user_permissions(web_context: Context) -> None:
 def test_users_read_can_list(
     unauthed_client: TestClient, web_context: Context, reader_user_permissions: None
 ) -> None:
-    """A caller with only users:read can GET /users."""
+    """A caller with only users:read can GET /users, scoped to themselves."""
     config = web_context.config.admin.auth
     claims = {
         "sub": "reader-user",
@@ -228,8 +228,14 @@ def test_users_read_can_list(
         "must_change_password": False,
     }
     token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
-    resp = unauthed_client.get("/users", headers={"Authorization": f"Bearer {token}"})
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = unauthed_client.get("/users", headers=headers)
     assert resp.status_code == 200
+    assert [u["id"] for u in resp.json()["data"]] == ["reader-user"]
+
+    # Another user is out of scope: the same 404 as a missing one.
+    assert unauthed_client.get("/users/usr_admin", headers=headers).status_code == 404
+    assert unauthed_client.get("/users/reader-user", headers=headers).status_code == 200
 
 
 def test_users_read_cannot_create(

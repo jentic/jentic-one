@@ -1013,7 +1013,7 @@ def s15_migration_round_trip(w: World, o: Outcome) -> None:
             w,
             "from jentic_one.migrations.run import downgrade; "
             "downgrade('control', 'cc3d4e5f6a7b'); "  # pragma: allowlist secret
-            "downgrade('admin', 'd2e3f4a5b6c7')",  # pragma: allowlist secret
+            "downgrade('admin', '6ae76df5ece5')",  # pragma: allowlist secret
         )
         effects = psql(
             w.env,

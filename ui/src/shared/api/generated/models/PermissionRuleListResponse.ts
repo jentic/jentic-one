@@ -7,6 +7,9 @@ import type { PermissionRuleReadSchema } from './PermissionRuleReadSchema';
  * List of permission rules.
  */
 export type PermissionRuleListResponse = {
+    /**
+     * The binding's permission rules, in evaluation order.
+     */
     data: Array<PermissionRuleReadSchema>;
 };
 

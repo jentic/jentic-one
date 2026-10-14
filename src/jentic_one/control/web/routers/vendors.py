@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query
 
 from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.control.web.deps import get_vendor_registry_service
@@ -15,6 +17,7 @@ from jentic_one.control.web.schemas.integrations import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter(tags=["Vendors"])
 
@@ -58,11 +61,14 @@ async def list_vendors(
 
 @router.get(
     "/vendors/{vendor_key}/auth-capabilities",
-    summary="Get a vendor's SSO capabilities",
+    summary="Get a vendor's OAuth flows and scopes",
     response_model=None,
 )
 async def get_auth_capabilities(
-    vendor_key: str,
+    vendor_key: Annotated[
+        str,
+        Path(description="Vendor registry key.", openapi_examples=ex.example(ex.VENDOR_KEY)),
+    ],
     oauth_app_registration_id: str | None = Query(
         default=None,
         max_length=30,
@@ -71,15 +77,22 @@ async def get_auth_capabilities(
             "more than one. Returns that registration's scopes + client_id, so "
             "the picker's tile and the connect payload stay aligned."
         ),
+        openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID),
     ),
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
 ) -> VendorAuthCapabilitiesResponse:
-    """Full auth capabilities for one vendor — flows, scopes, classifications.
+    """Describe how to connect a vendor: its OAuth flows and scope catalogue.
 
-    Never returns client_secret (authorization-code flow's secret is stripped
-    at response build time). ``UnknownVendorError`` maps to a 404 problem
-    detail via the handler registered in ``control/web/app.py``.
+    `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+    name, the OAuth `flows` it supports (`authorization_code` and/or
+    `device_authorization`), and every scope with its `classification`
+    (`read`, `write` or `admin`), whether it is requested by default, and a
+    description. Use it to build a connect screen before starting a connect
+    session. When the vendor has several admin-registered OAuth apps, pass
+    `oauth_app_registration_id` to pick one; without it the request fails
+    with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+    An unknown vendor returns 404 (`unknown_vendor`).
     """
     entry = await svc.resolve_by_pin(vendor_key, registration_id=oauth_app_registration_id)
     return VendorAuthCapabilitiesResponse(

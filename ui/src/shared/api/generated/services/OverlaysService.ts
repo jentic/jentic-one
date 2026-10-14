@@ -12,8 +12,14 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class OverlaysService {
     /**
-     * List Overlays
-     * List overlays for an API with optional status filter and cursor pagination.
+     * List an API's overlays
+     * List the overlays submitted against an API, newest first.
+     *
+     * Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+     * (applied to the served spec) or `deprecated` (retired) — and links to the
+     * actions valid in that state. Filter with `status`. Results are
+     * cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+     * true.
      * @returns OverlayListResponse Successful Response
      * @throws ApiError
      */
@@ -25,11 +31,29 @@ export class OverlaysService {
         limit = 50,
         status,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of overlays to return (1-200).
+         */
         limit?: number,
+        /**
+         * Only return overlays in this status: `pending`, `confirmed` or `deprecated`.
+         */
         status?: (string | null),
     }): CancelablePromise<OverlayListResponse> {
         return __request(OpenAPI, {
@@ -56,8 +80,16 @@ export class OverlaysService {
         });
     }
     /**
-     * Submit Overlay
-     * Submit a new overlay for an API.
+     * Submit an OpenAPI overlay
+     * Propose a change to an API's spec as an OpenAPI Overlay document.
+     *
+     * An overlay is a list of `actions` that patch the API's OpenAPI document —
+     * for example correcting a description or adding a missing parameter.
+     * Submitting stores it as `pending`; it changes nothing until an operator
+     * confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+     * record a `contributed_by` label. The document must be a JSON object with
+     * an `actions` array (at most 512 actions, 1 MB), else 422
+     * (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
      * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
@@ -67,9 +99,21 @@ export class OverlaysService {
         version,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Payload for submitting a new overlay.
+         */
         requestBody: OverlaySubmitRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -93,8 +137,13 @@ export class OverlaysService {
         });
     }
     /**
-     * Deprecate Overlay
-     * Deprecate an overlay (soft delete).
+     * Deprecate an overlay
+     * Retire an overlay so it is no longer offered for confirmation.
+     *
+     * The overlay moves to `deprecated` but is kept, and remains readable for
+     * history; nothing is deleted. Deprecating does not rewrite the served
+     * spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+     * `apis:write`. Returns 204.
      * @returns void
      * @throws ApiError
      */
@@ -104,9 +153,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -140,9 +201,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -165,18 +238,21 @@ export class OverlaysService {
         });
     }
     /**
-     * Update Overlay
-     * Update an overlay's document or target revision.
+     * Edit an overlay
+     * Change an overlay's `document` or `target_revision_id`.
      *
-     * Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-     * ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-     * (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-     * is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-     * the API's served spec (D1). That is an operator action, so it additionally requires
-     * ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-     * (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-     * overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-     * if no clean base was recorded to re-apply over.
+     * What the edit does depends on the overlay's state:
+     *
+     * - **Pending** (or confirmed but not yet applied): the stored overlay is
+     * updated; the served spec is untouched. Requires `apis:write`.
+     * - **Confirmed and live**: the edited document is re-applied over the
+     * overlay's original base and the result replaces the API's served spec.
+     * This also requires `overlays:confirm`, else 403
+     * (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+     * overlay is no longer the live revision, or
+     * (`overlay_rollback_target_missing`) if no clean base was recorded.
+     *
+     * Returns the updated overlay.
      * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
@@ -187,10 +263,25 @@ export class OverlaysService {
         overlayId,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
+        /**
+         * Payload for updating an existing overlay.
+         */
         requestBody: OverlayUpdateRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -215,18 +306,19 @@ export class OverlaysService {
         });
     }
     /**
-     * Confirm Overlay
-     * Confirm an overlay, materializing it onto the served spec.
+     * Confirm an overlay and apply it to the served spec
+     * Apply a pending overlay, producing a new current revision of the API.
      *
-     * Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-     * re-ingests the base spec with the overlay applied and promotes the result to the
-     * current revision), so it is an operator action, not a contributor one (contributors
-     * ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-     * purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-     * owner can grant it to a trusted operator without handing over full admin power.
-     * ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-     * deliberately excluded from an agent's self-service grantable set so a low-privilege
-     * agent cannot escalate into it.
+     * The base spec is re-imported with the overlay applied and the result is
+     * promoted to the API's current revision, so it is what the API now serves.
+     * The overlay becomes `confirmed`. Confirming an already-applied overlay is
+     * a no-op that returns it unchanged; a deprecated overlay is refused with
+     * 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+     * with 409 (`overlay_apply_conflict`).
+     *
+     * Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+     * overlays with `apis:write`, and an operator reviews and confirms them.
+     * Agents cannot grant themselves this permission. Returns the overlay.
      * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
@@ -237,10 +329,25 @@ export class OverlaysService {
         overlayId,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
+        /**
+         * Payload for confirming an overlay.
+         */
         requestBody: OverlayConfirmRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -265,17 +372,20 @@ export class OverlaysService {
         });
     }
     /**
-     * Rollback Overlay
-     * Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+     * Roll back a confirmed overlay
+     * Undo a confirmed overlay by restoring the revision it replaced.
      *
-     * Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-     * rewrites the API's served spec (it archives the overlay's materialized revision and
-     * promotes the prior revision back to current), so it is the same operator action as
-     * confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-     * carry a recorded superseded revision that is still restorable; otherwise a 409 is
-     * returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-     * ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-     * restored revision's hosts) and nothing changes.
+     * The overlay's revision is archived and the revision it superseded becomes
+     * the API's current revision again, so the served spec reverts, and the
+     * overlay is marked `deprecated`. Requires `overlays:confirm`, like
+     * confirming.
+     *
+     * Preconditions: the overlay is `confirmed`, its revision is still the
+     * live one, and the revision it replaced is still restorable. Otherwise
+     * nothing changes and 409 is returned: `overlay_conflict`,
+     * `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+     * another vendor's live API now serves one of the restored revision's
+     * hosts. Returns 204.
      * @returns void
      * @throws ApiError
      */
@@ -285,9 +395,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {

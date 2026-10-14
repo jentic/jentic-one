@@ -23,8 +23,15 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class AgentsService {
     /**
-     * List Agents
-     * List agents — scoped by identity via dynamic query scoping.
+     * List visible agents
+     * List the agents the caller can see, newest first.
+     *
+     * Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+     * else sees the agents they own. An agent caller also sees itself, and with
+     * `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+     * (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+     * cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+     * while `has_more` is true.
      * @returns AgentListResponse Successful Response
      * @throws ApiError
      */
@@ -33,8 +40,17 @@ export class AgentsService {
         limit = 50,
         status,
     }: {
+        /**
+         * Cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of agents to return (1-200, default 50).
+         */
         limit?: number,
+        /**
+         * Only return agents in this lifecycle status: `pending`, `active`, `rejected`, `disabled` or `archived`.
+         */
         status?: (string | null),
     }): CancelablePromise<AgentListResponse> {
         return __request(OpenAPI, {
@@ -56,14 +72,28 @@ export class AgentsService {
         });
     }
     /**
-     * Create Agent
-     * Create a new agent manually.
+     * Create an agent
+     * Create an agent owned by the caller.
+     *
+     * The agent is `active` immediately and owned by the caller. Supply `name`
+     * (required), an optional `description`, and optional `permissions`. When
+     * `permissions` is omitted the agent gets the default agent permission set.
+     * When supplied, every permission must be one the caller may grant (see
+     * `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+     * with 403 (`agent_permission_not_grantable`). Returns the created agent.
+     *
+     * The agent has no way to authenticate yet. Follow up with
+     * `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+     * for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
     public static createAgent({
         requestBody,
     }: {
+        /**
+         * Request body for creating an agent manually.
+         */
         requestBody: AgentCreateRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -83,25 +113,41 @@ export class AgentsService {
     }
     /**
      * Archive Agent
-     * Archive an agent — terminal-but-kept.
+     * Archive an agent — or, with ``purge=true``, hard-delete it.
      *
-     * The row is retained for history, but the action is not reversible and
+     * Archive keeps the row for history, but the action is not reversible and
      * the agent's authority is swept: permission grants, credential bindings, and
      * OAuth consent grants are revoked. For the reversible kill switch use
      * ``:disable`` / ``:enable`` instead.
+     *
+     * Purge removes the agent and its authority and session rows; it archives
+     * first if needed, so the agent's authority is gone before any cleanup runs,
+     * and a failed purge leaves the agent archived and can be retried. Archive
+     * returns 409 for an already-archived agent; purge accepts any status.
      * @returns void
      * @throws ApiError
      */
     public static archiveAgent({
         agentId,
+        purge = false,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings and connect sessions, and cancels its queued and running jobs. History (audit entries, events, execution records, finished jobs, notes) and the credentials it created are kept; once the agent is gone that history is visible to org:admin only.
+         */
+        purge?: boolean,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/agents/{agent_id}',
             path: {
                 'agent_id': agentId,
+            },
+            query: {
+                'purge': purge,
             },
             errors: {
                 400: `Bad Request`,
@@ -114,14 +160,22 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent
-     * Get agent by ID — requires agents:read or self-read.
+     * Get an agent
+     * Get one agent's profile and lifecycle state.
+     *
+     * Returns the agent's name, description, owner, `status`, approval or
+     * denial details, and whether it currently has an API key (`has_api_key`).
+     * Readable by the agent itself, its owner, and `org:admin`; an agent outside
+     * the caller's visibility answers 404.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
     public static getAgent({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -141,8 +195,16 @@ export class AgentsService {
         });
     }
     /**
-     * Update Agent
-     * Partially update an agent — name, description, or owner_id.
+     * Update an agent
+     * Partially update an agent's `name`, `description` or `owner_id`.
+     *
+     * Only the fields present in the body change; an empty body returns the
+     * agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+     * else gets 404). Changing `owner_id` transfers ownership, is
+     * `org:admin`-only, and revokes every active OAuth client grant bound to
+     * the agent, so the new owner must re-consent any connected client. The
+     * agent's API key, permissions and credential bindings are unaffected. An
+     * archived agent cannot be updated (409). Returns the updated agent.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -150,7 +212,13 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for partially updating an agent.
+         */
         requestBody: AgentPatchRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -172,14 +240,23 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent Api Key Info
-     * Get API key metadata for an agent. Returns info even after revocation.
+     * Get an agent's API key metadata
+     * Describe an agent's API key without revealing it.
+     *
+     * Returns the key record's `id`, `status` (`active`, or `revoked` once
+     * revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+     * is never returned — it is shown once, by `:generate-api-key`. Metadata
+     * stays available after revocation; the body is `null` if the agent never
+     * had a key. Allowed for the agent's owner or an `org:admin`.
      * @returns any Successful Response
      * @throws ApiError
      */
     public static getAgentApiKeyInfo({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<(ApiKeyInfoResponse | null)> {
         return __request(OpenAPI, {
@@ -199,14 +276,23 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent Api Key History
-     * Get the audit history of API key operations for an agent.
+     * Get an agent's API key history
+     * List recent API key rotations and revocations for an agent.
+     *
+     * Each entry gives the audit `action`, its `reason` (key rotated or key
+     * revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+     * 50 most recent audit entries, newest first, so very old key events may
+     * not appear; it is not paginated. Allowed for the agent's owner or an
+     * `org:admin`.
      * @returns ApiKeyHistoryResponse Successful Response
      * @throws ApiError
      */
     public static getAgentApiKeyHistory({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<ApiKeyHistoryResponse> {
         return __request(OpenAPI, {
@@ -226,14 +312,23 @@ export class AgentsService {
         });
     }
     /**
-     * List Credentials
-     * List direct credential bindings for an agent — requires agents:read or self.
+     * List an agent's credential bindings
+     * List the credentials bound directly to an agent.
+     *
+     * Each binding names the credential, the API it serves, when it was bound,
+     * whether it is `suspended` (and why), and any attached permission
+     * `rule_set_id`. Credential secrets are never returned. Readable by the
+     * agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+     * paginated.
      * @returns CredentialBindingListResponse Successful Response
      * @throws ApiError
      */
     public static listAgentCredentials({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<CredentialBindingListResponse> {
         return __request(OpenAPI, {
@@ -253,11 +348,16 @@ export class AgentsService {
         });
     }
     /**
-     * Bind Credential
-     * Directly bind a credential to an agent (theme 5 phase 1).
+     * Bind a credential to an agent
+     * Let an agent use a credential by binding it directly.
      *
-     * The caller must own the target credential (or hold ``org:admin``); a
-     * credential that does not exist or that the caller does not own returns 404.
+     * A new binding starts with no permission rules, so the agent can make no
+     * calls with it until rules are set or a rule set is attached. The caller
+     * must be able to see the agent and must own the credential (or hold
+     * `org:admin`). A credential that does not exist or that the caller does
+     * not own returns 404; binding the same credential twice returns 409
+     * (`credential_binding_conflict`).
+     * Returns the new binding.
      * @returns CredentialBindingResponse Successful Response
      * @throws ApiError
      */
@@ -265,7 +365,13 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for directly binding a credential to an agent.
+         */
         requestBody: CredentialBindRequest,
     }): CancelablePromise<CredentialBindingResponse> {
         return __request(OpenAPI, {
@@ -287,8 +393,16 @@ export class AgentsService {
         });
     }
     /**
-     * Unbind Credential
-     * Unbind a credential from an agent — suspend by default, purge on request.
+     * Suspend or remove a credential binding
+     * Stop an agent using a credential: suspend the binding, or purge it.
+     *
+     * By default the binding is **suspended**: the agent loses access at once,
+     * but the binding and its permission rules are kept, and
+     * `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+     * With `purge=true` the binding and its inline permission rules are deleted
+     * outright, so a later re-bind starts from deny-all. An agent may suspend
+     * its own binding but not purge it. Both modes are audited. Returns 204; a
+     * missing binding returns 404.
      * @returns void
      * @throws ApiError
      */
@@ -297,7 +411,13 @@ export class AgentsService {
         credentialId,
         purge = false,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * ID of the credential bound to the agent.
+         */
         credentialId: string,
         /**
          * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
@@ -325,8 +445,14 @@ export class AgentsService {
         });
     }
     /**
-     * Resume Credential Binding
-     * Lift a suspended credential binding — the reverse of the default unbind.
+     * Resume a suspended credential binding
+     * Restore an agent's access to a credential whose binding was suspended.
+     *
+     * Reverses the default (non-purge) unbind; a purged binding is gone and must
+     * be bound again instead. Because resuming re-grants the credential, the
+     * caller must own the credential (or hold `org:admin`) as well as see the
+     * agent, and an agent cannot resume its own binding. Returns the binding;
+     * 404 when no binding exists.
      * @returns CredentialBindingResponse Successful Response
      * @throws ApiError
      */
@@ -334,7 +460,13 @@ export class AgentsService {
         agentId,
         credentialId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * ID of the credential bound to the agent.
+         */
         credentialId: string,
     }): CancelablePromise<CredentialBindingResponse> {
         return __request(OpenAPI, {
@@ -368,7 +500,16 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for updating an agent's JWKS (public keys).
+         *
+         * The JWKS must contain at least one Ed25519 public key and must not
+         * contain any private key material.
+         */
         requestBody: JwksUpdateRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -390,15 +531,16 @@ export class AgentsService {
         });
     }
     /**
-     * List agent OAuth grants
-     * List OAuth consent grants binding clients to this agent.
+     * List an agent's connected OAuth clients
+     * List the OAuth clients a user has consented to act as this agent.
      *
-     * The "Connected clients" surface: every grant carries the client's display
-     * name and redirect-URI origin, the granted scopes, the consenting user,
-     * and created/last-used timestamps. Allowed for the agent's owner or an
-     * admin — authorization is enforced in the service layer, mirroring the
-     * ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-     * same as an agent that does not exist.
+     * Each grant gives the client's display name and redirect-URI origin, the
+     * granted scopes, the consenting user, its `status`, created and last-used
+     * timestamps, and `can_revoke` for the caller. Filter by `status`
+     * (`active` or `revoked`); results are cursor-paginated. Allowed for the
+     * agent's owner or an admin. An agent the caller cannot see answers 404,
+     * the same as one that does not exist. Revoke a grant with
+     * `POST /oauth-grants/{grant_id}:revoke`.
      * @returns OAuthGrantListResponse Successful Response
      * @throws ApiError
      */
@@ -408,12 +550,21 @@ export class AgentsService {
         limit = 50,
         cursor,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
         /**
          * Filter by grant lifecycle state.
          */
         status?: ('active' | 'revoked' | null),
+        /**
+         * Maximum number of grants to return (1-200, default 50).
+         */
         limit?: number,
+        /**
+         * Cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
     }): CancelablePromise<OAuthGrantListResponse> {
         return __request(OpenAPI, {
@@ -447,6 +598,9 @@ export class AgentsService {
     public static getAgentPermissions({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<AgentPermissionsResponse> {
         return __request(OpenAPI, {
@@ -475,7 +629,13 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for replacing an agent's permissions.
+         */
         requestBody: AgentPermissionsRequest,
     }): CancelablePromise<AgentPermissionsResponse> {
         return __request(OpenAPI, {
@@ -511,6 +671,9 @@ export class AgentsService {
     public static approveAgent({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -555,7 +718,13 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for claiming ownership of a self-registered agent.
+         */
         requestBody: ClaimRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -590,7 +759,13 @@ export class AgentsService {
         agentId,
         requestBody,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
+        /**
+         * Request body for denying an agent.
+         */
         requestBody: DenyRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
@@ -620,6 +795,9 @@ export class AgentsService {
     public static disableAgent({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -647,6 +825,9 @@ export class AgentsService {
     public static enableAgent({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -674,6 +855,9 @@ export class AgentsService {
     public static generateAgentApiKey({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<ApiKeyResponse> {
         return __request(OpenAPI, {
@@ -701,6 +885,9 @@ export class AgentsService {
     public static revokeAgentApiKey({
         agentId,
     }: {
+        /**
+         * ID of the agent.
+         */
         agentId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {

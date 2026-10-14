@@ -26,15 +26,45 @@ export class ExecutionsService {
         cursor,
         limit = 25,
     }: {
+        /**
+         * Legacy: only return executions mediated by this toolkit.
+         */
         toolkitId?: (string | null),
+        /**
+         * Only return executions with this trace ID.
+         */
         traceId?: (string | null),
+        /**
+         * Only return executions with one of these terminal statuses (`completed` or `failed`); repeat the parameter for several.
+         */
         status?: (Array<string> | null),
+        /**
+         * Only return executions started at or after this time (RFC 3339).
+         */
         from?: (string | null),
+        /**
+         * Only return executions started before this time (RFC 3339).
+         */
         to?: (string | null),
+        /**
+         * Only return executions of this API, given as `vendor[:name[:version]]`.
+         */
         api?: (string | null),
+        /**
+         * Only return executions run by this actor.
+         */
         actorId?: (string | null),
+        /**
+         * Only return executions initiated from this surface, e.g. `api` or `mcp`.
+         */
         origin?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of execution records to return (1-100, default 25).
+         */
         limit?: number,
     }): CancelablePromise<ExecutionListResponse> {
         return __request(OpenAPI, {
@@ -71,6 +101,9 @@ export class ExecutionsService {
     public static getExecution({
         executionId,
     }: {
+        /**
+         * ID of the execution record.
+         */
         executionId: string,
     }): CancelablePromise<ExecutionResponse> {
         return __request(OpenAPI, {

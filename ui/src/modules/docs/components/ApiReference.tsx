@@ -157,7 +157,7 @@ const IndexModelRow = memo(function IndexModelRow({
 				onClick={() => jumpTo(id)}
 				className={cn(
 					'hover:bg-muted hover:text-foreground block w-full truncate rounded px-2 py-1 text-left font-mono text-[12px]',
-					active ? 'bg-primary/10 text-primary' : 'text-foreground/60',
+					active ? 'bg-primary/10 text-primary' : 'text-foreground-sub',
 				)}
 			>
 				{name}
@@ -207,7 +207,7 @@ function ReferenceIndex({
 						<button
 							type="button"
 							onClick={() => jumpTo(tagGroupAnchorId(group.name, prefix))}
-							className="text-foreground/45 hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
+							className="text-foreground-faint hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
 						>
 							{group.name}
 						</button>
@@ -244,7 +244,7 @@ function ReferenceIndex({
 						<button
 							type="button"
 							onClick={() => jumpTo(modelsAnchorId(prefix))}
-							className="text-foreground/45 hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
+							className="text-foreground-faint hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
 						>
 							Models
 						</button>
@@ -282,11 +282,11 @@ function BodySchema({
 }) {
 	return (
 		<div>
-			<p className="text-foreground/45 mb-1.5 font-mono text-[11px]">{body.contentType}</p>
+			<p className="text-foreground-faint mb-1.5 font-mono text-[11px]">{body.contentType}</p>
 			{body.schema && Object.keys(body.schema).length > 0 ? (
 				<SchemaView spec={spec} schema={body.schema} anchorPrefix={anchorPrefix} />
 			) : (
-				<p className="text-foreground/45 text-[12px] italic">No schema.</p>
+				<p className="text-foreground-faint text-[12px] italic">No schema.</p>
 			)}
 		</div>
 	);
@@ -319,7 +319,7 @@ function Disclosure({
 			>
 				<ChevronRight
 					className={cn(
-						'text-foreground/40 mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform',
+						'text-foreground-faint mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform',
 						open && 'rotate-90',
 					)}
 					aria-hidden="true"
@@ -351,10 +351,10 @@ function StatusPill({ status }: { status: string }) {
 
 function SectionLabel({ children, count }: { children: ReactNode; count?: number }) {
 	return (
-		<h4 className="text-foreground/60 mb-2 flex items-baseline gap-2 text-[11px] font-semibold tracking-wider uppercase">
+		<h4 className="text-foreground-sub mb-2 flex items-baseline gap-2 text-[11px] font-semibold tracking-wider uppercase">
 			{children}
 			{count != null && (
-				<span className="text-foreground/45 font-mono text-[10px] normal-case">
+				<span className="text-foreground-faint font-mono text-[10px] normal-case">
 					{count}
 				</span>
 			)}
@@ -396,7 +396,7 @@ function ParamRow({ p }: { p: SpecOperation['parameters'][number] }) {
 						<span className="text-danger text-[10px] font-medium">required</span>
 					)}
 				</div>
-				{p.type && <code className="text-primary/70 font-mono text-[11px]">{p.type}</code>}
+				{p.type && <code className="text-primary font-mono text-[11px]">{p.type}</code>}
 			</div>
 			<div className="min-w-0">
 				{p.description && (
@@ -407,7 +407,7 @@ function ParamRow({ p }: { p: SpecOperation['parameters'][number] }) {
 						{p.constraints.map((c) => (
 							<span
 								key={c}
-								className="bg-muted/40 text-foreground/55 rounded px-1 py-px font-mono text-[10px]"
+								className="bg-muted/40 text-foreground-sub rounded px-1 py-px font-mono text-[10px]"
 							>
 								{c}
 							</span>
@@ -437,7 +437,7 @@ function AuthChip({ endpoint }: { endpoint: ReferenceEndpoint | undefined }) {
 	}
 	const permissions = endpoint.required_permissions ?? [];
 	return (
-		<span className="text-foreground/55 inline-flex items-center gap-1 text-[11px]">
+		<span className="text-foreground-sub inline-flex items-center gap-1 text-[11px]">
 			<Lock className="h-3 w-3" aria-hidden="true" />
 			{permissions.length > 0 ? (
 				<code className="font-mono">
@@ -487,7 +487,7 @@ const OperationBlock = memo(function OperationBlock({
 				<p className="text-foreground mt-2.5 text-[15px] font-medium">{op.summary}</p>
 			)}
 			{op.operationId && (
-				<p className="text-foreground/60 mt-0.5 font-mono text-[11px]">
+				<p className="text-foreground-sub mt-0.5 font-mono text-[11px]">
 					operationId: {op.operationId}
 				</p>
 			)}
@@ -512,7 +512,7 @@ const OperationBlock = memo(function OperationBlock({
 					<div className="space-y-3">
 						{paramGroups.map(([loc, params]) => (
 							<div key={loc} className="border-border/40 rounded-lg border px-3 py-1">
-								<p className="text-foreground/40 border-border/30 border-b py-1.5 text-[10px] font-semibold tracking-wider uppercase">
+								<p className="text-foreground-faint border-border/30 border-b py-1.5 text-[10px] font-semibold tracking-wider uppercase">
 									{PARAM_GROUP_LABEL[loc] ?? loc} parameters
 								</p>
 								<div className="divide-border/25 divide-y">
@@ -536,7 +536,7 @@ const OperationBlock = memo(function OperationBlock({
 												required
 											</span>
 										)}
-										<code className="text-foreground/45 font-mono text-[11px]">
+										<code className="text-foreground-faint font-mono text-[11px]">
 											{reqBody.contentType}
 										</code>
 									</span>
@@ -568,7 +568,7 @@ const OperationBlock = memo(function OperationBlock({
 										{r.description || '—'}
 									</span>
 									{hasBody && (
-										<code className="text-foreground/35 shrink-0 font-mono text-[10px]">
+										<code className="text-foreground-faint shrink-0 font-mono text-[10px]">
 											{r.bodies[0].contentType}
 										</code>
 									)}
@@ -627,7 +627,7 @@ function TagSection({
 				{tag.description && (
 					<Markdown
 						source={tag.description}
-						className="text-foreground/55 mt-0.5 text-sm"
+						className="text-foreground-sub mt-0.5 text-sm"
 					/>
 				)}
 			</header>
@@ -668,7 +668,7 @@ function ModelsSection({
 		<section id={modelsAnchorId(prefix)} className="scroll-mt-28">
 			<header className="border-border bg-card/40 mb-4 rounded-lg border px-4 py-2.5">
 				<h3 className="text-foreground text-sm font-semibold">Models</h3>
-				<p className="text-foreground/60 text-xs">
+				<p className="text-foreground-sub text-xs">
 					{parsed.models.length} component schemas referenced by the operations above.
 				</p>
 			</header>
@@ -693,7 +693,7 @@ function ModelsSection({
 							return desc ? (
 								<Markdown
 									source={desc}
-									className="text-foreground/55 mt-1 text-[13px]"
+									className="text-foreground-sub mt-1 text-[13px]"
 								/>
 							) : null;
 						})()}
@@ -764,7 +764,7 @@ function SchemeCard({ name, scheme }: { name: string; scheme: Record<string, unk
 	const summary = (
 		<span className="flex flex-wrap items-baseline gap-2">
 			<code className="text-primary font-mono text-[13px]">{name}</code>
-			<span className="text-foreground/55 text-xs">{describeScheme(scheme)}</span>
+			<span className="text-foreground-sub text-xs">{describeScheme(scheme)}</span>
 		</span>
 	);
 
@@ -779,11 +779,11 @@ function SchemeCard({ name, scheme }: { name: string; scheme: Record<string, unk
 			{desc && <Markdown source={desc} className="text-foreground/65 text-[13px]" />}
 			{flows.map((flow) => (
 				<div key={flow.name} className="mt-3 first:mt-2">
-					<p className="text-foreground/45 text-[11px] font-semibold tracking-wider uppercase">
+					<p className="text-foreground-faint text-[11px] font-semibold tracking-wider uppercase">
 						{flow.name} flow
 					</p>
 					{flow.tokenUrl && (
-						<p className="text-foreground/60 mt-1 text-[12px]">
+						<p className="text-foreground-sub mt-1 text-[12px]">
 							Token URL:{' '}
 							<code className="bg-muted/40 text-foreground rounded px-1 py-0.5 font-mono text-[11px]">
 								{flow.tokenUrl}
@@ -798,7 +798,7 @@ function SchemeCard({ name, scheme }: { name: string; scheme: Record<string, unk
 										{scope}
 									</code>
 									{scopeDesc && (
-										<span className="text-foreground/55 text-[12px]">
+										<span className="text-foreground-sub text-[12px]">
 											{scopeDesc}
 										</span>
 									)}
@@ -848,7 +848,7 @@ function ApiOverview({ parsed }: { parsed: ParsedSpec }) {
 										{s.url}
 									</code>
 									{s.description && (
-										<span className="text-foreground/60 ml-2 text-xs">
+										<span className="text-foreground-sub ml-2 text-xs">
 											{s.description}
 										</span>
 									)}
@@ -861,7 +861,7 @@ function ApiOverview({ parsed }: { parsed: ParsedSpec }) {
 				{hasMeta && (
 					<div>
 						<SectionLabel>About</SectionLabel>
-						<div className="text-foreground/60 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+						<div className="text-foreground-sub flex flex-wrap gap-x-4 gap-y-1 text-xs">
 							{meta.contactName && (
 								<span>
 									Contact:{' '}
@@ -912,7 +912,7 @@ function ApiOverview({ parsed }: { parsed: ParsedSpec }) {
 			{schemes.length > 0 && (
 				<div>
 					<SectionLabel>Authentication</SectionLabel>
-					<p className="text-foreground/50 mb-2 text-xs">
+					<p className="text-foreground-sub mb-2 text-xs">
 						Every authenticated request sends{' '}
 						<code className="bg-muted/40 text-foreground/70 rounded px-1 py-0.5 font-mono text-[11px]">
 							Authorization: Bearer &lt;token&gt;
@@ -1003,7 +1003,7 @@ export function ApiReferenceView({
 						/>
 					</div>
 					{q && (
-						<span className="text-foreground/50 shrink-0 text-xs">
+						<span className="text-foreground-sub shrink-0 text-xs">
 							{matchTotal} match{matchTotal === 1 ? '' : 'es'}
 						</span>
 					)}
@@ -1011,7 +1011,7 @@ export function ApiReferenceView({
 			</div>
 
 			{empty ? (
-				<p className="text-foreground/50 py-6 text-center text-sm">
+				<p className="text-foreground-sub py-6 text-center text-sm">
 					No operations or models match your filter.
 				</p>
 			) : (
@@ -1038,7 +1038,7 @@ export function ApiReferenceView({
 										<h3 className="text-foreground text-lg font-bold tracking-tight">
 											{group.name}
 										</h3>
-										<span className="text-foreground/60 text-xs">
+										<span className="text-foreground-sub text-xs">
 											{group.tags.reduce(
 												(n, t) => n + t.operations.length,
 												0,

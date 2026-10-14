@@ -37,6 +37,15 @@ def test_combined_app_mounts_all_surfaces(ctx: Context) -> None:
         assert data["surface"] == surface
 
 
+def test_combined_app_root_health_body_is_exact(ctx: Context) -> None:
+    """The typed root probe must not leak null optional members onto the wire."""
+    app = create_combined_app(ctx, ["registry", "admin", "control"])
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "version": __version__}
+
+
 def test_combined_app_subset_only_mounts_requested(ctx: Context) -> None:
     app = create_combined_app(ctx, ["control"])
     client = TestClient(app, raise_server_exceptions=False)

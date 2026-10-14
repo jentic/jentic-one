@@ -29,8 +29,10 @@ import {
 	type SecretKind,
 } from '@/shared/credentials/lib/connectReview';
 
+/** The action band: pinned to the bottom of the scrolling sheet body, so the
+ *  decision stays in reach however long the review above it runs. */
 const FOOTER_CLASS =
-	'bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5';
+	'bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5';
 
 const EYEBROW_CLASS = 'text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase';
 
@@ -407,13 +409,16 @@ export interface EnteredOAuthClient {
 
 /**
  * The approver's own OAuth client for an `awaiting_app` session — the same
- * fields as a direct OAuth 2.0 credential. The endpoints are optional: left
- * blank, the API's declared authorization-code endpoints apply. The client
- * secret follows the sensitive-input rule of {@link SecretEntryStep}.
+ * fields as a direct OAuth 2.0 credential. The client secret follows the
+ * sensitive-input rule of {@link SecretEntryStep}. For an API whose spec is
+ * from the public catalog the server offers its authorization-code endpoints:
+ * they arrive filled in and folded away behind a "Change" control. Otherwise
+ * the approver enters both.
  */
 export function OwnOAuthClientStep({
 	header,
 	callbackUrl,
+	catalogEndpoints,
 	submitting,
 	error,
 	onBack,
@@ -422,6 +427,8 @@ export function OwnOAuthClientStep({
 	header: ReactNode;
 	/** The redirect URI to allow on the OAuth app, when the server reports one. */
 	callbackUrl: string | null;
+	/** The public-catalog spec's endpoints, when the server offers them. */
+	catalogEndpoints?: { authorizeUrl: string; tokenUrl: string } | null;
 	submitting: boolean;
 	error: string | null;
 	onBack: () => void;
@@ -429,8 +436,9 @@ export function OwnOAuthClientStep({
 }) {
 	const [clientId, setClientId] = useState('');
 	const [clientSecret, setClientSecret] = useState('');
-	const [authorizeUrl, setAuthorizeUrl] = useState('');
-	const [tokenUrl, setTokenUrl] = useState('');
+	const [authorizeUrl, setAuthorizeUrl] = useState(catalogEndpoints?.authorizeUrl ?? '');
+	const [tokenUrl, setTokenUrl] = useState(catalogEndpoints?.tokenUrl ?? '');
+	const [editingEndpoints, setEditingEndpoints] = useState(!catalogEndpoints);
 	const ids = {
 		clientId: useId(),
 		clientSecret: useId(),
@@ -438,9 +446,9 @@ export function OwnOAuthClientStep({
 		tokenUrl: useId(),
 		callback: useId(),
 	};
-	// Both endpoints are the approver's own: the API's declared ones are never
-	// used, since an agent may have submitted the spec and the token URL
-	// receives the client secret.
+	// The token URL receives the client secret, so the API's declared endpoints
+	// are offered only for a public-catalog spec (server-side); a spec an agent
+	// or user submitted leaves both for the approver to enter.
 	const ready =
 		clientId.trim().length > 0 &&
 		clientSecret.length > 0 &&
@@ -487,36 +495,63 @@ export function OwnOAuthClientStep({
 					onChange={(e): void => setClientSecret(e.target.value)}
 				/>
 			</div>
-			<div className="space-y-1.5">
-				<Label htmlFor={ids.authorizeUrl} required>
-					Authorize URL
-				</Label>
-				<Input
-					id={ids.authorizeUrl}
-					type="url"
-					autoComplete="off"
-					value={authorizeUrl}
-					onChange={(e): void => setAuthorizeUrl(e.target.value)}
-					placeholder="https://provider.com/oauth/authorize"
-				/>
-			</div>
-			<div className="space-y-1.5">
-				<Label htmlFor={ids.tokenUrl} required>
-					Token URL
-				</Label>
-				<Input
-					id={ids.tokenUrl}
-					type="url"
-					autoComplete="off"
-					value={tokenUrl}
-					onChange={(e): void => setTokenUrl(e.target.value)}
-					placeholder="https://provider.com/oauth/token"
-				/>
-				<p className="text-muted-foreground text-xs">
-					Your OAuth provider&apos;s https endpoints. The token URL receives your client
-					secret, so copy both from your provider, not from the API&apos;s spec.
-				</p>
-			</div>
+			{!editingEndpoints && catalogEndpoints ? (
+				<div
+					className="bg-surface-inset flex items-start gap-3 rounded-lg px-3 py-2.5"
+					data-testid="catalog-oauth-endpoints"
+				>
+					<div className="min-w-0 flex-1 space-y-0.5">
+						<p className="text-foreground text-sm">
+							Endpoints from the API&apos;s catalog spec
+						</p>
+						<p className="text-muted-foreground truncate font-mono text-xs">
+							{hostOf(authorizeUrl)} · {hostOf(tokenUrl)}
+						</p>
+					</div>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={(): void => setEditingEndpoints(true)}
+					>
+						Change
+					</Button>
+				</div>
+			) : (
+				<>
+					<div className="space-y-1.5">
+						<Label htmlFor={ids.authorizeUrl} required>
+							Authorize URL
+						</Label>
+						<Input
+							id={ids.authorizeUrl}
+							type="url"
+							autoComplete="off"
+							value={authorizeUrl}
+							onChange={(e): void => setAuthorizeUrl(e.target.value)}
+							placeholder="https://provider.com/oauth/authorize"
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor={ids.tokenUrl} required>
+							Token URL
+						</Label>
+						<Input
+							id={ids.tokenUrl}
+							type="url"
+							autoComplete="off"
+							value={tokenUrl}
+							onChange={(e): void => setTokenUrl(e.target.value)}
+							placeholder="https://provider.com/oauth/token"
+						/>
+						<p className="text-muted-foreground text-xs">
+							{catalogEndpoints
+								? 'Filled in from the API’s public-catalog spec. The token URL receives your client secret, so change them only to your provider’s own https endpoints.'
+								: 'Your OAuth provider’s https endpoints. The token URL receives your client secret, so copy both from your provider, not from the API’s spec.'}
+						</p>
+					</div>
+				</>
+			)}
 			{callbackUrl && (
 				<div className="space-y-1.5">
 					<Label htmlFor={ids.callback}>Callback URL</Label>
@@ -558,4 +593,13 @@ export function OwnOAuthClientStep({
 			</div>
 		</form>
 	);
+}
+
+/** The host of an endpoint URL, or the URL itself when it does not parse. */
+function hostOf(url: string): string {
+	try {
+		return new URL(url).host;
+	} catch {
+		return url;
+	}
 }

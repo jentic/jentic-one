@@ -160,7 +160,7 @@ func (InviteIssuedResponse) RequiredFields() []string { return []string{"expires
 func (JobLinksResponse) RequiredFields() []string     { return []string{"self"} }
 func (JobListResponse) RequiredFields() []string      { return []string{"data", "has_more"} }
 func (JobResponse) RequiredFields() []string {
-	return []string{"_links", "created_at", "job_id", "kind", "status"}
+	return []string{"_links", "actor_type", "created_at", "job_id", "kind", "status"}
 }
 func (JwksUpdateRequest) RequiredFields() []string { return []string{"jwks"} }
 func (LoginRequest) RequiredFields() []string      { return []string{"email", "password"} }
@@ -209,6 +209,7 @@ func (OAuthClientResponse) RequiredFields() []string {
 }
 func (OAuthClientRotateSecretResponse) RequiredFields() []string { return []string{"client_secret"} }
 func (OAuthConfirmSessionRequest) RequiredFields() []string      { return []string{"confirmed_scopes"} }
+func (OAuthErrorResponse) RequiredFields() []string              { return []string{"error"} }
 func (OAuthGrantAdminListResponse) RequiredFields() []string     { return []string{"data", "has_more"} }
 func (OAuthGrantAdminResponse) RequiredFields() []string {
 	return []string{"agent_id", "can_revoke", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
@@ -278,6 +279,8 @@ func (RegisterResponse) RequiredFields() []string {
 }
 func (RegistrationStatusResponse) RequiredFields() []string { return []string{"client_id", "status"} }
 func (RevokeRequest) RequiredFields() []string              { return []string{"token"} }
+func (RootHealthResponse) RequiredFields() []string         { return []string{"status"} }
+func (RouteNotFoundResponse) RequiredFields() []string      { return []string{"detail"} }
 func (RuleSetAttachRequest) RequiredFields() []string       { return []string{"rule_set_id"} }
 func (RuleSetCreateRequest) RequiredFields() []string       { return []string{"name"} }
 func (RuleSetListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }

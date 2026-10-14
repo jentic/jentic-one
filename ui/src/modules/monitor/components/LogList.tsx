@@ -93,8 +93,8 @@ export interface LogRowProps {
 	detail?: ReactNode;
 	/** Inline control or affordance (chevron). */
 	action?: ReactNode;
-	/** Accessible name of the row. */
-	label: string;
+	/** For a row that folds/unfolds others: whether it is unfolded. */
+	expanded?: boolean;
 	onOpen: () => void;
 	/** The row whose record the detail pane shows. */
 	active?: boolean;
@@ -120,7 +120,7 @@ export function LogRow({
 	subject,
 	detail,
 	action,
-	label,
+	expanded,
 	onOpen,
 	active,
 	nested,
@@ -149,10 +149,13 @@ export function LogRow({
 					active ? 'bg-primary' : failure ? 'bg-danger' : 'bg-transparent',
 				)}
 			/>
+			{/* The row is named by its own content — status, sentence, time,
+			    actor, subject, detail — so what a reader sees is what assistive
+			    tech and voice control hear (WCAG 2.5.3). */}
 			<div
 				role="link"
 				tabIndex={0}
-				aria-label={label}
+				aria-expanded={expanded}
 				aria-current={active ? 'true' : undefined}
 				data-log-row={steppable ? '' : undefined}
 				onClick={(e: MouseEvent) => {

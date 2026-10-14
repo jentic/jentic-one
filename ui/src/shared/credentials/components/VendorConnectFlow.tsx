@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
 	ArrowLeft,
@@ -612,7 +612,7 @@ function VendorSelfConnectFlow({
 
 			{flowError && <ErrorAlert message={flowError} />}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
 					<ArrowLeft className="h-4 w-4" />
 					Back
@@ -1209,7 +1209,7 @@ function VendorApproveFlow({
 		return (
 			<div className="space-y-4">
 				<ErrorAlert message={approvalLoadError(sessionQuery.error)} />
-				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
+				<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close
 					</Button>
@@ -1328,6 +1328,14 @@ function VendorApproveFlow({
 					/>
 				}
 				callbackUrl={callbackUrl}
+				catalogEndpoints={
+					session.scheme?.authorization_url && session.scheme.token_url
+						? {
+								authorizeUrl: session.scheme.authorization_url,
+								tokenUrl: session.scheme.token_url,
+							}
+						: null
+				}
 				submitting={confirmMutation.isPending}
 				error={errorFor('own_client')}
 				onBack={(): void => goToPhase('rules')}
@@ -1420,8 +1428,14 @@ function VendorApproveFlow({
 					agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
 				/>
 			)}
+			{canConfirm && showScopes && scopes.length > 0 && currentSelection.size === 0 && (
+				<p className="text-muted-foreground text-xs" data-testid="scopes-needed-hint">
+					Pick at least one scope to continue
+					{scopes.some((s) => s.requested) ? '.' : ' — the agent didn’t ask for any.'}
+				</p>
+			)}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
 				<div className="flex items-center gap-1">
 					<Button type="button" variant="ghost" size="sm" onClick={handleNotNow}>
 						{canConfirm ? 'Not now' : 'Close'}
@@ -1633,7 +1647,7 @@ function RulesStep({
 
 			{error && <ErrorAlert message={error} />}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button
 					type="button"
 					variant="ghost"
@@ -1865,7 +1879,7 @@ function ScopeRow({
 				<div className="flex items-center gap-2">
 					<code className="text-foreground text-sm font-medium">{scope.name}</code>
 					<ScopeClassificationBadge classification={scope.classification} />
-					{agentRequested && <Badge variant="default">requested</Badge>}
+					{agentRequested && <Badge variant="default">requested by agent</Badge>}
 				</div>
 				{scope.description && (
 					<p className="text-muted-foreground mt-0.5 text-xs">{scope.description}</p>
@@ -2061,7 +2075,7 @@ function PollingStatusLine({ display, status }: { display: VendorDisplay; status
 
 function CancelBar({ onCancel }: { onCancel: () => void }) {
 	return (
-		<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
+		<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
 				Cancel
 			</Button>
@@ -2110,8 +2124,24 @@ function TerminalStep({
 	onRetry?: () => void;
 }) {
 	const success = status === 'connected';
+	// A finished connect closes itself after a short countdown — unless the step
+	// asks for something more (the re-authorize notice), or the operator does
+	// anything in it (pick agents to bind, Stay open), which keeps it open.
+	const [remaining, setRemaining] = useState<number | null>(
+		success && !children ? AUTO_CLOSE_SECONDS : null,
+	);
+	const stay = useCallback((): void => setRemaining(null), []);
+	useEffect(() => {
+		if (remaining == null) return undefined;
+		if (remaining <= 0) {
+			onDone();
+			return undefined;
+		}
+		const tick = setTimeout(() => setRemaining((r) => (r == null ? null : r - 1)), 1000);
+		return () => clearTimeout(tick);
+	}, [remaining, onDone]);
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5" onPointerDown={stay} onKeyDown={stay}>
 			<div className="flex flex-col items-center gap-3 py-4 text-center">
 				{success ? (
 					<CheckCircle2 className="text-success h-10 w-10" />
@@ -2148,7 +2178,21 @@ function TerminalStep({
 
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
+				{remaining != null && (
+					<span className="text-muted-foreground mr-auto flex items-center gap-2 text-sm">
+						{/* Announced once; the visible count ticks without re-announcing. */}
+						<span className="sr-only" role="status">
+							{`This closes by itself in ${AUTO_CLOSE_SECONDS} seconds.`}
+						</span>
+						<span aria-hidden="true" data-testid="auto-close-countdown">
+							Closing in {remaining}…
+						</span>
+						<Button type="button" variant="ghost" size="sm" onClick={stay}>
+							Stay open
+						</Button>
+					</span>
+				)}
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again
@@ -2161,6 +2205,9 @@ function TerminalStep({
 		</div>
 	);
 }
+
+/** Seconds a finished connect stays on screen before it closes by itself. */
+const AUTO_CLOSE_SECONDS = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers

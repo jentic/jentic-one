@@ -98,6 +98,10 @@ export interface ReviewScheme {
 	/** ``header`` / ``query`` / ``cookie`` for an API key. */
 	location: string | null;
 	field_name: string | null;
+	/** An OAuth scheme's authorize URL — set only when the API's spec is from the public catalog. */
+	authorization_url?: string | null;
+	/** An OAuth scheme's token URL — set only when the API's spec is from the public catalog. */
+	token_url?: string | null;
 }
 
 /**

@@ -19,6 +19,8 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
+import { CredentialType } from '@/shared/credentials/api';
+import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { formatTimestamp } from '@/shared/lib/utils';
 import { Toaster } from '@/shared/ui';
 import {
@@ -163,7 +165,10 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByText('where your agent runs')).toBeInTheDocument();
 		const hint = screen.getByTestId('register-command-shell');
 		expect(hint).toHaveTextContent('POSIX shell');
-		expect(hint).toHaveAttribute('title', expect.stringContaining('sh, bash, zsh'));
+		// The shared Tooltip describes the focusable wrapper (no native title box).
+		expect(hint.parentElement).toHaveAccessibleDescription(
+			expect.stringContaining('sh, bash, zsh'),
+		);
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
@@ -304,7 +309,7 @@ describe('Agents page — zero agents', () => {
 		const summary = await screen.findByTestId('permissions-summary');
 		const toggle = within(summary).getByRole('button', { name: /permissions$/ });
 		if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
-		const group = screen.getByRole('group', { name: label });
+		const group = await screen.findByRole('group', { name: label });
 		return [...group.querySelectorAll('[data-permission]')].map((el) =>
 			el.getAttribute('data-permission'),
 		);
@@ -351,22 +356,21 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
 			'Self-registered · signs in with its own keypair',
 		);
-		expect(facts.getByText(id)).toBeInTheDocument();
+		expect(within(screen.getByTestId('agent-id-fact')).getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
 		// No permissions requested: approval grants the default agent permissions. Two of
 		// them act (capabilities:execute runs upstream calls,
-		// credentials:connect stores a credential), so the review opens before
-		// approval and lists them all.
+		// credentials:connect stores a credential): the summary calls them out,
+		// and the full list is one click away.
 		const summary = await screen.findByTestId('permissions-summary');
 		expect(summary).toHaveTextContent(
 			`Gets the default agent permissions · ${DEFAULT_AGENT_PERMISSIONS.length}`,
 		);
-		expect(within(summary).getByRole('button', { name: 'Hide permissions' })).toHaveAttribute(
-			'aria-expanded',
-			'true',
-		);
-		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
+		expect(
+			within(summary).getByRole('button', { name: 'Review all permissions' }),
+		).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.getByTestId('permission-risk-callout')).toHaveTextContent(
 			'2 of these can change data, run upstream calls or administer your organisation.',
 		);
 		expect(await reviewedPermissions('Default agent permissions')).toEqual(
@@ -515,8 +519,20 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		await arrive('risky-bot', queryClient);
 
-		// Flagged permissions in the request: the review is open before approval, so
-		// every permission approval grants is on screen, grouped by area.
+		// Flagged permissions in the request are called out on the summary, never
+		// folded away.
+		const pinned = await screen.findByRole('list', {
+			name: 'Permissions that can change data, run calls or administer',
+		});
+		expect(
+			[...pinned.querySelectorAll('[data-permission]')].map((el) =>
+				el.getAttribute('data-permission'),
+			),
+		).toEqual(['agents:write', 'credentials:write', 'org:admin', 'capabilities:execute']);
+		expect(screen.queryByRole('group', { name: 'Requested permissions' })).toBeNull();
+
+		// "Review all" puts every permission approval grants on screen, grouped by area.
+		await userEvent.click(screen.getByRole('button', { name: 'Review all permissions' }));
 		const group = await screen.findByRole('group', { name: 'Requested permissions' });
 		const items = [...group.querySelectorAll<HTMLElement>('[data-permission]')];
 		expect(items.map((el) => el.dataset.permission).sort()).toEqual([...requested].sort());
@@ -541,17 +557,16 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByRole('button', { name: 'Approve risky-bot' })).toBeEnabled();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 
-		// Hiding the review keeps the flagged ones on the summary.
+		// Hiding the review brings the flagged ones back onto the summary.
 		await userEvent.click(screen.getByRole('button', { name: 'Hide permissions' }));
-		const pinned = screen.getByRole('list', {
-			name: 'Permissions that can change data, run calls or administer',
-		});
 		expect(
-			[...pinned.querySelectorAll('[data-permission]')].map((el) =>
-				el.getAttribute('data-permission'),
-			),
-		).toEqual(['agents:write', 'credentials:write', 'org:admin', 'capabilities:execute']);
-		expect(screen.queryByRole('group', { name: 'Requested permissions' })).toBeNull();
+			await screen.findByRole('list', {
+				name: 'Permissions that can change data, run calls or administer',
+			}),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByRole('group', { name: 'Requested permissions' })).toBeNull(),
+		);
 	});
 
 	it('holds Approve while the requested permissions are still being read', async () => {
@@ -777,11 +792,11 @@ describe('Agents page — zero agents', () => {
 			`Granted ${DEFAULT_AGENT_PERMISSIONS.length} permissions`,
 		);
 		expect(screen.queryByRole('group', { name: 'Granted permissions' })).toBeNull();
-		const toggle = within(summary).getByRole('button', { name: 'Review permissions' });
+		const toggle = within(summary).getByRole('button', { name: 'Review all permissions' });
 		expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
 		await user.click(toggle);
-		const group = screen.getByRole('group', { name: 'Granted permissions' });
+		const group = await screen.findByRole('group', { name: 'Granted permissions' });
 		expect(group.querySelectorAll('[data-permission]')).toHaveLength(
 			DEFAULT_AGENT_PERMISSIONS.length,
 		);
@@ -791,6 +806,87 @@ describe('Agents page — zero agents', () => {
 		const hide = within(summary).getByRole('button', { name: 'Hide permissions' });
 		expect(hide).toHaveAttribute('aria-expanded', 'true');
 		expect(hide).toHaveAttribute('aria-controls', group.id);
+	});
+
+	it('the permission summary counts each area from the data and calls out only the risky ones', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+
+		// One chip per area, each counting the permissions approval grants there.
+		const counts = screen.getByRole('list', { name: 'Permissions by area' });
+		const expected = groupPermissionsByArea(DEFAULT_AGENT_PERMISSIONS).map((g) => [
+			g.area,
+			String(g.permissions.length),
+		]);
+		expect(
+			[...counts.querySelectorAll<HTMLElement>('[data-area]')].map((el) => [
+				el.dataset.area,
+				el.dataset.count,
+			]),
+		).toEqual(expected);
+		for (const [area, n] of expected)
+			expect(counts.querySelector(`[data-area="${area}"]`)).toHaveTextContent(`${area}${n}`);
+
+		// The callout lists just the flagged ones, by what they allow and their id.
+		const risky = DEFAULT_AGENT_PERMISSIONS.filter((p) =>
+			['capabilities:execute', 'credentials:connect'].includes(p),
+		);
+		const pinned = screen.getByRole('list', {
+			name: 'Permissions that can change data, run calls or administer',
+		});
+		expect(
+			[...pinned.querySelectorAll('[data-permission]')].map((el) =>
+				el.getAttribute('data-permission'),
+			),
+		).toEqual(risky);
+		expect(pinned).toHaveTextContent('Execute capabilities via the broker');
+		expect(pinned).not.toHaveTextContent('apis:read');
+
+		// Folded by default; "Review all" opens every area, the flagged ones marked.
+		expect(screen.queryByRole('group', { name: 'Default agent permissions' })).toBeNull();
+		await user.click(screen.getByRole('button', { name: 'Review all permissions' }));
+		const group = await screen.findByRole('group', { name: 'Default agent permissions' });
+		expect(group.querySelectorAll('[data-permission]')).toHaveLength(
+			DEFAULT_AGENT_PERMISSIONS.length,
+		);
+		expect(
+			[...group.querySelectorAll('[data-risk]')].map((el) =>
+				el.getAttribute('data-permission'),
+			),
+		).toEqual(risky);
+		expect(screen.getByRole('button', { name: 'Hide permissions' })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		);
+	});
+
+	it('the step indicator marks the current step for assistive tech', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+
+		const steps = () =>
+			within(screen.getByRole('list', { name: 'Registration progress' })).getAllByRole(
+				'listitem',
+			);
+		expect(steps().map((li) => li.getAttribute('data-state'))).toEqual([
+			'done',
+			'done',
+			'current',
+			'upcoming',
+		]);
+		expect(steps()[2]).toHaveAttribute('aria-current', 'step');
+		expect(steps()[2]).toHaveTextContent('You approve it');
+		expect(steps()[0]).toHaveTextContent('Run the command (done)');
+
+		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		await screen.findByTestId('first-api-panel');
+		await waitFor(() => expect(steps()[3]).toHaveAttribute('aria-current', 'step'));
+		expect(steps().filter((li) => li.hasAttribute('aria-current'))).toHaveLength(1);
+		expect(progress()).toHaveAttribute('data-step', '4');
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {
@@ -1279,6 +1375,50 @@ describe('Agents page — zero agents', () => {
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
 	});
 
+	it('"Continue with GitHub" reaches the Access step after the credential, and lands with its rules', async () => {
+		worker.use(
+			http.get('/apis', () =>
+				HttpResponse.json({
+					data: [
+						{
+							api: { vendor: 'github-com', name: 'github-rest', version: '1.0.0' },
+							catalog_api_id: 'github.com/api.github.com',
+							display_name: null,
+							description: null,
+							_links: {},
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_github_pat',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github-com', name: 'github-rest', version: '1.0.0' },
+			}),
+		]);
+		const user = userEvent.setup();
+		await approved(user);
+		const github = screen.getByRole('button', { name: 'Continue with GitHub' });
+		await waitFor(() => expect(github).toBeEnabled());
+		await user.click(github);
+
+		const queue = await screen.findByRole('dialog', { name: 'Set up 1 API' });
+		await user.click(await within(queue).findByRole('button', { name: 'Use this credential' }));
+		// The landing's queue is the Add-APIs queue: the same Access step follows.
+		const step = await within(queue).findByTestId('queue-access-step');
+		expect(within(step).getByRole('radio', { name: /Custom rules/ })).toBeChecked();
+		await user.click(within(step).getByRole('radio', { name: /Read-only/ }));
+		await user.click(within(step).getByRole('button', { name: /^Add GitHub/ }));
+		const row = await within(queue).findByTestId('queue-progress-row');
+		await waitFor(() => expect(row).toHaveAttribute('data-status', 'added'));
+		expect(row).toHaveTextContent('Read-only');
+	});
+
 	it('"Continue with GitHub" falls back to the tray when the agent\'s bindings fail to load', async () => {
 		worker.use(
 			http.get('/agents/:id/credentials', () =>
@@ -1324,7 +1464,7 @@ describe('Agents page — resuming the first run on load', () => {
 			).toBeEnabled(),
 		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
-		expect(within(screen.getByTestId('agent-facts')).getByText(id)).toBeInTheDocument();
+		expect(within(screen.getByTestId('agent-id-fact')).getByText(id)).toBeInTheDocument();
 		expect(progressStep()).toBe('3');
 		// Rendered resolved: the manual card never mounts, so nothing slides off.
 		expect(screen.queryByTestId('manual-card')).toBeNull();

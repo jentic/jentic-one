@@ -123,7 +123,11 @@ function renderPage() {
 
 async function openSidebar(title: string): Promise<HTMLElement> {
 	const user = userEvent.setup();
-	await user.click(await screen.findByRole('button', { name: `${title} — open access details` }));
+	// The row's Manage access opens the sheet; the row and its chevron only pin it.
+	const row = (await screen.findByRole('heading', { name: title })).closest(
+		'[data-testid="api-tile"]',
+	) as HTMLElement;
+	await user.click(within(row).getByTestId('row-manage-access'));
 	const dialog = await screen.findByRole('dialog', { name: title });
 	await waitFor(() => {
 		expect(within(dialog).getAllByRole('button')[0]).toHaveFocus();
@@ -363,7 +367,10 @@ describe('a governed binding on a credential shared with the viewer', () => {
 					last_name: 'Er',
 					active: true,
 					// A member: manages agents and credentials, but is not an org admin.
-					permissions: ['agents:read', 'agents:write', 'credentials:write'],
+					// `apis:read` included because `GET /apis` requires it and the page
+					// sends that read only to a viewer who holds it (#1543) — without it a tile
+					// falls back to its vendor host and never reads "Stripe".
+					permissions: ['agents:read', 'agents:write', 'apis:read', 'credentials:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,

@@ -26,9 +26,21 @@ export class HeldExecutionsService {
         cursor,
         limit = 25,
     }: {
+        /**
+         * Only return held executions in this decision state, e.g. `pending`.
+         */
         state?: (ExecutionApprovalState | null),
+        /**
+         * Only return held executions filed by this agent.
+         */
         agentId?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of held executions to return (1-100, default 25).
+         */
         limit?: number,
     }): CancelablePromise<HeldExecutionListResponse> {
         return __request(OpenAPI, {
@@ -63,6 +75,9 @@ export class HeldExecutionsService {
     public static getHeldExecution({
         heldExecutionId,
     }: {
+        /**
+         * ID of the held execution.
+         */
         heldExecutionId: string,
     }): CancelablePromise<HeldExecutionDetailResponse> {
         return __request(OpenAPI, {
@@ -98,6 +113,9 @@ export class HeldExecutionsService {
     public static getHeldExecutionResult({
         heldExecutionId,
     }: {
+        /**
+         * ID of the held execution.
+         */
         heldExecutionId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -133,7 +151,13 @@ export class HeldExecutionsService {
         heldExecutionId,
         requestBody,
     }: {
+        /**
+         * ID of the held execution.
+         */
         heldExecutionId: string,
+        /**
+         * Approve or deny a pending held execution.
+         */
         requestBody: DecideHeldExecutionRequest,
     }): CancelablePromise<HeldExecutionResponse> {
         return __request(OpenAPI, {
@@ -170,6 +194,9 @@ export class HeldExecutionsService {
     public static withdrawHeldExecution({
         heldExecutionId,
     }: {
+        /**
+         * ID of the held execution.
+         */
         heldExecutionId: string,
     }): CancelablePromise<HeldExecutionResponse> {
         return __request(OpenAPI, {

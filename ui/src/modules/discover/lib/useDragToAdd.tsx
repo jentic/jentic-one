@@ -211,7 +211,7 @@ function DragGhost({ ghost }: { ghost: GhostState }) {
 		<div
 			aria-hidden="true"
 			data-testid="drag-ghost"
-			className="bg-surface-ghost pointer-events-none fixed z-[99] flex items-center gap-2.5 rounded-lg py-2 pr-3.5 pl-2 text-sm font-bold whitespace-nowrap text-white shadow-[0_18px_40px_-12px_rgba(0,0,0,.7),0_0_0_1px_hsl(var(--primary)/0.18)]"
+			className="bg-surface-ghost text-foreground pointer-events-none fixed z-[99] flex items-center gap-2.5 rounded-lg py-2 pr-3.5 pl-2 text-sm font-bold whitespace-nowrap shadow-[0_18px_40px_-12px_hsl(var(--shadow)/calc(.7*var(--shadow-k))),0_0_0_1px_hsl(var(--primary)/0.18)]"
 			style={{
 				left: x,
 				top: y,

@@ -9,6 +9,12 @@ import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
 // white-on-white because the theme background is missing.
 import '@/index.css';
 
+// Every file renders on the product's default palette, so axe colour-contrast
+// checks see one theme. A stored choice left by another file is cleared first
+// so `shared/lib/theme` reads the default when it loads.
+window.localStorage.removeItem('jentic-one.theme');
+document.documentElement.dataset.theme = 'light';
+
 // All test files run in parallel inside a single Chromium, so on a loaded CI
 // runner an async settle (backlog fetch → React commit) can outlast
 // testing-library's 1s default and fail every retry of the same loaded run
@@ -17,7 +23,7 @@ import '@/index.css';
 configure({ asyncUtilTimeout: 5_000 });
 
 beforeAll(async () => {
-	await worker.start({ onUnhandledRequest: 'warn' });
+	await worker.start({ onUnhandledFrame: 'warn' });
 });
 
 afterEach(() => {
@@ -33,8 +39,11 @@ afterEach(() => {
 	resetRailEventsStore();
 	window.localStorage.clear();
 	window.sessionStorage.clear();
+	document.documentElement.dataset.theme = 'light';
 });
 
 afterAll(() => {
-	worker.stop();
+	// Fire-and-forget: awaiting would block on in-flight requests that some
+	// suites intentionally leave pending (e.g. never-resolving handlers).
+	void worker.stop();
 });

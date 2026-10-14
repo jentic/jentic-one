@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from jentic_one.admin.services.job_result_service import JobResultService
@@ -22,6 +23,7 @@ from jentic_one.admin.web.schemas.jobs import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
@@ -51,6 +53,8 @@ def _job_response(view: JobView, request: Request) -> JobResponse:
         error=view.error,
         created_at=view.created_at,
         updated_at=view.updated_at,
+        actor_id=view.actor_id,
+        actor_type=view.actor_type,
         links=links,
     )
 
@@ -60,12 +64,40 @@ async def list_jobs(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
-    kind: str | None = None,
-    job_status: list[str] | None = Query(default=None, alias="status"),
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = None,
-    cursor: str | None = None,
-    limit: int = Query(default=25, ge=1, le=100),
+    kind: str | None = Query(
+        default=None,
+        description="Only return jobs of this kind, e.g. `import` or `execution`.",
+        openapi_examples=ex.example("import"),
+    ),
+    job_status: list[str] | None = Query(
+        default=None,
+        alias="status",
+        description="Only return jobs in one of these states; repeat the parameter for several.",
+        openapi_examples=ex.example(["running"]),
+    ),
+    from_: datetime | None = Query(
+        default=None,
+        alias="from",
+        description="Only return jobs created at or after this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_FROM),
+    ),
+    to: datetime | None = Query(
+        default=None,
+        description="Only return jobs created before this time (RFC 3339).",
+        openapi_examples=ex.example(ex.DATETIME_TO),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of jobs to return (1-100, default 25).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> JobListResponse:
     """List jobs with optional filters."""
     page = await job_svc.list_all(
@@ -84,7 +116,9 @@ async def list_jobs(
 @router.get("/jobs/{job_id}")
 async def get_job(
     request: Request,
-    job_id: str,
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
@@ -95,7 +129,9 @@ async def get_job(
 
 @router.get("/jobs/{job_id}/result")
 async def get_job_result(
-    job_id: str,
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
@@ -109,7 +145,9 @@ async def get_job_result(
 @router.post("/jobs/{job_id}:cancel", responses=with_responses(not_found(), conflict()))
 async def cancel_job(
     request: Request,
-    job_id: str,
+    job_id: Annotated[
+        str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
+    ],
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:

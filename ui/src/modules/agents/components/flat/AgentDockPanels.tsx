@@ -5,7 +5,14 @@
  * invitation and Permissions drops the permission editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
-import { Button, DetailSection, SheetBody, SheetHeader, SheetPrimitive } from '@/shared/ui';
+import {
+	Button,
+	DetailSection,
+	SheetBody,
+	SheetHeader,
+	SheetPrimitive,
+	TruncateWithTooltip,
+} from '@/shared/ui';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { useIsGeneratingAgentApiKey, type AgentEntity } from '@/modules/agents/api';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
@@ -16,6 +23,7 @@ import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvena
 import { McpPanel, McpSessionsCard } from '@/modules/agents/components/detail/McpPanel';
 import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 /** Shared chrome: header with title/subtitle + close, scrollable body. */
 function DockSheetFrame({
@@ -41,7 +49,9 @@ function DockSheetFrame({
 					>
 						{title}
 					</h2>
-					<p className="text-muted-foreground truncate text-xs">{subtitle}</p>
+					<TruncateWithTooltip className="text-muted-foreground text-xs">
+						{subtitle}
+					</TruncateWithTooltip>
 				</div>
 				<Button
 					variant="ghost"
@@ -154,10 +164,10 @@ export function AgentPermissionsSheet({
 					{/* Platform permissions and upstream API access are different models
 					    and users conflate them — the copy must name the difference. */}
 					<p className="text-muted-foreground text-sm">
-						Permissions govern what {agent.name} may do on the Jentic control plane
-						itself — they have nothing to do with any upstream API. What it may call
-						upstream is set by the API tiles on the main screen (each tile&rsquo;s
-						credential and rules).
+						Permissions govern what <AgentNameText name={agent.name} /> may do on the
+						Jentic control plane itself — they have nothing to do with any upstream API.
+						What it may call upstream is set by its &ldquo;Can call&rdquo; rows (each
+						row&rsquo;s credential and rules).
 					</p>
 					{isArchived && (
 						<p className="text-muted-foreground text-sm">

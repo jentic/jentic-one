@@ -35,7 +35,10 @@ class BasePermissionRuleSchema(BaseModel):
     path: str | None = Field(
         default=None,
         description=(
-            "Path pattern to match. Interpreted per `match_mode`: `regex` uses "
+            "Path pattern to match, relative to the API's server URL — the "
+            "spec's path (`/widgets`), never the full upstream path with the "
+            "server's base path (`/eu/widgets` for a server `https://host/{region}`). "
+            "Interpreted per `match_mode`: `regex` uses "
             "full-match semantics (the pattern must describe the whole path); "
             "`prefix` and `exact` are literal. None matches all paths."
         ),
@@ -101,13 +104,35 @@ class PermissionRuleSchema(BasePermissionRuleSchema):
 class PermissionRuleReadSchema(BaseModel):
     """Permission rule response (includes system fields)."""
 
-    effect: Literal["allow", "deny", "require-approval"]
-    methods: list[str] | None = None
-    path: str | None = None
-    match_mode: MatchMode = "regex"
-    operations: list[str] | None = None
-    is_system: bool = Field(alias="_system", default=False)
-    comment: str | None = Field(alias="_comment", default=None)
+    effect: Literal["allow", "deny", "require-approval"] = Field(
+        description="Whether this rule allows, denies, or holds the matched request for "
+        "human approval (`require-approval`)."
+    )
+    methods: list[str] | None = Field(
+        default=None, description="HTTP methods the rule matches; null matches all."
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
+            "null matches all paths."
+        ),
+    )
+    match_mode: MatchMode = Field(
+        default="regex",
+        description="How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
+    )
+    operations: list[str] | None = Field(
+        default=None, description="OpenAPI operation IDs the rule matches; null matches all."
+    )
+    is_system: bool = Field(
+        alias="_system",
+        default=False,
+        description="True when the rule is platform-managed rather than user-authored.",
+    )
+    comment: str | None = Field(
+        alias="_comment", default=None, description="Optional note attached to the rule."
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -115,14 +140,24 @@ class PermissionRuleReadSchema(BaseModel):
 class PermissionsPatchRequest(BaseModel):
     """Patch permission rules — add and/or remove."""
 
-    add: list[PermissionRuleSchema] | None = None
-    remove: list[int] | None = None
+    add: list[PermissionRuleSchema] | None = Field(
+        default=None, description="Rules to append after the existing user rules."
+    )
+    remove: list[int] | None = Field(
+        default=None,
+        description=(
+            "Zero-based indexes of user rules (excluding system rules) to delete; "
+            "applied before `add`."
+        ),
+    )
 
 
 class PermissionRuleListResponse(BaseModel):
     """List of permission rules."""
 
-    data: list[PermissionRuleReadSchema]
+    data: list[PermissionRuleReadSchema] = Field(
+        description="The binding's permission rules, in evaluation order."
+    )
 
 
 class PermissionTestRequest(BaseModel):
@@ -134,7 +169,11 @@ class PermissionTestRequest(BaseModel):
         description="HTTP method of the hypothetical request (case-insensitive).",
     )
     path: str = Field(
-        description="Path of the hypothetical request as the broker would see it.",
+        description=(
+            "Path of the hypothetical request relative to the API's server URL "
+            "(the spec's path, e.g. `/widgets/42`) — the path the broker "
+            "evaluates rules on."
+        ),
     )
     operation_id: str | None = Field(
         default=None,

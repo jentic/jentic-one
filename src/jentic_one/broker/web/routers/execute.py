@@ -123,6 +123,7 @@ from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.permissions.evaluation import rule_request_path
 from jentic_one.shared.tracing import (
     JENTIC_TRACESTATE_KEY,
     current_trace_id,
@@ -590,7 +591,10 @@ async def _handle(
         api=resolved.api,
         operation_id=resolved.operation.id,
         method=method,
-        path=urlparse(upstream_url).path,
+        path=rule_request_path(
+            resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
+        ),
+        upstream_url=upstream_url,
         instance=request.url.path,
         credential_deriver=credential_deriver,
         agent_rule_evaluator=agent_rule_evaluator,

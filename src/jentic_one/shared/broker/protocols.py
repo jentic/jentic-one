@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.permissions.evaluation import PathDivergence
 from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
@@ -148,6 +149,10 @@ class RuleEvaluation:
     verdict: RuleVerdict
     rules_loaded: int
     matched_rule_id: str | None = None
+    # Set when ``evaluate`` was given an ``upstream_path`` and a rule written
+    # against the full upstream path (server base included) changes the
+    # verdict versus the spec-relative path (#1424 upgrade diagnostics).
+    divergence: PathDivergence | None = None
 
     @property
     def allowed(self) -> bool:
@@ -269,6 +274,7 @@ class AgentRuleEvaluatorProtocol(Protocol):
         method: str,
         path: str,
         operation_id: str | None,
+        upstream_path: str | None = None,
     ) -> RuleEvaluation: ...
 
 

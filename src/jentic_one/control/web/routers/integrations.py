@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
 from jentic.problem_details import Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -68,6 +68,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import (
     conflict,
     not_found,
@@ -80,7 +81,11 @@ from jentic_one.shared.web.openapi_responses import (
 # or holds ``org:admin`` may act without it. Every other caller needs it.
 _POLL_TOKEN_DESCRIPTION = (
     "Opaque poll capability returned by :connect. Optional for the target "
-    "agent's owner (with credentials:write and agents:write) and org:admin"
+    "agent's owner (with credentials:write and agents:write) and org:admin. "
+    "Deliberately a query parameter: it rides the approval URL a human opens "
+    "in a browser, where a header cannot be set. It is a short-lived, "
+    "single-session capability, not a reusable credential, and it only "
+    "scopes reads/actions on that one connect session."
 )
 
 _logger = structlog.get_logger(__name__)
@@ -230,10 +235,28 @@ async def integrations_connect(
     summary="List connect sessions",
 )
 async def list_connect_sessions(
-    state: ConnectSessionState | None = Query(default=None, description="Filter by session state"),
-    vendor: str | None = Query(default=None, description="Filter by vendor registry key"),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    state: ConnectSessionState | None = Query(
+        default=None,
+        description="Filter by session state",
+        openapi_examples=ex.example("polling"),
+    ),
+    vendor: str | None = Query(
+        default=None,
+        description="Filter by vendor registry key",
+        openapi_examples=ex.example(ex.VENDOR_KEY),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's next_cursor; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of sessions to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -285,8 +308,18 @@ async def list_connect_sessions(
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ReviewSessionResponse:
@@ -362,6 +395,8 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 type=data.scheme.type,  # type: ignore[arg-type]
                 location=data.scheme.location,
                 field_name=data.scheme.field_name,
+                authorization_url=data.scheme.authorization_url,
+                token_url=data.scheme.token_url,
             )
             if data.scheme is not None
             else None
@@ -403,10 +438,20 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
     ),
 )
 async def confirm_connect_session(
-    session_id: str,
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     request: Request,
     body: Annotated[ConfirmSessionRequest, Body()],
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ConfirmSessionResponse:
@@ -510,8 +555,18 @@ def _to_variant(
     response_model=None,
 )
 async def poll_connect_session_status(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     # Auth is intentionally lightweight: caller must be authenticated with a
     # credential-touching permission, but the poll_token (or being the agent's
     # owner / org:admin) is the real capability that scopes the response — an
@@ -521,6 +576,21 @@ async def poll_connect_session_status(
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> StatusResponse:
+    """Poll the lifecycle status of a connect session.
+
+    Returns the session's current ``status`` and, once it has connected, the
+    resulting ``credential_id``, the account it ``connected_as``, and the
+    ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+    SPA poll this after ``:connect`` until the status is terminal.
+
+    Auth is intentionally lightweight: the caller must be authenticated with
+    ``credentials:connect`` or ``credentials:write``, but the real capability
+    that scopes the response is the session's ``poll_token`` (or being the
+    target agent's owner / ``org:admin``). An agent handed the token by
+    ``:connect`` can poll without full session-read rights. A missing session,
+    a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+    403, so the endpoint is not a session-id enumeration oracle.
+    """
     # ``get_status`` uniformly raises ``InvalidPollTokenError`` (→ 403 via
     # the registered handler) for "session missing", "poll_token mismatch"
     # and "not the owner / admin" — the uniform 403 is what closes the
@@ -547,8 +617,18 @@ async def poll_connect_session_status(
     response_model=None,
 )
 async def cancel_connect_session(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -584,7 +664,13 @@ async def cancel_connect_session(
     response_model=None,
 )
 async def reject_connect_session(
-    session_id: str,
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:

@@ -10,7 +10,9 @@ part of this surface: every read goes through the held execution itself.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
@@ -33,10 +35,18 @@ from jentic_one.shared.jobs.hold import PROBLEM_CONTENT_TYPE
 from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
 from jentic_one.shared.models.jobs import JobStatus
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
+
+_HeldExecutionId = Annotated[
+    str,
+    Path(
+        description="ID of the held execution.", openapi_examples=ex.example(ex.HELD_EXECUTION_ID)
+    ),
+]
 
 #: Execution statuses with a result to collect.
 _FINISHED = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
@@ -94,10 +104,28 @@ async def list_held_executions(
     request: Request,
     identity: Identity = get_current_identity(),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
-    state: ExecutionApprovalState | None = None,
-    agent_id: str | None = None,
-    cursor: str | None = None,
-    limit: int = Query(default=25, ge=1, le=100),
+    state: ExecutionApprovalState | None = Query(
+        default=None,
+        description="Only return held executions in this decision state, e.g. `pending`.",
+        openapi_examples=ex.example("pending"),
+    ),
+    agent_id: str | None = Query(
+        default=None,
+        description="Only return held executions filed by this agent.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of held executions to return (1-100, default 25).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> HeldExecutionListResponse:
     """List the held executions the caller may see, newest first.
 
@@ -120,7 +148,7 @@ async def list_held_executions(
     responses=with_responses(not_found()),
 )
 async def get_held_execution(
-    held_execution_id: str,
+    held_execution_id: _HeldExecutionId,
     request: Request,
     identity: Identity = get_current_identity(),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
@@ -141,7 +169,7 @@ async def get_held_execution(
     responses=with_responses(not_found(), conflict()),
 )
 async def get_held_execution_result(
-    held_execution_id: str,
+    held_execution_id: _HeldExecutionId,
     identity: Identity = get_current_identity(),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
 ) -> Response:
@@ -166,7 +194,7 @@ async def get_held_execution_result(
     responses=with_responses(not_found(), conflict()),
 )
 async def decide_held_execution(
-    held_execution_id: str,
+    held_execution_id: _HeldExecutionId,
     body: DecideHeldExecutionRequest,
     request: Request,
     identity: Identity = get_current_identity(),
@@ -193,7 +221,7 @@ async def decide_held_execution(
     responses=with_responses(not_found(), conflict()),
 )
 async def withdraw_held_execution(
-    held_execution_id: str,
+    held_execution_id: _HeldExecutionId,
     request: Request,
     identity: Identity = get_current_identity(),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),

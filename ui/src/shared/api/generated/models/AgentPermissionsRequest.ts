@@ -6,6 +6,9 @@
  * Request body for replacing an agent's permissions.
  */
 export type AgentPermissionsRequest = {
+    /**
+     * The full set of permissions the agent should hold.
+     */
     permissions: Array<string>;
 };
 

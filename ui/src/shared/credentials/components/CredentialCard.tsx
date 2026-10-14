@@ -21,7 +21,9 @@ interface CredentialCardProps {
 	cred: Credential;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
-	onConnect: (cred: Credential) => void;
+	/** Run the OAuth sign-in. Omitted when the viewer may not write credentials:
+	 * the card then offers no Connect, because the call would be refused. */
+	onConnect?: (cred: Credential) => void;
 	/** How many agents hold this credential: `undefined` still resolving
 	 * (skeleton), `null` unprovable (the clause is omitted), a number exact. */
 	usedByAgentCount?: number | null;
@@ -97,7 +99,9 @@ export function CredentialCard({
 			title={tuple}
 			className={cn(
 				'group relative flex h-full min-w-0 flex-col gap-3 p-4 text-left focus-within:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
-				pendingSignIn && 'border-dashed opacity-80',
+				// The dashed outline marks it; fading the card would drop its text
+				// below contrast.
+				pendingSignIn && 'border-dashed',
 			)}
 		>
 			{/* Full-card click target → edit, for pointer users. Hidden from the
@@ -353,7 +357,8 @@ interface CredentialActionsProps {
 	cred: Credential;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
-	onConnect: (cred: Credential) => void;
+	/** Omitted ⇒ no Connect button (see {@link CredentialCardProps.onConnect}). */
+	onConnect?: (cred: Credential) => void;
 	/** Hide edit and delete — the credential is shared with the viewer, not theirs. */
 	readOnly?: boolean;
 }
@@ -361,7 +366,8 @@ interface CredentialActionsProps {
 /**
  * Connect (OAuth only) · edit · delete. Sits above a host's full-surface edit
  * overlay and stops propagation, so each control stays independently clickable.
- * A read-only credential keeps Connect and drops edit and delete.
+ * A read-only credential keeps Connect and drops edit and delete; a host that
+ * passes no `onConnect` drops Connect too.
  */
 export function CredentialActions({
 	cred,
@@ -370,7 +376,7 @@ export function CredentialActions({
 	onConnect,
 	readOnly = false,
 }: CredentialActionsProps) {
-	const isOAuth = cred.type === CredentialType.OAUTH2;
+	const isOAuth = cred.type === CredentialType.OAUTH2 && onConnect != null;
 	const managed = isManagedProvider(cred.provider);
 	const connected = credentialIsConnected(cred);
 
@@ -388,7 +394,7 @@ export function CredentialActions({
 				<Button
 					variant={connected ? 'tonal' : 'outline'}
 					size="icon-xs"
-					onClick={stop((): void => onConnect(cred))}
+					onClick={stop((): void => onConnect?.(cred))}
 					aria-label={`${connected ? 'Reconnect' : 'Connect'} ${cred.name}`}
 					title={
 						managed

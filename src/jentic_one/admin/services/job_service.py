@@ -13,8 +13,26 @@ from jentic_one.admin.services.metrics import audit_events_counter
 from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+
+
+def _job_actor_type(created_by: str | None, stored: str) -> str:
+    """The enqueuing actor's type, preferring the id prefix over the stored column.
+
+    Rows written before migration ``r7s8t9u0v1w2`` got the column's ``'user'``
+    server default regardless of who enqueued them, so an agent-created legacy
+    job reads ``actor_type='user'``. The ``created_by`` prefix (``usr_`` /
+    ``agnt_`` / retired ``sva_``) is authoritative where it is recognisable;
+    the stored value is the fallback for anything else.
+    """
+    if created_by:
+        try:
+            return actor_type_label_from_id(created_by)
+        except ValueError:
+            pass
+    return stored
 
 
 class JobService:
@@ -117,4 +135,6 @@ class JobService:
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,
+            actor_id=job.created_by,
+            actor_type=_job_actor_type(job.created_by, job.actor_type),
         )

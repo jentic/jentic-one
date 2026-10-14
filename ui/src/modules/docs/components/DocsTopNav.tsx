@@ -129,7 +129,7 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 					<JenticLogo />
 				</Link>
 
-				<span className="text-foreground/40 hidden text-sm sm:inline">Docs</span>
+				<span className="text-foreground-faint hidden text-sm sm:inline">Docs</span>
 
 				<div ref={containerRef} className="relative ml-auto w-full max-w-md">
 					<Input
@@ -154,7 +154,7 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 						startIcon={<Search className="h-3.5 w-3.5" />}
 						className="pr-12"
 					/>
-					<kbd className="text-foreground/40 border-border bg-muted/40 pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border px-1.5 py-0.5 font-mono text-[10px] sm:block">
+					<kbd className="text-foreground-faint border-border bg-muted/40 pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border px-1.5 py-0.5 font-mono text-[10px] sm:block">
 						⌘K
 					</kbd>
 
@@ -167,7 +167,7 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 							className="border-border bg-card absolute right-0 left-0 z-50 mt-1.5 max-h-[60vh] overflow-y-auto rounded-lg border p-1 shadow-xl"
 						>
 							{results.length === 0 ? (
-								<p className="text-foreground/50 px-3 py-4 text-sm">
+								<p className="text-foreground-sub px-3 py-4 text-sm">
 									No matches for “{query.trim()}”.
 								</p>
 							) : (
@@ -190,7 +190,7 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 											)}
 										>
 											<Icon
-												className="text-foreground/45 h-4 w-4 shrink-0"
+												className="text-foreground-faint h-4 w-4 shrink-0"
 												aria-hidden="true"
 											/>
 											<span className="min-w-0 flex-1">
@@ -198,12 +198,12 @@ export function DocsTopNav({ reference, binaries, models, broker, onJump }: Docs
 													{item.title}
 												</span>
 												{item.subtitle && (
-													<span className="text-foreground/50 block truncate text-xs">
+													<span className="text-foreground-sub block truncate text-xs">
 														{item.subtitle}
 													</span>
 												)}
 											</span>
-											<span className="text-foreground/35 shrink-0 text-[10px] font-semibold tracking-wide uppercase">
+											<span className="text-foreground-faint shrink-0 text-[10px] font-semibold tracking-wide uppercase">
 												{meta.label}
 											</span>
 										</button>

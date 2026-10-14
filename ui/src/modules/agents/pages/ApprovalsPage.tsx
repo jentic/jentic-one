@@ -147,9 +147,6 @@ export default function ApprovalsPage() {
 							: 'No approvals match this filter.'
 					}
 					onRowClick={(row) => navigate(ROUTE_PATHS.approval(row.id))}
-					getRowLabel={(row) =>
-						`View approval for ${row.method} ${row.path} (${row.state})`
-					}
 				/>
 			)}
 

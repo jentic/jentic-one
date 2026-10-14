@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from jentic_one.shared.events import MAX_EVENT_SUMMARY_FIELD_LEN, emit_event, summary_label
+from jentic_one.shared.events import (
+    MAX_EVENT_SUMMARY_FIELD_LEN,
+    emit_event,
+    summary_label,
+    summary_text,
+)
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 
@@ -28,6 +33,32 @@ def test_long_name_is_bounded() -> None:
     label = summary_label("x" * 1000, "agnt_1")
     assert len(label) == MAX_EVENT_SUMMARY_FIELD_LEN + 2
     assert label.endswith("…'")
+
+
+def test_long_fallback_id_is_bounded_too() -> None:
+    """A label is never wider than the bound on EITHER branch.
+
+    Most ids are ksuids, but an actor id can be a ``sub`` claim minted by a
+    trusted issuer and ``Event.actor_id`` is ``String(255)`` — so the fallback
+    branch draws on as wide a source as a display name. An unbounded fallback
+    breaks the "a summary's worst case is a sum of known widths" guarantee that
+    keeps ``credential.accessed`` (which raises, failing credential injection)
+    inside ``Event.summary``.
+    """
+    label = summary_label(None, "u" * 255)
+    assert len(label) == MAX_EVENT_SUMMARY_FIELD_LEN
+    assert label.endswith("…")
+
+
+@pytest.mark.parametrize("value", ["", "short/path", "x" * MAX_EVENT_SUMMARY_FIELD_LEN])
+def test_summary_text_passes_values_within_the_bound_through(value: str) -> None:
+    assert summary_text(value) == value
+
+
+def test_summary_text_bounds_wider_values_with_an_ellipsis() -> None:
+    bounded = summary_text("y" * 1000)
+    assert len(bounded) == MAX_EVENT_SUMMARY_FIELD_LEN
+    assert bounded == "y" * (MAX_EVENT_SUMMARY_FIELD_LEN - 1) + "…"
 
 
 def test_control_and_format_characters_are_dropped() -> None:

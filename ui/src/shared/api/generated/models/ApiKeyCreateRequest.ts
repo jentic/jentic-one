@@ -33,8 +33,17 @@ export type ApiKeyCreateRequest = {
      * Credential provider; 'static' for stored secrets.
      */
     provider?: string;
+    /**
+     * Per-upstream-call overrides; reserved and not currently applied.
+     */
     runtime_config?: (RuntimeConfig | null);
+    /**
+     * OpenAPI server-variable values for URL template substitution (at most 20).
+     */
     server_variables?: (Record<string, string> | null);
+    /**
+     * Credential type; always `api_key`.
+     */
     type: string;
 };
 

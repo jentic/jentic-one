@@ -121,7 +121,7 @@ describe('?agent= for an agent the caller cannot see', () => {
 		expect(await screen.findAllByText('support-agent')).not.toHaveLength(0);
 		expect(screen.queryByRole('tab', { selected: true })).toBeNull();
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
-		expect(screen.queryByRole('region', { name: /^APIs for / })).toBeNull();
+		expect(screen.queryByRole('tabpanel')).toBeNull();
 		// The id stays in the URL: the deep link is not rewritten to another agent.
 		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_someone_elses');
 		await settleAnimations(container);

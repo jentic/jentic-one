@@ -228,3 +228,24 @@ class JobRepository:
             .group_by(Job.status)
         )
         return {JobStatus(row[0]): row[1] for row in result.all()}
+
+    @staticmethod
+    async def cancel_active_for_actor(session: AsyncSession, actor_id: str) -> int:
+        """Cancel every queued or running job the actor enqueued; returns the row count.
+
+        The agent-purge sweep. Matches on ``created_by`` alone: the id prefix
+        names the actor, and legacy agent jobs carry ``actor_type='user'``. A
+        cancelled job is never claimed again, and the worker skips the
+        completion and requeue writes for one it holds. The rows stay as history.
+        """
+        stmt = (
+            update(Job)
+            .where(
+                Job.created_by == actor_id,
+                Job.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value]),
+            )
+            .values(status=JobStatus.CANCELLED.value, visible_at=None)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]

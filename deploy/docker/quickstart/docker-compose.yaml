@@ -1,0 +1,77 @@
+# Jentic One quickstart — the README's Docker trial shape as one compose file.
+#
+# The same settings as config/quickstart.env (SQLite files on one volume,
+# development-mode secrets, no TLS), with the published image. `migrate` is a
+# one-shot init service; `app` and `broker` wait for it to finish.
+#
+#   curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+#   docker compose up -d
+#   docker compose exec app python -m jentic_one create-admin --email you@example.com
+#
+# Then sign in at http://127.0.0.1:8000. Agents call the broker on :8100.
+#
+# Trial use only: secrets are per-process dev values and the image tag floats.
+# The production shape (digest pin, external Postgres, real secrets, TLS) is
+# docs/installation/docker-compose.md.
+
+# Fixed project name, so containers and the data volume are named the same
+# whichever directory this file is saved in.
+name: jentic-quickstart
+
+x-image: &image ghcr.io/jentic/jentic-one-app:latest
+# The image has no curl, so the healthcheck uses python.
+x-healthcheck: &healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+# Mirrors config/quickstart.env — keep the two in sync. Any config key can be
+# added here using the JENTIC__SECTION__KEY convention (see config/README.md).
+x-env: &env
+  JENTIC__AUTH__CANONICAL_BASE_URL: http://127.0.0.1:8000
+  JENTIC__DATABASES__REGISTRY__BACKEND: sqlite
+  JENTIC__DATABASES__REGISTRY__PATH: /data/registry.db
+  JENTIC__DATABASES__CONTROL__BACKEND: sqlite
+  JENTIC__DATABASES__CONTROL__PATH: /data/control.db
+  JENTIC__DATABASES__ADMIN__BACKEND: sqlite
+  JENTIC__DATABASES__ADMIN__PATH: /data/admin.db
+  # Anonymous product telemetry (docs/reference/config.md#telemetry).
+  # Set to "false" to opt out.
+  JENTIC__TELEMETRY__ENABLED: "true"
+x-common: &common
+  image: *image
+  environment: *env
+  volumes:
+    - jentic-data:/data
+
+services:
+  migrate:
+    <<: *common
+    command: ["python", "-m", "jentic_one.migrations.run"]
+    restart: "no"
+
+  # Control plane: UI + APIs.
+  app:
+    <<: *common
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:8000:8000"]
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+  # Data plane: agents call this. The broker must run as the sole surface of
+  # its process, so it is its own service.
+  broker:
+    <<: *common
+    environment:
+      <<: *env
+      JENTIC__APPS: broker
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:8100:8000"]
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+volumes:
+  jentic-data:

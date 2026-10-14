@@ -162,6 +162,7 @@ def _source(
     servers: list[dict[str, Any]] | None = None,
     approved: bool = False,
     name: str = _NAME,
+    origin: str | None = "catalog",
 ) -> dict[str, Any]:
     spec = {
         "openapi": "3.1.0",
@@ -181,7 +182,7 @@ def _source(
         "vendor": _VENDOR,
         "api_name": name,
         "version": _VERSION,
-        "origin": "catalog",
+        "origin": origin,
         "submitted_by": "usr_writer",
     }
     if approved:
@@ -536,6 +537,52 @@ def _covering_entry() -> VendorAuthConfig:
         ],
         scopes=[VendorScopeConfig(name="read", classification="read", default=True)],
     )
+
+
+_GOOGLE_STYLE_SCHEME = {
+    "oauth": {
+        "type": "oauth2",
+        "flows": {
+            "authorizationCode": {
+                "authorizationUrl": "https://auth.widgets.example/authorize",
+                "tokenUrl": "https://auth.widgets.example/token",
+                "scopes": {
+                    "https://widgets.example/auth/widgets.readonly": "See your widgets",
+                    "https://widgets.example/auth/widgets": "See, edit and delete your widgets",
+                    "widgets:admin": "",
+                },
+            }
+        },
+    }
+}
+
+
+async def test_review_of_a_catalog_oauth_api_offers_its_endpoints_and_classifies_scopes(
+    env: Context,
+) -> None:
+    """A public-catalog spec's endpoints are offered to an approver bringing their
+    own app; scopes carry the spec's descriptions, a read-shaped name reads as
+    read, and what the agent asked for is flagged as requested."""
+    await _import(env, _GOOGLE_STYLE_SCHEME)
+    created = await _connect(
+        env, requested_scopes=["https://widgets.example/auth/widgets.readonly"]
+    )
+    review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.scheme is not None
+    assert (review.scheme.authorization_url, review.scheme.token_url) == (
+        "https://auth.widgets.example/authorize",
+        "https://auth.widgets.example/token",
+    )
+    by_name = {s.name: s for s in review.scopes}
+    readonly = by_name["https://widgets.example/auth/widgets.readonly"]
+    assert (readonly.classification, readonly.description, readonly.requested) == (
+        "read",
+        "See your widgets",
+        True,
+    )
+    full = by_name["https://widgets.example/auth/widgets"]
+    assert (full.classification, full.requested) == ("write", False)
+    assert by_name["widgets:admin"].classification == "admin"
 
 
 async def test_connect_oauth_api_uses_a_covering_config_entry(env: Context) -> None:
@@ -1365,6 +1412,8 @@ async def test_http_confirm_secret_variant_and_hidden_input(env: Context) -> Non
             "type": "api_key",
             "location": "header",
             "field_name": "X-Api-Key",
+            "authorization_url": None,
+            "token_url": None,
         }
         assert review["can_confirm"] is True
         body = {

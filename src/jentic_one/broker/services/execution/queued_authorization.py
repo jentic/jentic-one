@@ -40,6 +40,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.permissions.evaluation import rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
@@ -160,7 +161,12 @@ class QueuedExecutionAuthorizer:
                 ),
                 operation_id=request.operation_id,
                 method=request.method,
-                path=urlparse(request.upstream_url).path,
+                path=rule_request_path(
+                    request.relative_path,
+                    request.upstream_url,
+                    operation_id=request.operation_id,
+                ),
+                upstream_url=request.upstream_url,
                 instance=instance,
                 credential_deriver=self._credential_deriver,
                 agent_rule_evaluator=self._agent_rule_evaluator,

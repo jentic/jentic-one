@@ -21,6 +21,9 @@ class JobView(BaseModel):
     error: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    # Who enqueued the job: ``actor_id`` is the row's ``created_by`` subject.
+    actor_id: str | None = None
+    actor_type: str
 
 
 class JobFilter(BaseModel):

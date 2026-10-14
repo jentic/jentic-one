@@ -24,7 +24,9 @@ interface CredentialGroupCardProps {
 	credentials: Credential[];
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
-	onConnect: (cred: Credential) => void;
+	/** Omitted ⇒ the cards offer no Connect (the viewer may not write
+	 * credentials, so the sign-in call would be refused). */
+	onConnect?: (cred: Credential) => void;
 	usageFor: (cred: Credential) => Usage;
 	/** Which rows are shared with the viewer rather than theirs to change. */
 	readOnlyFor?: (cred: Credential) => boolean;
@@ -197,7 +199,9 @@ function CredentialRow({
 	showIdTail: boolean;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
-	onConnect: (cred: Credential) => void;
+	/** Omitted ⇒ the cards offer no Connect (the viewer may not write
+	 * credentials, so the sign-in call would be refused). */
+	onConnect?: (cred: Credential) => void;
 	usage: Usage;
 	readOnly: boolean;
 }) {

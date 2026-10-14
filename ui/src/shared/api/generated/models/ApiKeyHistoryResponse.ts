@@ -7,6 +7,9 @@ import type { ApiKeyHistoryEntryResponse } from './ApiKeyHistoryEntryResponse';
  * Audit trail of API key operations.
  */
 export type ApiKeyHistoryResponse = {
+    /**
+     * API key events, newest first.
+     */
     data: Array<ApiKeyHistoryEntryResponse>;
 };
 

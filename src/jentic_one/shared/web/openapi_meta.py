@@ -1014,25 +1014,51 @@ def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     }
 
 
-def _normalise_error_responses(responses: dict[str, Any]) -> None:
-    """Render error responses as ``application/problem+json`` with examples.
+_PROBLEM_DETAIL_REF = "#/components/schemas/ProblemDetail"
 
-    FastAPI emits error bodies (``model=ProblemDetail``) under
-    ``application/json``. This rewrites each 4xx/5xx response to the RFC 9457
-    media type and attaches the canonical per-status example, matching the
-    platform error contract.
+
+def _is_problem_detail_media(media: Any) -> bool:
+    return (
+        isinstance(media, dict) and (media.get("schema") or {}).get("$ref") == _PROBLEM_DETAIL_REF
+    )
+
+
+def _normalise_error_responses(responses: dict[str, Any]) -> None:
+    """Render Problem Details error responses as ``application/problem+json``.
+
+    FastAPI files an error ``model=ProblemDetail`` under the route's response
+    media type: ``application/json`` by default, but ``text/html`` for an
+    HTML-page route (``response_class=HTMLResponse``). This moves whichever
+    entry carries the ``ProblemDetail`` schema to the RFC 9457 media type and
+    attaches the canonical per-status example, matching the platform error
+    contract. Entries in another dialect (e.g. the RFC 6749 §5.2 OAuth error
+    body, or the framework's plain route-not-found body) keep their
+    ``application/json`` media type.
     """
     for code, response in responses.items():
-        if not isinstance(response, dict) or code not in STATUS_EXAMPLES:
+        if not isinstance(response, dict) or not code.startswith(("4", "5")):
             continue
         content = response.get("content")
         if not isinstance(content, dict):
             continue
-        media = content.pop("application/json", None)
-        if media is None:
-            media = content.get(PROBLEM_JSON, {})
-        if not isinstance(media, dict):
-            media = {}
+        # An error ``model=`` on an HTML-page route lands under ``text/html``;
+        # error bodies are always JSON, so fold it into ``application/json``.
+        html = content.get("text/html")
+        if isinstance(html, dict) and html.get("schema"):
+            content.pop("text/html")
+            json_media = content.setdefault("application/json", {})
+            json_media.setdefault("schema", html["schema"])
+        if code not in STATUS_EXAMPLES:
+            continue
+        problem_media_types = [mt for mt, m in content.items() if _is_problem_detail_media(m)]
+        if not problem_media_types:
+            continue
+        media = content[problem_media_types[0]]
+        for mt in problem_media_types:
+            content.pop(mt, None)
+        # A schema-less problem+json placeholder (an earlier pass, or a route
+        # that pre-declared the media type) is superseded by the real entry.
+        content.pop(PROBLEM_JSON, None)
         media["example"] = STATUS_EXAMPLES[code]
         content[PROBLEM_JSON] = media
 
@@ -1142,8 +1168,83 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # returned.
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
+                _summarise_parameter_examples(operation)
+                _describe_request_body(operation, components.get("schemas", {}))
+            _summarise_path_item(path_item)
+            _describe_path_item(path_item)
 
         app.openapi_schema = schema
         return schema
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
+def _summarise_parameter_examples(operation: dict[str, Any]) -> None:
+    """Give every parameter example a ``summary``.
+
+    ``openapi_examples.example()`` labels the canonical values itself; any other
+    value (a page size, a status filter) is labelled from its parameter here,
+    because only the spec knows which parameter an example is attached to.
+    """
+    for param in operation.get("parameters") or []:
+        for entry in (param.get("examples") or {}).values():
+            if isinstance(entry, dict) and not entry.get("summary"):
+                entry["summary"] = f"Example {param['in']} value for `{param['name']}`"
+
+
+def _summarise_path_item(path_item: dict[str, Any]) -> None:
+    """Set the path item's ``summary`` from its operations' summaries.
+
+    OpenAPI's path-level ``summary`` applies to every operation on the path;
+    FastAPI never emits one. Joining the operation summaries in spec order
+    (``"List agents; Register agent"``) states exactly what the path offers.
+    """
+    if path_item.get("summary"):
+        return
+    summaries = [
+        op["summary"]
+        for method, op in path_item.items()
+        if method.lower() in _HTTP_METHODS and isinstance(op, dict) and op.get("summary")
+    ]
+    if summaries:
+        path_item["summary"] = "; ".join(summaries)
+
+
+def _describe_path_item(path_item: dict[str, Any]) -> None:
+    """Set the path item's ``description`` to a method-by-method index.
+
+    The joined ``summary`` says what the path offers; the description adds which
+    HTTP method does what (``"`GET`: List agents. `POST`: Register agent."``),
+    so a reader of the path alone can pick the right operation.
+    """
+    if path_item.get("description"):
+        return
+    entries = [
+        f"`{method.upper()}`: {op['summary'].rstrip('.')}."
+        for method, op in path_item.items()
+        if method.lower() in _HTTP_METHODS and isinstance(op, dict) and op.get("summary")
+    ]
+    if entries:
+        path_item["description"] = " ".join(entries)
+
+
+def _describe_request_body(operation: dict[str, Any], schemas: dict[str, Any]) -> None:
+    """Give the operation's ``requestBody`` a ``description``.
+
+    FastAPI never emits one. Prefer the body model's own description (its
+    docstring, already public on the component); otherwise fall back to naming
+    the operation the payload is for.
+    """
+    body = operation.get("requestBody")
+    if not isinstance(body, dict) or body.get("description"):
+        return
+    for media in (body.get("content") or {}).values():
+        schema = media.get("schema") or {}
+        ref = schema.get("$ref", "")
+        target = schemas.get(ref.rsplit("/", 1)[-1], {}) if ref else schema
+        if target.get("description"):
+            body["description"] = target["description"]
+            return
+    op_id = operation.get("operationId")
+    if op_id:
+        body["description"] = f"Request payload for the `{op_id}` operation."

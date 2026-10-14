@@ -920,6 +920,42 @@ def test_rule_set_unknown_id_is_404(cred_writer_client: TestClient) -> None:
     assert resp.json()["type"] == "rule_set_not_found"
 
 
+@pytest.mark.parametrize(
+    ("path", "allowed"),
+    [
+        ("/%61dmin/users", False),  # normalized to /admin/users — the deny matches
+        ("/admin%2F..%2Fwidgets", False),  # ambiguous traversal — the broker refuses it
+        ("/admin\\..\\widgets", False),
+        ("/widgets/1", True),
+    ],
+)
+def test_permission_dry_run_judges_the_path_like_the_broker(
+    cred_writer_client: TestClient,
+    bound_agents: tuple[str, list[str]],
+    path: str,
+    allowed: bool,
+) -> None:
+    """``deny /admin`` then ``allow /``: the dry-run normalizes its input and
+    refuses ambiguous traversal exactly as enforcement does."""
+    credential_id, (agent_id, _) = bound_agents
+    binding_base = f"/credentials/{credential_id}/agents/{agent_id}"
+    put = cred_writer_client.put(
+        f"{binding_base}/permissions",
+        json=[
+            {"effect": "deny", "path": "/admin", "match_mode": "prefix"},
+            {"effect": "allow", "path": "/", "match_mode": "prefix"},
+        ],
+    )
+    assert put.status_code == 200, put.text
+
+    got = cred_writer_client.post(
+        f"{binding_base}/permissions:test", json={"method": "GET", "path": path}
+    )
+
+    assert got.status_code == 200, got.text
+    assert got.json()["allowed"] is allowed
+
+
 async def test_rule_set_attach_lifecycle(
     cred_writer_client: TestClient,
     bound_agents: tuple[str, list[str]],

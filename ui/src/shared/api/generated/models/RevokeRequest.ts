@@ -13,8 +13,17 @@
  * JSON arm, where the platform identity scopes the revocation instead.
  */
 export type RevokeRequest = {
+    /**
+     * Public client's client_id, used on form-encoded requests; ignored on bearer-authenticated JSON requests.
+     */
     client_id?: (string | null);
+    /**
+     * The token to revoke.
+     */
     token: string;
+    /**
+     * Optional hint, `access_token` or `refresh_token`; both types are checked regardless.
+     */
     token_type_hint?: (string | null);
 };
 

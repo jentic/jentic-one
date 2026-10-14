@@ -178,10 +178,48 @@ async def test_emit_credential_access_names_the_credential_owner(
         assert event.created_by == "usr_cred_owner"
 
 
-async def test_emit_credential_access_summary_names_the_credential(
+async def test_emit_credential_access_summary_names_both_entities(
     admin_db: DatabaseSession, clean_events: None
 ) -> None:
-    """The summary names the credential; the id stays in ``data``."""
+    """The summary names the credential AND the acting actor; the ids stay addressable.
+
+    Both halves of the one sentence come from ``summary_label``, so the reader
+    of the activity feed never meets a quoted name next to a raw ``agnt_…``
+    id (#1543). ``credential_id`` stays in ``data`` and the actor id on
+    ``actor_id``, untruncated.
+    """
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            credential_name="Stripe live key",
+            actor_name="billing-bot",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.summary == (
+            "Credential 'Stripe live key' accessed by 'billing-bot' for stripe/charges/v1"
+        )
+        assert event.data["credential_id"] == "cred_abc"
+        assert event.actor_id == "agent_42"
+
+
+async def test_emit_credential_access_summary_falls_back_to_the_id(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """Either name may be absent — a signed JWT carries no name claim, and the
+    async worker rebuilds its identity from a job payload. Each half of the
+    sentence degrades to its id independently.
+    """
     async with admin_db.transaction() as session:
         event_id = await emit_credential_access(
             session,
@@ -202,12 +240,7 @@ async def test_emit_credential_access_summary_names_the_credential(
         assert event.summary == (
             "Credential 'Stripe live key' accessed by agent_42 for stripe/charges/v1"
         )
-        assert event.data["credential_id"] == "cred_abc"
 
-
-async def test_emit_credential_access_summary_falls_back_to_the_id(
-    admin_db: DatabaseSession, clean_events: None
-) -> None:
     async with admin_db.transaction() as session:
         event_id = await emit_credential_access(
             session,
@@ -225,6 +258,53 @@ async def test_emit_credential_access_summary_falls_back_to_the_id(
         event = await EventRepository.get_by_id(session, event_id)
         assert event is not None
         assert event.summary == "Credential cred_abc accessed by agent_42 for stripe/charges/v1"
+
+
+async def test_emit_credential_access_fits_the_column_at_max_width_inputs(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """Pins #1543: the widest possible ``credential.accessed`` summary still
+    INSERTs into ``Event.summary`` (``String(512)``).
+
+    This emit is the one that must not raise: it is **not** best-effort, and a
+    failure fails the whole credential injection — an agent could not use its
+    credentials at all. Yet it interpolates the widest values in the event
+    vocabulary: two ``String(255)`` display names (``credentials.name``,
+    ``agents.name``) plus the API identity tuple, which is three
+    ``String(100)`` columns and 302 characters on its own. Every one of them
+    therefore passes a width bound, making the worst case a sum of known
+    widths: 29 of sentence + 130 + 130 (two bounded labels) + 128 (the bounded
+    API tuple) = 417.
+    """
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            # The widest actor id ``Event.actor_id`` (String(255)) accepts — a
+            # trusted issuer's ``sub`` is not a ksuid and is not width-capped
+            # upstream, so the label's fallback branch is bounded too.
+            actor_id="u" * 255,
+            actor_type="agent",
+            credential_id="c" * 30,  # credentials.id is String(30)
+            provider="p" * 100,
+            wire_type="api_key",
+            api_vendor="v" * 100,  # 3 x API_FIELD_MAX_LENGTH + 2 separators
+            api_name="w" * 100,
+            api_version="x" * 100,
+            credential_name="n" * 255,  # credentials.name is String(255)
+            actor_name="a" * 255,  # agents.name is String(255)
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        # Round-tripping from Postgres is the real proof: an over-wide value
+        # would have failed the INSERT above, not been silently clipped.
+        assert event is not None
+        assert len(event.summary) == 417
+        assert len(event.summary) <= 512
+        # The ids stay addressable at full width off the bounded summary.
+        assert event.actor_id == "u" * 255
+        assert event.data["credential_id"] == "c" * 30
+        assert event.data["api_vendor"] == "v" * 100
 
 
 async def test_emit_credential_access_never_records_secret(

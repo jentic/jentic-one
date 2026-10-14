@@ -19,7 +19,9 @@ query-param/opaque-key scheme if a generated client can't honour raw slashes.)
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
@@ -40,6 +42,7 @@ from jentic_one.registry.web.schemas.catalog import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.openapi_responses import conflict
 
@@ -69,13 +72,50 @@ async def list_catalog(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: CatalogService = Depends(get_catalog_service),
-    q: str | None = Query(default=None, max_length=500),
-    registered_only: bool = False,
-    unregistered_only: bool = False,
-    outdated_only: bool = False,
-    include_snoozed: bool = False,
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    q: str | None = Query(
+        default=None,
+        max_length=500,
+        description="Search text matched against entry IDs; results are ranked by match quality.",
+        openapi_examples=ex.example("charges"),
+    ),
+    registered_only: bool = Query(
+        default=False,
+        description="Only return entries already imported into the registry.",
+        openapi_examples=ex.example(True),
+    ),
+    unregistered_only: bool = Query(
+        default=False,
+        description=(
+            "Only return entries not yet imported; cannot be combined with `registered_only` "
+            "or `outdated_only`."
+        ),
+        openapi_examples=ex.example(False),
+    ),
+    outdated_only: bool = Query(
+        default=False,
+        description="Only return imported entries with an upstream update available.",
+        openapi_examples=ex.example(True),
+    ),
+    include_snoozed: bool = Query(
+        default=False,
+        description="Treat entries whose update notification is snoozed as outdated.",
+        openapi_examples=ex.example(True),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description=(
+            "Opaque cursor from a previous page's `next_cursor`; keep the other filters "
+            "unchanged while paging."
+        ),
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of entries to return (1-200).",
+        openapi_examples=ex.example(25),
+    ),
 ) -> JSONResponse:
     """List a keyset page of browsable catalog entries (search/filter aware).
 
@@ -132,13 +172,44 @@ async def list_catalog(
     response_model_by_alias=True,
 )
 async def preview_catalog_operations(
-    api_id: str,
+    api_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
+            ),
+            openapi_examples=ex.example(ex.CATALOG_API_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: CatalogService = Depends(get_catalog_service),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=200, ge=0, le=200),
-    tag: str | None = None,
-    q: str | None = Query(default=None, max_length=500),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of matching operations to skip.",
+        openapi_examples=ex.example(0),
+    ),
+    limit: int = Query(
+        default=200,
+        ge=0,
+        le=200,
+        description="Maximum number of operations to return (0-200).",
+        openapi_examples=ex.example(25),
+    ),
+    tag: str | None = Query(
+        default=None,
+        description="Only return operations with a tag containing this text (case-insensitive).",
+        openapi_examples=ex.example("Charges"),
+    ),
+    q: str | None = Query(
+        default=None,
+        max_length=500,
+        description=(
+            "Only return operations whose method, path, summary or operation ID contains "
+            "this text (case-insensitive)."
+        ),
+        openapi_examples=ex.example("charges"),
+    ),
 ) -> JSONResponse:
     """Preview the operations of a catalog entry's spec (capped, offset-paginated).
 
@@ -187,7 +258,15 @@ async def preview_catalog_operations(
 )
 async def get_catalog_entry(
     request: Request,
-    api_id: str,
+    api_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
+            ),
+            openapi_examples=ex.example(ex.CATALOG_API_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> JSONResponse:
@@ -220,7 +299,15 @@ async def refresh_catalog(
 )
 async def import_catalog_entry(
     request: Request,
-    api_id: str,
+    api_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
+            ),
+            openapi_examples=ex.example(ex.CATALOG_API_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["catalog:import"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> JSONResponse:
@@ -240,7 +327,15 @@ async def import_catalog_entry(
     responses=conflict("The catalog entry has no outstanding update to snooze."),
 )
 async def snooze_catalog_entry(
-    api_id: str,
+    api_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
+            ),
+            openapi_examples=ex.example(ex.CATALOG_API_ID),
+        ),
+    ],
     body: CatalogSnoozeRequest | None = None,
     identity: Identity = get_current_identity(required_permissions=["events:write"]),
     svc: CatalogService = Depends(get_catalog_service),
@@ -259,7 +354,15 @@ async def snooze_catalog_entry(
 
 @router.post("/catalog/{api_id:path}:unsnooze", status_code=204)
 async def unsnooze_catalog_entry(
-    api_id: str,
+    api_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
+            ),
+            openapi_examples=ex.example(ex.CATALOG_API_ID),
+        ),
+    ],
     identity: Identity = get_current_identity(required_permissions=["events:write"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> Response:

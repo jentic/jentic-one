@@ -19,6 +19,7 @@ from jentic_one.registry.web.content_negotiation import accepted_media_types
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -30,10 +31,22 @@ async def inspect_operation(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
-    id: str | None = Query(None, description="METHOD URL identifier"),
-    operation_id: str | None = Query(None, description="Operation ID"),
-    revision_id: str | None = Query(None, description="Pin to specific revision"),
-    detail: Literal["summary", "full"] = Query("summary"),
+    id: str | None = Query(
+        None,
+        description="METHOD URL identifier",
+        openapi_examples=ex.example(ex.OPERATION_METHOD_URL),
+    ),
+    operation_id: str | None = Query(
+        None, description="Operation ID", openapi_examples=ex.example(ex.OPERATION_ID)
+    ),
+    revision_id: str | None = Query(
+        None, description="Pin to specific revision", openapi_examples=ex.example(ex.REVISION_ID)
+    ),
+    detail: Literal["summary", "full"] = Query(
+        "summary",
+        description="Level of detail to return; only `summary` is currently supported.",
+        openapi_examples=ex.example("summary"),
+    ),
 ) -> Response:
     """Inspect an operation — resolve to full structural detail.
 

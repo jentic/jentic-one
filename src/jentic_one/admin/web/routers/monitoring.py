@@ -18,6 +18,7 @@ from jentic_one.admin.web.schemas.monitoring import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -26,7 +27,13 @@ router = APIRouter()
 async def get_execution_stats(
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: MonitoringService = Depends(get_monitoring_service),
-    days: int = Query(default=7, ge=1, le=30),
+    days: int = Query(
+        default=7,
+        ge=1,
+        le=30,
+        description="Number of days back from now to aggregate over (1-30, default 7).",
+        openapi_examples=ex.example(7),
+    ),
 ) -> ExecutionStatsResponse:
     """Return aggregated execution statistics for the dashboard."""
     stats = await svc.get_execution_stats(days)
@@ -59,14 +66,54 @@ async def get_execution_stats(
 async def get_usage_stats(
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: MonitoringService = Depends(get_monitoring_service),
-    since: int | None = Query(default=None),
-    until: int | None = Query(default=None),
-    group_by: GroupBy | None = Query(default=None),
-    top_limit: int = Query(default=10, ge=1, le=50),
-    toolkit_id: str | None = Query(default=None),
-    api_id: str | None = Query(default=None),
-    agent_id: str | None = Query(default=None),
-    status: str | None = Query(default=None),
+    since: int | None = Query(
+        default=None,
+        description=(
+            "Start of the window in Unix epoch seconds (inclusive); defaults to 24 hours before "
+            "`until`."
+        ),
+        openapi_examples=ex.example(ex.EPOCH_SINCE),
+    ),
+    until: int | None = Query(
+        default=None,
+        description=(
+            "End of the window in Unix epoch seconds (exclusive); defaults to the next minute "
+            "boundary after now."
+        ),
+        openapi_examples=ex.example(ex.EPOCH_UNTIL),
+    ),
+    group_by: GroupBy | None = Query(
+        default=None,
+        description="Dimension to group the `top` rows by; defaults to `api`.",
+        openapi_examples=ex.example("api"),
+    ),
+    top_limit: int = Query(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum number of `top` rows to return (1-50, default 10).",
+        openapi_examples=ex.example(10),
+    ),
+    toolkit_id: str | None = Query(
+        default=None,
+        description="Legacy: only count executions mediated by this toolkit.",
+        openapi_examples=ex.example(ex.TOOLKIT_ID),
+    ),
+    api_id: str | None = Query(
+        default=None,
+        description="Only count executions of this API, given as `vendor/name`.",
+        openapi_examples=ex.example(ex.API_VENDOR_NAME),
+    ),
+    agent_id: str | None = Query(
+        default=None,
+        description="Only count executions run by this actor ID.",
+        openapi_examples=ex.example(ex.AGENT_ID),
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Only count executions with this status, e.g. `completed` or `failed`.",
+        openapi_examples=ex.example("completed"),
+    ),
 ) -> UsageResponse:
     """Return detailed usage statistics for the monitoring overview."""
     resolved_group_by = group_by if group_by is not None else GroupBy.API

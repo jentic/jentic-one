@@ -42,7 +42,13 @@ export class OAuthAppRegistrationsService {
          * Filter by OAuth flow kind.
          */
         flowKind?: (OAuthAppRegistrationFlowKind | null),
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of registrations to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<OAuthAppRegistrationListResponse> {
         return __request(OpenAPI, {
@@ -79,6 +85,9 @@ export class OAuthAppRegistrationsService {
     public static createOauthAppRegistration({
         requestBody,
     }: {
+        /**
+         * Request payload for the `createOauthAppRegistration` operation.
+         */
         requestBody: (AuthorizationCodeRegistrationCreateRequest | DeviceAuthorizationRegistrationCreateRequest),
     }): CancelablePromise<OAuthAppRegistrationResponse> {
         return __request(OpenAPI, {
@@ -108,6 +117,9 @@ export class OAuthAppRegistrationsService {
     public static deleteOauthAppRegistration({
         id,
     }: {
+        /**
+         * ID of the OAuth app registration.
+         */
         id: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -137,6 +149,9 @@ export class OAuthAppRegistrationsService {
     public static getOauthAppRegistration({
         id,
     }: {
+        /**
+         * ID of the OAuth app registration.
+         */
         id: string,
     }): CancelablePromise<OAuthAppRegistrationResponse> {
         return __request(OpenAPI, {
@@ -169,7 +184,13 @@ export class OAuthAppRegistrationsService {
         id,
         requestBody,
     }: {
+        /**
+         * ID of the OAuth app registration.
+         */
         id: string,
+        /**
+         * Partial update — fields not present are left untouched.
+         */
         requestBody: OAuthAppRegistrationUpdateRequest,
     }): CancelablePromise<OAuthAppRegistrationResponse> {
         return __request(OpenAPI, {
@@ -202,7 +223,13 @@ export class OAuthAppRegistrationsService {
         id,
         requestBody,
     }: {
+        /**
+         * ID of the OAuth app registration.
+         */
         id: string,
+        /**
+         * Rotate the client secret on an auth-code registration.
+         */
         requestBody: OAuthAppRegistrationRotateSecretRequest,
     }): CancelablePromise<OAuthAppRegistrationResponse> {
         return __request(OpenAPI, {

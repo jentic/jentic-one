@@ -104,7 +104,7 @@ export interface AgentAccess {
 	agents: CredentialAgentResponse[];
 	/** Every (agent, credential) binding behind `agents` — an agent bound to two
 	 * of the credentials appears twice here, once in `agents`. */
-	bindings: { agentId: string; credentialId: string; suspended: boolean }[];
+	bindings: AgentCredentialBinding[];
 	/** Every credential's agents read has settled — answered or failed. */
 	agentsSettled: boolean;
 	/** At least one of those reads failed, so `agents` may be missing some. */
@@ -114,6 +114,21 @@ export interface AgentAccess {
 	 * first page reported more agents (`has_more`). What was read is a floor.
 	 */
 	agentsTruncated: boolean;
+}
+
+/** One (agent, credential) binding, as `GET /credentials/{cid}/agents` reports it. */
+export interface AgentCredentialBinding {
+	agentId: string;
+	credentialId: string;
+	suspended: boolean;
+	/**
+	 * The shared permission rule set governing this binding, or `null` when its
+	 * inline `agent_permission_rules` apply. Carried through because the broker
+	 * evaluates the SET in preference to the inline rules: a surface judging
+	 * access from the inline list alone would call a rule-set-governed binding
+	 * "Blocked" while the set allows the call (#1543).
+	 */
+	ruleSetId: string | null;
 }
 
 /** The `agents` list is the whole answer: settled, nothing failed, nothing capped. */
@@ -197,6 +212,10 @@ export function useAgentAccess(
 						agentId: agent.agent_id,
 						credentialId: cred.credential_id,
 						suspended: agent.suspended,
+						// The row's own field, not derived: an absent `rule_set_id`
+						// (a surface whose backend predates rule sets) reads as
+						// `null` = inline rules, the same as an explicit null.
+						ruleSetId: agent.rule_set_id ?? null,
 					});
 					if (!access.agents.some((a) => a.agent_id === agent.agent_id)) {
 						access.agents.push(agent);

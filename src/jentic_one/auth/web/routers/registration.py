@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse
 
 from jentic_one.auth.services.errors import (
@@ -18,6 +20,7 @@ from jentic_one.auth.web.schemas.registration import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
 
 router = APIRouter()
@@ -61,7 +64,13 @@ async def register_endpoint(
 
 @router.get("/register/{agent_id}")
 async def poll_status_endpoint(
-    agent_id: str,
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     request: Request,
     reg_svc: RegistrationService = Depends(get_registration_service),
 ) -> RegistrationStatusResponse:
@@ -76,7 +85,13 @@ async def poll_status_endpoint(
 
 @router.put("/register/{agent_id}")
 async def update_registration_endpoint(
-    agent_id: str,
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     _identity: Identity = get_current_identity(allow_expired_password=True),
 ) -> JSONResponse:
     """Client update not supported — returns 403."""
@@ -85,7 +100,13 @@ async def update_registration_endpoint(
 
 @router.delete("/register/{agent_id}")
 async def delete_registration_endpoint(
-    agent_id: str,
+    agent_id: Annotated[
+        str,
+        Path(
+            description="ID of the registered agent (its client_id).",
+            openapi_examples=ex.example(ex.AGENT_ID),
+        ),
+    ],
     _identity: Identity = get_current_identity(allow_expired_password=True),
 ) -> JSONResponse:
     """Client deletion not supported — returns 403."""

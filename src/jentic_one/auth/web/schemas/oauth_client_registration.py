@@ -22,7 +22,11 @@ class OAuthClientRegistrationRequest(BaseModel):
     # anonymous and the name flows into event summaries on operator surfaces.
     # Client-claimed and untrusted (phishing) — consent UIs render the
     # redirect-URI origin prominently, never the name alone.
-    client_name: str = Field(min_length=1, max_length=255)
+    client_name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Human-readable client name; self-asserted and not verified by the server.",
+    )
     # Native MCP clients are RFC 8252 apps: alongside https (always) and
     # loopback http, §7.1 private-use schemes (e.g. ``cursor://…``,
     # ``com.example.app:/…``) are accepted on this door — PKCE S256 is the
@@ -48,9 +52,25 @@ class OAuthClientRegistrationRequest(BaseModel):
     response_types: list[str] | None = Field(
         default=None, description="Only ['code'] is supported."
     )
-    scope: str | None = Field(default=None, max_length=6500)
-    software_id: str | None = Field(default=None, max_length=255)
-    software_version: str | None = Field(default=None, max_length=255)
+    scope: str | None = Field(
+        default=None,
+        max_length=6500,
+        description=(
+            "Space-separated scopes requested as the client's ceiling (at most 100 tokens);"
+            " capped to the scopes the server grants OAuth clients, and the full set when omitted."
+        ),
+    )
+    software_id: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Stable identifier of the client software; with the redirect URIs it is used to"
+            " match a repeat registration to the existing client."
+        ),
+    )
+    software_version: str | None = Field(
+        default=None, max_length=255, description="Version of the client software."
+    )
     application_type: str | None = Field(
         default=None,
         max_length=32,
@@ -87,19 +107,34 @@ class OAuthClientRegistrationResponse(BaseModel):
     clients retry ``/authorize``, they don't poll).
     """
 
-    client_id: str
+    client_id: str = Field(description="The client identifier to use in OAuth requests.")
     client_id_issued_at: int = Field(
         description="Seconds since the Unix epoch at which the client_id was issued."
     )
-    client_name: str
-    redirect_uris: list[str]
-    token_endpoint_auth_method: str = "none"
-    grant_types: list[str] = ["authorization_code", "refresh_token"]
-    response_types: list[str] = ["code"]
+    client_name: str = Field(description="The client name as sent in the request.")
+    redirect_uris: list[str] = Field(description="The registered redirect URIs.")
+    token_endpoint_auth_method: str = Field(
+        default="none", description="Always `none`: the client is public and uses PKCE."
+    )
+    grant_types: list[str] = Field(
+        default=["authorization_code", "refresh_token"],
+        description="Grant types the client may use.",
+    )
+    response_types: list[str] = Field(
+        default=["code"], description="Response types the client may use; always `code`."
+    )
     scope: str = Field(
         description="Space-separated scope ceiling granted to the client "
         "(the request's scope capped to the MCP tool-scope set)."
     )
-    software_id: str | None = None
-    software_version: str | None = None
-    application_type: str | None = None
+    software_id: str | None = Field(
+        default=None, description="The software ID as sent in the request; omitted if not sent."
+    )
+    software_version: str | None = Field(
+        default=None,
+        description="The software version as sent in the request; omitted if not sent.",
+    )
+    application_type: str | None = Field(
+        default=None,
+        description="The application type as sent in the request; omitted if not sent.",
+    )

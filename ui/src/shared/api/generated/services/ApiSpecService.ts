@@ -18,9 +18,21 @@ export class ApiSpecService {
         version,
         overlays = true,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
+         */
         overlays?: boolean,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -45,8 +57,15 @@ export class ApiSpecService {
         });
     }
     /**
-     * Get Api Revision Spec
-     * Download the OpenAPI spec for a specific revision.
+     * Download an API revision's OpenAPI document
+     * Download the stored OpenAPI document of one revision.
+     *
+     * Choose the format with `Accept`: `application/json` (the default), or
+     * `application/openapi+yaml` / `application/yaml`; anything else returns
+     * 406. The response carries `Content-Disposition: attachment` with a
+     * `.json` or `.yaml` filename. The document is served exactly as stored —
+     * a revision produced by confirming an overlay already includes it, so the
+     * `overlays` flag currently has no effect.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -57,10 +76,25 @@ export class ApiSpecService {
         revisionId,
         overlays = true,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
+        /**
+         * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
+         */
         overlays?: boolean,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

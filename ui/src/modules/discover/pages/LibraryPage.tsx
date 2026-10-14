@@ -377,7 +377,12 @@ export default function LibraryPage() {
 					{!catalog.error && (
 						<DiscoverStatusRow
 							catalogTotal={catalog.catalogTotal}
-							registeredCount={catalog.registeredCount}
+							// The workspace's OWN count, the same `GET /apis` digest the
+							// docked panel's "N APIs" reads — not the manifest's
+							// `registered_count`, which counts only catalog entries
+							// matched to a local spec url and so omits every pasted or
+							// locally-imported spec.
+							workspaceCount={digest.complete ? digest.totals.apis : null}
 							outdatedCount={catalog.outdatedCount}
 							manifestAgeSeconds={catalog.manifestAgeSeconds}
 							loading={catalog.isPending}

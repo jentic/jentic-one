@@ -13,6 +13,9 @@
  * absolute URL.
  */
 export type OAuthSessionContinueResponse = {
+    /**
+     * Relative `/authorize` URL to navigate to in order to resume the flow.
+     */
     redirect_url: string;
 };
 

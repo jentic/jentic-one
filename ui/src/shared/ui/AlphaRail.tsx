@@ -93,9 +93,9 @@ export function AlphaRail({
 				const cls = cn(
 					'font-heading grid h-6 w-6 place-items-center rounded-[5px] text-[10.5px] font-semibold leading-none',
 					letter.enabled
-						? 'text-muted-foreground hover:text-white focus-visible:ring-ring cursor-pointer focus-visible:ring-2 focus-visible:outline-none'
+						? 'text-muted-foreground hover:text-foreground focus-visible:ring-ring cursor-pointer focus-visible:ring-2 focus-visible:outline-none'
 						: 'text-foreground-disabled cursor-default',
-					isCurrent && 'bg-surface-tonal text-white',
+					isCurrent && 'bg-surface-tonal text-foreground',
 					isBusy && 'motion-safe:animate-pulse',
 				);
 				if (!letter.enabled) {

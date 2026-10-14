@@ -4,14 +4,23 @@ from __future__ import annotations
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.repos import AuditRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import AuditEntryNotFoundError, InvalidInputError
 from jentic_one.admin.services.schemas.audit import AuditFilter, AuditView
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
 
 class AuditService:
-    """Provides read-only access to the audit log."""
+    """Provides read-only access to the audit log.
+
+    Every read is scoped to the caller (``build_access_filters`` on
+    ``AuditEntry``): a non-admin sees only entries they, or an agent they own,
+    performed. An entry outside the caller's visibility is indistinguishable
+    from a missing one (``AuditEntryNotFoundError`` -> 404). ``org:admin`` sees
+    the whole organisation's log.
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -19,9 +28,12 @@ class AuditService:
     async def list_all(
         self,
         filter: AuditFilter,
+        *,
+        identity: Identity,
         cursor: str | None = None,
         limit: int = 50,
     ) -> Page[AuditView]:
+        access_filters = build_access_filters(identity, AuditEntry)
         has_target = filter.target_type is not None or filter.target_id is not None
         if has_target and (filter.target_type is None or filter.target_id is None):
             raise InvalidInputError("target_type and target_id must both be provided")
@@ -42,6 +54,7 @@ class AuditService:
                     origin=filter.origin,
                     since=filter.since,
                     until=filter.until,
+                    filters=access_filters,
                 )
             elif filter.actor_id is not None:
                 entries = await AuditRepository.list_by_actor(
@@ -52,6 +65,7 @@ class AuditService:
                     origin=filter.origin,
                     since=filter.since,
                     until=filter.until,
+                    filters=access_filters,
                 )
             else:
                 entries = await AuditRepository.list_all(
@@ -61,6 +75,7 @@ class AuditService:
                     origin=filter.origin,
                     since=filter.since,
                     until=filter.until,
+                    filters=access_filters,
                 )
 
         has_more = len(entries) > limit
@@ -74,9 +89,10 @@ class AuditService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_by_id(self, audit_id: str) -> AuditView:
+    async def get_by_id(self, audit_id: str, *, identity: Identity) -> AuditView:
+        access_filters = build_access_filters(identity, AuditEntry)
         async with self._ctx.admin_db.session() as session:
-            entry = await AuditRepository.get_by_id(session, audit_id)
+            entry = await AuditRepository.get_by_id(session, audit_id, filters=access_filters)
         if entry is None:
             raise AuditEntryNotFoundError(audit_id)
         return self._to_view(entry)

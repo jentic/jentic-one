@@ -15,6 +15,7 @@ from jentic_one.admin.web.schemas.oauth_grants import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -42,15 +43,35 @@ async def list_oauth_grants(
     identity: Identity = get_current_identity(required_permissions=["oauth-clients:read"]),
     svc: OAuthGrantAdminService = Depends(get_oauth_grant_admin_service),
     client_id: str | None = Query(
-        default=None, description="Filter by the client's public client_id."
+        default=None,
+        description="Filter by the client's public client_id.",
+        openapi_examples=ex.example(ex.OAUTH_PUBLIC_CLIENT_ID),
     ),
-    agent_id: str | None = Query(default=None, description="Filter by bound agent."),
-    user_id: str | None = Query(default=None, description="Filter by consenting user."),
+    agent_id: str | None = Query(
+        default=None, description="Filter by bound agent.", openapi_examples=ex.example(ex.AGENT_ID)
+    ),
+    user_id: str | None = Query(
+        default=None,
+        description="Filter by consenting user.",
+        openapi_examples=ex.example(ex.USER_ID),
+    ),
     status: Literal["active", "revoked"] | None = Query(
-        default=None, description="Filter by grant lifecycle state."
+        default=None,
+        description="Filter by grant lifecycle state.",
+        openapi_examples=ex.example("active"),
     ),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = None,
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of grants to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
 ) -> OAuthGrantAdminListResponse:
     """List consent→agent grants across all clients and agents.
 
@@ -59,6 +80,9 @@ async def list_oauth_grants(
     and redirect-URI origin plus the consenting ``user_id`` — after an agent
     ownership transfer the grant stays with the original consenter, so this
     column is how an admin spots stranded grants.
+
+    Scoped to the caller: org admins see every grant. Anyone else sees grants
+    they consented to and grants bound to agents they own.
     """
     page = await svc.list_grants(
         identity=identity,

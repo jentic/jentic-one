@@ -31,16 +31,7 @@
  */
 import type { ActivitySource, MonitorView } from '@/modules/monitor/api';
 import { ROUTES } from '@/shared/app';
-
-/**
- * The backend stores `trace_id="unknown"` for executions/jobs that ran without
- * a `traceparent`/`x-request-id` header (see the broker's executor). Such a
- * value can't open a trace sheet or filter the audit log, so we treat it — and
- * empty/nullish ids — as "no usable trace" everywhere a cross-link is offered.
- */
-export function hasTrace(traceId: string | null | undefined): traceId is string {
-	return traceId != null && traceId !== '' && traceId !== 'unknown';
-}
+import { hasTrace } from '@/shared/lib';
 
 export interface MonitorLinkParams {
 	view?: MonitorView;

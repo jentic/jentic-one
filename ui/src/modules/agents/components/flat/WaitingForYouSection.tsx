@@ -18,7 +18,7 @@
  * for it.
  */
 import { useMemo, type ReactNode } from 'react';
-import { AppLink } from '@/shared/ui';
+import { AppLink, Tooltip, UserText } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
 import { useActorDirectory } from '@/shared/hooks';
 import { formatTimestamp } from '@/shared/lib/utils';
@@ -107,11 +107,13 @@ function WaitingRow({
 		<li className="bg-warning/10 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3.5 py-2.5">
 			<span className="bg-warning h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden="true" />
 			<p className="min-w-0 flex-1 basis-52 text-sm">
-				<span className="font-heading font-semibold">{name}</span>{' '}
+				<UserText className="font-heading font-semibold">{name}</UserText>{' '}
 				<span className="text-muted-foreground">
 					{what}
 					{' · '}
-					<span title={`Asked ${formatTimestamp(since)}`}>{waitingLabel(since)}</span>
+					<Tooltip content={`Asked ${formatTimestamp(since)}`}>
+						{waitingLabel(since)}
+					</Tooltip>
 				</span>
 			</p>
 			<span className="flex flex-wrap items-center gap-2">{children}</span>

@@ -1162,24 +1162,41 @@ func (e InspectOperationParamsDetail) Valid() bool {
 //
 // Used in responses and as the canonical identity tuple.
 type APIReference struct {
-	Name    string `json:"name"`
-	Vendor  string `json:"vendor"`
+	// Name Name of the API within the vendor.
+	Name string `json:"name"`
+
+	// Vendor Vendor of the API (for example `stripe.com`).
+	Vendor string `json:"vendor"`
+
+	// Version Version of the API.
 	Version string `json:"version"`
 }
 
 // APIReferenceRequest Relaxed variant for request bodies where partial identification is allowed.
 type APIReferenceRequest struct {
+	// CatalogApiId Catalog identity of the API (`domain[/sub-api]`, for example `nytimes.com/article_search`), when known; used for display only, not for matching.
 	CatalogApiId *string `json:"catalog_api_id,omitempty"`
-	Name         *string `json:"name,omitempty"`
-	Vendor       string  `json:"vendor"`
-	Version      *string `json:"version,omitempty"`
+
+	// Name Name of the API within the vendor; empty to cover every API of the vendor.
+	Name *string `json:"name,omitempty"`
+
+	// Vendor Vendor of the API (for example `stripe.com`).
+	Vendor string `json:"vendor"`
+
+	// Version Version of the API; empty to cover every version.
+	Version *string `json:"version,omitempty"`
 }
 
 // ActorListResponse Paginated list of actors.
 type ActorListResponse struct {
-	Data       []ActorSummaryResponse `json:"data"`
-	HasMore    bool                   `json:"has_more"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
+	// Data The page of actors.
+	Data []ActorSummaryResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ActorLookupEntryResponse Display fields of one actor resolved by id.
@@ -1201,11 +1218,13 @@ type ActorLookupEntryResponse struct {
 //
 // Examples: {"data":[{"active":true,"actor_type":"user","id":"usr_2abc","name":"Ada Lovelace"}]}
 type ActorLookupResponse struct {
+	// Data The resolved actors; ids that match no visible actor are omitted.
 	Data []ActorLookupEntryResponse `json:"data"`
 }
 
 // ActorSummaryResponse Single actor entry in the actors list.
 type ActorSummaryResponse struct {
+	// Active False for a disabled user or a non-active agent.
 	Active bool `json:"active"`
 
 	// ActorType Type of authenticated actor: a human user or an agent.
@@ -1213,9 +1232,15 @@ type ActorSummaryResponse struct {
 	// Historical records may carry older actor-type values that are no longer
 	// issued; treat unrecognised values as opaque labels.
 	ActorType ActorType `json:"actor_type"`
+
+	// CreatedAt When the actor was created (RFC 3339).
 	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
-	Name      string    `json:"name"`
+
+	// Id Actor id (`usr_…` or `agnt_…`).
+	Id string `json:"id"`
+
+	// Name Display name: a user's full name or an agent's name.
+	Name string `json:"name"`
 }
 
 // ActorType Type of authenticated actor: a human user or an agent.
@@ -1226,59 +1251,103 @@ type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
 type AgentCreateRequest struct {
-	Description *string   `json:"description,omitempty"`
-	Name        string    `json:"name"`
+	// Description Optional free-text description of the agent.
+	Description *string `json:"description,omitempty"`
+
+	// Name Human-readable name of the agent.
+	Name string `json:"name"`
+
+	// Permissions Permissions to grant the agent; each must be grantable by the caller. Omit to grant the default agent permission set.
 	Permissions *[]string `json:"permissions,omitempty"`
 }
 
 // AgentListResponse List of agents.
 type AgentListResponse struct {
-	Data       []AgentResponse `json:"data"`
-	HasMore    bool            `json:"has_more"`
-	NextCursor *string         `json:"next_cursor,omitempty"`
+	// Data The page of agents.
+	Data []AgentResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // AgentPatchRequest Request body for partially updating an agent.
 type AgentPatchRequest struct {
+	// Description New description for the agent.
 	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
-	OwnerId     *string `json:"owner_id,omitempty"`
+
+	// Name New name for the agent.
+	Name *string `json:"name,omitempty"`
+
+	// OwnerId ID of the user to transfer ownership to; `org:admin` only.
+	OwnerId *string `json:"owner_id,omitempty"`
 }
 
 // AgentPermissionsRequest Request body for replacing an agent's permissions.
 type AgentPermissionsRequest struct {
+	// Permissions The full set of permissions the agent should hold.
 	Permissions []string `json:"permissions"`
 }
 
 // AgentPermissionsResponse Response containing an agent's current permissions.
 type AgentPermissionsResponse struct {
+	// Permissions Permissions currently granted to the agent.
 	Permissions []string `json:"permissions"`
 }
 
 // AgentResponse Agent representation in API responses.
 type AgentResponse struct {
-	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
-	ApprovedBy    *string    `json:"approved_by,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	DenialReason  *string    `json:"denial_reason,omitempty"`
-	DeniedBy      *string    `json:"denied_by,omitempty"`
-	Description   *string    `json:"description,omitempty"`
-	HasApiKey     *bool      `json:"has_api_key,omitempty"`
-	Id            string     `json:"id"`
-	Name          string     `json:"name"`
-	OwnerId       *string    `json:"owner_id,omitempty"`
-	ParentAgentId *string    `json:"parent_agent_id,omitempty"`
-	RegisteredBy  string     `json:"registered_by"`
-	Status        string     `json:"status"`
+	// ApprovedAt When the agent was approved (RFC 3339); null if not approved.
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+
+	// ApprovedBy ID of the user who approved the agent; null if not approved.
+	ApprovedBy *string `json:"approved_by,omitempty"`
+
+	// CreatedAt When the agent was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// DenialReason Reason given when the agent was denied; null if not denied.
+	DenialReason *string `json:"denial_reason,omitempty"`
+
+	// DeniedBy ID of the actor that denied the agent; null if not denied.
+	DeniedBy *string `json:"denied_by,omitempty"`
+
+	// Description Free-text description of the agent; null if not set.
+	Description *string `json:"description,omitempty"`
+
+	// HasApiKey Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.
+	HasApiKey *bool `json:"has_api_key,omitempty"`
+
+	// Id Unique ID of the agent.
+	Id string `json:"id"`
+
+	// Name Human-readable name of the agent.
+	Name string `json:"name"`
+
+	// OwnerId ID of the user who owns the agent; null for an unclaimed self-registration.
+	OwnerId *string `json:"owner_id,omitempty"`
+
+	// ParentAgentId ID of the parent agent; null when the agent has no parent.
+	ParentAgentId *string `json:"parent_agent_id,omitempty"`
+
+	// RegisteredBy ID of the actor that registered the agent, or `self` for a self-registration.
+	RegisteredBy string `json:"registered_by"`
+
+	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	Status string `json:"status"`
 }
 
 // ApiImportLinksResponse Hypermedia links for an import response.
 type ApiImportLinksResponse struct {
+	// Self URL of the import job to poll for progress.
 	Self string `json:"self"`
 }
 
 // ApiImportRequest Wrapper for a batch of import sources.
 type ApiImportRequest struct {
+	// Sources Documents to import, between 1 and 100 per request.
 	Sources []ApiImportRequest_Sources_Item `json:"sources"`
 }
 
@@ -1291,29 +1360,51 @@ type ApiImportRequest_Sources_Item struct {
 type ApiImportResponse struct {
 	// UnderscoreLinks Hypermedia links for an import response.
 	UnderscoreLinks ApiImportLinksResponse `json:"_links"`
-	JobId           string                 `json:"job_id"`
-	Status          string                 `json:"status"`
+
+	// JobId ID of the import job.
+	JobId string `json:"job_id"`
+
+	// Status Status of the job when accepted; `queued`.
+	Status string `json:"status"`
 }
 
 // ApiInfoResponse API identification information.
 type ApiInfoResponse struct {
-	Host    *string `json:"host,omitempty"`
-	Name    string  `json:"name"`
-	Vendor  string  `json:"vendor"`
-	Version string  `json:"version"`
+	// Host Upstream host called; null if unknown.
+	Host *string `json:"host,omitempty"`
+
+	// Name Name of the API that was called.
+	Name string `json:"name"`
+
+	// Vendor Vendor of the API that was called.
+	Vendor string `json:"vendor"`
+
+	// Version Version of the API that was called.
+	Version string `json:"version"`
 }
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
 type ApiKeyConfirmSessionRequest struct {
-	AgentId         *string                         `json:"agent_id,omitempty"`
-	Digest          string                          `json:"digest"`
-	ExpectedAgentId *string                         `json:"expected_agent_id,omitempty"`
-	Key             *string                         `json:"key,omitempty"`
-	Kind            ApiKeyConfirmSessionRequestKind `json:"kind"`
-	PermissionRules []PermissionRuleSchema          `json:"permission_rules"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Key API key to store; write-only.
+	Key *string `json:"key,omitempty"`
+
+	// Kind Confirm variant; always `api_key`.
+	Kind ApiKeyConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
-// ApiKeyConfirmSessionRequestKind defines model for ApiKeyConfirmSessionRequest.Kind.
+// ApiKeyConfirmSessionRequestKind Confirm variant; always `api_key`.
 type ApiKeyConfirmSessionRequestKind string
 
 // ApiKeyCreateRequest Create request for api_key credentials.
@@ -1336,82 +1427,136 @@ type ApiKeyCreateRequest struct {
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
-	Provider        *string                 `json:"provider,omitempty"`
-	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string      `json:"server_variables,omitempty"`
-	Type            ApiKeyCreateRequestType `json:"type"`
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `api_key`.
+	Type ApiKeyCreateRequestType `json:"type"`
 }
 
-// ApiKeyCreateRequestType defines model for ApiKeyCreateRequest.Type.
+// ApiKeyCreateRequestType Credential type; always `api_key`.
 type ApiKeyCreateRequestType string
 
 // ApiKeyHistoryEntryResponse A single event in the API key audit trail.
 type ApiKeyHistoryEntryResponse struct {
-	Action     string    `json:"action"`
-	ActorId    *string   `json:"actor_id,omitempty"`
-	Id         string    `json:"id"`
+	// Action Audited action, for example `rotate` or `revoke`.
+	Action string `json:"action"`
+
+	// ActorId ID of the actor that performed the action.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// Id Unique ID of the audit entry.
+	Id string `json:"id"`
+
+	// OccurredAt When the action occurred (RFC 3339).
 	OccurredAt time.Time `json:"occurred_at"`
-	Reason     *string   `json:"reason,omitempty"`
+
+	// Reason Structured reason: `api_key_rotated` or `api_key_revoked`.
+	Reason *string `json:"reason,omitempty"`
 }
 
 // ApiKeyHistoryResponse Audit trail of API key operations.
 type ApiKeyHistoryResponse struct {
+	// Data API key events, newest first.
 	Data []ApiKeyHistoryEntryResponse `json:"data"`
 }
 
 // ApiKeyInfoResponse API key metadata — retrievable even after revocation.
 type ApiKeyInfoResponse struct {
-	CreatedAt time.Time  `json:"created_at"`
-	CreatedBy *string    `json:"created_by,omitempty"`
-	Id        string     `json:"id"`
+	// CreatedAt When the API key was first created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the API key.
+	CreatedBy *string `json:"created_by,omitempty"`
+
+	// Id Unique ID of the API key record.
+	Id string `json:"id"`
+
+	// RotatedAt When the API key was last rotated (RFC 3339); null if never rotated.
 	RotatedAt *time.Time `json:"rotated_at,omitempty"`
-	Status    string     `json:"status"`
+
+	// Status Key status: `active`, or `revoked` once revoked.
+	Status string `json:"status"`
 }
 
 // ApiKeyResponse Response containing a plaintext API key (shown once).
 type ApiKeyResponse struct {
+	// Key The plaintext API key; shown only once, store it securely.
 	Key string `json:"key"`
 }
 
 // ApiKeyUpdateRequest Update request for api_key credentials.
 type ApiKeyUpdateRequest struct {
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
 	Active *bool `json:"active,omitempty"`
 
 	// FieldName Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the parameter name.
 	FieldName *string `json:"field_name,omitempty"`
-	Key       *string `json:"key,omitempty"`
+
+	// Key Replacement API key; omit to leave unchanged.
+	Key *string `json:"key,omitempty"`
 
 	// Location Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the injection binding.
-	Location        *CredentialLocation     `json:"location,omitempty"`
-	Name            *string                 `json:"name,omitempty"`
-	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string      `json:"server_variables,omitempty"`
-	Type            ApiKeyUpdateRequestType `json:"type"`
+	Location *CredentialLocation `json:"location,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `api_key`.
+	Type ApiKeyUpdateRequestType `json:"type"`
 }
 
-// ApiKeyUpdateRequestType defines model for ApiKeyUpdateRequest.Type.
+// ApiKeyUpdateRequestType Credential type; always `api_key`.
 type ApiKeyUpdateRequestType string
 
 // ApiLinksResponse Hypermedia links for a (local) API resource.
 type ApiLinksResponse struct {
+	// CurrentRevision URL of the API's current revision; null when it has no live revision.
 	CurrentRevision *string `json:"current_revision,omitempty"`
-	Revisions       string  `json:"revisions"`
-	Self            string  `json:"self"`
+
+	// Revisions URL of the API's revision list.
+	Revisions string `json:"revisions"`
+
+	// Self URL of this API.
+	Self string `json:"self"`
 }
 
 // ApiListResponse Cursor-paginated list of APIs.
 type ApiListResponse struct {
-	Data       []ApiResponse `json:"data"`
-	HasMore    bool          `json:"has_more"`
-	NextCursor *string       `json:"next_cursor,omitempty"`
+	// Data The page of APIs.
+	Data []ApiResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ApiReferenceResponse Core API identifier triple plus derived host.
 type ApiReferenceResponse struct {
-	Host    *string `json:"host"`
-	Name    string  `json:"name"`
-	Vendor  string  `json:"vendor"`
-	Version string  `json:"version"`
+	// Host Host the API is served from, derived from its spec; null if it declares none.
+	Host *string `json:"host"`
+
+	// Name Registry name of the API.
+	Name string `json:"name"`
+
+	// Vendor Registry vendor of the API.
+	Vendor string `json:"vendor"`
+
+	// Version Registry version of the API.
+	Version string `json:"version"`
 }
 
 // ApiResponse Full API aggregate response.
@@ -1424,53 +1569,97 @@ type ApiResponse struct {
 	UnderscoreLinks ApiLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api               ApiReferenceResponse `json:"api"`
-	CatalogApiId      *string              `json:"catalog_api_id"`
-	CreatedAt         time.Time            `json:"created_at"`
-	CurrentRevisionId *string              `json:"current_revision_id"`
-	Description       *string              `json:"description"`
-	DisplayName       *string              `json:"display_name"`
-	IconUrl           *string              `json:"icon_url"`
-	OperationCount    int                  `json:"operation_count"`
+	Api ApiReferenceResponse `json:"api"`
+
+	// CatalogApiId Catalog identity the API was imported from (`domain[/sub-api]`, for example `nytimes.com/article_search`); null for manual imports.
+	CatalogApiId *string `json:"catalog_api_id"`
+
+	// CreatedAt When the API was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CurrentRevisionId ID of the revision the API currently serves; null when it has no live revision.
+	CurrentRevisionId *string `json:"current_revision_id"`
+
+	// Description Free-text description of the API; null if not set.
+	Description *string `json:"description"`
+
+	// DisplayName Human-readable name to show for the API; null if not set.
+	DisplayName *string `json:"display_name"`
+
+	// IconUrl URL of an icon image for the API; null if not set.
+	IconUrl *string `json:"icon_url"`
+
+	// OperationCount Number of operations the API exposes.
+	OperationCount int `json:"operation_count"`
 
 	// Origin Provenance of the current revision: `catalog` (imported from the public catalog), `overlay` (materialized from a confirmed overlay), or null (manual import).
-	Origin          *string  `json:"origin,omitempty"`
-	RevisionCount   int      `json:"revision_count"`
+	Origin *string `json:"origin,omitempty"`
+
+	// RevisionCount Number of revisions recorded for the API.
+	RevisionCount int `json:"revision_count"`
+
+	// SecuritySchemes Distinct security scheme types declared by the current revision.
 	SecuritySchemes []string `json:"security_schemes"`
 
 	// SourceUrl Upstream spec URL backing the current revision, when known (catalog linkage).
 	SourceUrl *string `json:"source_url,omitempty"`
 
 	// UpdateAvailable Whether the upstream spec at `source_url` has a notified update this API hasn't adopted yet (Flow-3). Re-importing clears it.
-	UpdateAvailable *bool     `json:"update_available,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	UpdateAvailable *bool `json:"update_available,omitempty"`
+
+	// UpdatedAt When the API was last updated (RFC 3339); equals `created_at` if never updated.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ApiSourceInline Import source carrying raw OpenAPI/Arazzo content inline.
 type ApiSourceInline struct {
-	ApiName     *string             `json:"api_name,omitempty"`
-	Content     string              `json:"content"`
-	Filename    string              `json:"filename"`
-	SubmittedBy *string             `json:"submitted_by,omitempty"`
-	Type        ApiSourceInlineType `json:"type"`
-	Vendor      *string             `json:"vendor,omitempty"`
-	Version     *string             `json:"version,omitempty"`
+	// ApiName Name to register the API under; taken from the document title when omitted.
+	ApiName *string `json:"api_name,omitempty"`
+
+	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string.
+	Content string `json:"content"`
+
+	// Filename File name of the submitted document.
+	Filename string `json:"filename"`
+
+	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	SubmittedBy *string `json:"submitted_by,omitempty"`
+
+	// Type Source kind; always `inline` for this variant.
+	Type ApiSourceInlineType `json:"type"`
+
+	// Vendor Vendor to register the API under; taken from the document when omitted.
+	Vendor *string `json:"vendor,omitempty"`
+
+	// Version Version to register the API under; taken from the document when omitted.
+	Version *string `json:"version,omitempty"`
 }
 
-// ApiSourceInlineType defines model for ApiSourceInline.Type.
+// ApiSourceInlineType Source kind; always `inline` for this variant.
 type ApiSourceInlineType string
 
 // ApiSourceUrl Import source pointing at a fetchable URL.
 type ApiSourceUrl struct {
-	ApiName     *string          `json:"api_name,omitempty"`
-	SubmittedBy *string          `json:"submitted_by,omitempty"`
-	Type        ApiSourceUrlType `json:"type"`
-	Url         string           `json:"url"`
-	Vendor      *string          `json:"vendor,omitempty"`
-	Version     *string          `json:"version,omitempty"`
+	// ApiName Name to register the API under; taken from the document title when omitted.
+	ApiName *string `json:"api_name,omitempty"`
+
+	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	SubmittedBy *string `json:"submitted_by,omitempty"`
+
+	// Type Source kind; always `url` for this variant.
+	Type ApiSourceUrlType `json:"type"`
+
+	// Url URL the OpenAPI or Arazzo document is fetched from.
+	Url string `json:"url"`
+
+	// Vendor Vendor to register the API under; taken from the document when omitted.
+	Vendor *string `json:"vendor,omitempty"`
+
+	// Version Version to register the API under; taken from the document when omitted.
+	Version *string `json:"version,omitempty"`
 }
 
-// ApiSourceUrlType defines model for ApiSourceUrl.Type.
+// ApiSourceUrlType Source kind; always `url` for this variant.
 type ApiSourceUrlType string
 
 // ApiTargetRequest A registry API identity to connect a credential for.
@@ -1487,9 +1676,14 @@ type ApiTargetRequest struct {
 
 // ApiUpdateRequest Partial update payload for an API's presentation fields.
 type ApiUpdateRequest struct {
+	// Description Free-text description of the API; null clears it.
 	Description *string `json:"description,omitempty"`
+
+	// DisplayName Human-readable name to show for the API; null clears it.
 	DisplayName *string `json:"display_name,omitempty"`
-	IconUrl     *string `json:"icon_url,omitempty"`
+
+	// IconUrl URL of an icon image for the API; null clears it.
+	IconUrl *string `json:"icon_url,omitempty"`
 }
 
 // ApprovalDecision A reviewer's decision on a pending approval.
@@ -1497,32 +1691,74 @@ type ApprovalDecision string
 
 // AuditListResponse Paginated list of audit entries.
 type AuditListResponse struct {
-	Data       []AuditResponse `json:"data"`
-	HasMore    bool            `json:"has_more"`
-	NextCursor *string         `json:"next_cursor,omitempty"`
+	// Data The page of audit entries.
+	Data []AuditResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // AuditResponse Audit entry representation in API responses.
 type AuditResponse struct {
-	Action         string                  `json:"action"`
-	ActorId        *string                 `json:"actor_id,omitempty"`
-	ActorSessionId *string                 `json:"actor_session_id,omitempty"`
-	ActorType      string                  `json:"actor_type"`
-	After          *map[string]interface{} `json:"after,omitempty"`
-	Before         *map[string]interface{} `json:"before,omitempty"`
-	Diff           *map[string]interface{} `json:"diff,omitempty"`
-	Id             string                  `json:"id"`
-	IpAddress      *string                 `json:"ip_address,omitempty"`
-	JobId          *string                 `json:"job_id,omitempty"`
-	OccurredAt     time.Time               `json:"occurred_at"`
-	Origin         *string                 `json:"origin,omitempty"`
-	Reason         *string                 `json:"reason,omitempty"`
-	RequestId      *string                 `json:"request_id,omitempty"`
-	TargetId       string                  `json:"target_id"`
-	TargetParentId *string                 `json:"target_parent_id,omitempty"`
-	TargetType     string                  `json:"target_type"`
-	TraceId        *string                 `json:"trace_id,omitempty"`
-	UserAgent      *string                 `json:"user_agent,omitempty"`
+	// Action The audited action, e.g. `create`, `update` or `revoke`.
+	Action string `json:"action"`
+
+	// ActorId ID of the actor that performed the action; null if unknown.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorSessionId Session the actor acted under; null if not recorded.
+	ActorSessionId *string `json:"actor_session_id,omitempty"`
+
+	// ActorType Kind of actor that performed the action, e.g. `user` or `agent`.
+	ActorType string `json:"actor_type"`
+
+	// After Snapshot of the target after the action; null if none.
+	After *map[string]interface{} `json:"after,omitempty"`
+
+	// Before Snapshot of the target before the action; null if none.
+	Before *map[string]interface{} `json:"before,omitempty"`
+
+	// Diff Changes between `before` and `after`, keyed `added`, `removed` and `modified` (each modified key maps to `old`/`new`); null when nothing changed.
+	Diff *map[string]interface{} `json:"diff,omitempty"`
+
+	// Id Unique ID of the audit entry.
+	Id string `json:"id"`
+
+	// IpAddress Client IP address of the triggering request, if recorded.
+	IpAddress *string `json:"ip_address,omitempty"`
+
+	// JobId ID of the job the action ran under, if any.
+	JobId *string `json:"job_id,omitempty"`
+
+	// OccurredAt When the audited action happened (RFC 3339).
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// Origin Surface the action was initiated from, e.g. `dashboard`, `cli`, `api`, `agent`, `mcp` or `system`; null if not recorded.
+	Origin *string `json:"origin,omitempty"`
+
+	// Reason Reason recorded for the action; null if none was given.
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestId ID of the request that triggered the action, if recorded.
+	RequestId *string `json:"request_id,omitempty"`
+
+	// TargetId ID of the entity the action was performed on.
+	TargetId string `json:"target_id"`
+
+	// TargetParentId ID of the target's parent entity; null when not applicable.
+	TargetParentId *string `json:"target_parent_id,omitempty"`
+
+	// TargetType Type of the entity the action was performed on.
+	TargetType string `json:"target_type"`
+
+	// TraceId Trace ID of the triggering request, if recorded.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// UserAgent User-Agent of the triggering request, if recorded.
+	UserAgent *string `json:"user_agent,omitempty"`
 }
 
 // AuditTargetType Entity types that can be the target of an audited action.
@@ -1532,129 +1768,235 @@ type AuditTargetType string
 //
 // Examples: {"api_vendor":"github","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","client_secret":"\u003cpaste-client-secret-from-vendor-console\u003e","default_scopes":["repo","read:user"],"display_name":"GitHub","flow_kind":"authorization_code","name":"MyOrg GitHub","token_url":"https://github.com/login/oauth/access_token"}
 type AuthorizationCodeRegistrationCreateRequest struct {
-	ApiVendor    string `json:"api_vendor"`
+	// ApiVendor Vendor registry key the registration connects.
+	ApiVendor string `json:"api_vendor"`
+
+	// AuthorizeUrl Authorization endpoint URL.
 	AuthorizeUrl string `json:"authorize_url"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.
-	CatalogApiId  string    `json:"catalog_api_id"`
-	ClientId      string    `json:"client_id"`
-	ClientSecret  string    `json:"client_secret"`
+	CatalogApiId string `json:"catalog_api_id"`
+
+	// ClientId OAuth client ID of the app.
+	ClientId string `json:"client_id"`
+
+	// ClientSecret OAuth client secret of the app; stored encrypted and never returned.
+	ClientSecret string `json:"client_secret"`
+
+	// DefaultScopes Scopes requested by default.
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
-	DisplayName string                                             `json:"display_name"`
-	FlowKind    AuthorizationCodeRegistrationCreateRequestFlowKind `json:"flow_kind"`
-	Name        string                                             `json:"name"`
-	TokenUrl    string                                             `json:"token_url"`
+	DisplayName string `json:"display_name"`
+
+	// FlowKind OAuth flow the registration uses; always `authorization_code`.
+	FlowKind AuthorizationCodeRegistrationCreateRequestFlowKind `json:"flow_kind"`
+
+	// Name Admin-chosen name of the registration.
+	Name string `json:"name"`
+
+	// TokenUrl Token endpoint URL.
+	TokenUrl string `json:"token_url"`
 }
 
-// AuthorizationCodeRegistrationCreateRequestFlowKind defines model for AuthorizationCodeRegistrationCreateRequest.FlowKind.
+// AuthorizationCodeRegistrationCreateRequestFlowKind OAuth flow the registration uses; always `authorization_code`.
 type AuthorizationCodeRegistrationCreateRequestFlowKind string
 
 // BasicAuthCreateRequest Create request for basic credentials.
 type BasicAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest        `json:"api"`
-	Name            string                     `json:"name"`
-	Password        string                     `json:"password"`
-	Provider        *string                    `json:"provider,omitempty"`
-	RuntimeConfig   *RuntimeConfig             `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string         `json:"server_variables,omitempty"`
-	Type            BasicAuthCreateRequestType `json:"type"`
-	Username        string                     `json:"username"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Name Human-readable label for the credential.
+	Name string `json:"name"`
+
+	// Password Password for HTTP Basic auth. Stored encrypted; never returned after create.
+	Password string `json:"password"`
+
+	// Provider Credential provider; 'static' for stored secrets.
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `basic`.
+	Type BasicAuthCreateRequestType `json:"type"`
+
+	// Username Username sent with HTTP Basic auth.
+	Username string `json:"username"`
 }
 
-// BasicAuthCreateRequestType defines model for BasicAuthCreateRequest.Type.
+// BasicAuthCreateRequestType Credential type; always `basic`.
 type BasicAuthCreateRequestType string
 
 // BasicAuthUpdateRequest Update request for basic credentials.
 type BasicAuthUpdateRequest struct {
-	Active          *bool                      `json:"active,omitempty"`
-	Name            *string                    `json:"name,omitempty"`
-	Password        *string                    `json:"password,omitempty"`
-	RuntimeConfig   *RuntimeConfig             `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string         `json:"server_variables,omitempty"`
-	Type            BasicAuthUpdateRequestType `json:"type"`
-	Username        *string                    `json:"username,omitempty"`
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	Active *bool `json:"active,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// Password Replacement password; omit to leave unchanged.
+	Password *string `json:"password,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `basic`.
+	Type BasicAuthUpdateRequestType `json:"type"`
+
+	// Username Replacement username; omit to leave unchanged.
+	Username *string `json:"username,omitempty"`
 }
 
-// BasicAuthUpdateRequestType defines model for BasicAuthUpdateRequest.Type.
+// BasicAuthUpdateRequestType Credential type; always `basic`.
 type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
 type BasicConfirmSessionRequest struct {
-	AgentId         *string                        `json:"agent_id,omitempty"`
-	Digest          string                         `json:"digest"`
-	ExpectedAgentId *string                        `json:"expected_agent_id,omitempty"`
-	Kind            BasicConfirmSessionRequestKind `json:"kind"`
-	Password        *string                        `json:"password,omitempty"`
-	PermissionRules []PermissionRuleSchema         `json:"permission_rules"`
-	Username        string                         `json:"username"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; always `basic`.
+	Kind BasicConfirmSessionRequestKind `json:"kind"`
+
+	// Password Password to store; write-only.
+	Password *string `json:"password,omitempty"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// Username Username to store.
+	Username string `json:"username"`
 }
 
-// BasicConfirmSessionRequestKind defines model for BasicConfirmSessionRequest.Kind.
+// BasicConfirmSessionRequestKind Confirm variant; always `basic`.
 type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
 type BearerConfirmSessionRequest struct {
-	AgentId         *string                         `json:"agent_id,omitempty"`
-	Digest          string                          `json:"digest"`
-	ExpectedAgentId *string                         `json:"expected_agent_id,omitempty"`
-	Kind            BearerConfirmSessionRequestKind `json:"kind"`
-	PermissionRules []PermissionRuleSchema          `json:"permission_rules"`
-	Token           *string                         `json:"token,omitempty"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; always `bearer`.
+	Kind BearerConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// Token Bearer token to store; write-only.
+	Token *string `json:"token,omitempty"`
 }
 
-// BearerConfirmSessionRequestKind defines model for BearerConfirmSessionRequest.Kind.
+// BearerConfirmSessionRequestKind Confirm variant; always `bearer`.
 type BearerConfirmSessionRequestKind string
 
 // BearerTokenCreateRequest Create request for bearer_token credentials.
 type BearerTokenCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest          `json:"api"`
-	Name            string                       `json:"name"`
-	Provider        *string                      `json:"provider,omitempty"`
-	RuntimeConfig   *RuntimeConfig               `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string           `json:"server_variables,omitempty"`
-	Token           string                       `json:"token"`
-	Type            BearerTokenCreateRequestType `json:"type"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Name Human-readable label for the credential.
+	Name string `json:"name"`
+
+	// Provider Credential provider; 'static' for stored secrets.
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Token The bearer token secret. Stored encrypted; never returned after create.
+	Token string `json:"token"`
+
+	// Type Credential type; always `bearer_token`.
+	Type BearerTokenCreateRequestType `json:"type"`
 }
 
-// BearerTokenCreateRequestType defines model for BearerTokenCreateRequest.Type.
+// BearerTokenCreateRequestType Credential type; always `bearer_token`.
 type BearerTokenCreateRequestType string
 
 // BearerTokenUpdateRequest Update request for bearer_token credentials.
 type BearerTokenUpdateRequest struct {
-	Active          *bool                        `json:"active,omitempty"`
-	Name            *string                      `json:"name,omitempty"`
-	RuntimeConfig   *RuntimeConfig               `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string           `json:"server_variables,omitempty"`
-	Token           *string                      `json:"token,omitempty"`
-	Type            BearerTokenUpdateRequestType `json:"type"`
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	Active *bool `json:"active,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Token Replacement bearer token; omit to leave unchanged.
+	Token *string `json:"token,omitempty"`
+
+	// Type Credential type; always `bearer_token`.
+	Type BearerTokenUpdateRequestType `json:"type"`
 }
 
-// BearerTokenUpdateRequestType defines model for BearerTokenUpdateRequest.Type.
+// BearerTokenUpdateRequestType Credential type; always `bearer_token`.
 type BearerTokenUpdateRequestType string
 
 // BodyConsentAgentCreate defines model for Body_consentAgentCreate.
 type BodyConsentAgentCreate struct {
-	AgentName    string `json:"agent_name"`
+	// AgentName Name for the new agent; surrounding whitespace is trimmed.
+	AgentName string `json:"agent_name"`
+
+	// ConsentToken Single-use consent handle embedded in the consent page.
 	ConsentToken string `json:"consent_token"`
-	CreateState  string `json:"create_state"`
+
+	// CreateState Signed single-use agent-creation token embedded in the consent page.
+	CreateState string `json:"create_state"`
 }
 
 // BodyConsentSubmit defines model for Body_consentSubmit.
 type BodyConsentSubmit struct {
-	Action       string  `json:"action"`
-	AgentId      *string `json:"agent_id,omitempty"`
-	ConsentToken string  `json:"consent_token"`
+	// Action `approve` or `deny`; any value other than `deny` is treated as approval.
+	Action string `json:"action"`
+
+	// AgentId ID of the agent to connect the client to; sent only by the agent-picker consent page.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ConsentToken Single-use consent handle embedded in the consent page.
+	ConsentToken string `json:"consent_token"`
 }
 
 // BodyLoginSubmit defines model for Body_loginSubmit.
 type BodyLoginSubmit struct {
-	Csrf     string `json:"csrf"`
-	Email    string `json:"email"`
-	Ls       string `json:"ls"`
+	// Csrf Single-use CSRF token embedded in the login form.
+	Csrf string `json:"csrf"`
+
+	// Email Email address of the local account.
+	Email string `json:"email"`
+
+	// Ls Signed authorization-flow state (carry-through token) from the login form.
+	Ls string `json:"ls"`
+
+	// Password Password of the local account.
 	Password string `json:"password"`
 }
 
@@ -1752,44 +2094,77 @@ type CatalogSnoozeRequest struct {
 
 // ChangePasswordRequest Payload for changing own password.
 type ChangePasswordRequest struct {
+	// CurrentPassword The caller's current password.
 	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
+
+	// NewPassword The new password to set.
+	NewPassword string `json:"new_password"`
 }
 
 // ClaimRequest Request body for claiming ownership of a self-registered agent.
 type ClaimRequest struct {
+	// Token Single-use claim token returned when the agent self-registered.
 	Token string `json:"token"`
 }
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
 type ConnectRequestBody struct {
-	Extra  *map[string]string `json:"extra,omitempty"`
-	Scopes *[]string          `json:"scopes,omitempty"`
+	// Extra Additional provider-specific connect parameters.
+	Extra *map[string]string `json:"extra,omitempty"`
+
+	// Scopes OAuth scopes to request.
+	Scopes *[]string `json:"scopes,omitempty"`
 }
 
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
 type ConnectSessionListResponse struct {
-	Data       []ConnectSessionSummaryResponse `json:"data"`
-	HasMore    bool                            `json:"has_more"`
-	NextCursor *string                         `json:"next_cursor,omitempty"`
+	// Data The page of connect sessions.
+	Data []ConnectSessionSummaryResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
 type ConnectSessionSummaryResponse struct {
-	AgentId            *string                            `json:"agent_id,omitempty"`
-	ConnectedAs        *string                            `json:"connected_as,omitempty"`
-	CreatedAt          time.Time                          `json:"created_at"`
-	CredentialId       string                             `json:"credential_id"`
-	ErrorCode          *string                            `json:"error_code,omitempty"`
-	Reason             *string                            `json:"reason,omitempty"`
-	RequestedByActorId string                             `json:"requested_by_actor_id"`
-	SessionId          string                             `json:"session_id"`
-	State              ConnectSessionSummaryResponseState `json:"state"`
-	VendorDisplayName  string                             `json:"vendor_display_name"`
-	VendorKey          string                             `json:"vendor_key"`
+	// AgentId ID of the agent the credential is bound to on confirm; null when unbound.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ConnectedAs Upstream account the credential connected as; null until known.
+	ConnectedAs *string `json:"connected_as,omitempty"`
+
+	// CreatedAt When the session was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId ID of the session's credential (pending until the session connects).
+	CredentialId string `json:"credential_id"`
+
+	// ErrorCode Reserved for a failure code; always null on listed sessions.
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Reason Free-text reason given when the session was started.
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestedByActorId ID of the actor that started the session.
+	RequestedByActorId string `json:"requested_by_actor_id"`
+
+	// SessionId Unique ID of the connect session.
+	SessionId string `json:"session_id"`
+
+	// State Current lifecycle state of the session.
+	State ConnectSessionSummaryResponseState `json:"state"`
+
+	// VendorDisplayName Display name of the vendor.
+	VendorDisplayName string `json:"vendor_display_name"`
+
+	// VendorKey Vendor registry key the session connects.
+	VendorKey string `json:"vendor_key"`
 }
 
-// ConnectSessionSummaryResponseState defines model for ConnectSessionSummaryResponse.State.
+// ConnectSessionSummaryResponseState Current lifecycle state of the session.
 type ConnectSessionSummaryResponseState string
 
 // ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
@@ -1801,36 +2176,56 @@ type ConnectSessionSummaryResponseState string
 // vanished row) all read as “pending“ so the endpoint is not a lifecycle
 // oracle either.
 type ConsentAgentStatusResponse struct {
+	// Status Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
 	Status ConsentAgentStatusResponseStatus `json:"status"`
 }
 
-// ConsentAgentStatusResponseStatus defines model for ConsentAgentStatusResponse.Status.
+// ConsentAgentStatusResponseStatus Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
 type ConsentAgentStatusResponseStatus string
 
 // CreateAdminRequest Payload for first-run admin creation (one-time setup).
 type CreateAdminRequest struct {
-	Email     string  `json:"email"`
+	// Email Email address of the first admin.
+	Email string `json:"email"`
+
+	// FirstName First name of the first admin; defaults to `Admin`.
 	FirstName *string `json:"first_name,omitempty"`
-	LastName  *string `json:"last_name,omitempty"`
-	Password  string  `json:"password"`
+
+	// LastName Last name of the first admin; defaults to `User`.
+	LastName *string `json:"last_name,omitempty"`
+
+	// Password Password for the first admin.
+	Password string `json:"password"`
 }
 
 // CredentialAgentListResponse Paginated list of agents directly bound to a credential.
 type CredentialAgentListResponse struct {
-	Data       []CredentialAgentResponse `json:"data"`
-	HasMore    bool                      `json:"has_more"`
-	NextCursor *string                   `json:"next_cursor,omitempty"`
+	// Data The page of bound agents.
+	Data []CredentialAgentResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // CredentialAgentResponse Agent directly bound to a credential (theme 5 phase 1).
 type CredentialAgentResponse struct {
-	AgentId   string    `json:"agent_id"`
-	AgentName string    `json:"agent_name"`
-	BoundAt   time.Time `json:"bound_at"`
+	// AgentId ID of the bound agent.
+	AgentId string `json:"agent_id"`
+
+	// AgentName Name of the bound agent.
+	AgentName string `json:"agent_name"`
+
+	// BoundAt When the agent was bound to the credential (RFC 3339).
+	BoundAt time.Time `json:"bound_at"`
 
 	// RuleSetId Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
 	RuleSetId *string `json:"rule_set_id,omitempty"`
-	Status    string  `json:"status"`
+
+	// Status Status of the bound agent.
+	Status string `json:"status"`
 
 	// Suspended True when the binding is soft-suspended (reversible cut-off): the binding and its rules survive, but the agent cannot execute through this credential until resumed.
 	Suspended bool `json:"suspended"`
@@ -1838,47 +2233,81 @@ type CredentialAgentResponse struct {
 
 // CredentialBindRequest Request body for directly binding a credential to an agent.
 type CredentialBindRequest struct {
+	// CredentialId ID of the credential to bind to the agent.
 	CredentialId string `json:"credential_id"`
 }
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 type CredentialBindingEntry struct {
-	BoundAt         time.Time       `json:"bound_at"`
-	CredentialId    string          `json:"credential_id"`
-	Name            *string         `json:"name,omitempty"`
-	RuleSetId       *string         `json:"rule_set_id,omitempty"`
-	Serves          *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended       *bool           `json:"suspended,omitempty"`
-	SuspendedReason *string         `json:"suspended_reason,omitempty"`
+	// BoundAt When the credential was bound (RFC 3339).
+	BoundAt time.Time `json:"bound_at"`
+
+	// CredentialId ID of the bound credential.
+	CredentialId string `json:"credential_id"`
+
+	// Name Name of the bound credential; null if it no longer exists or cannot be resolved.
+	Name *string `json:"name,omitempty"`
+
+	// RuleSetId ID of the shared permission rule set attached; null when inline rules apply.
+	RuleSetId *string `json:"rule_set_id,omitempty"`
+
+	// Serves The APIs the bound credential serves; empty if unresolvable.
+	Serves *[]ServedApiRef `json:"serves,omitempty"`
+
+	// Suspended Whether the binding is suspended; the agent cannot execute through it until resumed.
+	Suspended *bool `json:"suspended,omitempty"`
+
+	// SuspendedReason Why the binding is suspended: null for a manual suspension, `api_deleted` when the API the credential serves was deleted.
+	SuspendedReason *string `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindingListResponse List of direct credential bindings.
 type CredentialBindingListResponse struct {
+	// Data The agent's direct credential bindings.
 	Data []CredentialBindingResponse `json:"data"`
 }
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 type CredentialBindingResponse struct {
-	AgentId         string          `json:"agent_id"`
-	BoundAt         time.Time       `json:"bound_at"`
-	CredentialId    string          `json:"credential_id"`
-	Id              string          `json:"id"`
-	Name            *string         `json:"name,omitempty"`
-	RuleSetId       *string         `json:"rule_set_id,omitempty"`
-	Serves          *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended       bool            `json:"suspended"`
-	SuspendedReason *string         `json:"suspended_reason,omitempty"`
+	// AgentId ID of the agent the credential is bound to.
+	AgentId string `json:"agent_id"`
+
+	// BoundAt When the credential was bound (RFC 3339).
+	BoundAt time.Time `json:"bound_at"`
+
+	// CredentialId ID of the bound credential.
+	CredentialId string `json:"credential_id"`
+
+	// Id Unique ID of the binding.
+	Id string `json:"id"`
+
+	// Name Name of the bound credential; null if it cannot be resolved.
+	Name *string `json:"name,omitempty"`
+
+	// RuleSetId ID of the shared permission rule set attached; null when inline rules apply.
+	RuleSetId *string `json:"rule_set_id,omitempty"`
+
+	// Serves The APIs the bound credential serves; empty if unresolvable.
+	Serves *[]ServedApiRef `json:"serves,omitempty"`
+
+	// Suspended Whether the binding is suspended, cutting off the agent's access to it.
+	Suspended bool `json:"suspended"`
+
+	// SuspendedReason Why the binding is suspended: null for a manual suspension, `api_deleted` when the API the credential serves was deleted; cleared on resume.
+	SuspendedReason *string `json:"suspended_reason,omitempty"`
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
 //
-// Examples: {"credential":{"active":true,"api":{"name":"stripe","vendor":"stripe-com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","name":"Stripe live key","provider":"static","type":"api_key"},"secret":{"key":"sk_live_…"}}, {"credential":{"active":true,"api":{"name":"posthog-api","vendor":"posthog-com"},"created_at":"2026-01-15T09:31:00Z","credential_id":"cred_01HZXA...","name":"PostHog personal key","provider":"static","type":"bearer_token"},"secret":{"token":"phx_…"},"warnings":["API scope 'posthog-com/posthog-api/*' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"]}
+// Examples: {"credential":{"active":true,"api":{"name":"stripe","vendor":"stripe-com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","name":"Stripe live key","provider":"static","type":"api_key"},"secret":{"key":"sk_live_…"}}, {"credential":{"active":true,"api":{"name":"posthog-api","vendor":"posthog-com","version":"1.0"},"created_at":"2026-01-15T09:31:00Z","credential_id":"cred_01HZXA...","name":"PostHog personal key","provider":"static","type":"bearer_token"},"secret":{"token":"phx_…"},"warnings":["API scope 'posthog-com/posthog-api/1.0' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"]}
 type CredentialCreateResponse struct {
 	// Credential Redacted credential response (for read/list/patch).
 	//
 	// Examples: {"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}
 	Credential CredentialRedactedResponse `json:"credential"`
-	Secret     map[string]interface{}     `json:"secret"`
+
+	// Secret Type-specific secret material, returned only in this create response.
+	Secret map[string]interface{} `json:"secret"`
 
 	// Warnings Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
 	Warnings *[]string `json:"warnings,omitempty"`
@@ -1886,9 +2315,14 @@ type CredentialCreateResponse struct {
 
 // CredentialListResponse Paginated list of credentials.
 type CredentialListResponse struct {
-	Data       []CredentialRedactedResponse `json:"data"`
-	HasMore    bool                         `json:"has_more"`
-	NextCursor *string                      `json:"next_cursor,omitempty"`
+	// Data The page of credentials.
+	Data []CredentialRedactedResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // CredentialLocation Where an API-key credential is injected into a request.
@@ -1949,23 +2383,47 @@ type CredentialType string
 
 // CurrentUserResponse Current user profile.
 type CurrentUserResponse struct {
-	Active             bool       `json:"active"`
-	CreatedAt          time.Time  `json:"created_at"`
-	Email              string     `json:"email"`
-	FirstName          string     `json:"first_name"`
-	Id                 string     `json:"id"`
-	LastName           string     `json:"last_name"`
-	MustChangePassword bool       `json:"must_change_password"`
-	Permissions        []string   `json:"permissions"`
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+	// Active Whether the user account is enabled.
+	Active bool `json:"active"`
+
+	// CreatedAt When the user was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// Email Email address of the user.
+	Email string `json:"email"`
+
+	// FirstName First name of the user.
+	FirstName string `json:"first_name"`
+
+	// Id Unique ID of the user.
+	Id string `json:"id"`
+
+	// LastName Last name of the user.
+	LastName string `json:"last_name"`
+
+	// MustChangePassword Whether the user must change their password before using other endpoints.
+	MustChangePassword bool `json:"must_change_password"`
+
+	// Permissions The user's effective permissions, including those implied by assigned ones.
+	Permissions []string `json:"permissions"`
+
+	// UpdatedAt When the user was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // DailyExecutionBucket Execution counts for a single day.
 type DailyExecutionBucket struct {
-	Date    string `json:"date"`
-	Failed  int    `json:"failed"`
-	Success int    `json:"success"`
-	Total   int    `json:"total"`
+	// Date The day the bucket covers, as `YYYY-MM-DD`.
+	Date string `json:"date"`
+
+	// Failed Number of those executions that failed.
+	Failed int `json:"failed"`
+
+	// Success Number of those executions that completed.
+	Success int `json:"success"`
+
+	// Total Number of executions started that day.
+	Total int `json:"total"`
 }
 
 // DecideHeldExecutionRequest Approve or deny a pending held execution.
@@ -1981,6 +2439,7 @@ type DecideHeldExecutionRequest struct {
 
 // DenyRequest Request body for denying an agent.
 type DenyRequest struct {
+	// Reason Why the agent is being denied.
 	Reason string `json:"reason"`
 }
 
@@ -1988,28 +2447,44 @@ type DenyRequest struct {
 //
 // Examples: {"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","default_scopes":["repo"],"display_name":"GitHub","flow_kind":"device_authorization","name":"MyOrg GitHub (device flow)","token_endpoint":"https://github.com/login/oauth/access_token"}
 type DeviceAuthorizationRegistrationCreateRequest struct {
-	ApiVendor             string `json:"api_vendor"`
+	// ApiVendor Vendor registry key the registration connects.
+	ApiVendor string `json:"api_vendor"`
+
+	// AuthorizationEndpoint Device authorization endpoint URL.
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').
-	CatalogApiId  string    `json:"catalog_api_id"`
-	ClientId      string    `json:"client_id"`
+	CatalogApiId string `json:"catalog_api_id"`
+
+	// ClientId OAuth client ID of the app.
+	ClientId string `json:"client_id"`
+
+	// DefaultScopes Scopes requested by default.
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
-	DisplayName   string                                               `json:"display_name"`
-	FlowKind      DeviceAuthorizationRegistrationCreateRequestFlowKind `json:"flow_kind"`
-	Name          string                                               `json:"name"`
-	TokenEndpoint string                                               `json:"token_endpoint"`
+	DisplayName string `json:"display_name"`
+
+	// FlowKind OAuth flow the registration uses; always `device_authorization`.
+	FlowKind DeviceAuthorizationRegistrationCreateRequestFlowKind `json:"flow_kind"`
+
+	// Name Admin-chosen name of the registration.
+	Name string `json:"name"`
+
+	// TokenEndpoint Token endpoint URL.
+	TokenEndpoint string `json:"token_endpoint"`
 }
 
-// DeviceAuthorizationRegistrationCreateRequestFlowKind defines model for DeviceAuthorizationRegistrationCreateRequest.FlowKind.
+// DeviceAuthorizationRegistrationCreateRequestFlowKind OAuth flow the registration uses; always `device_authorization`.
 type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EffectivePermission A single effective permission with provenance.
 type EffectivePermission struct {
+	// ImpliedBy Assigned permission that implies this one; null when it is assigned directly.
 	ImpliedBy *string `json:"implied_by,omitempty"`
-	Name      string  `json:"name"`
+
+	// Name Permission name.
+	Name string `json:"name"`
 }
 
 // ErrorItem A granular error detail entry within the errors[] array of a ProblemDetails response.
@@ -2044,36 +2519,68 @@ type ErrorItem struct {
 
 // EventLinks HAL-style links for an event.
 type EventLinks struct {
-	Action    *string `json:"action,omitempty"`
+	// Action Reserved link to a follow-up action; currently always null.
+	Action *string `json:"action,omitempty"`
+
+	// Execution URL of the related execution record; null if none.
 	Execution *string `json:"execution,omitempty"`
-	Job       *string `json:"job,omitempty"`
-	Self      string  `json:"self"`
+
+	// Job URL of the related job; null if none.
+	Job *string `json:"job,omitempty"`
+
+	// Self URL of this event.
+	Self string `json:"self"`
 }
 
 // EventListResponse Paginated list of events.
 type EventListResponse struct {
-	Data       []EventResponse `json:"data"`
-	HasMore    bool            `json:"has_more"`
-	NextCursor *string         `json:"next_cursor,omitempty"`
+	// Data The page of events.
+	Data []EventResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // EventResponse Event representation in API responses.
 type EventResponse struct {
 	// UnderscoreLinks HAL-style links for an event.
-	UnderscoreLinks EventLinks              `json:"_links"`
-	ActorId         *string                 `json:"actor_id,omitempty"`
-	ActorType       *string                 `json:"actor_type,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	Data            *map[string]interface{} `json:"data,omitempty"`
-	Detail          *string                 `json:"detail,omitempty"`
-	EventId         string                  `json:"event_id"`
-	RequiresAction  bool                    `json:"requires_action"`
+	UnderscoreLinks EventLinks `json:"_links"`
+
+	// ActorId ID of the actor that caused the event; null if none.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorType Kind of actor that caused the event, e.g. `user` or `agent`; null if none.
+	ActorType *string `json:"actor_type,omitempty"`
+
+	// CreatedAt When the event was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// Data Type-specific structured payload; empty object when there is none.
+	Data *map[string]interface{} `json:"data,omitempty"`
+
+	// Detail Longer human-readable detail; null if none.
+	Detail *string `json:"detail,omitempty"`
+
+	// EventId Unique ID of the event (`evt_…`).
+	EventId string `json:"event_id"`
+
+	// RequiresAction Whether the event needs someone to act on it.
+	RequiresAction bool `json:"requires_action"`
 
 	// Severity Severity level for platform events.
 	Severity EventSeverity `json:"severity"`
-	Summary  string        `json:"summary"`
-	TraceId  *string       `json:"trace_id,omitempty"`
-	Type     string        `json:"type"`
+
+	// Summary Short human-readable summary of the event.
+	Summary string `json:"summary"`
+
+	// TraceId Trace ID of the request that produced the event, if any.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// Type Namespaced event type, e.g. `import.completed`. Opaque string: historical events may carry types that are no longer emitted.
+	Type string `json:"type"`
 }
 
 // EventSeverity Severity level for platform events.
@@ -2084,13 +2591,19 @@ type ExecutionApprovalState string
 
 // ExecutionListResponse Paginated list of executions.
 type ExecutionListResponse struct {
-	Data       []ExecutionResponse `json:"data"`
-	HasMore    bool                `json:"has_more"`
-	NextCursor *string             `json:"next_cursor,omitempty"`
+	// Data The page of execution records.
+	Data []ExecutionResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ExecutionRecordLinks HATEOAS links for an execution record.
 type ExecutionRecordLinks struct {
+	// Self URL of this execution record.
 	Self string `json:"self"`
 }
 
@@ -2098,51 +2611,105 @@ type ExecutionRecordLinks struct {
 type ExecutionResponse struct {
 	// UnderscoreLinks HATEOAS links for an execution record.
 	UnderscoreLinks ExecutionRecordLinks `json:"_links"`
-	ActorId         string               `json:"actor_id"`
-	ActorType       string               `json:"actor_type"`
-	Api             *ApiInfoResponse     `json:"api,omitempty"`
-	CreatedAt       time.Time            `json:"created_at"`
-	CredentialId    *string              `json:"credential_id,omitempty"`
-	CredentialName  *string              `json:"credential_name,omitempty"`
-	DurationMs      *int                 `json:"duration_ms,omitempty"`
-	Error           *string              `json:"error,omitempty"`
-	ExecutionId     string               `json:"execution_id"`
-	HttpStatus      *int                 `json:"http_status,omitempty"`
-	OperationId     *string              `json:"operation_id,omitempty"`
+
+	// ActorId ID of the actor that ran the execution.
+	ActorId string `json:"actor_id"`
+
+	// ActorType Kind of actor that ran the execution, e.g. `user` or `agent`. Opaque string: historical rows may carry a retired type.
+	ActorType string `json:"actor_type"`
+
+	// Api The API that was called; null when it is not recorded.
+	Api *ApiInfoResponse `json:"api,omitempty"`
+
+	// CreatedAt When the execution record was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId ID of the credential used. Null for inline auth, credential-less APIs, older records and executions that failed before a credential was chosen.
+	CredentialId *string `json:"credential_id,omitempty"`
+
+	// CredentialName Name of the credential used; null when no credential is recorded.
+	CredentialName *string `json:"credential_name,omitempty"`
+
+	// DurationMs Duration of the execution in milliseconds; null if unknown.
+	DurationMs *int `json:"duration_ms,omitempty"`
+
+	// Error Short error message (at most 128 characters) for a failed execution.
+	Error *string `json:"error,omitempty"`
+
+	// ExecutionId Unique ID of the execution record.
+	ExecutionId string `json:"execution_id"`
+
+	// HttpStatus HTTP status returned by the upstream; null if no upstream response.
+	HttpStatus *int `json:"http_status,omitempty"`
+
+	// OperationId Machine identifier of the operation called; null when none was resolved.
+	OperationId *string `json:"operation_id,omitempty"`
 
 	// OperationMethod The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
 	OperationMethod *string `json:"operation_method,omitempty"`
 
 	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
-	OperationPath   *string                 `json:"operation_path,omitempty"`
-	Origin          *string                 `json:"origin,omitempty"`
+	OperationPath *string `json:"operation_path,omitempty"`
+
+	// Origin Surface the execution was initiated from, e.g. `api`, `agent` or `mcp`; null if not recorded.
+	Origin *string `json:"origin,omitempty"`
+
+	// PinnedRevisions Pinned API revisions used, keyed `vendor:name:version` with the revision ID as value; null when no pin applied.
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
-	StartedAt       time.Time               `json:"started_at"`
-	Status          string                  `json:"status"`
-	ToolkitId       *string                 `json:"toolkit_id,omitempty"`
-	ToolkitName     *string                 `json:"toolkit_name,omitempty"`
-	TraceId         string                  `json:"trace_id"`
+
+	// StartedAt When the execution started (RFC 3339).
+	StartedAt time.Time `json:"started_at"`
+
+	// Status Terminal outcome: `completed` or `failed`. An upstream response with HTTP status 400 or above counts as `failed`.
+	Status string `json:"status"`
+
+	// ToolkitId Legacy: toolkit that mediated the execution. Null for direct-binding executions; attribute those via `credential_id` instead.
+	ToolkitId *string `json:"toolkit_id,omitempty"`
+
+	// ToolkitName Legacy: name of the toolkit in `toolkit_id`; null when unavailable.
+	ToolkitName *string `json:"toolkit_name,omitempty"`
+
+	// TraceId Trace ID of the execution request.
+	TraceId string `json:"trace_id"`
 }
 
 // ExecutionStatsResponse Aggregated execution statistics for the dashboard.
 type ExecutionStatsResponse struct {
-	DailyBuckets       []DailyExecutionBucket `json:"daily_buckets"`
-	SuccessRatePercent float32                `json:"success_rate_percent"`
-	TopOperations      []TopOperation         `json:"top_operations"`
-	TotalExecutions    int                    `json:"total_executions"`
+	// DailyBuckets Per-day execution counts, oldest first; days with no executions are omitted.
+	DailyBuckets []DailyExecutionBucket `json:"daily_buckets"`
+
+	// SuccessRatePercent Share of executions in the window that completed, as a percentage rounded to two decimals; 0 when there were none.
+	SuccessRatePercent float32 `json:"success_rate_percent"`
+
+	// TopOperations The most-executed operations in the window, most executions first (up to 10).
+	TopOperations []TopOperation `json:"top_operations"`
+
+	// TotalExecutions Number of executions started in the window.
+	TotalExecutions int `json:"total_executions"`
 }
 
 // ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
 type ExistingCredentialConfirmSessionRequest struct {
-	AgentId         *string                                     `json:"agent_id,omitempty"`
-	CredentialId    string                                      `json:"credential_id"`
-	Digest          string                                      `json:"digest"`
-	ExpectedAgentId *string                                     `json:"expected_agent_id,omitempty"`
-	Kind            ExistingCredentialConfirmSessionRequestKind `json:"kind"`
-	PermissionRules []PermissionRuleSchema                      `json:"permission_rules"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// CredentialId ID of the approver's credential to bind.
+	CredentialId string `json:"credential_id"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; always `existing_credential`.
+	Kind ExistingCredentialConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
-// ExistingCredentialConfirmSessionRequestKind defines model for ExistingCredentialConfirmSessionRequest.Kind.
+// ExistingCredentialConfirmSessionRequestKind Confirm variant; always `existing_credential`.
 type ExistingCredentialConfirmSessionRequestKind string
 
 // GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
@@ -2175,10 +2742,17 @@ type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
 type HealthResponse struct {
-	NextStep      *string `json:"next_step,omitempty"`
-	SetupRequired bool    `json:"setup_required"`
-	Status        string  `json:"status"`
-	Surface       string  `json:"surface"`
+	// NextStep Next setup step to perform, e.g. `create_admin`; null when setup is complete.
+	NextStep *string `json:"next_step,omitempty"`
+
+	// SetupRequired Whether first-run setup is still needed because no user exists yet.
+	SetupRequired bool `json:"setup_required"`
+
+	// Status Health status of the surface; `ok` when it is serving.
+	Status string `json:"status"`
+
+	// Surface Name of the surface reporting health; always `admin`.
+	Surface string `json:"surface"`
 }
 
 // HeldExecutionDetailResponse A held execution with the agent context and the held request a reviewer decides on.
@@ -2393,21 +2967,34 @@ type InstanceIdentityResponse struct {
 // InstanceIdentityResponseBackend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
 type InstanceIdentityResponseBackend string
 
-// IntegrationsConnectRequest defines model for IntegrationsConnectRequest.
+// IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
 type IntegrationsConnectRequest struct {
+	// AgentId ID of the agent to bind the credential to on confirm; agent callers must omit it, and when omitted by a user the credential connects unbound.
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// Api Registry API to connect a credential for. Exactly one of vendor or api.
 	Api *ApiTargetRequest `json:"api,omitempty"`
 
 	// AuthType Declared scheme name or kind to use for an api target
-	AuthType                 *string                 `json:"auth_type,omitempty"`
-	Name                     *string                 `json:"name,omitempty"`
-	OauthAppRegistrationId   *string                 `json:"oauth_app_registration_id,omitempty"`
-	PreferredFlow            *string                 `json:"preferred_flow,omitempty"`
-	Reason                   *string                 `json:"reason,omitempty"`
+	AuthType *string `json:"auth_type,omitempty"`
+
+	// Name Label for the resulting credential; defaults to the vendor's display name.
+	Name *string `json:"name,omitempty"`
+
+	// OauthAppRegistrationId ID of the admin OAuth app registration to connect through; required when several active registrations offer the flow.
+	OauthAppRegistrationId *string `json:"oauth_app_registration_id,omitempty"`
+
+	// PreferredFlow Flow kind to use if the source offers it; defaults to the source's first flow.
+	PreferredFlow *string `json:"preferred_flow,omitempty"`
+
+	// Reason Free-text reason for the request, shown to the approver.
+	Reason *string `json:"reason,omitempty"`
+
+	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
-	RequestedScopes          *[]string               `json:"requested_scopes,omitempty"`
+
+	// RequestedScopes Upstream scopes to request (at most 100).
+	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
 
 	// Vendor Vendor registry key (e.g. 'github'). Exactly one of vendor or api.
 	Vendor *string `json:"vendor,omitempty"`
@@ -2415,17 +3002,29 @@ type IntegrationsConnectRequest struct {
 
 // IntrospectResponse RFC 7662 introspection response.
 type IntrospectResponse struct {
-	Active    bool    `json:"active"`
-	Exp       *int    `json:"exp,omitempty"`
-	Scope     *string `json:"scope,omitempty"`
-	Sub       *string `json:"sub,omitempty"`
+	// Active Whether the token is currently valid.
+	Active bool `json:"active"`
+
+	// Exp Token expiry, in seconds since the Unix epoch; omitted if unknown.
+	Exp *int `json:"exp,omitempty"`
+
+	// Scope Space-separated effective scopes of the token; omitted if unknown.
+	Scope *string `json:"scope,omitempty"`
+
+	// Sub ID of the actor the token was issued to; omitted if unknown.
+	Sub *string `json:"sub,omitempty"`
+
+	// TokenType Kind of token: `access_token` or `refresh_token`; omitted if unknown.
 	TokenType *string `json:"token_type,omitempty"`
 }
 
 // InviteIssuedResponse Response when an invite token is issued.
 type InviteIssuedResponse struct {
+	// ExpiresAt When the invite token expires (RFC 3339).
 	ExpiresAt time.Time `json:"expires_at"`
-	Token     string    `json:"token"`
+
+	// Token One-time invite token the user redeems to set a password.
+	Token string `json:"token"`
 }
 
 // InviteState State of a user invitation.
@@ -2433,29 +3032,59 @@ type InviteState string
 
 // JobLinksResponse Hypermedia links for a job.
 type JobLinksResponse struct {
+	// Execution URL of the related execution record; null if none.
 	Execution *string `json:"execution,omitempty"`
-	Result    *string `json:"result,omitempty"`
-	Self      string  `json:"self"`
+
+	// Result URL of the job result; null until the job has completed.
+	Result *string `json:"result,omitempty"`
+
+	// Self URL of this job.
+	Self string `json:"self"`
 }
 
 // JobListResponse Paginated list of jobs.
 type JobListResponse struct {
-	Data       []JobResponse `json:"data"`
-	HasMore    bool          `json:"has_more"`
-	NextCursor *string       `json:"next_cursor,omitempty"`
+	// Data The page of jobs.
+	Data []JobResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // JobResponse Job representation in API responses.
 type JobResponse struct {
 	// UnderscoreLinks Hypermedia links for a job.
 	UnderscoreLinks JobLinksResponse `json:"_links"`
-	CreatedAt       time.Time        `json:"created_at"`
-	Error           *string          `json:"error,omitempty"`
-	ExecutionId     *string          `json:"execution_id,omitempty"`
-	JobId           string           `json:"job_id"`
-	Kind            string           `json:"kind"`
-	Status          string           `json:"status"`
-	UpdatedAt       *time.Time       `json:"updated_at,omitempty"`
+
+	// ActorId Subject that enqueued the job. Null only for legacy rows with no actor.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorType Kind of actor that enqueued the job: 'user' or 'agent'. Opaque string: historical rows may carry a retired type such as 'service_account'.
+	ActorType string `json:"actor_type"`
+
+	// CreatedAt When the job was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// Error Error message recorded for the job; null if none.
+	Error *string `json:"error,omitempty"`
+
+	// ExecutionId ID of the execution record linked to the job, if any.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// JobId Unique ID of the job.
+	JobId string `json:"job_id"`
+
+	// Kind Kind of job, e.g. `import` or `execution`.
+	Kind string `json:"kind"`
+
+	// Status Lifecycle state: `queued`, `running`, `completed`, `failed`, `cancelled` or `dead_letter`.
+	Status string `json:"status"`
+
+	// UpdatedAt When the job was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // JwksUpdateRequest Request body for updating an agent's JWKS (public keys).
@@ -2469,16 +3098,26 @@ type JwksUpdateRequest struct {
 
 // LoginRequest Credentials for login.
 type LoginRequest struct {
-	Email    string `json:"email"`
+	// Email Email address of the user.
+	Email string `json:"email"`
+
+	// Password The user's password.
 	Password string `json:"password"`
 }
 
 // LoginResponse JWT token response after successful authentication.
 type LoginResponse struct {
-	AccessToken        string `json:"access_token"`
-	ExpiresIn          int    `json:"expires_in"`
-	MustChangePassword bool   `json:"must_change_password"`
-	TokenType          string `json:"token_type"`
+	// AccessToken Signed JWT to send as a bearer token on subsequent requests.
+	AccessToken string `json:"access_token"`
+
+	// ExpiresIn Lifetime of the access token in seconds.
+	ExpiresIn int `json:"expires_in"`
+
+	// MustChangePassword Whether the user must change their password before using other endpoints.
+	MustChangePassword bool `json:"must_change_password"`
+
+	// TokenType Token type; always `bearer`.
+	TokenType string `json:"token_type"`
 }
 
 // McpConfigRegistrationRequest Report that an MCP config entry was written for one agent runtime.
@@ -2508,33 +3147,65 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 type MeAgent struct {
-	ApprovedBy         *string                   `json:"approved_by,omitempty"`
+	// ApprovedBy ID of the user who approved the agent; null if not approved.
+	ApprovedBy *string `json:"approved_by,omitempty"`
+
+	// CredentialBindings Credentials bound directly to the agent.
 	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
-	Id                 string                    `json:"id"`
-	Name               string                    `json:"name"`
-	ParentAgentId      *string                   `json:"parent_agent_id,omitempty"`
-	Permissions        []string                  `json:"permissions"`
-	Status             string                    `json:"status"`
-	TokenPermissions   []string                  `json:"token_permissions"`
-	Type               *MeAgentType              `json:"type,omitempty"`
+
+	// Id Unique ID of the agent.
+	Id string `json:"id"`
+
+	// Name Human-readable name of the agent.
+	Name string `json:"name"`
+
+	// ParentAgentId ID of the parent agent; null when the agent has no parent.
+	ParentAgentId *string `json:"parent_agent_id,omitempty"`
+
+	// Permissions Permissions currently granted to the agent, read live rather than from the token.
+	Permissions []string `json:"permissions"`
+
+	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	Status string `json:"status"`
+
+	// TokenPermissions Permissions in the presented bearer token; if narrower than `permissions`, obtain a new token to pick up newer grants.
+	TokenPermissions []string `json:"token_permissions"`
+
+	// Type Actor type discriminator; always `agent`.
+	Type *MeAgentType `json:"type,omitempty"`
 }
 
-// MeAgentType defines model for MeAgent.Type.
+// MeAgentType Actor type discriminator; always `agent`.
 type MeAgentType string
 
 // MeUser Identity response for a user actor.
 type MeUser struct {
-	Admin              bool        `json:"admin"`
-	Email              string      `json:"email"`
-	Id                 string      `json:"id"`
-	MustChangePassword bool        `json:"must_change_password"`
-	Name               string      `json:"name"`
-	Permissions        []string    `json:"permissions"`
-	Status             string      `json:"status"`
-	Type               *MeUserType `json:"type,omitempty"`
+	// Admin Whether the caller's token holds `org:admin`.
+	Admin bool `json:"admin"`
+
+	// Email Email address of the user.
+	Email string `json:"email"`
+
+	// Id Unique ID of the user.
+	Id string `json:"id"`
+
+	// MustChangePassword Whether the user must change their password; most endpoints return 403 until they do.
+	MustChangePassword bool `json:"must_change_password"`
+
+	// Name Display name of the user.
+	Name string `json:"name"`
+
+	// Permissions Permissions carried by the caller's token.
+	Permissions []string `json:"permissions"`
+
+	// Status User status: `active` or `disabled`.
+	Status string `json:"status"`
+
+	// Type Actor type discriminator; always `user`.
+	Type *MeUserType `json:"type,omitempty"`
 }
 
-// MeUserType defines model for MeUser.Type.
+// MeUserType Actor type discriminator; always `user`.
 type MeUserType string
 
 // NoAuthCreateRequest Create request for no_auth credentials.
@@ -2545,21 +3216,36 @@ type MeUserType string
 // it as a no-op auth (see broker credential resolver / injection).
 type NoAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest     `json:"api"`
-	Name            string                  `json:"name"`
-	Provider        *string                 `json:"provider,omitempty"`
-	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
-	ServerVariables *map[string]string      `json:"server_variables,omitempty"`
-	Type            NoAuthCreateRequestType `json:"type"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Name Human-readable label for the credential.
+	Name string `json:"name"`
+
+	// Provider Credential provider; 'static' for stored secrets.
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `no_auth`.
+	Type NoAuthCreateRequestType `json:"type"`
 }
 
-// NoAuthCreateRequestType defines model for NoAuthCreateRequest.Type.
+// NoAuthCreateRequestType Credential type; always `no_auth`.
 type NoAuthCreateRequestType string
 
 // NoteApiReference Loose “(vendor, name, version)“ identity tuple for a registered API.
 type NoteApiReference struct {
-	Name    string `json:"name"`
-	Vendor  string `json:"vendor"`
+	// Name Name of the API within the vendor.
+	Name string `json:"name"`
+
+	// Vendor Vendor of the API.
+	Vendor string `json:"vendor"`
+
+	// Version Version of the API.
 	Version string `json:"version"`
 }
 
@@ -2568,22 +3254,38 @@ type NoteConfidence string
 
 // NoteCreateRequest Payload for creating a new note.
 type NoteCreateRequest struct {
-	Body               string          `json:"body"`
-	Confidence         *NoteConfidence `json:"confidence,omitempty"`
-	RelatedExecutionId *string         `json:"related_execution_id,omitempty"`
+	// Body Text of the note, up to 4000 characters.
+	Body string `json:"body"`
+
+	// Confidence Author's confidence in the note; null if not stated.
+	Confidence *NoteConfidence `json:"confidence,omitempty"`
+
+	// RelatedExecutionId ID of an execution the note relates to; null if none.
+	RelatedExecutionId *string `json:"related_execution_id,omitempty"`
 
 	// Resource Exactly-one-of resource identifier for a note (request side).
 	Resource NoteResource `json:"resource"`
-	Source   *NoteSource  `json:"source,omitempty"`
-	Type     *NoteType    `json:"type,omitempty"`
+
+	// Source Origin of the note (`agent`, `human` or `platform`); null if not stated.
+	Source *NoteSource `json:"source,omitempty"`
+
+	// Type Category of the note; null if uncategorised.
+	Type *NoteType `json:"type,omitempty"`
 }
 
 // NoteResource Exactly-one-of resource identifier for a note (request side).
 type NoteResource struct {
-	Api          *NoteApiReference `json:"api,omitempty"`
-	CredentialId *string           `json:"credential_id,omitempty"`
-	ExecutionId  *string           `json:"execution_id,omitempty"`
-	OperationId  *string           `json:"operation_id,omitempty"`
+	// Api API to attach the note to; set exactly one resource field.
+	Api *NoteApiReference `json:"api,omitempty"`
+
+	// CredentialId ID of the credential to attach the note to; set exactly one resource field.
+	CredentialId *string `json:"credential_id,omitempty"`
+
+	// ExecutionId ID of the execution to attach the note to; set exactly one resource field.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// OperationId ID of the operation to attach the note to; set exactly one resource field.
+	OperationId *string `json:"operation_id,omitempty"`
 }
 
 // NoteSource Origin tag for a note (matches the spec “NoteSource“ enum).
@@ -2594,11 +3296,20 @@ type NoteType string
 
 // NoteUpdateRequest Payload for updating an existing note (partial).
 type NoteUpdateRequest struct {
-	Body               *string         `json:"body,omitempty"`
-	Confidence         *NoteConfidence `json:"confidence,omitempty"`
-	RelatedExecutionId *string         `json:"related_execution_id,omitempty"`
-	Source             *NoteSource     `json:"source,omitempty"`
-	Type               *NoteType       `json:"type,omitempty"`
+	// Body New text of the note, up to 4000 characters; may be omitted but not null.
+	Body *string `json:"body,omitempty"`
+
+	// Confidence New confidence in the note; null clears it.
+	Confidence *NoteConfidence `json:"confidence,omitempty"`
+
+	// RelatedExecutionId ID of an execution the note relates to; null clears it.
+	RelatedExecutionId *string `json:"related_execution_id,omitempty"`
+
+	// Source New origin of the note; null clears it.
+	Source *NoteSource `json:"source,omitempty"`
+
+	// Type New category of the note; null clears it.
+	Type *NoteType `json:"type,omitempty"`
 }
 
 // OAuth2CreateRequest Create request for oauth2 credentials.
@@ -2607,36 +3318,73 @@ type NoteUpdateRequest struct {
 // are optional — the connect flow handles authentication without caller-supplied client details.
 type OAuth2CreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest     `json:"api"`
-	AuthorizeUrl    *string                 `json:"authorize_url,omitempty"`
-	ClientId        *string                 `json:"client_id,omitempty"`
-	ClientSecret    *string                 `json:"client_secret,omitempty"`
-	GrantType       *string                 `json:"grant_type,omitempty"`
-	Name            string                  `json:"name"`
-	Provider        *string                 `json:"provider,omitempty"`
-	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
-	Scopes          *[]string               `json:"scopes,omitempty"`
-	ServerVariables *map[string]string      `json:"server_variables,omitempty"`
-	TokenUrl        *string                 `json:"token_url,omitempty"`
-	Type            OAuth2CreateRequestType `json:"type"`
+	Api APIReferenceRequest `json:"api"`
+
+	// AuthorizeUrl Authorization endpoint URL; for the device_code grant, the device authorization endpoint.
+	AuthorizeUrl *string `json:"authorize_url,omitempty"`
+
+	// ClientId OAuth client ID; required for non-managed providers.
+	ClientId *string `json:"client_id,omitempty"`
+
+	// ClientSecret OAuth client secret; required for non-managed providers except the device_code grant. Stored encrypted; never returned after create.
+	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// GrantType OAuth2 grant type (e.g. client_credentials, authorization_code, device_code).
+	GrantType *string `json:"grant_type,omitempty"`
+
+	// Name Human-readable label for the credential.
+	Name string `json:"name"`
+
+	// Provider Credential provider; 'static' for stored secrets.
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// Scopes OAuth scopes to request.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// TokenUrl Token endpoint URL; required for non-managed providers.
+	TokenUrl *string `json:"token_url,omitempty"`
+
+	// Type Credential type; always `oauth2`.
+	Type OAuth2CreateRequestType `json:"type"`
 }
 
-// OAuth2CreateRequestType defines model for OAuth2CreateRequest.Type.
+// OAuth2CreateRequestType Credential type; always `oauth2`.
 type OAuth2CreateRequestType string
 
 // OAuth2UpdateRequest Update request for oauth2 credentials.
 type OAuth2UpdateRequest struct {
-	Active          *bool                   `json:"active,omitempty"`
-	ClientSecret    *string                 `json:"client_secret,omitempty"`
-	Name            *string                 `json:"name,omitempty"`
-	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
-	Scopes          *[]string               `json:"scopes,omitempty"`
-	ServerVariables *map[string]string      `json:"server_variables,omitempty"`
-	TokenUrl        *string                 `json:"token_url,omitempty"`
-	Type            OAuth2UpdateRequestType `json:"type"`
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	Active *bool `json:"active,omitempty"`
+
+	// ClientSecret Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.
+	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// Scopes Replacement OAuth scopes; applied only when client_secret is sent.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// TokenUrl Replacement token endpoint URL; applied only when client_secret is sent.
+	TokenUrl *string `json:"token_url,omitempty"`
+
+	// Type Credential type; always `oauth2`.
+	Type OAuth2UpdateRequestType `json:"type"`
 }
 
-// OAuth2UpdateRequestType defines model for OAuth2UpdateRequest.Type.
+// OAuth2UpdateRequestType Credential type; always `oauth2`.
 type OAuth2UpdateRequestType string
 
 // OAuthAppRegistrationFlowKind Which OAuth flow a registration supports.
@@ -2644,9 +3392,14 @@ type OAuthAppRegistrationFlowKind string
 
 // OAuthAppRegistrationListResponse Paginated list of OAuth app registrations.
 type OAuthAppRegistrationListResponse struct {
-	Data       []OAuthAppRegistrationResponse `json:"data"`
-	HasMore    bool                           `json:"has_more"`
-	NextCursor *string                        `json:"next_cursor,omitempty"`
+	// Data The page of OAuth app registrations.
+	Data []OAuthAppRegistrationResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OAuthAppRegistrationResponse Registration as returned to admins.
@@ -2655,48 +3408,95 @@ type OAuthAppRegistrationListResponse struct {
 // “secret_last_rotated_at“ so an admin can see rotation history without
 // being able to read the material.
 type OAuthAppRegistrationResponse struct {
-	ApiVendor             string  `json:"api_vendor"`
+	// ApiVendor Vendor registry key the registration connects.
+	ApiVendor string `json:"api_vendor"`
+
+	// AuthorizationEndpoint Device authorization endpoint URL; null for authorization-code registrations.
 	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
-	AuthorizeUrl          *string `json:"authorize_url,omitempty"`
+
+	// AuthorizeUrl Authorization endpoint URL; null for device-authorization registrations.
+	AuthorizeUrl *string `json:"authorize_url,omitempty"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API.
-	CatalogApiId             string    `json:"catalog_api_id"`
-	ClientId                 string    `json:"client_id"`
-	CreatedAt                time.Time `json:"created_at"`
-	CreatedBy                *string   `json:"created_by"`
-	DefaultScopes            *[]string `json:"default_scopes,omitempty"`
-	DependentCredentialCount int       `json:"dependent_credential_count"`
+	CatalogApiId string `json:"catalog_api_id"`
+
+	// ClientId OAuth client ID of the app.
+	ClientId string `json:"client_id"`
+
+	// CreatedAt When the registration was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the registration.
+	CreatedBy *string `json:"created_by"`
+
+	// DefaultScopes Scopes requested by default; null if none are set.
+	DefaultScopes *[]string `json:"default_scopes,omitempty"`
+
+	// DependentCredentialCount Number of credentials minted through this registration.
+	DependentCredentialCount int `json:"dependent_credential_count"`
 
 	// DisplayName Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card.
 	DisplayName string `json:"display_name"`
 
 	// FlowKind Which OAuth flow a registration supports.
-	FlowKind            OAuthAppRegistrationFlowKind `json:"flow_kind"`
-	HasClientSecret     bool                         `json:"has_client_secret"`
-	Id                  string                       `json:"id"`
-	IsActive            bool                         `json:"is_active"`
-	Name                string                       `json:"name"`
-	SecretLastRotatedAt *time.Time                   `json:"secret_last_rotated_at"`
-	TokenEndpoint       *string                      `json:"token_endpoint,omitempty"`
-	TokenUrl            *string                      `json:"token_url,omitempty"`
-	UpdatedAt           time.Time                    `json:"updated_at"`
+	FlowKind OAuthAppRegistrationFlowKind `json:"flow_kind"`
+
+	// HasClientSecret Whether a client secret is stored.
+	HasClientSecret bool `json:"has_client_secret"`
+
+	// Id Unique ID of the OAuth app registration.
+	Id string `json:"id"`
+
+	// IsActive Whether the registration is active.
+	IsActive bool `json:"is_active"`
+
+	// Name Admin-chosen name of the registration.
+	Name string `json:"name"`
+
+	// SecretLastRotatedAt When the client secret was last rotated (RFC 3339); null if never rotated.
+	SecretLastRotatedAt *time.Time `json:"secret_last_rotated_at"`
+
+	// TokenEndpoint Token endpoint URL; null for authorization-code registrations.
+	TokenEndpoint *string `json:"token_endpoint,omitempty"`
+
+	// TokenUrl Token endpoint URL; null for device-authorization registrations.
+	TokenUrl *string `json:"token_url,omitempty"`
+
+	// UpdatedAt When the registration was last updated (RFC 3339).
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OAuthAppRegistrationRotateSecretRequest Rotate the client secret on an auth-code registration.
 type OAuthAppRegistrationRotateSecretRequest struct {
+	// ClientSecret New OAuth client secret; stored encrypted and never returned.
 	ClientSecret string `json:"client_secret"`
 }
 
 // OAuthAppRegistrationUpdateRequest Partial update — fields not present are left untouched.
 type OAuthAppRegistrationUpdateRequest struct {
-	AuthorizationEndpoint *string   `json:"authorization_endpoint,omitempty"`
-	AuthorizeUrl          *string   `json:"authorize_url,omitempty"`
-	DefaultScopes         *[]string `json:"default_scopes,omitempty"`
-	DisplayName           *string   `json:"display_name,omitempty"`
-	IsActive              *bool     `json:"is_active,omitempty"`
-	Name                  *string   `json:"name,omitempty"`
-	TokenEndpoint         *string   `json:"token_endpoint,omitempty"`
-	TokenUrl              *string   `json:"token_url,omitempty"`
+	// AuthorizationEndpoint New device authorization endpoint URL; device-authorization registrations only.
+	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
+
+	// AuthorizeUrl New authorization endpoint URL; authorization-code registrations only.
+	AuthorizeUrl *string `json:"authorize_url,omitempty"`
+
+	// DefaultScopes Replacement default scopes; omit to leave unchanged.
+	DefaultScopes *[]string `json:"default_scopes,omitempty"`
+
+	// DisplayName New vendor family label; omit to leave unchanged.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// IsActive Activate or deactivate the registration; omit to leave unchanged.
+	IsActive *bool `json:"is_active,omitempty"`
+
+	// Name New registration name; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// TokenEndpoint New token endpoint URL; device-authorization registrations only.
+	TokenEndpoint *string `json:"token_endpoint,omitempty"`
+
+	// TokenUrl New token endpoint URL; authorization-code registrations only.
+	TokenUrl *string `json:"token_url,omitempty"`
 }
 
 // OAuthApprovalDecisionRequest Inline admin approve/deny posted from the approval-pending page.
@@ -2714,11 +3514,14 @@ type OAuthAppRegistrationUpdateRequest struct {
 // “oauth-clients:write“ — so global redaction buys nothing worth that
 // collision.
 type OAuthApprovalDecisionRequest struct {
+	// Action The decision: `approve` or `deny` the pending client.
 	Action OAuthApprovalDecisionRequestAction `json:"action"`
-	State  string                             `json:"state"`
+
+	// State Signed approval-state token issued by `/authorize` for this request.
+	State string `json:"state"`
 }
 
-// OAuthApprovalDecisionRequestAction defines model for OAuthApprovalDecisionRequest.Action.
+// OAuthApprovalDecisionRequestAction The decision: `approve` or `deny` the pending client.
 type OAuthApprovalDecisionRequestAction string
 
 // OAuthApprovalStatusResponse Minimal tri-state approval status for a pending-client authorize request.
@@ -2727,10 +3530,11 @@ type OAuthApprovalDecisionRequestAction string
 // metadata — so the anonymous poll endpoint cannot be used to read client
 // details out of the registry.
 type OAuthApprovalStatusResponse struct {
+	// Status Approval state of the client: `pending`, `approved` or `denied`.
 	Status OAuthApprovalStatusResponseStatus `json:"status"`
 }
 
-// OAuthApprovalStatusResponseStatus defines model for OAuthApprovalStatusResponse.Status.
+// OAuthApprovalStatusResponseStatus Approval state of the client: `pending`, `approved` or `denied`.
 type OAuthApprovalStatusResponseStatus string
 
 // OAuthClientCreateRequest Request body for creating an OAuth client.
@@ -2767,8 +3571,9 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 
 // OAuthClientCreateResponse Returned on creation — includes the one-time plaintext client secret.
 //
-// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
+// Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","client_secret":"\u003credacted\u003e","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientCreateResponse struct {
+	// Active Whether the client is enabled; false for disabled, pending or denied clients.
 	Active bool `json:"active"`
 
 	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
@@ -2787,14 +3592,24 @@ type OAuthClientCreateResponse struct {
 	ClientSecret *string `json:"client_secret"`
 
 	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
-	ConsentModel string    `json:"consent_model"`
-	CreatedAt    time.Time `json:"created_at"`
-	CreatedBy    *string   `json:"created_by"`
-	Description  *string   `json:"description"`
+	ConsentModel string `json:"consent_model"`
+
+	// CreatedAt When the client was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the client; null if not recorded.
+	CreatedBy *string `json:"created_by"`
+
+	// Description Description of the client; null if none.
+	Description *string `json:"description"`
 
 	// Id Internal ID (ksuid).
-	Id           string   `json:"id"`
-	Name         string   `json:"name"`
+	Id string `json:"id"`
+
+	// Name Human-readable name for the client.
+	Name string `json:"name"`
+
+	// RedirectUris Allowed OAuth callback URLs.
 	RedirectUris []string `json:"redirect_uris"`
 
 	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
@@ -2807,8 +3622,10 @@ type OAuthClientCreateResponse struct {
 	SoftwareId *string `json:"software_id"`
 
 	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
-	TokenEndpointAuthMethod string     `json:"token_endpoint_auth_method"`
-	UpdatedAt               *time.Time `json:"updated_at"`
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+
+	// UpdatedAt When the client was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OAuthClientDenyRequest Request body for denying an OAuth client.
@@ -2819,6 +3636,7 @@ type OAuthClientDenyRequest struct {
 
 // OAuthClientListResponse A list of OAuth clients.
 type OAuthClientListResponse struct {
+	// Data The OAuth clients.
 	Data []OAuthClientResponse `json:"data"`
 }
 
@@ -2826,7 +3644,9 @@ type OAuthClientListResponse struct {
 type OAuthClientRegistrationRequest struct {
 	// ApplicationType Accepted and echoed ('native' for desktop/CLI apps, per the 2026-07-28 MCP spec revision); localhost http redirect URIs are allowed regardless.
 	ApplicationType *string `json:"application_type,omitempty"`
-	ClientName      string  `json:"client_name"`
+
+	// ClientName Human-readable client name; self-asserted and not verified by the server.
+	ClientName string `json:"client_name"`
 
 	// GrantTypes Subset of ['authorization_code', 'refresh_token'].
 	GrantTypes *[]string `json:"grant_types,omitempty"`
@@ -2835,10 +3655,16 @@ type OAuthClientRegistrationRequest struct {
 	RedirectUris []string `json:"redirect_uris"`
 
 	// ResponseTypes Only ['code'] is supported.
-	ResponseTypes   *[]string `json:"response_types,omitempty"`
-	Scope           *string   `json:"scope,omitempty"`
-	SoftwareId      *string   `json:"software_id,omitempty"`
-	SoftwareVersion *string   `json:"software_version,omitempty"`
+	ResponseTypes *[]string `json:"response_types,omitempty"`
+
+	// Scope Space-separated scopes requested as the client's ceiling (at most 100 tokens); capped to the scopes the server grants OAuth clients, and the full set when omitted.
+	Scope *string `json:"scope,omitempty"`
+
+	// SoftwareId Stable identifier of the client software; with the redirect URIs it is used to match a repeat registration to the existing client.
+	SoftwareId *string `json:"software_id,omitempty"`
+
+	// SoftwareVersion Version of the client software.
+	SoftwareVersion *string `json:"software_version,omitempty"`
 
 	// TokenEndpointAuthMethod Must be 'none' if supplied — this endpoint only registers public (secret-less, PKCE-only) clients.
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
@@ -2851,27 +3677,45 @@ type OAuthClientRegistrationRequest struct {
 // “registration_access_token“ (D12 — no RFC 7592 self-management surface;
 // clients retry “/authorize“, they don't poll).
 type OAuthClientRegistrationResponse struct {
+	// ApplicationType The application type as sent in the request; omitted if not sent.
 	ApplicationType *string `json:"application_type,omitempty"`
-	ClientId        string  `json:"client_id"`
+
+	// ClientId The client identifier to use in OAuth requests.
+	ClientId string `json:"client_id"`
 
 	// ClientIdIssuedAt Seconds since the Unix epoch at which the client_id was issued.
-	ClientIdIssuedAt int       `json:"client_id_issued_at"`
-	ClientName       string    `json:"client_name"`
-	GrantTypes       *[]string `json:"grant_types,omitempty"`
-	RedirectUris     []string  `json:"redirect_uris"`
-	ResponseTypes    *[]string `json:"response_types,omitempty"`
+	ClientIdIssuedAt int `json:"client_id_issued_at"`
+
+	// ClientName The client name as sent in the request.
+	ClientName string `json:"client_name"`
+
+	// GrantTypes Grant types the client may use.
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// RedirectUris The registered redirect URIs.
+	RedirectUris []string `json:"redirect_uris"`
+
+	// ResponseTypes Response types the client may use; always `code`.
+	ResponseTypes *[]string `json:"response_types,omitempty"`
 
 	// Scope Space-separated scope ceiling granted to the client (the request's scope capped to the MCP tool-scope set).
-	Scope                   string  `json:"scope"`
-	SoftwareId              *string `json:"software_id,omitempty"`
-	SoftwareVersion         *string `json:"software_version,omitempty"`
+	Scope string `json:"scope"`
+
+	// SoftwareId The software ID as sent in the request; omitted if not sent.
+	SoftwareId *string `json:"software_id,omitempty"`
+
+	// SoftwareVersion The software version as sent in the request; omitted if not sent.
+	SoftwareVersion *string `json:"software_version,omitempty"`
+
+	// TokenEndpointAuthMethod Always `none`: the client is public and uses PKCE.
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // OAuthClientResponse An OAuth client in API responses.
 //
-// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
+// Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientResponse struct {
+	// Active Whether the client is enabled; false for disabled, pending or denied clients.
 	Active bool `json:"active"`
 
 	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
@@ -2887,14 +3731,24 @@ type OAuthClientResponse struct {
 	ClientId string `json:"client_id"`
 
 	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
-	ConsentModel string    `json:"consent_model"`
-	CreatedAt    time.Time `json:"created_at"`
-	CreatedBy    *string   `json:"created_by"`
-	Description  *string   `json:"description"`
+	ConsentModel string `json:"consent_model"`
+
+	// CreatedAt When the client was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the client; null if not recorded.
+	CreatedBy *string `json:"created_by"`
+
+	// Description Description of the client; null if none.
+	Description *string `json:"description"`
 
 	// Id Internal ID (ksuid).
-	Id           string   `json:"id"`
-	Name         string   `json:"name"`
+	Id string `json:"id"`
+
+	// Name Human-readable name for the client.
+	Name string `json:"name"`
+
+	// RedirectUris Allowed OAuth callback URLs.
 	RedirectUris []string `json:"redirect_uris"`
 
 	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
@@ -2907,8 +3761,10 @@ type OAuthClientResponse struct {
 	SoftwareId *string `json:"software_id"`
 
 	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
-	TokenEndpointAuthMethod string     `json:"token_endpoint_auth_method"`
-	UpdatedAt               *time.Time `json:"updated_at"`
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+
+	// UpdatedAt When the client was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OAuthClientRotateSecretResponse Returned on secret rotation — the new one-time plaintext secret.
@@ -2919,36 +3775,76 @@ type OAuthClientRotateSecretResponse struct {
 
 // OAuthClientUpdateRequest Request body for updating an OAuth client.
 type OAuthClientUpdateRequest struct {
+	// Active False disables the client and true re-enables it; null means no change.
 	Active *bool `json:"active,omitempty"`
 
 	// AllowedScopes Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
-	AllowedScopes  *[]string `json:"allowed_scopes,omitempty"`
-	Description    *string   `json:"description,omitempty"`
-	Name           *string   `json:"name,omitempty"`
-	RedirectUris   *[]string `json:"redirect_uris,omitempty"`
-	RequireConsent *bool     `json:"require_consent,omitempty"`
+	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
+
+	// Description New description for the client; null means no change.
+	Description *string `json:"description,omitempty"`
+
+	// Name New name for the client; null means no change.
+	Name *string `json:"name,omitempty"`
+
+	// RedirectUris Replacement list of allowed OAuth callback URLs; null means no change.
+	RedirectUris *[]string `json:"redirect_uris,omitempty"`
+
+	// RequireConsent Whether to show a consent screen during authorization; null means no change.
+	RequireConsent *bool `json:"require_consent,omitempty"`
 }
 
 // OAuthConfirmSessionRequest Confirm an OAuth session: the scopes to request and the agent's rules.
 //
 // The default variant — a body without “kind“ is this one.
 type OAuthConfirmSessionRequest struct {
-	AgentId         *string                         `json:"agent_id,omitempty"`
-	ConfirmedScopes []string                        `json:"confirmed_scopes"`
-	Digest          *string                         `json:"digest,omitempty"`
-	ExpectedAgentId *string                         `json:"expected_agent_id,omitempty"`
-	Kind            *OAuthConfirmSessionRequestKind `json:"kind,omitempty"`
-	PermissionRules *[]PermissionRuleSchema         `json:"permission_rules,omitempty"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// ConfirmedScopes Upstream scopes the approver confirmed (at most 100).
+	ConfirmedScopes []string `json:"confirmed_scopes"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale. Required for an API target.
+	Digest *string `json:"digest,omitempty"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale. Required for an API target.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; `oauth` (the default when omitted).
+	Kind *OAuthConfirmSessionRequestKind `json:"kind,omitempty"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
-// OAuthConfirmSessionRequestKind defines model for OAuthConfirmSessionRequest.Kind.
+// OAuthConfirmSessionRequestKind Confirm variant; `oauth` (the default when omitted).
 type OAuthConfirmSessionRequestKind string
+
+// OAuthErrorResponse OAuth 2.0 error response (RFC 6749 §5.2 dialect).
+//
+// Spec-facing OAuth endpoints (token, RFC 7009 revocation, RFC 7591
+// registration) answer errors in this dialect rather than RFC 9457 Problem
+// Details, because real OAuth/MCP clients parse it.
+//
+// Examples: {"error":"invalid_request","error_description":"missing required parameter"}
+type OAuthErrorResponse struct {
+	// Error ASCII error code, e.g. `invalid_request`, `invalid_grant`, `invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.
+	Error string `json:"error"`
+
+	// ErrorDescription Human-readable explanation of the error.
+	ErrorDescription *string `json:"error_description,omitempty"`
+}
 
 // OAuthGrantAdminListResponse A paginated list of OAuth grants (admin cross-view).
 type OAuthGrantAdminListResponse struct {
-	Data       []OAuthGrantAdminResponse `json:"data"`
-	HasMore    bool                      `json:"has_more"`
-	NextCursor *string                   `json:"next_cursor,omitempty"`
+	// Data The page of grants.
+	Data []OAuthGrantAdminResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OAuthGrantAdminResponse One consent→agent grant in the admin cross-view.
@@ -2966,8 +3862,10 @@ type OAuthGrantAdminResponse struct {
 	ClientName *string `json:"client_name"`
 
 	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
-	ClientOrigin *string   `json:"client_origin"`
-	CreatedAt    time.Time `json:"created_at"`
+	ClientOrigin *string `json:"client_origin"`
+
+	// CreatedAt When the grant was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
 
 	// Id Grant ID (ksuid, `ocg_` prefix).
 	Id string `json:"id"`
@@ -2976,8 +3874,10 @@ type OAuthGrantAdminResponse struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 
 	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
-	OauthClientId string     `json:"oauth_client_id"`
-	RevokedAt     *time.Time `json:"revoked_at"`
+	OauthClientId string `json:"oauth_client_id"`
+
+	// RevokedAt When the grant was revoked (RFC 3339); null while it is active.
+	RevokedAt *time.Time `json:"revoked_at"`
 
 	// Scopes Scopes granted at consent (the D2 intersection).
 	Scopes []string `json:"scopes"`
@@ -2991,9 +3891,14 @@ type OAuthGrantAdminResponse struct {
 
 // OAuthGrantListResponse A paginated list of OAuth grants.
 type OAuthGrantListResponse struct {
-	Data       []OAuthGrantResponse `json:"data"`
-	HasMore    bool                 `json:"has_more"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
+	// Data The page of OAuth grants.
+	Data []OAuthGrantResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OAuthGrantResponse One consent→agent grant in API responses.
@@ -3011,8 +3916,10 @@ type OAuthGrantResponse struct {
 	ClientName *string `json:"client_name"`
 
 	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
-	ClientOrigin *string   `json:"client_origin"`
-	CreatedAt    time.Time `json:"created_at"`
+	ClientOrigin *string `json:"client_origin"`
+
+	// CreatedAt When the grant was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
 
 	// Id Grant ID (ksuid, `ocg_` prefix).
 	Id string `json:"id"`
@@ -3021,8 +3928,10 @@ type OAuthGrantResponse struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 
 	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
-	OauthClientId string     `json:"oauth_client_id"`
-	RevokedAt     *time.Time `json:"revoked_at"`
+	OauthClientId string `json:"oauth_client_id"`
+
+	// RevokedAt When the grant was revoked (RFC 3339); null while it is active.
+	RevokedAt *time.Time `json:"revoked_at"`
 
 	// Scopes Scopes granted at consent (the D2 intersection).
 	Scopes []string `json:"scopes"`
@@ -3047,6 +3956,7 @@ type OAuthGrantResponse struct {
 // credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
 // additionally requires an authenticated platform user).
 type OAuthSessionContinueRequest struct {
+	// State Signed login carry-through token (`ls`) issued for this authorize request.
 	State string `json:"state"`
 }
 
@@ -3059,6 +3969,7 @@ type OAuthSessionContinueRequest struct {
 // page script navigates within its own origin, never to a caller-influenced
 // absolute URL.
 type OAuthSessionContinueResponse struct {
+	// RedirectUrl Relative `/authorize` URL to navigate to in order to resume the flow.
 	RedirectUrl string `json:"redirect_url"`
 }
 
@@ -3098,32 +4009,52 @@ type OperationResultResponse struct {
 	UnderscoreLinks SearchLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api            ApiReferenceResponse `json:"api"`
-	Description    *string              `json:"description,omitempty"`
-	Method         string               `json:"method"`
-	Name           *string              `json:"name,omitempty"`
-	OperationId    string               `json:"operation_id"`
-	RelevanceScore float32              `json:"relevance_score"`
+	Api ApiReferenceResponse `json:"api"`
+
+	// Description Description of the operation; null if the spec gives none.
+	Description *string `json:"description,omitempty"`
+
+	// Method HTTP method of the operation.
+	Method string `json:"method"`
+
+	// Name Summary of the operation from the spec; null if it has none.
+	Name *string `json:"name,omitempty"`
+
+	// OperationId Registry ID of the operation.
+	OperationId string `json:"operation_id"`
+
+	// RelevanceScore Relevance of the result to the query, from 0 to 1; higher is more relevant.
+	RelevanceScore float32 `json:"relevance_score"`
 
 	// Target The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.
-	Target string                       `json:"target"`
-	Type   *OperationResultResponseType `json:"type,omitempty"`
-	Url    string                       `json:"url"`
+	Target string `json:"target"`
+
+	// Type Result kind; always `operation`.
+	Type *OperationResultResponseType `json:"type,omitempty"`
+
+	// Url URL of the operation, built from the spec's server and path; host-relative when the spec declares no absolute server.
+	Url string `json:"url"`
 }
 
-// OperationResultResponseType defines model for OperationResultResponse.Type.
+// OperationResultResponseType Result kind; always `operation`.
 type OperationResultResponseType string
 
 // OperationSummaryLinksResponse Hypermedia links for an operation summary.
 type OperationSummaryLinksResponse struct {
+	// Inspect URL of the operation's full detail via `GET /inspect`.
 	Inspect string `json:"inspect"`
 }
 
 // OperationSummaryListResponse Cursor-paginated list of operations.
 type OperationSummaryListResponse struct {
-	Data       []OperationSummaryResponse `json:"data"`
-	HasMore    bool                       `json:"has_more"`
-	NextCursor *string                    `json:"next_cursor,omitempty"`
+	// Data The page of operations.
+	Data []OperationSummaryResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OperationSummaryResponse Single operation in a paginated list.
@@ -3132,19 +4063,36 @@ type OperationSummaryResponse struct {
 	UnderscoreLinks OperationSummaryLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api         ApiReferenceResponse `json:"api"`
-	Deprecated  *bool                `json:"deprecated,omitempty"`
-	Description *string              `json:"description,omitempty"`
-	Method      string               `json:"method"`
-	Name        *string              `json:"name,omitempty"`
-	OperationId string               `json:"operation_id"`
-	Path        string               `json:"path"`
-	RevisionId  string               `json:"revision_id"`
-	Tags        *[]string            `json:"tags,omitempty"`
+	Api ApiReferenceResponse `json:"api"`
+
+	// Deprecated Whether the spec marks the operation as deprecated.
+	Deprecated *bool `json:"deprecated,omitempty"`
+
+	// Description Description of the operation; null if the spec gives none.
+	Description *string `json:"description,omitempty"`
+
+	// Method HTTP method of the operation.
+	Method string `json:"method"`
+
+	// Name Summary of the operation from the spec; null if it has none.
+	Name *string `json:"name,omitempty"`
+
+	// OperationId Registry ID of the operation.
+	OperationId string `json:"operation_id"`
+
+	// Path Path template of the operation as declared in the spec.
+	Path string `json:"path"`
+
+	// RevisionId ID of the revision the operation belongs to.
+	RevisionId string `json:"revision_id"`
+
+	// Tags Tags the spec assigns to the operation.
+	Tags *[]string `json:"tags,omitempty"`
 }
 
 // OverlayConfirmRequest Payload for confirming an overlay.
 type OverlayConfirmRequest struct {
+	// ExecutionId ID of the execution that verified the overlay, recorded as `confirmed_by_execution_id`.
 	ExecutionId *string `json:"execution_id,omitempty"`
 }
 
@@ -3155,18 +4103,32 @@ type OverlayConfirmRequest struct {
 // when it is applicable to the current status. They are not permission-scoped — the
 // “overlays:confirm“ gate on confirm/rollback is still enforced server-side (403).
 type OverlayLinksResponse struct {
-	Api       string  `json:"api"`
-	Confirm   *string `json:"confirm,omitempty"`
+	// Api URL of the API the overlay applies to.
+	Api string `json:"api"`
+
+	// Confirm URL to confirm the overlay; null unless it is `pending`.
+	Confirm *string `json:"confirm,omitempty"`
+
+	// Deprecate URL to deprecate the overlay (via `DELETE`); null once it is `deprecated`.
 	Deprecate *string `json:"deprecate,omitempty"`
-	Rollback  *string `json:"rollback,omitempty"`
-	Self      string  `json:"self"`
+
+	// Rollback URL to roll back the overlay; null unless it is `confirmed` and its revision has been produced.
+	Rollback *string `json:"rollback,omitempty"`
+
+	// Self URL of this overlay.
+	Self string `json:"self"`
 }
 
 // OverlayListResponse Cursor-paginated list of overlays.
 type OverlayListResponse struct {
-	Data       []OverlayResponse `json:"data"`
-	HasMore    bool              `json:"has_more"`
-	NextCursor *string           `json:"next_cursor,omitempty"`
+	// Data The page of overlays.
+	Data []OverlayResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OverlayResponse Full overlay resource response.
@@ -3177,35 +4139,73 @@ type OverlayResponse struct {
 	// revisions resource's promote/archive links), so a surface renders an action only
 	// when it is applicable to the current status. They are not permission-scoped — the
 	// ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
-	UnderscoreLinks        OverlayLinksResponse   `json:"_links"`
-	ApiId                  string                 `json:"api_id"`
-	ConfirmedAt            *time.Time             `json:"confirmed_at"`
-	ConfirmedByExecutionId *string                `json:"confirmed_by_execution_id"`
-	ConfirmedRevisionId    *string                `json:"confirmed_revision_id,omitempty"`
-	ContributedBy          *string                `json:"contributed_by"`
-	CreatedAt              time.Time              `json:"created_at"`
-	CreatedBy              *string                `json:"created_by,omitempty"`
-	DeprecatedAt           *time.Time             `json:"deprecated_at"`
-	DeprecatedReason       *string                `json:"deprecated_reason,omitempty"`
-	Document               map[string]interface{} `json:"document"`
-	Id                     string                 `json:"id"`
-	Status                 string                 `json:"status"`
-	SupersededRevisionId   *string                `json:"superseded_revision_id,omitempty"`
-	TargetRevisionId       *string                `json:"target_revision_id"`
-	UpdatedAt              *time.Time             `json:"updated_at"`
+	UnderscoreLinks OverlayLinksResponse `json:"_links"`
+
+	// ApiId ID of the API the overlay applies to.
+	ApiId string `json:"api_id"`
+
+	// ConfirmedAt When the overlay was confirmed (RFC 3339); null if not confirmed.
+	ConfirmedAt *time.Time `json:"confirmed_at"`
+
+	// ConfirmedByExecutionId ID of the execution supplied when the overlay was confirmed; null if none.
+	ConfirmedByExecutionId *string `json:"confirmed_by_execution_id"`
+
+	// ConfirmedRevisionId ID of the revision produced by applying the overlay; null until confirmation completes.
+	ConfirmedRevisionId *string `json:"confirmed_revision_id,omitempty"`
+
+	// ContributedBy Free-text attribution label supplied at submission; null if none.
+	ContributedBy *string `json:"contributed_by"`
+
+	// CreatedAt When the overlay was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the overlay.
+	CreatedBy *string `json:"created_by,omitempty"`
+
+	// DeprecatedAt When the overlay was deprecated (RFC 3339); null if not deprecated.
+	DeprecatedAt *time.Time `json:"deprecated_at"`
+
+	// DeprecatedReason Why the overlay was deprecated: `manual`, `rollback` or `superseded_by_reimport`; null when not deprecated or not recorded.
+	DeprecatedReason *string `json:"deprecated_reason,omitempty"`
+
+	// Document The OpenAPI Overlay document.
+	Document map[string]interface{} `json:"document"`
+
+	// Id Unique ID of the overlay.
+	Id string `json:"id"`
+
+	// Status Lifecycle status of the overlay: `pending`, `confirmed` or `deprecated`.
+	Status string `json:"status"`
+
+	// SupersededRevisionId ID of the revision the overlay replaced when applied, restored by a rollback; null if none.
+	SupersededRevisionId *string `json:"superseded_revision_id,omitempty"`
+
+	// TargetRevisionId ID of the revision the overlay was written against; null if unpinned.
+	TargetRevisionId *string `json:"target_revision_id"`
+
+	// UpdatedAt When the overlay was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OverlaySubmitRequest Payload for submitting a new overlay.
 type OverlaySubmitRequest struct {
-	ContributedBy    *string                `json:"contributed_by,omitempty"`
-	Document         map[string]interface{} `json:"document"`
-	TargetRevisionId *string                `json:"target_revision_id,omitempty"`
+	// ContributedBy Free-text attribution label for who contributed the overlay.
+	ContributedBy *string `json:"contributed_by,omitempty"`
+
+	// Document OpenAPI Overlay document; must be a JSON object with an `actions` array.
+	Document map[string]interface{} `json:"document"`
+
+	// TargetRevisionId ID of the revision the overlay was written against; null to leave unpinned.
+	TargetRevisionId *string `json:"target_revision_id,omitempty"`
 }
 
 // OverlayUpdateRequest Payload for updating an existing overlay.
 type OverlayUpdateRequest struct {
-	Document         *map[string]interface{} `json:"document,omitempty"`
-	TargetRevisionId *string                 `json:"target_revision_id,omitempty"`
+	// Document Replacement OpenAPI Overlay document; omit to keep the current one.
+	Document *map[string]interface{} `json:"document,omitempty"`
+
+	// TargetRevisionId ID of the revision the overlay was written against.
+	TargetRevisionId *string `json:"target_revision_id,omitempty"`
 }
 
 // OwnOAuthClientConfirmSessionRequest Resolve an “awaiting_app“ session with the approver's own OAuth client.
@@ -3217,56 +4217,95 @@ type OverlayUpdateRequest struct {
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
 type OwnOAuthClientConfirmSessionRequest struct {
-	AgentId         *string                                 `json:"agent_id,omitempty"`
-	AuthorizeUrl    string                                  `json:"authorize_url"`
-	ClientId        string                                  `json:"client_id"`
-	ClientSecret    *string                                 `json:"client_secret,omitempty"`
-	ConfirmedScopes *[]string                               `json:"confirmed_scopes,omitempty"`
-	Digest          string                                  `json:"digest"`
-	ExpectedAgentId *string                                 `json:"expected_agent_id,omitempty"`
-	Kind            OwnOAuthClientConfirmSessionRequestKind `json:"kind"`
-	PermissionRules []PermissionRuleSchema                  `json:"permission_rules"`
-	TokenUrl        string                                  `json:"token_url"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// AuthorizeUrl Authorization endpoint URL of the OAuth app.
+	AuthorizeUrl string `json:"authorize_url"`
+
+	// ClientId Client ID of the approver's OAuth app.
+	ClientId string `json:"client_id"`
+
+	// ClientSecret Client secret of the approver's OAuth app; write-only.
+	ClientSecret *string `json:"client_secret,omitempty"`
+
+	// ConfirmedScopes Upstream scopes to request (at most 100).
+	ConfirmedScopes *[]string `json:"confirmed_scopes,omitempty"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; always `own_oauth_client`.
+	Kind OwnOAuthClientConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
+
+	// TokenUrl Token endpoint URL of the OAuth app.
+	TokenUrl string `json:"token_url"`
 }
 
-// OwnOAuthClientConfirmSessionRequestKind defines model for OwnOAuthClientConfirmSessionRequest.Kind.
+// OwnOAuthClientConfirmSessionRequestKind Confirm variant; always `own_oauth_client`.
 type OwnOAuthClientConfirmSessionRequestKind string
 
 // PermissionListResponse List of available permissions.
 type PermissionListResponse struct {
+	// Data The permissions in the catalogue.
 	Data []PermissionResponse `json:"data"`
 }
 
 // PermissionResponse A single permission entry from the catalogue.
 type PermissionResponse struct {
+	// Description Human-readable description of what the permission allows.
 	Description string `json:"description"`
 
 	// GrantableByCaller Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
-	GrantableByCaller bool     `json:"grantable_by_caller"`
-	Implies           []string `json:"implies"`
-	Name              string   `json:"name"`
+	GrantableByCaller bool `json:"grantable_by_caller"`
+
+	// Implies Permissions this one implies when granted.
+	Implies []string `json:"implies"`
+
+	// Name Permission name, e.g. `users:read`.
+	Name string `json:"name"`
 }
 
 // PermissionRuleListResponse List of permission rules.
 type PermissionRuleListResponse struct {
+	// Data The binding's permission rules, in evaluation order.
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 type PermissionRuleReadSchema struct {
-	UnderscoreComment *string                            `json:"_comment,omitempty"`
-	UnderscoreSystem  *bool                              `json:"_system,omitempty"`
-	Effect            PermissionRuleReadSchemaEffect     `json:"effect"`
-	MatchMode         *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
-	Methods           *[]string                          `json:"methods,omitempty"`
-	Operations        *[]string                          `json:"operations,omitempty"`
-	Path              *string                            `json:"path,omitempty"`
+	// UnderscoreComment Optional note attached to the rule.
+	UnderscoreComment *string `json:"_comment,omitempty"`
+
+	// UnderscoreSystem True when the rule is platform-managed rather than user-authored.
+	UnderscoreSystem *bool `json:"_system,omitempty"`
+
+	// Effect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
+	Effect PermissionRuleReadSchemaEffect `json:"effect"`
+
+	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+	MatchMode *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
+
+	// Methods HTTP methods the rule matches; null matches all.
+	Methods *[]string `json:"methods,omitempty"`
+
+	// Operations OpenAPI operation IDs the rule matches; null matches all.
+	Operations *[]string `json:"operations,omitempty"`
+
+	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.
+	Path *string `json:"path,omitempty"`
 }
 
-// PermissionRuleReadSchemaEffect defines model for PermissionRuleReadSchema.Effect.
+// PermissionRuleReadSchemaEffect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
 type PermissionRuleReadSchemaEffect string
 
-// PermissionRuleReadSchemaMatchMode defines model for PermissionRuleReadSchema.MatchMode.
+// PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
 type PermissionRuleReadSchemaMatchMode string
 
 // PermissionRuleSchema Permission rule for an agent↔credential binding.
@@ -3287,7 +4326,7 @@ type PermissionRuleSchema struct {
 	// Operations OpenAPI operation IDs to match. None matches all operations.
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
 	Path *string `json:"path,omitempty"`
 }
 
@@ -3305,7 +4344,7 @@ type PermissionTestRequest struct {
 	// OperationId Optional OpenAPI operation id resolved from the request URL.
 	OperationId *string `json:"operation_id,omitempty"`
 
-	// Path Path of the hypothetical request as the broker would see it.
+	// Path Path of the hypothetical request relative to the API's server URL (the spec's path, e.g. `/widgets/42`) — the path the broker evaluates rules on.
 	Path string `json:"path"`
 }
 
@@ -3332,14 +4371,20 @@ type PermissionTestResponse struct {
 
 // Permissions Structured permissions view: assigned + effective.
 type Permissions struct {
-	Assigned  []string              `json:"assigned"`
+	// Assigned Permissions assigned directly to the user.
+	Assigned []string `json:"assigned"`
+
+	// Effective All permissions the user holds, including those implied by assigned ones.
 	Effective []EffectivePermission `json:"effective"`
 }
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
 type PermissionsPatchRequest struct {
-	Add    *[]PermissionRuleSchema `json:"add,omitempty"`
-	Remove *[]int                  `json:"remove,omitempty"`
+	// Add Rules to append after the existing user rules.
+	Add *[]PermissionRuleSchema `json:"add,omitempty"`
+
+	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
+	Remove *[]int `json:"remove,omitempty"`
 }
 
 // PreviewInfoResponse The `info` block fields surfaced in a preview.
@@ -3386,8 +4431,6 @@ type PreviewOperationResponse struct {
 }
 
 // PreviewParameterResponse A slimmed parameter in an operation preview.
-//
-// Examples: {"description":"Page size.","in":"query","name":"limit","required":false}
 type PreviewParameterResponse struct {
 	// Description Parameter description (empty string when absent).
 	Description string `json:"description"`
@@ -3447,6 +4490,7 @@ type ProblemDetail struct {
 
 // ProviderConfigListResponse A list of stored provider configs (secrets redacted).
 type ProviderConfigListResponse struct {
+	// Data The stored provider configs.
 	Data []ProviderConfigResponse `json:"data"`
 }
 
@@ -3455,11 +4499,15 @@ type ProviderConfigListResponse struct {
 // Examples: {"config":{"client_id":"client_abc123","client_secret":"***","environment":"production","kind":"pipedream","project_id":"proj_abc123"},"created_at":"2026-06-29T12:00:00Z","name":"pipedream","updated_at":"2026-06-29T12:00:00Z"}
 type ProviderConfigResponse struct {
 	// Config Stored config with secret fields redacted.
-	Config    map[string]interface{} `json:"config"`
-	CreatedAt time.Time              `json:"created_at"`
+	Config map[string]interface{} `json:"config"`
+
+	// CreatedAt When the provider config was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
 
 	// Name Provider name (e.g. 'pipedream').
-	Name      string     `json:"name"`
+	Name string `json:"name"`
+
+	// UpdatedAt When the provider config was last updated (RFC 3339); null if never updated.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3470,7 +4518,7 @@ type ProviderConfigResponse struct {
 // “client_secret“ (write-only), and optional “environment“,
 // “connect_base_url“, “expiry_skew_seconds“.
 //
-// Examples: {"client_id":"client_abc123","client_secret":"\u003credacted\u003e","environment":"production","project_id":"proj_abc123"}
+// Examples: {"config":{"client_id":"client_abc123","client_secret":"\u003credacted\u003e","environment":"production","project_id":"proj_abc123"}}
 type ProviderConfigSetRequest struct {
 	// Config Provider-specific configuration fields, validated by provider name.
 	Config map[string]interface{} `json:"config"`
@@ -3499,6 +4547,7 @@ type ProviderDiscoveryEntryResponse struct {
 
 // ProviderDiscoveryResponse Discovery response listing all available credential providers.
 type ProviderDiscoveryResponse struct {
+	// Providers The available credential providers.
 	Providers []ProviderDiscoveryEntryResponse `json:"providers"`
 }
 
@@ -3506,51 +4555,92 @@ type ProviderDiscoveryResponse struct {
 //
 // Refused when another agent is bound to the credential.
 type ReauthorizeConfirmSessionRequest struct {
-	AgentId         *string                              `json:"agent_id,omitempty"`
-	CredentialId    string                               `json:"credential_id"`
-	Digest          string                               `json:"digest"`
-	ExpectedAgentId *string                              `json:"expected_agent_id,omitempty"`
-	Kind            ReauthorizeConfirmSessionRequestKind `json:"kind"`
-	PermissionRules []PermissionRuleSchema               `json:"permission_rules"`
+	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// CredentialId ID of the approver's OAuth credential to bind and re-consent.
+	CredentialId string `json:"credential_id"`
+
+	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	Digest string `json:"digest"`
+
+	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
+
+	// Kind Confirm variant; always `reauthorize`.
+	Kind ReauthorizeConfirmSessionRequestKind `json:"kind"`
+
+	// PermissionRules Permission rules to bind for the agent (at most 100).
+	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
-// ReauthorizeConfirmSessionRequestKind defines model for ReauthorizeConfirmSessionRequest.Kind.
+// ReauthorizeConfirmSessionRequestKind Confirm variant; always `reauthorize`.
 type ReauthorizeConfirmSessionRequestKind string
 
 // RedeemInviteRequest Payload for redeeming an invite token.
 type RedeemInviteRequest struct {
+	// InviteToken The invite token issued when the user was created or re-invited.
 	InviteToken string `json:"invite_token"`
-	Password    string `json:"password"`
+
+	// Password Password to set for the invited user.
+	Password string `json:"password"`
 }
 
 // RegisterRequest POST /register request body.
 type RegisterRequest struct {
-	ClientName string    `json:"client_name"`
+	// ClientName Name for the new agent.
+	ClientName string `json:"client_name"`
+
+	// GrantTypes Accepted for RFC 7591 compatibility and ignored; the agent uses the JWT-bearer grant.
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// Jwks A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
-	Jwks                    map[string]interface{} `json:"jwks"`
-	Scope                   *string                `json:"scope,omitempty"`
-	TokenEndpointAuthMethod *string                `json:"token_endpoint_auth_method,omitempty"`
+	Jwks map[string]interface{} `json:"jwks"`
+
+	// Scope Space-separated permissions requested for the agent (at most 100 tokens).
+	Scope *string `json:"scope,omitempty"`
+
+	// TokenEndpointAuthMethod Accepted for RFC 7591 compatibility and ignored; the agent uses `private_key_jwt`.
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // RegisterResponse POST /register 201 response.
 type RegisterResponse struct {
-	ClaimToken              *string   `json:"claim_token,omitempty"`
-	ClientId                string    `json:"client_id"`
-	GrantTypes              *[]string `json:"grant_types,omitempty"`
-	RegistrationAccessToken string    `json:"registration_access_token"`
-	RegistrationClientUri   string    `json:"registration_client_uri"`
-	Status                  string    `json:"status"`
-	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method,omitempty"`
+	// ClaimToken Single-use token a human presents to `POST /agents/{agent_id}:claim` to take ownership; omitted when the deployment does not issue claim tokens.
+	ClaimToken *string `json:"claim_token,omitempty"`
+
+	// ClientId ID of the new agent, used as its OAuth client_id.
+	ClientId string `json:"client_id"`
+
+	// GrantTypes Grant types the agent may use; always the JWT-bearer grant.
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// RegistrationAccessToken Bearer token for polling `registration_client_uri`; shown once and expires after a configured time.
+	RegistrationAccessToken string `json:"registration_access_token"`
+
+	// RegistrationClientUri URL to poll for the registration status.
+	RegistrationClientUri string `json:"registration_client_uri"`
+
+	// Status Lifecycle status of the new agent; `pending` until an operator approves it.
+	Status string `json:"status"`
+
+	// TokenEndpointAuthMethod How the agent authenticates at the token endpoint; always `private_key_jwt`.
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // RegistrationStatusResponse GET /register/{agent_id} response.
 type RegistrationStatusResponse struct {
-	ClientId                string    `json:"client_id"`
-	GrantTypes              *[]string `json:"grant_types,omitempty"`
-	Status                  string    `json:"status"`
-	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method,omitempty"`
+	// ClientId ID of the agent, used as its OAuth client_id.
+	ClientId string `json:"client_id"`
+
+	// GrantTypes Grant types the agent may use; always the JWT-bearer grant.
+	GrantTypes *[]string `json:"grant_types,omitempty"`
+
+	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	Status string `json:"status"`
+
+	// TokenEndpointAuthMethod How the agent authenticates at the token endpoint; always `private_key_jwt`.
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // RevokeRequest Revocation endpoint request (RFC 7009) — JSON or form-encoded.
@@ -3562,9 +4652,39 @@ type RegistrationStatusResponse struct {
 // secret-less client's lineage binding; ignored on the bearer-authenticated
 // JSON arm, where the platform identity scopes the revocation instead.
 type RevokeRequest struct {
-	ClientId      *string `json:"client_id,omitempty"`
-	Token         string  `json:"token"`
+	// ClientId Public client's client_id, used on form-encoded requests; ignored on bearer-authenticated JSON requests.
+	ClientId *string `json:"client_id,omitempty"`
+
+	// Token The token to revoke.
+	Token string `json:"token"`
+
+	// TokenTypeHint Optional hint, `access_token` or `refresh_token`; both types are checked regardless.
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
+// RootHealthResponse Liveness body of the canonical root “GET /health“ probe.
+//
+// Examples: {"status":"ok","version":"1.0.0"}
+type RootHealthResponse struct {
+	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status `ok` while the process is serving requests. A metered marketplace deployment whose entitlement lapsed answers `not_entitled` (still HTTP 200, so orchestrators don't restart it).
+	Status string `json:"status"`
+
+	// Version Running Jentic One release. Absent on the `not_entitled` body.
+	Version *string `json:"version,omitempty"`
+}
+
+// RouteNotFoundResponse The framework's plain route-not-found body.
+//
+// Config-gated routes answer this exact body when their gate is closed, so the
+// gate state is indistinguishable from a route that does not exist.
+//
+// Examples: {"detail":"Not Found"}
+type RouteNotFoundResponse struct {
+	// Detail Always `Not Found`.
+	Detail string `json:"detail"`
 }
 
 // RuleSetAttachRequest Point a direct agent↔credential binding at a shared rule set.
@@ -3575,6 +4695,7 @@ type RuleSetAttachRequest struct {
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
 type RuleSetCreateRequest struct {
+	// Description Optional free-text description of the set.
 	Description *string `json:"description,omitempty"`
 
 	// Name Unique human-readable name.
@@ -3586,63 +4707,104 @@ type RuleSetCreateRequest struct {
 
 // RuleSetListResponse Paginated list of rule sets.
 type RuleSetListResponse struct {
-	Data       []RuleSetSummaryResponse `json:"data"`
-	HasMore    bool                     `json:"has_more"`
-	NextCursor *string                  `json:"next_cursor,omitempty"`
+	// Data The page of rule sets.
+	Data []RuleSetSummaryResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
-	BindingCount int       `json:"binding_count"`
-	CreatedAt    time.Time `json:"created_at"`
-	CreatedBy    *string   `json:"created_by,omitempty"`
+	BindingCount int `json:"binding_count"`
+
+	// CreatedAt When the rule set was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy ID of the actor that created the rule set.
+	CreatedBy *string `json:"created_by,omitempty"`
 
 	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
-	Curated     bool                       `json:"curated"`
-	Description *string                    `json:"description,omitempty"`
-	Name        string                     `json:"name"`
-	RuleSetId   string                     `json:"rule_set_id"`
-	Rules       []PermissionRuleReadSchema `json:"rules"`
+	Curated bool `json:"curated"`
+
+	// Description Free-text description of the rule set; null if unset.
+	Description *string `json:"description,omitempty"`
+
+	// Name Unique human-readable name of the rule set.
+	Name string `json:"name"`
+
+	// RuleSetId Unique ID of the rule set (`prs_…`).
+	RuleSetId string `json:"rule_set_id"`
+
+	// Rules Ordered rule list (first-match-wins, default-deny).
+	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
 // RuleSetSummaryResponse Rule set list entry.
 type RuleSetSummaryResponse struct {
+	// CreatedAt When the rule set was created (RFC 3339).
 	CreatedAt time.Time `json:"created_at"`
-	CreatedBy *string   `json:"created_by,omitempty"`
+
+	// CreatedBy ID of the actor that created the rule set.
+	CreatedBy *string `json:"created_by,omitempty"`
 
 	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
-	Curated     bool    `json:"curated"`
+	Curated bool `json:"curated"`
+
+	// Description Free-text description of the rule set; null if unset.
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
-	RuleCount   int     `json:"rule_count"`
-	RuleSetId   string  `json:"rule_set_id"`
+
+	// Name Unique human-readable name of the rule set.
+	Name string `json:"name"`
+
+	// RuleCount Number of rules in the set.
+	RuleCount int `json:"rule_count"`
+
+	// RuleSetId Unique ID of the rule set (`prs_…`).
+	RuleSetId string `json:"rule_set_id"`
 }
 
 // RuleSetUpdateRequest Rename or re-describe a rule set.
 type RuleSetUpdateRequest struct {
+	// Description New description; omit to leave unchanged.
 	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
+
+	// Name New unique name; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
 }
 
 // RuntimeConfig Optional per-upstream-call overrides.
 type RuntimeConfig struct {
-	Headers     *map[string]string `json:"headers,omitempty"`
+	// Headers Header overrides for upstream calls.
+	Headers *map[string]string `json:"headers,omitempty"`
+
+	// QueryParams Query-parameter overrides for upstream calls.
 	QueryParams *map[string]string `json:"query_params,omitempty"`
 }
 
 // SearchLinksResponse Hypermedia links for a search result row.
 type SearchLinksResponse struct {
+	// Inspect URL of the operation's full detail via `GET /inspect`.
 	Inspect string `json:"inspect"`
 }
 
 // SearchRequest POST /search request body.
 type SearchRequest struct {
 	// Apis Restrict results to these APIs. Each entry is a 'vendor[/name[/version]]' identifier of an imported API (e.g. 'github-com/api-github-com/1.1.4'); vendor and name are normalized like ingest, so raw spellings such as 'stripe.com/api' also resolve. The legacy colon-separated form 'vendor[:name[:version]]' is also accepted.
-	Apis   *[]string `json:"apis,omitempty"`
-	Cursor *string   `json:"cursor,omitempty"`
-	Limit  *int      `json:"limit,omitempty"`
-	Query  string    `json:"query"`
+	Apis *[]string `json:"apis,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Limit Maximum number of results to return (1-100).
+	Limit *int `json:"limit,omitempty"`
+
+	// Query Free-text search query; must not be empty.
+	Query string `json:"query"`
 
 	// RevisionPins Pin specific APIs to a revision for this search. Keys are full 'vendor/name/version' identifiers (colon-separated also accepted); values are revision UUIDs.
 	RevisionPins *map[string]string `json:"revision_pins,omitempty"`
@@ -3650,36 +4812,68 @@ type SearchRequest struct {
 
 // SearchResponse Cursor-paginated search results page.
 type SearchResponse struct {
-	Data       []OperationResultResponse `json:"data"`
-	HasMore    bool                      `json:"has_more"`
-	NextCursor *string                   `json:"next_cursor,omitempty"`
+	// Data The page of matching operations.
+	Data []OperationResultResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // SecuritySchemeFlowResponse A single OAuth2 flow within a security scheme.
 type SecuritySchemeFlowResponse struct {
-	AuthorizationUrl *string            `json:"authorization_url,omitempty"`
-	FlowType         string             `json:"flow_type"`
-	RefreshUrl       *string            `json:"refresh_url,omitempty"`
-	Scopes           *map[string]string `json:"scopes,omitempty"`
-	TokenUrl         *string            `json:"token_url,omitempty"`
+	// AuthorizationUrl Authorization endpoint URL; null if the flow has none.
+	AuthorizationUrl *string `json:"authorization_url,omitempty"`
+
+	// FlowType OAuth2 flow type (for example `authorizationCode` or `clientCredentials`).
+	FlowType string `json:"flow_type"`
+
+	// RefreshUrl Token refresh URL; null if the flow has none.
+	RefreshUrl *string `json:"refresh_url,omitempty"`
+
+	// Scopes Available scopes mapped to their descriptions.
+	Scopes *map[string]string `json:"scopes,omitempty"`
+
+	// TokenUrl Token endpoint URL; null if the flow has none.
+	TokenUrl *string `json:"token_url,omitempty"`
 }
 
 // SecuritySchemeListResponse List of security schemes for an API's current revision.
 type SecuritySchemeListResponse struct {
+	// Data Security schemes declared by the API's current revision.
 	Data []SecuritySchemeResponse `json:"data"`
 }
 
 // SecuritySchemeResponse Full security scheme detail for a revision.
 type SecuritySchemeResponse struct {
-	BearerFormat     *string                       `json:"bearer_format,omitempty"`
-	Description      *string                       `json:"description,omitempty"`
-	Flows            *[]SecuritySchemeFlowResponse `json:"flows,omitempty"`
-	InLocation       *string                       `json:"in_location,omitempty"`
-	Name             string                        `json:"name"`
-	OpenIdConnectUrl *string                       `json:"open_id_connect_url,omitempty"`
-	ParamName        *string                       `json:"param_name,omitempty"`
-	Scheme           *string                       `json:"scheme,omitempty"`
-	Type             string                        `json:"type"`
+	// BearerFormat Hint for the bearer token format; null if not declared.
+	BearerFormat *string `json:"bearer_format,omitempty"`
+
+	// Description Description of the scheme from the spec; null if none.
+	Description *string `json:"description,omitempty"`
+
+	// Flows OAuth2 flows declared by the scheme; empty for other types.
+	Flows *[]SecuritySchemeFlowResponse `json:"flows,omitempty"`
+
+	// InLocation Where an API key is sent (`header`, `query` or `cookie`); null for other types.
+	InLocation *string `json:"in_location,omitempty"`
+
+	// Name Name of the security scheme as declared in the spec.
+	Name string `json:"name"`
+
+	// OpenIdConnectUrl OpenID Connect discovery URL; null unless `type` is `openIdConnect`.
+	OpenIdConnectUrl *string `json:"open_id_connect_url,omitempty"`
+
+	// ParamName Name of the header, query or cookie parameter carrying the API key.
+	ParamName *string `json:"param_name,omitempty"`
+
+	// Scheme HTTP authentication scheme (for example `bearer`); null unless `type` is `http`.
+	Scheme *string `json:"scheme,omitempty"`
+
+	// Type Security scheme type (for example `apiKey`, `http`, `oauth2` or `openIdConnect`).
+	Type string `json:"type"`
 }
 
 // ServedApiRef An API served by an agent's bound credential, keyed by its stored identity.
@@ -3690,13 +4884,19 @@ type SecuritySchemeResponse struct {
 // all-required “APIReference“. Shared so the auth service schema and the
 // “/me“ web schema use ONE model instead of two identical copies.
 type ServedApiRef struct {
-	ApiName    *string `json:"api_name,omitempty"`
-	ApiVendor  string  `json:"api_vendor"`
+	// ApiName Name of the served API; null means every API of the vendor.
+	ApiName *string `json:"api_name,omitempty"`
+
+	// ApiVendor Vendor of the served API.
+	ApiVendor string `json:"api_vendor"`
+
+	// ApiVersion Version of the served API; null means every version.
 	ApiVersion *string `json:"api_version,omitempty"`
 }
 
 // SetPermissionsRequest Request body for setting user permissions.
 type SetPermissionsRequest struct {
+	// Permissions Permissions to assign to the user; replaces the current assigned set.
 	Permissions []string `json:"permissions"`
 }
 
@@ -3718,117 +4918,220 @@ type Sigv4CreateRequest struct {
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
-	Provider      *string        `json:"provider,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// SecretAccessKey AWS secret access key. Stored encrypted; never returned after create.
-	SecretAccessKey string             `json:"secret_access_key"`
+	SecretAccessKey string `json:"secret_access_key"`
+
+	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// SessionToken Optional temporary-credential session token (STS). Expires; re-save when it does.
-	SessionToken *string                `json:"session_token,omitempty"`
-	Type         Sigv4CreateRequestType `json:"type"`
+	SessionToken *string `json:"session_token,omitempty"`
+
+	// Type Credential type; always `sigv4`.
+	Type Sigv4CreateRequestType `json:"type"`
 }
 
-// Sigv4CreateRequestType defines model for Sigv4CreateRequest.Type.
+// Sigv4CreateRequestType Credential type; always `sigv4`.
 type Sigv4CreateRequestType string
 
 // Sigv4UpdateRequest Update request for sigv4 credentials (key rotation / scope edit).
 type Sigv4UpdateRequest struct {
-	AccessKeyId       *string                `json:"access_key_id,omitempty"`
-	Active            *bool                  `json:"active,omitempty"`
-	AwsRegion         *string                `json:"aws_region,omitempty"`
-	AwsService        *string                `json:"aws_service,omitempty"`
-	ClearSessionToken *bool                  `json:"clear_session_token,omitempty"`
-	Name              *string                `json:"name,omitempty"`
-	RuntimeConfig     *RuntimeConfig         `json:"runtime_config,omitempty"`
-	SecretAccessKey   *string                `json:"secret_access_key,omitempty"`
-	ServerVariables   *map[string]string     `json:"server_variables,omitempty"`
-	SessionToken      *string                `json:"session_token,omitempty"`
-	Type              Sigv4UpdateRequestType `json:"type"`
+	// AccessKeyId Replacement AWS access key ID; must be sent with secret_access_key.
+	AccessKeyId *string `json:"access_key_id,omitempty"`
+
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	Active *bool `json:"active,omitempty"`
+
+	// AwsRegion Replacement signing region; omit to leave unchanged.
+	AwsRegion *string `json:"aws_region,omitempty"`
+
+	// AwsService Replacement signing service; omit to leave unchanged.
+	AwsService *string `json:"aws_service,omitempty"`
+
+	// ClearSessionToken Remove the stored session token; takes precedence over session_token.
+	ClearSessionToken *bool `json:"clear_session_token,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// SecretAccessKey Replacement AWS secret access key; must be sent with access_key_id.
+	SecretAccessKey *string `json:"secret_access_key,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// SessionToken Replacement STS session token; omit to leave unchanged.
+	SessionToken *string `json:"session_token,omitempty"`
+
+	// Type Credential type; always `sigv4`.
+	Type Sigv4UpdateRequestType `json:"type"`
 }
 
-// Sigv4UpdateRequestType defines model for Sigv4UpdateRequest.Type.
+// Sigv4UpdateRequestType Credential type; always `sigv4`.
 type Sigv4UpdateRequestType string
 
 // TokenResponse Token endpoint success response.
 type TokenResponse struct {
-	AccessToken  string  `json:"access_token"`
-	ExpiresIn    int     `json:"expires_in"`
-	IdToken      *string `json:"id_token,omitempty"`
+	// AccessToken The access token to send as a bearer token.
+	AccessToken string `json:"access_token"`
+
+	// ExpiresIn Lifetime of the access token, in seconds.
+	ExpiresIn int `json:"expires_in"`
+
+	// IdToken OpenID Connect ID token; omitted when none was issued.
+	IdToken *string `json:"id_token,omitempty"`
+
+	// RefreshToken Refresh token for obtaining new tokens; omitted when none was issued.
 	RefreshToken *string `json:"refresh_token,omitempty"`
 
 	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
-	Scope     *string `json:"scope,omitempty"`
+	Scope *string `json:"scope,omitempty"`
+
+	// TokenType Token type; always `bearer`.
 	TokenType *string `json:"token_type,omitempty"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
 type TopOperation struct {
-	ApiName     string `json:"api_name"`
-	ApiVendor   string `json:"api_vendor"`
-	Failed      int    `json:"failed"`
+	// ApiName Name of the API the operation belongs to.
+	ApiName string `json:"api_name"`
+
+	// ApiVendor Vendor of the API the operation belongs to.
+	ApiVendor string `json:"api_vendor"`
+
+	// Failed Number of those executions that failed.
+	Failed int `json:"failed"`
+
+	// OperationId Identifier of the operation.
 	OperationId string `json:"operation_id"`
-	Total       int    `json:"total"`
+
+	// Total Number of executions of the operation in the window.
+	Total int `json:"total"`
 }
 
 // UsageBucket Execution counts for a single time bucket.
 type UsageBucket struct {
-	AvgMs   float32 `json:"avg_ms"`
-	Failed  int     `json:"failed"`
-	Success int     `json:"success"`
-	Total   int     `json:"total"`
-	Ts      int     `json:"ts"`
+	// AvgMs Mean execution duration in the bucket, in milliseconds.
+	AvgMs float32 `json:"avg_ms"`
+
+	// Failed Number of those executions that failed.
+	Failed int `json:"failed"`
+
+	// Success Number of those executions that completed.
+	Success int `json:"success"`
+
+	// Total Number of executions started in the bucket.
+	Total int `json:"total"`
+
+	// Ts Start of the bucket, in Unix epoch seconds.
+	Ts int `json:"ts"`
 }
 
 // UsageResponse Full usage statistics response.
 type UsageResponse struct {
-	BucketSeconds int           `json:"bucket_seconds"`
-	Buckets       []UsageBucket `json:"buckets"`
-	GroupBy       string        `json:"group_by"`
-	Since         int           `json:"since"`
+	// BucketSeconds Width of each entry in `buckets`, in seconds; chosen from the window length.
+	BucketSeconds int `json:"bucket_seconds"`
+
+	// Buckets Execution counts per time bucket, oldest first; empty buckets are omitted.
+	Buckets []UsageBucket `json:"buckets"`
+
+	// GroupBy Dimension the `top` rows are grouped by.
+	GroupBy string `json:"group_by"`
+
+	// Since Start of the window, in Unix epoch seconds (inclusive).
+	Since int `json:"since"`
 
 	// Stats Overall usage statistics for a time window.
 	Stats UsageStatsBlock `json:"stats"`
-	Top   []UsageTopRow   `json:"top"`
-	Until int             `json:"until"`
+
+	// Top The entities with the most executions in the window, most first.
+	Top []UsageTopRow `json:"top"`
+
+	// Until End of the window, in Unix epoch seconds (exclusive).
+	Until int `json:"until"`
 }
 
 // UsageStatsBlock Overall usage statistics for a time window.
 type UsageStatsBlock struct {
-	ActiveNow int      `json:"active_now"`
-	AvgMs     float32  `json:"avg_ms"`
-	Failed    int      `json:"failed"`
-	P50Ms     *float32 `json:"p50_ms"`
-	P95Ms     *float32 `json:"p95_ms"`
-	Pending   int      `json:"pending"`
-	Success   int      `json:"success"`
-	Total     int      `json:"total"`
+	// ActiveNow Reserved count of in-flight executions; currently always 0.
+	ActiveNow int `json:"active_now"`
+
+	// AvgMs Mean execution duration in milliseconds; 0 when there were no executions.
+	AvgMs float32 `json:"avg_ms"`
+
+	// Failed Number of those executions that failed.
+	Failed int `json:"failed"`
+
+	// P50Ms Median execution duration in milliseconds; null when not available.
+	P50Ms *float32 `json:"p50_ms"`
+
+	// P95Ms 95th-percentile execution duration in milliseconds; null when not available.
+	P95Ms *float32 `json:"p95_ms"`
+
+	// Pending Reserved count of pending executions; currently always 0.
+	Pending int `json:"pending"`
+
+	// Success Number of those executions that completed.
+	Success int `json:"success"`
+
+	// Total Number of executions started in the window.
+	Total int `json:"total"`
 }
 
 // UsageTopRow Top entity row with sparkline trend.
 type UsageTopRow struct {
-	AvgMs   float32 `json:"avg_ms"`
-	Failed  int     `json:"failed"`
-	Key     string  `json:"key"`
-	Label   string  `json:"label"`
-	Success int     `json:"success"`
-	Total   int     `json:"total"`
-	Trend   []int   `json:"trend"`
+	// AvgMs Mean execution duration for this entity, in milliseconds.
+	AvgMs float32 `json:"avg_ms"`
+
+	// Failed Number of those executions that failed.
+	Failed int `json:"failed"`
+
+	// Key Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
+	Key string `json:"key"`
+
+	// Label Display label for the row.
+	Label string `json:"label"`
+
+	// Success Number of those executions that completed.
+	Success int `json:"success"`
+
+	// Total Number of executions for this entity in the window.
+	Total int `json:"total"`
+
+	// Trend Execution counts for this entity across equal segments of the window, oldest first.
+	Trend []int `json:"trend"`
 }
 
 // UserCreateRequest Request body for creating a new user.
 type UserCreateRequest struct {
-	Email       string    `json:"email"`
-	FirstName   string    `json:"first_name"`
-	LastName    string    `json:"last_name"`
+	// Email Email address of the new user; must be unique.
+	Email string `json:"email"`
+
+	// FirstName First name of the new user.
+	FirstName string `json:"first_name"`
+
+	// LastName Last name of the new user.
+	LastName string `json:"last_name"`
+
+	// Permissions Permissions to assign to the new user; the caller may only grant permissions they hold. Defaults to none.
 	Permissions *[]string `json:"permissions,omitempty"`
 }
 
 // UserCreatedResponse Response after user creation including invite token.
 type UserCreatedResponse struct {
+	// InviteExpiresAt When the invite token expires (RFC 3339).
 	InviteExpiresAt time.Time `json:"invite_expires_at"`
-	InviteToken     string    `json:"invite_token"`
+
+	// InviteToken One-time invite token the user redeems to set a password.
+	InviteToken string `json:"invite_token"`
 
 	// User User representation in API responses.
 	User UserResponse `json:"user"`
@@ -3836,56 +5139,107 @@ type UserCreatedResponse struct {
 
 // UserListResponse Paginated list of users.
 type UserListResponse struct {
-	Data       []UserResponse `json:"data"`
-	HasMore    bool           `json:"has_more"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
+	// Data The page of users.
+	Data []UserResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // UserResponse User representation in API responses.
 type UserResponse struct {
-	Active             bool      `json:"active"`
-	AuthProvider       string    `json:"auth_provider"`
-	CreatedAt          time.Time `json:"created_at"`
-	Email              string    `json:"email"`
-	ExternalSubjectId  *string   `json:"external_subject_id,omitempty"`
-	FirstName          string    `json:"first_name"`
-	Id                 string    `json:"id"`
-	InviteState        string    `json:"invite_state"`
-	LastName           string    `json:"last_name"`
-	MustChangePassword bool      `json:"must_change_password"`
-	Name               string    `json:"name"`
+	// Active Whether the user account is enabled.
+	Active bool `json:"active"`
+
+	// AuthProvider How the user authenticates: `local` (password) or `external`.
+	AuthProvider string `json:"auth_provider"`
+
+	// CreatedAt When the user was created (RFC 3339).
+	CreatedAt time.Time `json:"created_at"`
+
+	// Email Email address of the user.
+	Email string `json:"email"`
+
+	// ExternalSubjectId Subject ID from the external identity provider; null for local users.
+	ExternalSubjectId *string `json:"external_subject_id,omitempty"`
+
+	// FirstName First name of the user.
+	FirstName string `json:"first_name"`
+
+	// Id Unique ID of the user.
+	Id string `json:"id"`
+
+	// InviteState Invitation state: `pending`, `redeemed`, `accepted` or `expired`. `expired` means a pending invite whose token has lapsed and should be reissued.
+	InviteState string `json:"invite_state"`
+
+	// LastName Last name of the user.
+	LastName string `json:"last_name"`
+
+	// MustChangePassword Whether the user must change their password at next use.
+	MustChangePassword bool `json:"must_change_password"`
+
+	// Name Full display name: first name and last name.
+	Name string `json:"name"`
 
 	// Permissions Structured permissions view: assigned + effective.
 	Permissions Permissions `json:"permissions"`
-	UpdatedAt   *time.Time  `json:"updated_at,omitempty"`
+
+	// UpdatedAt When the user was last updated (RFC 3339); null if never updated.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // UserUpdateRequest Request body for updating a user.
 type UserUpdateRequest struct {
-	Email     *string `json:"email,omitempty"`
+	// Email New email address; must be unique. Null means no change.
+	Email *string `json:"email,omitempty"`
+
+	// FirstName New first name; null means no change.
 	FirstName *string `json:"first_name,omitempty"`
-	LastName  *string `json:"last_name,omitempty"`
+
+	// LastName New last name; null means no change.
+	LastName *string `json:"last_name,omitempty"`
 }
 
-// VendorListResponse defines model for VendorListResponse.
+// VendorListResponse The vendors the caller can connect a credential for.
 type VendorListResponse struct {
+	// Data The connectable vendors.
 	Data []VendorSummaryResponse `json:"data"`
 }
 
-// VendorSummaryResponse defines model for VendorSummaryResponse.
+// VendorSummaryResponse A vendor, or one admin registration for it, that the caller can connect to.
 type VendorSummaryResponse struct {
-	CatalogApiId   *string                     `json:"catalog_api_id,omitempty"`
-	DisplayName    string                      `json:"display_name"`
-	EntryId        string                      `json:"entry_id"`
-	FlowKinds      []string                    `json:"flow_kinds"`
-	Key            string                      `json:"key"`
-	Name           string                      `json:"name"`
-	RegistrationId *string                     `json:"registration_id,omitempty"`
-	Source         VendorSummaryResponseSource `json:"source"`
-	Vendor         string                      `json:"vendor"`
+	// CatalogApiId Catalog API (`<domain>/<sub>`) the registration signs in to; null for platform-shipped vendors.
+	CatalogApiId *string `json:"catalog_api_id,omitempty"`
+
+	// DisplayName Vendor's display name (e.g. 'Gmail').
+	DisplayName string `json:"display_name"`
+
+	// EntryId Stable per-row key: the registration ID for admin registrations, else the vendor key.
+	EntryId string `json:"entry_id"`
+
+	// FlowKinds OAuth flow kinds this row supports (`authorization_code`, `device_authorization`).
+	FlowKinds []string `json:"flow_kinds"`
+
+	// Key Vendor registry key shared by every registration for the vendor.
+	Key string `json:"key"`
+
+	// Name Label for this row: the registration name for admin registrations, else the display name.
+	Name string `json:"name"`
+
+	// RegistrationId ID of the admin OAuth app registration behind this row; null for platform-shipped vendors.
+	RegistrationId *string `json:"registration_id,omitempty"`
+
+	// Source Where the row came from: `db` for an admin registration, `config` for a platform-shipped vendor.
+	Source VendorSummaryResponseSource `json:"source"`
+
+	// Vendor Fully-qualified vendor ID (`<host>/<api-id>`) when known; otherwise the vendor key.
+	Vendor string `json:"vendor"`
 }
 
-// VendorSummaryResponseSource defines model for VendorSummaryResponse.Source.
+// VendorSummaryResponseSource Where the row came from: `db` for an admin registration, `config` for a platform-shipped vendor.
 type VendorSummaryResponseSource string
 
 // VersionResponse The running app version and the latest release known to this backend.
@@ -3902,8 +5256,11 @@ type VersionResponse struct {
 
 // ListActorsParams defines parameters for ListActors.
 type ListActorsParams struct {
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of actors to return (1-5000, default 1000).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // LookupActorsParams defines parameters for LookupActors.
@@ -3914,6 +5271,7 @@ type LookupActorsParams struct {
 
 // ListOauthClientsParams defines parameters for ListOauthClients.
 type ListOauthClientsParams struct {
+	// IncludeInactive Whether to include inactive (disabled, pending or denied) clients; defaults to false.
 	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
 
 	// ApprovalStatus Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.
@@ -3936,8 +5294,12 @@ type ListOauthGrantsParams struct {
 
 	// Status Filter by grant lifecycle state.
 	Status *ListOauthGrantsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
-	Limit  *int                         `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor *string                      `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of grants to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListOauthGrantsParamsStatus defines parameters for ListOauthGrants.
@@ -3945,9 +5307,20 @@ type ListOauthGrantsParamsStatus string
 
 // ListAgentsParams defines parameters for ListAgents.
 type ListAgentsParams struct {
+	// Cursor Cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of agents to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Status Only return agents in this lifecycle status: `pending`, `active`, `rejected`, `disabled` or `archived`.
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// ArchiveAgentParams defines parameters for ArchiveAgent.
+type ArchiveAgentParams struct {
+	// Purge Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings and connect sessions, and cancels its queued and running jobs. History (audit entries, events, execution records, finished jobs, notes) and the credentials it created are kept; once the agent is gone that history is visible to org:admin only.
+	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
 }
 
 // UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
@@ -3960,8 +5333,12 @@ type UnbindAgentCredentialParams struct {
 type ListAgentOauthGrantsParams struct {
 	// Status Filter by grant lifecycle state.
 	Status *ListAgentOauthGrantsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
-	Limit  *int                              `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of grants to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListAgentOauthGrantsParamsStatus defines parameters for ListAgentOauthGrants.
@@ -3969,69 +5346,122 @@ type ListAgentOauthGrantsParamsStatus string
 
 // ListApisParams defines parameters for ListApis.
 type ListApisParams struct {
+	// Vendor Only return APIs from this vendor.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of APIs to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetApiSpecParams defines parameters for GetApiSpec.
 type GetApiSpecParams struct {
+	// Overlays Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
 	Overlays *bool `form:"overlays,omitempty" json:"overlays,omitempty"`
 }
 
 // ListApiOperationsParams defines parameters for ListApiOperations.
 type ListApiOperationsParams struct {
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of operations to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListOverlaysParams defines parameters for ListOverlays.
 type ListOverlaysParams struct {
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of overlays to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Status Only return overlays in this status: `pending`, `confirmed` or `deprecated`.
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 }
 
 // ListApiRevisionsParams defines parameters for ListApiRevisions.
 type ListApiRevisionsParams struct {
-	State  *[]string `form:"state,omitempty" json:"state,omitempty"`
-	Cursor *string   `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
+	// State Only return revisions in these states; repeat to match several.
+	State *[]string `form:"state,omitempty" json:"state,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of revisions to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetApiRevisionSpecParams defines parameters for GetApiRevisionSpec.
 type GetApiRevisionSpecParams struct {
+	// Overlays Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
 	Overlays *bool `form:"overlays,omitempty" json:"overlays,omitempty"`
 }
 
 // ListApiRevisionOperationsParams defines parameters for ListApiRevisionOperations.
 type ListApiRevisionOperationsParams struct {
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of operations to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListAuditEntriesParams defines parameters for ListAuditEntries.
 type ListAuditEntriesParams struct {
+	// TargetType Only return entries for this target type; must be sent together with `target_id`.
 	TargetType *AuditTargetType `form:"target_type,omitempty" json:"target_type,omitempty"`
-	TargetId   *string          `form:"target_id,omitempty" json:"target_id,omitempty"`
-	ActorId    *string          `form:"actor_id,omitempty" json:"actor_id,omitempty"`
-	Origin     *string          `form:"origin,omitempty" json:"origin,omitempty"`
-	Since      *time.Time       `form:"since,omitempty" json:"since,omitempty"`
-	Until      *time.Time       `form:"until,omitempty" json:"until,omitempty"`
-	Cursor     *string          `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit      *int             `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// TargetId Only return entries for this target ID; must be sent together with `target_type`.
+	TargetId *string `form:"target_id,omitempty" json:"target_id,omitempty"`
+
+	// ActorId Only return entries made by this actor.
+	ActorId *string `form:"actor_id,omitempty" json:"actor_id,omitempty"`
+
+	// Origin Only return entries initiated from this surface, e.g. `dashboard` or `cli`.
+	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
+
+	// Since Only return entries that occurred at or after this time (RFC 3339).
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return entries that occurred at or before this time (RFC 3339).
+	Until *time.Time `form:"until,omitempty" json:"until,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of entries to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // AuthorizeEndpointParams defines parameters for AuthorizeEndpoint.
 type AuthorizeEndpointParams struct {
-	ResponseType        string  `form:"response_type" json:"response_type"`
-	ClientId            string  `form:"client_id" json:"client_id"`
-	RedirectUri         string  `form:"redirect_uri" json:"redirect_uri"`
-	CodeChallenge       string  `form:"code_challenge" json:"code_challenge"`
-	CodeChallengeMethod string  `form:"code_challenge_method" json:"code_challenge_method"`
-	Scope               *string `form:"scope,omitempty" json:"scope,omitempty"`
-	State               *string `form:"state,omitempty" json:"state,omitempty"`
-	Nonce               *string `form:"nonce,omitempty" json:"nonce,omitempty"`
+	// ResponseType OAuth response type; only `code` is supported.
+	ResponseType string `form:"response_type" json:"response_type"`
+
+	// ClientId Client ID of the application requesting authorization.
+	ClientId string `form:"client_id" json:"client_id"`
+
+	// RedirectUri Where to send the result; must be a redirect URI allowed for the client.
+	RedirectUri string `form:"redirect_uri" json:"redirect_uri"`
+
+	// CodeChallenge PKCE code challenge derived from the client's code verifier.
+	CodeChallenge string `form:"code_challenge" json:"code_challenge"`
+
+	// CodeChallengeMethod PKCE challenge method; only `S256` is supported.
+	CodeChallengeMethod string `form:"code_challenge_method" json:"code_challenge_method"`
+
+	// Scope Space-separated scopes requested; must stay within the client's allowed scopes.
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// State Opaque client value returned unchanged on the redirect back to the client.
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+
+	// Nonce OpenID Connect nonce to bind the ID token to the client's session.
+	Nonce *string `form:"nonce,omitempty" json:"nonce,omitempty"`
 
 	// Sc Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
 	Sc *string `form:"sc,omitempty" json:"sc,omitempty"`
@@ -4039,21 +5469,41 @@ type AuthorizeEndpointParams struct {
 
 // ListCatalogParams defines parameters for ListCatalog.
 type ListCatalogParams struct {
-	Q                *string `form:"q,omitempty" json:"q,omitempty"`
-	RegisteredOnly   *bool   `form:"registered_only,omitempty" json:"registered_only,omitempty"`
-	UnregisteredOnly *bool   `form:"unregistered_only,omitempty" json:"unregistered_only,omitempty"`
-	OutdatedOnly     *bool   `form:"outdated_only,omitempty" json:"outdated_only,omitempty"`
-	IncludeSnoozed   *bool   `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
-	Cursor           *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit            *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	// Q Search text matched against entry IDs; results are ranked by match quality.
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// RegisteredOnly Only return entries already imported into the registry.
+	RegisteredOnly *bool `form:"registered_only,omitempty" json:"registered_only,omitempty"`
+
+	// UnregisteredOnly Only return entries not yet imported; cannot be combined with `registered_only` or `outdated_only`.
+	UnregisteredOnly *bool `form:"unregistered_only,omitempty" json:"unregistered_only,omitempty"`
+
+	// OutdatedOnly Only return imported entries with an upstream update available.
+	OutdatedOnly *bool `form:"outdated_only,omitempty" json:"outdated_only,omitempty"`
+
+	// IncludeSnoozed Treat entries whose update notification is snoozed as outdated.
+	IncludeSnoozed *bool `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of entries to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // PreviewCatalogOperationsParams defines parameters for PreviewCatalogOperations.
 type PreviewCatalogOperationsParams struct {
-	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	Tag    *string `form:"tag,omitempty" json:"tag,omitempty"`
-	Q      *string `form:"q,omitempty" json:"q,omitempty"`
+	// Offset Number of matching operations to skip.
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Maximum number of operations to return (0-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Tag Only return operations with a tag containing this text (case-insensitive).
+	Tag *string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Q Only return operations whose method, path, summary or operation ID contains this text (case-insensitive).
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
 }
 
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
@@ -4066,8 +5516,12 @@ type ListConnectSessionsParams struct {
 
 	// Vendor Filter by vendor registry key
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's next_cursor; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of sessions to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListConnectSessionsParamsState defines parameters for ListConnectSessions.
@@ -4075,19 +5529,19 @@ type ListConnectSessionsParamsState string
 
 // GetConnectSessionParams defines parameters for GetConnectSession.
 type GetConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
 type PollConnectSessionStatusParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // CancelConnectSessionParams defines parameters for CancelConnectSession.
 type CancelConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
@@ -4098,14 +5552,19 @@ type ConfirmConnectSessionJSONBody struct {
 
 // ConfirmConnectSessionParams defines parameters for ConfirmConnectSession.
 type ConfirmConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // ListCredentialsParams defines parameters for ListCredentials.
 type ListCredentialsParams struct {
+	// Cursor Opaque cursor from a previous page's next_cursor; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of credentials to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Vendor Filter to credentials for this API vendor (exact match).
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 }
 
@@ -4116,8 +5575,13 @@ type CreateCredentialJSONBody struct {
 
 // OauthCallbackParams defines parameters for OauthCallback.
 type OauthCallbackParams struct {
-	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	// Code Authorization code issued by the identity provider.
+	Code *string `form:"code,omitempty" json:"code,omitempty"`
+
+	// State Signed state value issued when the connect flow began.
 	State *string `form:"state,omitempty" json:"state,omitempty"`
+
+	// Error OAuth error code from the identity provider when authorization failed.
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
@@ -4128,8 +5592,11 @@ type UpdateCredentialJSONBody struct {
 
 // ListCredentialAgentsParams defines parameters for ListCredentialAgents.
 type ListCredentialAgentsParams struct {
+	// Cursor Opaque cursor from a previous page's next_cursor; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of agents to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ReplaceAgentCredentialPermissionsJSONBody defines parameters for ReplaceAgentCredentialPermissions.
@@ -4137,55 +5604,116 @@ type ReplaceAgentCredentialPermissionsJSONBody = []PermissionRuleSchema
 
 // ErrorPageParams defines parameters for ErrorPage.
 type ErrorPageParams struct {
+	// Error Error code to display; returned as-is in the response body.
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
 // ListEventsParams defines parameters for ListEvents.
 type ListEventsParams struct {
-	EventType      *[]string        `form:"event_type,omitempty" json:"event_type,omitempty"`
-	Severity       *[]EventSeverity `form:"severity,omitempty" json:"severity,omitempty"`
-	RequiresAction *bool            `form:"requires_action,omitempty" json:"requires_action,omitempty"`
-	From           *time.Time       `form:"from,omitempty" json:"from,omitempty"`
-	To             *time.Time       `form:"to,omitempty" json:"to,omitempty"`
-	TraceId        *string          `form:"trace_id,omitempty" json:"trace_id,omitempty"`
-	ActorId        *string          `form:"actor_id,omitempty" json:"actor_id,omitempty"`
-	ActorType      *string          `form:"actor_type,omitempty" json:"actor_type,omitempty"`
-	Cursor         *string          `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit          *int             `form:"limit,omitempty" json:"limit,omitempty"`
+	// EventType Only return events of one of these types; repeat the parameter for several.
+	EventType *[]string `form:"event_type,omitempty" json:"event_type,omitempty"`
+
+	// Severity Only return events with one of these severities; repeat the parameter for several.
+	Severity *[]EventSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// RequiresAction Only return events whose `requires_action` flag matches.
+	RequiresAction *bool `form:"requires_action,omitempty" json:"requires_action,omitempty"`
+
+	// From Only return events created at or after this time (RFC 3339).
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only return events created before this time (RFC 3339).
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// TraceId Only return events with this trace ID.
+	TraceId *string `form:"trace_id,omitempty" json:"trace_id,omitempty"`
+
+	// ActorId Only return events caused by this actor.
+	ActorId *string `form:"actor_id,omitempty" json:"actor_id,omitempty"`
+
+	// ActorType Only return events caused by this kind of actor, e.g. `user` or `agent`.
+	ActorType *string `form:"actor_type,omitempty" json:"actor_type,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of events to return (1-100, default 25).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // StreamEventsParams defines parameters for StreamEvents.
 type StreamEventsParams struct {
-	Since          *time.Time       `form:"since,omitempty" json:"since,omitempty"`
-	EventType      *[]string        `form:"event_type,omitempty" json:"event_type,omitempty"`
-	Severity       *[]EventSeverity `form:"severity,omitempty" json:"severity,omitempty"`
-	RequiresAction *bool            `form:"requires_action,omitempty" json:"requires_action,omitempty"`
-	TraceId        *string          `form:"trace_id,omitempty" json:"trace_id,omitempty"`
-	ActorId        *string          `form:"actor_id,omitempty" json:"actor_id,omitempty"`
-	ActorType      *string          `form:"actor_type,omitempty" json:"actor_type,omitempty"`
-	LastEventID    *string          `json:"Last-Event-ID,omitempty"`
+	// Since Stream events created after this time (RFC 3339); defaults to now, and a future time is treated as now.
+	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
+
+	// EventType Only return events of one of these types; repeat the parameter for several.
+	EventType *[]string `form:"event_type,omitempty" json:"event_type,omitempty"`
+
+	// Severity Only return events with one of these severities; repeat the parameter for several.
+	Severity *[]EventSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// RequiresAction Only return events whose `requires_action` flag matches.
+	RequiresAction *bool `form:"requires_action,omitempty" json:"requires_action,omitempty"`
+
+	// TraceId Only return events with this trace ID.
+	TraceId *string `form:"trace_id,omitempty" json:"trace_id,omitempty"`
+
+	// ActorId Only return events caused by this actor.
+	ActorId *string `form:"actor_id,omitempty" json:"actor_id,omitempty"`
+
+	// ActorType Only return events caused by this kind of actor, e.g. `user` or `agent`.
+	ActorType *string `form:"actor_type,omitempty" json:"actor_type,omitempty"`
+
+	// LastEventID ID of the last event received (`evt_` plus 24 hex characters), to resume a stream after it; ignored if the event is not visible to the caller.
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
 }
 
 // ListExecutionsParams defines parameters for ListExecutions.
 type ListExecutionsParams struct {
-	ToolkitId *string    `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
-	TraceId   *string    `form:"trace_id,omitempty" json:"trace_id,omitempty"`
-	Status    *[]string  `form:"status,omitempty" json:"status,omitempty"`
-	From      *time.Time `form:"from,omitempty" json:"from,omitempty"`
-	To        *time.Time `form:"to,omitempty" json:"to,omitempty"`
-	Api       *string    `form:"api,omitempty" json:"api,omitempty"`
-	ActorId   *string    `form:"actor_id,omitempty" json:"actor_id,omitempty"`
-	Origin    *string    `form:"origin,omitempty" json:"origin,omitempty"`
-	Cursor    *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	// ToolkitId Legacy: only return executions mediated by this toolkit.
+	ToolkitId *string `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
+
+	// TraceId Only return executions with this trace ID.
+	TraceId *string `form:"trace_id,omitempty" json:"trace_id,omitempty"`
+
+	// Status Only return executions with one of these terminal statuses (`completed` or `failed`); repeat the parameter for several.
+	Status *[]string `form:"status,omitempty" json:"status,omitempty"`
+
+	// From Only return executions started at or after this time (RFC 3339).
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only return executions started before this time (RFC 3339).
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Api Only return executions of this API, given as `vendor[:name[:version]]`.
+	Api *string `form:"api,omitempty" json:"api,omitempty"`
+
+	// ActorId Only return executions run by this actor.
+	ActorId *string `form:"actor_id,omitempty" json:"actor_id,omitempty"`
+
+	// Origin Only return executions initiated from this surface, e.g. `api` or `mcp`.
+	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of execution records to return (1-100, default 25).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListHeldExecutionsParams defines parameters for ListHeldExecutions.
 type ListHeldExecutionsParams struct {
-	State   *ExecutionApprovalState `form:"state,omitempty" json:"state,omitempty"`
-	AgentId *string                 `form:"agent_id,omitempty" json:"agent_id,omitempty"`
-	Cursor  *string                 `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit   *int                    `form:"limit,omitempty" json:"limit,omitempty"`
+	// State Only return held executions in this decision state, e.g. `pending`.
+	State *ExecutionApprovalState `form:"state,omitempty" json:"state,omitempty"`
+
+	// AgentId Only return held executions filed by this agent.
+	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of held executions to return (1-100, default 25).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetGovernedHostsParams defines parameters for GetGovernedHosts.
@@ -4203,8 +5731,10 @@ type InspectOperationParams struct {
 	OperationId *string `form:"operation_id,omitempty" json:"operation_id,omitempty"`
 
 	// RevisionId Pin to specific revision
-	RevisionId *string                       `form:"revision_id,omitempty" json:"revision_id,omitempty"`
-	Detail     *InspectOperationParamsDetail `form:"detail,omitempty" json:"detail,omitempty"`
+	RevisionId *string `form:"revision_id,omitempty" json:"revision_id,omitempty"`
+
+	// Detail Level of detail to return; only `summary` is currently supported.
+	Detail *InspectOperationParamsDetail `form:"detail,omitempty" json:"detail,omitempty"`
 }
 
 // InspectOperationParamsDetail defines parameters for InspectOperation.
@@ -4212,12 +5742,23 @@ type InspectOperationParamsDetail string
 
 // ListJobsParams defines parameters for ListJobs.
 type ListJobsParams struct {
-	Kind   *string    `form:"kind,omitempty" json:"kind,omitempty"`
-	Status *[]string  `form:"status,omitempty" json:"status,omitempty"`
-	From   *time.Time `form:"from,omitempty" json:"from,omitempty"`
-	To     *time.Time `form:"to,omitempty" json:"to,omitempty"`
-	Cursor *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	// Kind Only return jobs of this kind, e.g. `import` or `execution`.
+	Kind *string `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// Status Only return jobs in one of these states; repeat the parameter for several.
+	Status *[]string `form:"status,omitempty" json:"status,omitempty"`
+
+	// From Only return jobs created at or after this time (RFC 3339).
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only return jobs created before this time (RFC 3339).
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of jobs to return (1-100, default 25).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // LoginPageParams defines parameters for LoginPage.
@@ -4233,40 +5774,73 @@ type GetMe200JSONResponseBody struct {
 
 // GetExecutionStatsParams defines parameters for GetExecutionStats.
 type GetExecutionStatsParams struct {
+	// Days Number of days back from now to aggregate over (1-30, default 7).
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
 }
 
 // GetUsageStatsParams defines parameters for GetUsageStats.
 type GetUsageStatsParams struct {
-	Since     *int     `form:"since,omitempty" json:"since,omitempty"`
-	Until     *int     `form:"until,omitempty" json:"until,omitempty"`
-	GroupBy   *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
-	TopLimit  *int     `form:"top_limit,omitempty" json:"top_limit,omitempty"`
-	ToolkitId *string  `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
-	ApiId     *string  `form:"api_id,omitempty" json:"api_id,omitempty"`
-	AgentId   *string  `form:"agent_id,omitempty" json:"agent_id,omitempty"`
-	Status    *string  `form:"status,omitempty" json:"status,omitempty"`
+	// Since Start of the window in Unix epoch seconds (inclusive); defaults to 24 hours before `until`.
+	Since *int `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until End of the window in Unix epoch seconds (exclusive); defaults to the next minute boundary after now.
+	Until *int `form:"until,omitempty" json:"until,omitempty"`
+
+	// GroupBy Dimension to group the `top` rows by; defaults to `api`.
+	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// TopLimit Maximum number of `top` rows to return (1-50, default 10).
+	TopLimit *int `form:"top_limit,omitempty" json:"top_limit,omitempty"`
+
+	// ToolkitId Legacy: only count executions mediated by this toolkit.
+	ToolkitId *string `form:"toolkit_id,omitempty" json:"toolkit_id,omitempty"`
+
+	// ApiId Only count executions of this API, given as `vendor/name`.
+	ApiId *string `form:"api_id,omitempty" json:"api_id,omitempty"`
+
+	// AgentId Only count executions run by this actor ID.
+	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`
+
+	// Status Only count executions with this status, e.g. `completed` or `failed`.
+	Status *string `form:"status,omitempty" json:"status,omitempty"`
 }
 
 // ListNotesParams defines parameters for ListNotes.
 type ListNotesParams struct {
-	Cursor       *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit        *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	Api          *string `form:"api,omitempty" json:"api,omitempty"`
-	OperationId  *string `form:"operation_id,omitempty" json:"operation_id,omitempty"`
-	ExecutionId  *string `form:"execution_id,omitempty" json:"execution_id,omitempty"`
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of notes to return (1-200).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Api Only return notes attached to APIs matching `vendor[:name[:version]]`.
+	Api *string `form:"api,omitempty" json:"api,omitempty"`
+
+	// OperationId Only return notes attached to this operation.
+	OperationId *string `form:"operation_id,omitempty" json:"operation_id,omitempty"`
+
+	// ExecutionId Only return notes attached to this execution.
+	ExecutionId *string `form:"execution_id,omitempty" json:"execution_id,omitempty"`
+
+	// CredentialId Only return notes attached to this credential.
 	CredentialId *string `form:"credential_id,omitempty" json:"credential_id,omitempty"`
-	Type         *string `form:"type,omitempty" json:"type,omitempty"`
-	CreatedBy    *string `form:"created_by,omitempty" json:"created_by,omitempty"`
+
+	// Type Only return notes of this type.
+	Type *string `form:"type,omitempty" json:"type,omitempty"`
+
+	// CreatedBy Only return notes created by this actor ID.
+	CreatedBy *string `form:"created_by,omitempty" json:"created_by,omitempty"`
 }
 
 // DeleteNoteParams defines parameters for DeleteNote.
 type DeleteNoteParams struct {
+	// IfMatch Expected note revision (the `ETag` value); the request fails with 412 if the note has changed.
 	IfMatch *string `json:"if-match,omitempty"`
 }
 
 // UpdateNoteParams defines parameters for UpdateNote.
 type UpdateNoteParams struct {
+	// IfMatch Expected note revision (the `ETag` value); the request fails with 412 if the note has changed.
 	IfMatch *string `json:"if-match,omitempty"`
 }
 
@@ -4280,8 +5854,12 @@ type ListOauthAppRegistrationsParams struct {
 
 	// FlowKind Filter by OAuth flow kind.
 	FlowKind *OAuthAppRegistrationFlowKind `form:"flow_kind,omitempty" json:"flow_kind,omitempty"`
-	Cursor   *string                       `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit    *int                          `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's next_cursor; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of registrations to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // CreateOauthAppRegistrationJSONBody defines parameters for CreateOauthAppRegistration.
@@ -4297,7 +5875,10 @@ type ApprovalStatusEndpointParams struct {
 
 // AuthorizeOauthCallbackParams defines parameters for AuthorizeOauthCallback.
 type AuthorizeOauthCallbackParams struct {
-	Code  string `form:"code" json:"code"`
+	// Code Authorization code issued by the external identity provider.
+	Code string `form:"code" json:"code"`
+
+	// State Signed authorization-flow state that `/authorize` sent to the provider.
 	State string `form:"state" json:"state"`
 }
 
@@ -4351,8 +5932,11 @@ type TokenEndpointFormdataBody struct {
 
 // ListPermissionRuleSetsParams defines parameters for ListPermissionRuleSets.
 type ListPermissionRuleSetsParams struct {
+	// Cursor Opaque cursor from a previous page's next_cursor; omit for the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Limit Maximum number of rule sets to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ReplacePermissionRuleSetRulesJSONBody defines parameters for ReplacePermissionRuleSetRules.
@@ -4360,8 +5944,13 @@ type ReplacePermissionRuleSetRulesJSONBody = []PermissionRuleSchema
 
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
-	Cursor      *string      `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit       *int         `form:"limit,omitempty" json:"limit,omitempty"`
+	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of users to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// InviteState Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.
 	InviteState *InviteState `form:"invite_state,omitempty" json:"invite_state,omitempty"`
 }
 
@@ -5579,42 +7168,34 @@ type ClientInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
 	OauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
+	// McpOauthAuthorizationServer Get OAuth authorization server metadata for MCP clients
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+	// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 	//
-	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-	// the issuer `{base}/mcp` named by the protected-resource document. It
-	// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-	// and the public-client profile (`none` + PKCE S256) — the root document is a
-	// separate, unchanged surface whose `registration_endpoint` remains the agent
-	// `/register`.
+	// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+	// — the URL an MCP client derives from the protected-resource document
+	// (RFC 8414 §3.1). It lists the authorization, token and revocation
+	// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+	// the MCP tool scopes, and the public client profile: no client secret
+	// (`none`) with PKCE `S256`. It differs from the root
+	// `/.well-known/oauth-authorization-server` document, whose
+	// `registration_endpoint` is the agent `/register`. Returns 404 when
+	// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 	//
 	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
 	McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
+	// McpOauthProtectedResourceRootAlias Get MCP protected resource metadata (root fallback)
 	//
-	// Root-path alias of the MCP protected-resource document.
+	// Serve the MCP protected-resource document at the root well-known path.
 	//
-	// Compatibility fallback for clients that probe the root
-	// `/.well-known/oauth-protected-resource` instead of following the 401's
-	// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-	// because this deployment has exactly one OAuth-protected resource, so the
-	// root and path-scoped documents are the same body.
-	//
-	// Two acknowledged trades:
-	//
-	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
-	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
-	//   the resource they queried. This body claims ``resource={base}/mcp`` — a
-	//   strict path-deriving validator would reject it, but Claude's fallback
-	//   validates against the MCP server URL (``{base}/mcp``), which is exactly
-	//   what the alias exists to satisfy. That is the intended trade.
-	// - The alias squats the deployment's only root PRM slot: a future non-MCP
-	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. The mounted MCP app must re-confirm the
-	//   "exactly one OAuth-protected resource" premise before adding one.
+	// Returns the same RFC 9728 body as
+	// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+	// its authorization server, and the MCP tool scopes. It exists for clients
+	// (such as Claude Code) that probe this root path instead of following the
+	// `resource_metadata` pointer in a 401. That is safe while this deployment
+	// has exactly one OAuth-protected resource. Returns 404 when interactive
+	// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 	//
 	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
 	McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5630,25 +7211,34 @@ type ClientInterface interface {
 	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
 	McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListActors List Actors
+	// ListActors List users and agents
 	//
-	// List all actors (users and agents) for UI cache hydration.
+	// List users and agents with the minimal fields needed to label them.
+	//
+	// Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+	// and `active`. Requires `users:read`. Results are scoped to the caller:
+	// `org:admin` lists everyone; anyone else lists only themselves and the
+	// agents they may see (their own, or with `owner:agents:read` their owner's
+	// agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+	// already hold, use `GET /actors/lookup`.
 	//
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LookupActors Resolve actor names by id
 	//
-	// Resolve user and agent ids to display names for any signed-in caller.
+	// Resolve user and agent ids to display names.
 	//
-	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
-	// asked for, so a caller without ``users:read`` can label the owners,
-	// approvers and actors it already sees by id. Users resolve for any caller;
-	// agents only when the caller may see them (its own agents, itself, or with
-	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
-	// Ids that match no visible user or agent are left out of the response
-	// rather than reported as errors. Listing the whole directory stays behind
-	// ``users:read`` on ``GET /actors``.
+	// Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+	// `name` and `active` for each id the caller may see. Any signed-in caller
+	// may call it, so a UI can label the owners, approvers and actors it
+	// already holds by id without `users:read`.
+	//
+	// Users resolve for every caller. Agents resolve only when visible to the
+	// caller: itself, its own agents, its owner's agents with
+	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+	// visible actor are silently left out rather than reported as errors.
+	// Listing the whole directory needs `users:read` on `GET /actors`.
 	//
 	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5835,28 +7425,60 @@ type ClientInterface interface {
 	// ownership transfer the grant stays with the original consenter, so this
 	// column is how an admin spots stranded grants.
 	//
+	// Scoped to the caller: org admins see every grant. Anyone else sees grants
+	// they consented to and grants bound to agents they own.
+	//
 	// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
 	ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAgents List Agents
+	// ListAgents List visible agents
 	//
-	// List agents — scoped by identity via dynamic query scoping.
+	// List the agents the caller can see, newest first.
+	//
+	// Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+	// else sees the agents they own. An agent caller also sees itself, and with
+	// `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+	// (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+	// cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+	// while `has_more` is true.
 	//
 	// Corresponds with GET /agents (the `ListAgents` operationId).
 	ListAgents(ctx context.Context, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateAgentWithBody Create Agent
+	// CreateAgentWithBody Create an agent
 	//
-	// Create a new agent manually.
+	// Create an agent owned by the caller.
+	//
+	// The agent is `active` immediately and owned by the caller. Supply `name`
+	// (required), an optional `description`, and optional `permissions`. When
+	// `permissions` is omitted the agent gets the default agent permission set.
+	// When supplied, every permission must be one the caller may grant (see
+	// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+	// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+	//
+	// The agent has no way to authenticate yet. Follow up with
+	// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+	// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /agents (the `CreateAgent` operationId).
 	CreateAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateAgent Create Agent
+	// CreateAgent Create an agent
 	//
-	// Create a new agent manually.
+	// Create an agent owned by the caller.
+	//
+	// The agent is `active` immediately and owned by the caller. Supply `name`
+	// (required), an optional `description`, and optional `permissions`. When
+	// `permissions` is omitted the agent gets the default agent permission set.
+	// When supplied, every permission must be one the caller may grant (see
+	// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+	// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+	//
+	// The agent has no way to authenticate yet. Follow up with
+	// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+	// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5865,96 +7487,164 @@ type ClientInterface interface {
 
 	// ArchiveAgent Archive Agent
 	//
-	// Archive an agent — terminal-but-kept.
+	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
-	// The row is retained for history, but the action is not reversible and
+	// Archive keeps the row for history, but the action is not reversible and
 	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
-	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-	ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetAgent Get Agent
+	// Purge removes the agent and its authority and session rows; it archives
+	// first if needed, so the agent's authority is gone before any cleanup runs,
+	// and a failed purge leaves the agent archived and can be retried. Archive
+	// returns 409 for an already-archived agent; purge accepts any status.
 	//
-	// Get agent by ID — requires agents:read or self-read.
+	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
+	ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgent Get an agent
+	//
+	// Get one agent's profile and lifecycle state.
+	//
+	// Returns the agent's name, description, owner, `status`, approval or
+	// denial details, and whether it currently has an API key (`has_api_key`).
+	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
+	// the caller's visibility answers 404.
 	//
 	// Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 	GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateAgentWithBody Update Agent
+	// UpdateAgentWithBody Update an agent
 	//
-	// Partially update an agent — name, description, or owner_id.
+	// Partially update an agent's `name`, `description` or `owner_id`.
+	//
+	// Only the fields present in the body change; an empty body returns the
+	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+	// else gets 404). Changing `owner_id` transfers ownership, is
+	// `org:admin`-only, and revokes every active OAuth client grant bound to
+	// the agent, so the new owner must re-consent any connected client. The
+	// agent's API key, permissions and credential bindings are unaffected. An
+	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /agents/{agent_id} (the `UpdateAgent` operationId).
 	UpdateAgentWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateAgent Update Agent
+	// UpdateAgent Update an agent
 	//
-	// Partially update an agent — name, description, or owner_id.
+	// Partially update an agent's `name`, `description` or `owner_id`.
+	//
+	// Only the fields present in the body change; an empty body returns the
+	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+	// else gets 404). Changing `owner_id` transfers ownership, is
+	// `org:admin`-only, and revokes every active OAuth client grant bound to
+	// the agent, so the new owner must re-consent any connected client. The
+	// agent's API key, permissions and credential bindings are unaffected. An
+	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /agents/{agent_id} (the `UpdateAgent` operationId).
 	UpdateAgent(ctx context.Context, agentId string, body UpdateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAgentApiKeyInfo Get Agent Api Key Info
+	// GetAgentApiKeyInfo Get an agent's API key metadata
 	//
-	// Get API key metadata for an agent. Returns info even after revocation.
+	// Describe an agent's API key without revealing it.
+	//
+	// Returns the key record's `id`, `status` (`active`, or `revoked` once
+	// revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+	// is never returned — it is shown once, by `:generate-api-key`. Metadata
+	// stays available after revocation; the body is `null` if the agent never
+	// had a key. Allowed for the agent's owner or an `org:admin`.
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key (the `GetAgentApiKeyInfo` operationId).
 	GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAgentApiKeyHistory Get Agent Api Key History
+	// GetAgentApiKeyHistory Get an agent's API key history
 	//
-	// Get the audit history of API key operations for an agent.
+	// List recent API key rotations and revocations for an agent.
+	//
+	// Each entry gives the audit `action`, its `reason` (key rotated or key
+	// revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+	// 50 most recent audit entries, newest first, so very old key events may
+	// not appear; it is not paginated. Allowed for the agent's owner or an
+	// `org:admin`.
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAgentCredentials List Credentials
+	// ListAgentCredentials List an agent's credential bindings
 	//
-	// List direct credential bindings for an agent — requires agents:read or self.
+	// List the credentials bound directly to an agent.
+	//
+	// Each binding names the credential, the API it serves, when it was bound,
+	// whether it is `suspended` (and why), and any attached permission
+	// `rule_set_id`. Credential secrets are never returned. Readable by the
+	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+	// paginated.
 	//
 	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 	ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BindAgentCredentialWithBody Bind Credential
+	// BindAgentCredentialWithBody Bind a credential to an agent
 	//
-	// Directly bind a credential to an agent (theme 5 phase 1).
+	// Let an agent use a credential by binding it directly.
 	//
-	// The caller must own the target credential (or hold ``org:admin``); a
-	// credential that does not exist or that the caller does not own returns 404.
+	// A new binding starts with no permission rules, so the agent can make no
+	// calls with it until rules are set or a rule set is attached. The caller
+	// must be able to see the agent and must own the credential (or hold
+	// `org:admin`). A credential that does not exist or that the caller does
+	// not own returns 404; binding the same credential twice returns 409
+	// (`credential_binding_conflict`).
+	// Returns the new binding.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
 	BindAgentCredentialWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BindAgentCredential Bind Credential
+	// BindAgentCredential Bind a credential to an agent
 	//
-	// Directly bind a credential to an agent (theme 5 phase 1).
+	// Let an agent use a credential by binding it directly.
 	//
-	// The caller must own the target credential (or hold ``org:admin``); a
-	// credential that does not exist or that the caller does not own returns 404.
+	// A new binding starts with no permission rules, so the agent can make no
+	// calls with it until rules are set or a rule set is attached. The caller
+	// must be able to see the agent and must own the credential (or hold
+	// `org:admin`). A credential that does not exist or that the caller does
+	// not own returns 404; binding the same credential twice returns 409
+	// (`credential_binding_conflict`).
+	// Returns the new binding.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
 	BindAgentCredential(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UnbindAgentCredential Unbind Credential
+	// UnbindAgentCredential Suspend or remove a credential binding
 	//
-	// Unbind a credential from an agent — suspend by default, purge on request.
+	// Stop an agent using a credential: suspend the binding, or purge it.
+	//
+	// By default the binding is **suspended**: the agent loses access at once,
+	// but the binding and its permission rules are kept, and
+	// `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+	// With `purge=true` the binding and its inline permission rules are deleted
+	// outright, so a later re-bind starts from deny-all. An agent may suspend
+	// its own binding but not purge it. Both modes are audited. Returns 204; a
+	// missing binding returns 404.
 	//
 	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
 	UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ResumeAgentCredentialBinding Resume Credential Binding
+	// ResumeAgentCredentialBinding Resume a suspended credential binding
 	//
-	// Lift a suspended credential binding — the reverse of the default unbind.
+	// Restore an agent's access to a credential whose binding was suspended.
+	//
+	// Reverses the default (non-purge) unbind; a purged binding is gone and must
+	// be bound again instead. Because resuming re-grants the credential, the
+	// caller must own the credential (or hold `org:admin`) as well as see the
+	// agent, and an agent cannot resume its own binding. Returns the binding;
+	// 404 when no binding exists.
 	//
 	// Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
 	ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5985,16 +7675,17 @@ type ClientInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwks(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAgentOauthGrants List agent OAuth grants
+	// ListAgentOauthGrants List an agent's connected OAuth clients
 	//
-	// List OAuth consent grants binding clients to this agent.
+	// List the OAuth clients a user has consented to act as this agent.
 	//
-	// The "Connected clients" surface: every grant carries the client's display
-	// name and redirect-URI origin, the granted scopes, the consenting user,
-	// and created/last-used timestamps. Allowed for the agent's owner or an
-	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-	// same as an agent that does not exist.
+	// Each grant gives the client's display name and redirect-URI origin, the
+	// granted scopes, the consenting user, its `status`, created and last-used
+	// timestamps, and `can_revoke` for the caller. Filter by `status`
+	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
+	// agent's owner or an admin. An agent the caller cannot see answers 404,
+	// the same as one that does not exist. Revoke a grant with
+	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6209,41 +7900,75 @@ type ClientInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/openapi (the `GetApiSpec` operationId).
 	GetApiSpec(ctx context.Context, vendor string, name string, version string, params *GetApiSpecParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListApiOperations List Api Operations
+	// ListApiOperations List the operations an API currently serves
 	//
-	// List operations for the API's current (live) revision.
+	// List every operation in the API's current (live) revision.
+	//
+	// Each row gives the operation's id, method, path, name, description, tags,
+	// `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+	// a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+	// Use this to browse an API exhaustively; to find operations by intent,
+	// use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+	// revision.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/operations (the `ListApiOperations` operationId).
 	ListApiOperations(ctx context.Context, vendor string, name string, version string, params *ListApiOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListOverlays List Overlays
+	// ListOverlays List an API's overlays
 	//
-	// List overlays for an API with optional status filter and cursor pagination.
+	// List the overlays submitted against an API, newest first.
+	//
+	// Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+	// (applied to the served spec) or `deprecated` (retired) — and links to the
+	// actions valid in that state. Filter with `status`. Results are
+	// cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+	// true.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/overlays (the `ListOverlays` operationId).
 	ListOverlays(ctx context.Context, vendor string, name string, version string, params *ListOverlaysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SubmitOverlayWithBody Submit Overlay
+	// SubmitOverlayWithBody Submit an OpenAPI overlay
 	//
-	// Submit a new overlay for an API.
+	// Propose a change to an API's spec as an OpenAPI Overlay document.
+	//
+	// An overlay is a list of `actions` that patch the API's OpenAPI document —
+	// for example correcting a description or adding a missing parameter.
+	// Submitting stores it as `pending`; it changes nothing until an operator
+	// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+	// record a `contributed_by` label. The document must be a JSON object with
+	// an `actions` array (at most 512 actions, 1 MB), else 422
+	// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays (the `SubmitOverlay` operationId).
 	SubmitOverlayWithBody(ctx context.Context, vendor string, name string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SubmitOverlay Submit Overlay
+	// SubmitOverlay Submit an OpenAPI overlay
 	//
-	// Submit a new overlay for an API.
+	// Propose a change to an API's spec as an OpenAPI Overlay document.
+	//
+	// An overlay is a list of `actions` that patch the API's OpenAPI document —
+	// for example correcting a description or adding a missing parameter.
+	// Submitting stores it as `pending`; it changes nothing until an operator
+	// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+	// record a `contributed_by` label. The document must be a JSON object with
+	// an `actions` array (at most 512 actions, 1 MB), else 422
+	// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays (the `SubmitOverlay` operationId).
 	SubmitOverlay(ctx context.Context, vendor string, name string, version string, body SubmitOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeprecateOverlay Deprecate Overlay
+	// DeprecateOverlay Deprecate an overlay
 	//
-	// Deprecate an overlay (soft delete).
+	// Retire an overlay so it is no longer offered for confirmation.
+	//
+	// The overlay moves to `deprecated` but is kept, and remains readable for
+	// history; nothing is deleted. Deprecating does not rewrite the served
+	// spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+	// `apis:write`. Returns 204.
 	//
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `DeprecateOverlay` operationId).
 	DeprecateOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6255,136 +7980,183 @@ type ClientInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `GetOverlay` operationId).
 	GetOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateOverlayWithBody Update Overlay
+	// UpdateOverlayWithBody Edit an overlay
 	//
-	// Update an overlay's document or target revision.
+	// Change an overlay's `document` or `target_revision_id`.
 	//
-	// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-	// ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-	// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-	// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-	// the API's served spec (D1). That is an operator action, so it additionally requires
-	// ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-	// (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-	// overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-	// if no clean base was recorded to re-apply over.
+	// What the edit does depends on the overlay's state:
+	//
+	// - **Pending** (or confirmed but not yet applied): the stored overlay is
+	//   updated; the served spec is untouched. Requires `apis:write`.
+	// - **Confirmed and live**: the edited document is re-applied over the
+	//   overlay's original base and the result replaces the API's served spec.
+	//   This also requires `overlays:confirm`, else 403
+	//   (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+	//   overlay is no longer the live revision, or
+	//   (`overlay_rollback_target_missing`) if no clean base was recorded.
+	//
+	// Returns the updated overlay.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `UpdateOverlay` operationId).
 	UpdateOverlayWithBody(ctx context.Context, vendor string, name string, version string, overlayId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateOverlay Update Overlay
+	// UpdateOverlay Edit an overlay
 	//
-	// Update an overlay's document or target revision.
+	// Change an overlay's `document` or `target_revision_id`.
 	//
-	// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-	// ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-	// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-	// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-	// the API's served spec (D1). That is an operator action, so it additionally requires
-	// ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-	// (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-	// overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-	// if no clean base was recorded to re-apply over.
+	// What the edit does depends on the overlay's state:
+	//
+	// - **Pending** (or confirmed but not yet applied): the stored overlay is
+	//   updated; the served spec is untouched. Requires `apis:write`.
+	// - **Confirmed and live**: the edited document is re-applied over the
+	//   overlay's original base and the result replaces the API's served spec.
+	//   This also requires `overlays:confirm`, else 403
+	//   (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+	//   overlay is no longer the live revision, or
+	//   (`overlay_rollback_target_missing`) if no clean base was recorded.
+	//
+	// Returns the updated overlay.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `UpdateOverlay` operationId).
 	UpdateOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, body UpdateOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmOverlayWithBody Confirm Overlay
+	// ConfirmOverlayWithBody Confirm an overlay and apply it to the served spec
 	//
-	// Confirm an overlay, materializing it onto the served spec.
+	// Apply a pending overlay, producing a new current revision of the API.
 	//
-	// Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-	// re-ingests the base spec with the overlay applied and promotes the result to the
-	// current revision), so it is an operator action, not a contributor one (contributors
-	// ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-	// purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-	// owner can grant it to a trusted operator without handing over full admin power.
-	// ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-	// deliberately excluded from an agent's self-service grantable set so a low-privilege
-	// agent cannot escalate into it.
+	// The base spec is re-imported with the overlay applied and the result is
+	// promoted to the API's current revision, so it is what the API now serves.
+	// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+	// a no-op that returns it unchanged; a deprecated overlay is refused with
+	// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+	// with 409 (`overlay_apply_conflict`).
+	//
+	// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+	// overlays with `apis:write`, and an operator reviews and confirms them.
+	// Agents cannot grant themselves this permission. Returns the overlay.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm (the `ConfirmOverlay` operationId).
 	ConfirmOverlayWithBody(ctx context.Context, vendor string, name string, version string, overlayId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmOverlay Confirm Overlay
+	// ConfirmOverlay Confirm an overlay and apply it to the served spec
 	//
-	// Confirm an overlay, materializing it onto the served spec.
+	// Apply a pending overlay, producing a new current revision of the API.
 	//
-	// Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-	// re-ingests the base spec with the overlay applied and promotes the result to the
-	// current revision), so it is an operator action, not a contributor one (contributors
-	// ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-	// purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-	// owner can grant it to a trusted operator without handing over full admin power.
-	// ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-	// deliberately excluded from an agent's self-service grantable set so a low-privilege
-	// agent cannot escalate into it.
+	// The base spec is re-imported with the overlay applied and the result is
+	// promoted to the API's current revision, so it is what the API now serves.
+	// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+	// a no-op that returns it unchanged; a deprecated overlay is refused with
+	// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+	// with 409 (`overlay_apply_conflict`).
+	//
+	// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+	// overlays with `apis:write`, and an operator reviews and confirms them.
+	// Agents cannot grant themselves this permission. Returns the overlay.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm (the `ConfirmOverlay` operationId).
 	ConfirmOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, body ConfirmOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RollbackOverlay Rollback Overlay
+	// RollbackOverlay Roll back a confirmed overlay
 	//
-	// Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+	// Undo a confirmed overlay by restoring the revision it replaced.
 	//
-	// Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-	// rewrites the API's served spec (it archives the overlay's materialized revision and
-	// promotes the prior revision back to current), so it is the same operator action as
-	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-	// restored revision's hosts) and nothing changes.
+	// The overlay's revision is archived and the revision it superseded becomes
+	// the API's current revision again, so the served spec reverts, and the
+	// overlay is marked `deprecated`. Requires `overlays:confirm`, like
+	// confirming.
+	//
+	// Preconditions: the overlay is `confirmed`, its revision is still the
+	// live one, and the revision it replaced is still restorable. Otherwise
+	// nothing changes and 409 is returned: `overlay_conflict`,
+	// `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+	// another vendor's live API now serves one of the restored revision's
+	// hosts. Returns 204.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 	RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListApiRevisions List Api Revisions
+	// ListApiRevisions List an API's revisions
 	//
-	// List revisions for an API with optional state filter and cursor pagination.
+	// List every revision imported for an API, newest first.
+	//
+	// Each revision gives its `state` (`draft`, `published`, `imported` or
+	// `archived`), whether it `is_current` (the one served), its source, spec
+	// digest, operation count and lifecycle timestamps, plus links to the
+	// actions valid in its state. Repeat `state` to filter by several states.
+	// Results are cursor-paginated: pass `next_cursor` as `cursor` while
+	// `has_more` is true. Fetch one revision with
+	// `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions (the `ListApiRevisions` operationId).
 	ListApiRevisions(ctx context.Context, vendor string, name string, version string, params *ListApiRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteRevision Delete Revision
+	// DeleteRevision Delete an archived API revision
 	//
-	// Delete an archived revision.
+	// Permanently delete an archived revision.
+	//
+	// Only an `archived` revision can be deleted — archive it first; any other
+	// state is refused with 409 (`revision_state_conflict`). Deletion cannot
+	// be undone. Requires `apis:write`. Returns 204.
 	//
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `DeleteRevision` operationId).
 	DeleteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetApiRevision Get Api Revision
+	// GetApiRevision Get an API revision
 	//
-	// Retrieve a single revision by ID.
+	// Get one revision's metadata and lifecycle state.
+	//
+	// Returns the same fields as an entry in the revision list: `state`,
+	// `is_current`, source, spec digest, operation count, timestamps, and links
+	// to the actions valid in its state. This is metadata only — download the
+	// spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+	// revision does not exist.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `GetApiRevision` operationId).
 	GetApiRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetApiRevisionSpec Get Api Revision Spec
+	// GetApiRevisionSpec Download an API revision's OpenAPI document
 	//
-	// Download the OpenAPI spec for a specific revision.
+	// Download the stored OpenAPI document of one revision.
+	//
+	// Choose the format with `Accept`: `application/json` (the default), or
+	// `application/openapi+yaml` / `application/yaml`; anything else returns
+	// 406. The response carries `Content-Disposition: attachment` with a
+	// `.json` or `.yaml` filename. The document is served exactly as stored —
+	// a revision produced by confirming an overlay already includes it, so the
+	// `overlays` flag currently has no effect.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi (the `GetApiRevisionSpec` operationId).
 	GetApiRevisionSpec(ctx context.Context, vendor string, name string, version string, revisionId string, params *GetApiRevisionSpecParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListApiRevisionOperations List Api Revision Operations
+	// ListApiRevisionOperations List the operations in an API revision
 	//
-	// List operations for a specific revision.
+	// List every operation in one specific revision, live or not.
+	//
+	// Same rows, ordering and cursor pagination as the live-revision listing,
+	// but for the named revision, so you can review a draft before promoting
+	// it or compare against an archived one. Follow each row's `inspect` link
+	// for full detail. 404 if the API or revision does not exist.
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations (the `ListApiRevisionOperations` operationId).
 	ListApiRevisionOperations(ctx context.Context, vendor string, name string, version string, revisionId string, params *ListApiRevisionOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ArchiveRevision Archive Revision
+	// ArchiveRevision Archive an API revision
 	//
-	// Archive a draft revision.
+	// Retire a `draft` or `imported` revision without deleting it.
+	//
+	// The revision moves to `archived` and is kept for reference; it can then
+	// be deleted. If it was the API's current revision, the API is left with
+	// no live revision until another is promoted. A revision in any other
+	// state is refused with 409 (`revision_state_conflict`). Requires
+	// `apis:write`. Returns the archived revision.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive (the `ArchiveRevision` operationId).
 	ArchiveRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6412,6 +8184,9 @@ type ClientInterface interface {
 	// ListAuditEntries List Audit Entries
 	//
 	// List audit entries with optional filters.
+	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
 	//
 	// Corresponds with GET /audit (the `ListAuditEntries` operationId).
 	ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -6596,6 +8371,21 @@ type ClientInterface interface {
 	GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PollConnectSessionStatus Poll a connect session's status
+	//
+	// Poll the lifecycle status of a connect session.
+	//
+	// Returns the session's current ``status`` and, once it has connected, the
+	// resulting ``credential_id``, the account it ``connected_as``, and the
+	// ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+	// SPA poll this after ``:connect`` until the status is terminal.
+	//
+	// Auth is intentionally lightweight: the caller must be authenticated with
+	// ``credentials:connect`` or ``credentials:write``, but the real capability
+	// that scopes the response is the session's ``poll_token`` (or being the
+	// target agent's owner / ``org:admin``). An agent handed the token by
+	// ``:connect`` can poll without full session-read rights. A missing session,
+	// a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+	// 403, so the endpoint is not a session-id enumeration oracle.
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7978,10 +9768,17 @@ type ClientInterface interface {
 
 	// CreatePermissionRuleSetWithBody Create permission rule set
 	//
-	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	// Create a named, reusable list of permission rules.
 	//
-	// N agent-credential bindings can point at one set, so `permissions:test`
-	// and "revoke this operation everywhere" stay single-place edits.
+	// Attach the set to any number of agent-credential bindings
+	// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+	// its rules later updates every attached binding at once, so a policy
+	// change such as "block this operation everywhere" is a single edit.
+	// Supply a unique `name`, an optional `description`, and optional initial
+	// ordered `rules`. A set created by an `org:admin` is *curated*: any
+	// `credentials:write` holder may attach it, but only an `org:admin` may
+	// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+	// if the name is taken.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7990,10 +9787,17 @@ type ClientInterface interface {
 
 	// CreatePermissionRuleSet Create permission rule set
 	//
-	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	// Create a named, reusable list of permission rules.
 	//
-	// N agent-credential bindings can point at one set, so `permissions:test`
-	// and "revoke this operation everywhere" stay single-place edits.
+	// Attach the set to any number of agent-credential bindings
+	// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+	// its rules later updates every attached binding at once, so a policy
+	// change such as "block this operation everywhere" is a single edit.
+	// Supply a unique `name`, an optional `description`, and optional initial
+	// ordered `rules`. A set created by an `org:admin` is *curated*: any
+	// `credentials:write` holder may attach it, but only an `org:admin` may
+	// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+	// if the name is taken.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8002,7 +9806,12 @@ type ClientInterface interface {
 
 	// DeletePermissionRuleSet Delete permission rule set
 	//
-	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	// Permanently delete a rule set that no binding uses.
+	//
+	// Detach the set from every binding first: while any binding still
+	// references it the delete fails with 409 (`rule_set_in_use`) and nothing
+	// changes. Same edit permission as updating the set (403
+	// `rule_set_access_denied`). Returns 204.
 	//
 	// Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
 	DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8014,57 +9823,79 @@ type ClientInterface interface {
 	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
 	GetPermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdatePermissionRuleSetWithBody Update permission rule set
+	// UpdatePermissionRuleSetWithBody Rename or re-describe a permission rule set
 	//
-	// Rename or re-describe a rule set.
+	// Change a rule set's `name` and/or `description`.
 	//
-	// A curated set is editable by an org admin; any other set by its creator
-	// or an org admin (403 `rule_set_access_denied` otherwise).
+	// The rules themselves are replaced separately, with
+	// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+	// only by an `org:admin`; any other set by its creator or an `org:admin`
+	// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+	// its rules and the number of bindings referencing it; 409
+	// (`rule_set_name_conflict`) if the new name is taken.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
 	UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdatePermissionRuleSet Update permission rule set
+	// UpdatePermissionRuleSet Rename or re-describe a permission rule set
 	//
-	// Rename or re-describe a rule set.
+	// Change a rule set's `name` and/or `description`.
 	//
-	// A curated set is editable by an org admin; any other set by its creator
-	// or an org admin (403 `rule_set_access_denied` otherwise).
+	// The rules themselves are replaced separately, with
+	// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+	// only by an `org:admin`; any other set by its creator or an `org:admin`
+	// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+	// its rules and the number of bindings referencing it; 409
+	// (`rule_set_name_conflict`) if the new name is taken.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
 	UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+	// ReplacePermissionRuleSetRulesWithBody Replace all rules in a permission rule set
 	//
-	// Replace the set's full ordered rule list (idempotent PUT).
+	// Replace a rule set's entire ordered rule list with the body.
 	//
-	// Every binding pointing at the set picks the new list up at once — the
-	// single-place edit rule grouping exists for.
+	// This is a full replacement, not a merge: user rules missing from the body
+	// are removed, and an empty list clears them. Platform-managed system rules
+	// (`_system: true`) are kept. The request is idempotent.
+	// Every binding attached to the set enforces the new rules immediately.
+	// Same edit permission as updating the set (403 `rule_set_access_denied`).
+	// Returns the stored rules in order.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
 	ReplacePermissionRuleSetRulesWithBody(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplacePermissionRuleSetRules Replace rule set rules
+	// ReplacePermissionRuleSetRules Replace all rules in a permission rule set
 	//
-	// Replace the set's full ordered rule list (idempotent PUT).
+	// Replace a rule set's entire ordered rule list with the body.
 	//
-	// Every binding pointing at the set picks the new list up at once — the
-	// single-place edit rule grouping exists for.
+	// This is a full replacement, not a merge: user rules missing from the body
+	// are removed, and an empty list clears them. Platform-managed system rules
+	// (`_system: true`) are kept. The request is idempotent.
+	// Every binding attached to the set enforces the new rules immediately.
+	// Same edit permission as updating the set (403 `rule_set_access_denied`).
+	// Returns the stored rules in order.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
 	ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPermissions List Permissions
+	// ListPermissions List the permission catalogue
 	//
-	// List the permission catalogue visible to the caller.
+	// List every permission, flagged with whether the caller may grant it to an agent.
+	//
+	// Each entry gives the permission `name`, a `description`, the permissions
+	// it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+	// `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+	// `org:admin` is listed only to callers who hold it. Use it to build an
+	// agent permission picker. Any signed-in caller may call it.
 	//
 	// Corresponds with GET /permissions (the `ListPermissions` operationId).
 	ListPermissions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8152,7 +9983,9 @@ type ClientInterface interface {
 
 	// ListUsers List Users
 	//
-	// List all users with cursor-based pagination.
+	// List users with cursor-based pagination.
+	//
+	// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 	//
 	// Corresponds with GET /users (the `ListUsers` operationId).
 	ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8223,6 +10056,9 @@ type ClientInterface interface {
 	// GetUser Get User
 	//
 	// Get a user by ID.
+	//
+	// Scoped to the caller: org admins can read any user; anyone else only themselves.
+	// Any other user answers 404.
 	//
 	// Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 	GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8341,13 +10177,19 @@ type ClientInterface interface {
 	// Corresponds with GET /vendors (the `ListVendors` operationId).
 	ListVendors(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAuthCapabilities Get a vendor's SSO capabilities
+	// GetAuthCapabilities Get a vendor's OAuth flows and scopes
 	//
-	// Full auth capabilities for one vendor — flows, scopes, classifications.
+	// Describe how to connect a vendor: its OAuth flows and scope catalogue.
 	//
-	// Never returns client_secret (authorization-code flow's secret is stripped
-	// at response build time). ``UnknownVendorError`` maps to a 404 problem
-	// detail via the handler registered in ``control/web/app.py``.
+	// `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+	// name, the OAuth `flows` it supports (`authorization_code` and/or
+	// `device_authorization`), and every scope with its `classification`
+	// (`read`, `write` or `admin`), whether it is requested by default, and a
+	// description. Use it to build a connect screen before starting a connect
+	// session. When the vendor has several admin-registered OAuth apps, pass
+	// `oauth_app_registration_id` to pick one; without it the request fails
+	// with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+	// An unknown vendor returns 404 (`unknown_vendor`).
 	//
 	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
 	GetAuthCapabilities(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8387,16 +10229,19 @@ func (c *Client) OauthAuthorizationServer(ctx context.Context, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-// McpOauthAuthorizationServer OAuth authorization server metadata for the MCP resource
+// McpOauthAuthorizationServer Get OAuth authorization server metadata for MCP clients
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 //
-// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-// the issuer `{base}/mcp` named by the protected-resource document. It
-// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-// and the public-client profile (`none` + PKCE S256) — the root document is a
-// separate, unchanged surface whose `registration_endpoint` remains the agent
-// `/register`.
+// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+// — the URL an MCP client derives from the protected-resource document
+// (RFC 8414 §3.1). It lists the authorization, token and revocation
+// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+// the MCP tool scopes, and the public client profile: no client secret
+// (`none`) with PKCE `S256`. It differs from the root
+// `/.well-known/oauth-authorization-server` document, whose
+// `registration_endpoint` is the agent `/register`. Returns 404 when
+// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 //
 // Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
 func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8411,28 +10256,17 @@ func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// McpOauthProtectedResourceRootAlias OAuth protected resource metadata (root alias for the MCP resource)
+// McpOauthProtectedResourceRootAlias Get MCP protected resource metadata (root fallback)
 //
-// Root-path alias of the MCP protected-resource document.
+// Serve the MCP protected-resource document at the root well-known path.
 //
-// Compatibility fallback for clients that probe the root
-// `/.well-known/oauth-protected-resource` instead of following the 401's
-// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-// because this deployment has exactly one OAuth-protected resource, so the
-// root and path-scoped documents are the same body.
-//
-// Two acknowledged trades:
-//
-//   - RFC 9728 §3 says this well-known path corresponds to resource identifier
-//     “{base}“ (no path), and §3.3 has clients validate “resource“ against
-//     the resource they queried. This body claims “resource={base}/mcp“ — a
-//     strict path-deriving validator would reject it, but Claude's fallback
-//     validates against the MCP server URL (“{base}/mcp“), which is exactly
-//     what the alias exists to satisfy. That is the intended trade.
-//   - The alias squats the deployment's only root PRM slot: a future non-MCP
-//     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. The mounted MCP app must re-confirm the
-//     "exactly one OAuth-protected resource" premise before adding one.
+// Returns the same RFC 9728 body as
+// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+// its authorization server, and the MCP tool scopes. It exists for clients
+// (such as Claude Code) that probe this root path instead of following the
+// `resource_metadata` pointer in a 401. That is safe while this deployment
+// has exactly one OAuth-protected resource. Returns 404 when interactive
+// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 //
 // Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
 func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8468,9 +10302,16 @@ func (c *Client) McpOauthProtectedResource(ctx context.Context, reqEditors ...Re
 	return c.Client.Do(req)
 }
 
-// ListActors List Actors
+// ListActors List users and agents
 //
-// List all actors (users and agents) for UI cache hydration.
+// List users and agents with the minimal fields needed to label them.
+//
+// Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+// and `active`. Requires `users:read`. Results are scoped to the caller:
+// `org:admin` lists everyone; anyone else lists only themselves and the
+// agents they may see (their own, or with `owner:agents:read` their owner's
+// agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+// already hold, use `GET /actors/lookup`.
 //
 // Corresponds with GET /actors (the `ListActors` operationId).
 func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8487,16 +10328,18 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 
 // LookupActors Resolve actor names by id
 //
-// Resolve user and agent ids to display names for any signed-in caller.
+// Resolve user and agent ids to display names.
 //
-// Returns only “id“, “actor_type“, “name“ and “active“ for the ids
-// asked for, so a caller without “users:read“ can label the owners,
-// approvers and actors it already sees by id. Users resolve for any caller;
-// agents only when the caller may see them (its own agents, itself, or with
-// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
-// Ids that match no visible user or agent are left out of the response
-// rather than reported as errors. Listing the whole directory stays behind
-// “users:read“ on “GET /actors“.
+// Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+// `name` and `active` for each id the caller may see. Any signed-in caller
+// may call it, so a UI can label the owners, approvers and actors it
+// already holds by id without `users:read`.
+//
+// Users resolve for every caller. Agents resolve only when visible to the
+// caller: itself, its own agents, its owner's agents with
+// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+// visible actor are silently left out rather than reported as errors.
+// Listing the whole directory needs `users:read` on `GET /actors`.
 //
 // Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8863,6 +10706,9 @@ func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthC
 // ownership transfer the grant stays with the original consenter, so this
 // column is how an admin spots stranded grants.
 //
+// Scoped to the caller: org admins see every grant. Anyone else sees grants
+// they consented to and grants bound to agents they own.
+//
 // Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
 func (c *Client) ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListOauthGrantsRequest(c.Server, params)
@@ -8876,9 +10722,16 @@ func (c *Client) ListOauthGrants(ctx context.Context, params *ListOauthGrantsPar
 	return c.Client.Do(req)
 }
 
-// ListAgents List Agents
+// ListAgents List visible agents
 //
-// List agents — scoped by identity via dynamic query scoping.
+// List the agents the caller can see, newest first.
+//
+// Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+// else sees the agents they own. An agent caller also sees itself, and with
+// `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+// (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+// cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+// while `has_more` is true.
 //
 // Corresponds with GET /agents (the `ListAgents` operationId).
 func (c *Client) ListAgents(ctx context.Context, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8893,9 +10746,20 @@ func (c *Client) ListAgents(ctx context.Context, params *ListAgentsParams, reqEd
 	return c.Client.Do(req)
 }
 
-// CreateAgentWithBody Create Agent
+// CreateAgentWithBody Create an agent
 //
-// Create a new agent manually.
+// Create an agent owned by the caller.
+//
+// The agent is `active` immediately and owned by the caller. Supply `name`
+// (required), an optional `description`, and optional `permissions`. When
+// `permissions` is omitted the agent gets the default agent permission set.
+// When supplied, every permission must be one the caller may grant (see
+// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+//
+// The agent has no way to authenticate yet. Follow up with
+// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8912,9 +10776,20 @@ func (c *Client) CreateAgentWithBody(ctx context.Context, contentType string, bo
 	return c.Client.Do(req)
 }
 
-// CreateAgent Create Agent
+// CreateAgent Create an agent
 //
-// Create a new agent manually.
+// Create an agent owned by the caller.
+//
+// The agent is `active` immediately and owned by the caller. Supply `name`
+// (required), an optional `description`, and optional `permissions`. When
+// `permissions` is omitted the agent gets the default agent permission set.
+// When supplied, every permission must be one the caller may grant (see
+// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+//
+// The agent has no way to authenticate yet. Follow up with
+// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8933,16 +10808,21 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 
 // ArchiveAgent Archive Agent
 //
-// Archive an agent — terminal-but-kept.
+// Archive an agent — or, with “purge=true“, hard-delete it.
 //
-// The row is retained for history, but the action is not reversible and
+// Archive keeps the row for history, but the action is not reversible and
 // the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
+// Purge removes the agent and its authority and session rows; it archives
+// first if needed, so the agent's authority is gone before any cleanup runs,
+// and a failed purge leaves the agent archived and can be retried. Archive
+// returns 409 for an already-archived agent; purge accepts any status.
+//
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-func (c *Client) ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveAgentRequest(c.Server, agentId)
+func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewArchiveAgentRequest(c.Server, agentId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8953,9 +10833,14 @@ func (c *Client) ArchiveAgent(ctx context.Context, agentId string, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// GetAgent Get Agent
+// GetAgent Get an agent
 //
-// Get agent by ID — requires agents:read or self-read.
+// Get one agent's profile and lifecycle state.
+//
+// Returns the agent's name, description, owner, `status`, approval or
+// denial details, and whether it currently has an API key (`has_api_key`).
+// Readable by the agent itself, its owner, and `org:admin`; an agent outside
+// the caller's visibility answers 404.
 //
 // Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8970,9 +10855,17 @@ func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-// UpdateAgentWithBody Update Agent
+// UpdateAgentWithBody Update an agent
 //
-// Partially update an agent — name, description, or owner_id.
+// Partially update an agent's `name`, `description` or `owner_id`.
+//
+// Only the fields present in the body change; an empty body returns the
+// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+// else gets 404). Changing `owner_id` transfers ownership, is
+// `org:admin`-only, and revokes every active OAuth client grant bound to
+// the agent, so the new owner must re-consent any connected client. The
+// agent's API key, permissions and credential bindings are unaffected. An
+// archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8989,9 +10882,17 @@ func (c *Client) UpdateAgentWithBody(ctx context.Context, agentId string, conten
 	return c.Client.Do(req)
 }
 
-// UpdateAgent Update Agent
+// UpdateAgent Update an agent
 //
-// Partially update an agent — name, description, or owner_id.
+// Partially update an agent's `name`, `description` or `owner_id`.
+//
+// Only the fields present in the body change; an empty body returns the
+// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+// else gets 404). Changing `owner_id` transfers ownership, is
+// `org:admin`-only, and revokes every active OAuth client grant bound to
+// the agent, so the new owner must re-consent any connected client. The
+// agent's API key, permissions and credential bindings are unaffected. An
+// archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9008,9 +10909,15 @@ func (c *Client) UpdateAgent(ctx context.Context, agentId string, body UpdateAge
 	return c.Client.Do(req)
 }
 
-// GetAgentApiKeyInfo Get Agent Api Key Info
+// GetAgentApiKeyInfo Get an agent's API key metadata
 //
-// Get API key metadata for an agent. Returns info even after revocation.
+// Describe an agent's API key without revealing it.
+//
+// Returns the key record's `id`, `status` (`active`, or `revoked` once
+// revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+// is never returned — it is shown once, by `:generate-api-key`. Metadata
+// stays available after revocation; the body is `null` if the agent never
+// had a key. Allowed for the agent's owner or an `org:admin`.
 //
 // Corresponds with GET /agents/{agent_id}/api-key (the `GetAgentApiKeyInfo` operationId).
 func (c *Client) GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9025,9 +10932,15 @@ func (c *Client) GetAgentApiKeyInfo(ctx context.Context, agentId string, reqEdit
 	return c.Client.Do(req)
 }
 
-// GetAgentApiKeyHistory Get Agent Api Key History
+// GetAgentApiKeyHistory Get an agent's API key history
 //
-// Get the audit history of API key operations for an agent.
+// List recent API key rotations and revocations for an agent.
+//
+// Each entry gives the audit `action`, its `reason` (key rotated or key
+// revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+// 50 most recent audit entries, newest first, so very old key events may
+// not appear; it is not paginated. Allowed for the agent's owner or an
+// `org:admin`.
 //
 // Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9042,9 +10955,15 @@ func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqE
 	return c.Client.Do(req)
 }
 
-// ListAgentCredentials List Credentials
+// ListAgentCredentials List an agent's credential bindings
 //
-// List direct credential bindings for an agent — requires agents:read or self.
+// List the credentials bound directly to an agent.
+//
+// Each binding names the credential, the API it serves, when it was bound,
+// whether it is `suspended` (and why), and any attached permission
+// `rule_set_id`. Credential secrets are never returned. Readable by the
+// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+// paginated.
 //
 // Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9059,12 +10978,17 @@ func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEd
 	return c.Client.Do(req)
 }
 
-// BindAgentCredentialWithBody Bind Credential
+// BindAgentCredentialWithBody Bind a credential to an agent
 //
-// Directly bind a credential to an agent (theme 5 phase 1).
+// Let an agent use a credential by binding it directly.
 //
-// The caller must own the target credential (or hold “org:admin“); a
-// credential that does not exist or that the caller does not own returns 404.
+// A new binding starts with no permission rules, so the agent can make no
+// calls with it until rules are set or a rule set is attached. The caller
+// must be able to see the agent and must own the credential (or hold
+// `org:admin`). A credential that does not exist or that the caller does
+// not own returns 404; binding the same credential twice returns 409
+// (`credential_binding_conflict`).
+// Returns the new binding.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9081,12 +11005,17 @@ func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string
 	return c.Client.Do(req)
 }
 
-// BindAgentCredential Bind Credential
+// BindAgentCredential Bind a credential to an agent
 //
-// Directly bind a credential to an agent (theme 5 phase 1).
+// Let an agent use a credential by binding it directly.
 //
-// The caller must own the target credential (or hold “org:admin“); a
-// credential that does not exist or that the caller does not own returns 404.
+// A new binding starts with no permission rules, so the agent can make no
+// calls with it until rules are set or a rule set is attached. The caller
+// must be able to see the agent and must own the credential (or hold
+// `org:admin`). A credential that does not exist or that the caller does
+// not own returns 404; binding the same credential twice returns 409
+// (`credential_binding_conflict`).
+// Returns the new binding.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9103,9 +11032,17 @@ func (c *Client) BindAgentCredential(ctx context.Context, agentId string, body B
 	return c.Client.Do(req)
 }
 
-// UnbindAgentCredential Unbind Credential
+// UnbindAgentCredential Suspend or remove a credential binding
 //
-// Unbind a credential from an agent — suspend by default, purge on request.
+// Stop an agent using a credential: suspend the binding, or purge it.
+//
+// By default the binding is **suspended**: the agent loses access at once,
+// but the binding and its permission rules are kept, and
+// `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+// With `purge=true` the binding and its inline permission rules are deleted
+// outright, so a later re-bind starts from deny-all. An agent may suspend
+// its own binding but not purge it. Both modes are audited. Returns 204; a
+// missing binding returns 404.
 //
 // Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
 func (c *Client) UnbindAgentCredential(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9120,9 +11057,15 @@ func (c *Client) UnbindAgentCredential(ctx context.Context, agentId string, cred
 	return c.Client.Do(req)
 }
 
-// ResumeAgentCredentialBinding Resume Credential Binding
+// ResumeAgentCredentialBinding Resume a suspended credential binding
 //
-// Lift a suspended credential binding — the reverse of the default unbind.
+// Restore an agent's access to a credential whose binding was suspended.
+//
+// Reverses the default (non-purge) unbind; a purged binding is gone and must
+// be bound again instead. Because resuming re-grants the credential, the
+// caller must own the credential (or hold `org:admin`) as well as see the
+// agent, and an agent cannot resume its own binding. Returns the binding;
+// 404 when no binding exists.
 //
 // Corresponds with POST /agents/{agent_id}/credentials/{credential_id}:resume (the `ResumeAgentCredentialBinding` operationId).
 func (c *Client) ResumeAgentCredentialBinding(ctx context.Context, agentId string, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9183,16 +11126,17 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 	return c.Client.Do(req)
 }
 
-// ListAgentOauthGrants List agent OAuth grants
+// ListAgentOauthGrants List an agent's connected OAuth clients
 //
-// List OAuth consent grants binding clients to this agent.
+// List the OAuth clients a user has consented to act as this agent.
 //
-// The "Connected clients" surface: every grant carries the client's display
-// name and redirect-URI origin, the granted scopes, the consenting user,
-// and created/last-used timestamps. Allowed for the agent's owner or an
-// admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics. An agent the caller cannot see answers 404, the
-// same as an agent that does not exist.
+// Each grant gives the client's display name and redirect-URI origin, the
+// granted scopes, the consenting user, its `status`, created and last-used
+// timestamps, and `can_revoke` for the caller. Filter by `status`
+// (`active` or `revoked`); results are cursor-paginated. Allowed for the
+// agent's owner or an admin. An agent the caller cannot see answers 404,
+// the same as one that does not exist. Revoke a grant with
+// `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9617,9 +11561,16 @@ func (c *Client) GetApiSpec(ctx context.Context, vendor string, name string, ver
 	return c.Client.Do(req)
 }
 
-// ListApiOperations List Api Operations
+// ListApiOperations List the operations an API currently serves
 //
-// List operations for the API's current (live) revision.
+// List every operation in the API's current (live) revision.
+//
+// Each row gives the operation's id, method, path, name, description, tags,
+// `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+// a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+// Use this to browse an API exhaustively; to find operations by intent,
+// use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+// revision.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/operations (the `ListApiOperations` operationId).
 func (c *Client) ListApiOperations(ctx context.Context, vendor string, name string, version string, params *ListApiOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9634,9 +11585,15 @@ func (c *Client) ListApiOperations(ctx context.Context, vendor string, name stri
 	return c.Client.Do(req)
 }
 
-// ListOverlays List Overlays
+// ListOverlays List an API's overlays
 //
-// List overlays for an API with optional status filter and cursor pagination.
+// List the overlays submitted against an API, newest first.
+//
+// Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+// (applied to the served spec) or `deprecated` (retired) — and links to the
+// actions valid in that state. Filter with `status`. Results are
+// cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+// true.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/overlays (the `ListOverlays` operationId).
 func (c *Client) ListOverlays(ctx context.Context, vendor string, name string, version string, params *ListOverlaysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9651,9 +11608,17 @@ func (c *Client) ListOverlays(ctx context.Context, vendor string, name string, v
 	return c.Client.Do(req)
 }
 
-// SubmitOverlayWithBody Submit Overlay
+// SubmitOverlayWithBody Submit an OpenAPI overlay
 //
-// Submit a new overlay for an API.
+// Propose a change to an API's spec as an OpenAPI Overlay document.
+//
+// An overlay is a list of `actions` that patch the API's OpenAPI document —
+// for example correcting a description or adding a missing parameter.
+// Submitting stores it as `pending`; it changes nothing until an operator
+// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+// record a `contributed_by` label. The document must be a JSON object with
+// an `actions` array (at most 512 actions, 1 MB), else 422
+// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9670,9 +11635,17 @@ func (c *Client) SubmitOverlayWithBody(ctx context.Context, vendor string, name 
 	return c.Client.Do(req)
 }
 
-// SubmitOverlay Submit Overlay
+// SubmitOverlay Submit an OpenAPI overlay
 //
-// Submit a new overlay for an API.
+// Propose a change to an API's spec as an OpenAPI Overlay document.
+//
+// An overlay is a list of `actions` that patch the API's OpenAPI document —
+// for example correcting a description or adding a missing parameter.
+// Submitting stores it as `pending`; it changes nothing until an operator
+// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+// record a `contributed_by` label. The document must be a JSON object with
+// an `actions` array (at most 512 actions, 1 MB), else 422
+// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9689,9 +11662,14 @@ func (c *Client) SubmitOverlay(ctx context.Context, vendor string, name string, 
 	return c.Client.Do(req)
 }
 
-// DeprecateOverlay Deprecate Overlay
+// DeprecateOverlay Deprecate an overlay
 //
-// Deprecate an overlay (soft delete).
+// Retire an overlay so it is no longer offered for confirmation.
+//
+// The overlay moves to `deprecated` but is kept, and remains readable for
+// history; nothing is deleted. Deprecating does not rewrite the served
+// spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+// `apis:write`. Returns 204.
 //
 // Corresponds with DELETE /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `DeprecateOverlay` operationId).
 func (c *Client) DeprecateOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9723,19 +11701,22 @@ func (c *Client) GetOverlay(ctx context.Context, vendor string, name string, ver
 	return c.Client.Do(req)
 }
 
-// UpdateOverlayWithBody Update Overlay
+// UpdateOverlayWithBody Edit an overlay
 //
-// Update an overlay's document or target revision.
+// Change an overlay's `document` or `target_revision_id`.
 //
-// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-// ordinary contributor edit — “apis:write“. Editing a *materialized* overlay
-// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-// the API's served spec (D1). That is an operator action, so it additionally requires
-// “overlays:confirm“; a caller with only “apis:write“ gets a 403
-// (“overlay_rematerialize_forbidden“). The re-materialize is refused with a 409 if the
-// overlay is no longer the live revision, and with “overlay_rollback_target_missing“
-// if no clean base was recorded to re-apply over.
+// What the edit does depends on the overlay's state:
+//
+//   - **Pending** (or confirmed but not yet applied): the stored overlay is
+//     updated; the served spec is untouched. Requires `apis:write`.
+//   - **Confirmed and live**: the edited document is re-applied over the
+//     overlay's original base and the result replaces the API's served spec.
+//     This also requires `overlays:confirm`, else 403
+//     (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+//     overlay is no longer the live revision, or
+//     (`overlay_rollback_target_missing`) if no clean base was recorded.
+//
+// Returns the updated overlay.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9752,19 +11733,22 @@ func (c *Client) UpdateOverlayWithBody(ctx context.Context, vendor string, name 
 	return c.Client.Do(req)
 }
 
-// UpdateOverlay Update Overlay
+// UpdateOverlay Edit an overlay
 //
-// Update an overlay's document or target revision.
+// Change an overlay's `document` or `target_revision_id`.
 //
-// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-// ordinary contributor edit — “apis:write“. Editing a *materialized* overlay
-// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-// the API's served spec (D1). That is an operator action, so it additionally requires
-// “overlays:confirm“; a caller with only “apis:write“ gets a 403
-// (“overlay_rematerialize_forbidden“). The re-materialize is refused with a 409 if the
-// overlay is no longer the live revision, and with “overlay_rollback_target_missing“
-// if no clean base was recorded to re-apply over.
+// What the edit does depends on the overlay's state:
+//
+//   - **Pending** (or confirmed but not yet applied): the stored overlay is
+//     updated; the served spec is untouched. Requires `apis:write`.
+//   - **Confirmed and live**: the edited document is re-applied over the
+//     overlay's original base and the result replaces the API's served spec.
+//     This also requires `overlays:confirm`, else 403
+//     (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+//     overlay is no longer the live revision, or
+//     (`overlay_rollback_target_missing`) if no clean base was recorded.
+//
+// Returns the updated overlay.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9781,19 +11765,20 @@ func (c *Client) UpdateOverlay(ctx context.Context, vendor string, name string, 
 	return c.Client.Do(req)
 }
 
-// ConfirmOverlayWithBody Confirm Overlay
+// ConfirmOverlayWithBody Confirm an overlay and apply it to the served spec
 //
-// Confirm an overlay, materializing it onto the served spec.
+// Apply a pending overlay, producing a new current revision of the API.
 //
-// Requires “overlays:confirm“: confirming rewrites the API's served spec (it
-// re-ingests the base spec with the overlay applied and promotes the result to the
-// current revision), so it is an operator action, not a contributor one (contributors
-// “submit“ overlays with “apis:write“; an operator reviews and confirms). This is a
-// purpose-scoped downgrade from the former “org:admin“ gate — narrow enough that an
-// owner can grant it to a trusted operator without handing over full admin power.
-// “org:admin“ still satisfies it (it implies “overlays:confirm“), and the scope is
-// deliberately excluded from an agent's self-service grantable set so a low-privilege
-// agent cannot escalate into it.
+// The base spec is re-imported with the overlay applied and the result is
+// promoted to the API's current revision, so it is what the API now serves.
+// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+// a no-op that returns it unchanged; a deprecated overlay is refused with
+// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+// with 409 (`overlay_apply_conflict`).
+//
+// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+// overlays with `apis:write`, and an operator reviews and confirms them.
+// Agents cannot grant themselves this permission. Returns the overlay.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9810,19 +11795,20 @@ func (c *Client) ConfirmOverlayWithBody(ctx context.Context, vendor string, name
 	return c.Client.Do(req)
 }
 
-// ConfirmOverlay Confirm Overlay
+// ConfirmOverlay Confirm an overlay and apply it to the served spec
 //
-// Confirm an overlay, materializing it onto the served spec.
+// Apply a pending overlay, producing a new current revision of the API.
 //
-// Requires “overlays:confirm“: confirming rewrites the API's served spec (it
-// re-ingests the base spec with the overlay applied and promotes the result to the
-// current revision), so it is an operator action, not a contributor one (contributors
-// “submit“ overlays with “apis:write“; an operator reviews and confirms). This is a
-// purpose-scoped downgrade from the former “org:admin“ gate — narrow enough that an
-// owner can grant it to a trusted operator without handing over full admin power.
-// “org:admin“ still satisfies it (it implies “overlays:confirm“), and the scope is
-// deliberately excluded from an agent's self-service grantable set so a low-privilege
-// agent cannot escalate into it.
+// The base spec is re-imported with the overlay applied and the result is
+// promoted to the API's current revision, so it is what the API now serves.
+// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+// a no-op that returns it unchanged; a deprecated overlay is refused with
+// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+// with 409 (`overlay_apply_conflict`).
+//
+// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+// overlays with `apis:write`, and an operator reviews and confirms them.
+// Agents cannot grant themselves this permission. Returns the overlay.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9839,18 +11825,21 @@ func (c *Client) ConfirmOverlay(ctx context.Context, vendor string, name string,
 	return c.Client.Do(req)
 }
 
-// RollbackOverlay Rollback Overlay
+// RollbackOverlay Roll back a confirmed overlay
 //
-// Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+// Undo a confirmed overlay by restoring the revision it replaced.
 //
-// Requires “overlays:confirm“ — the symmetric inverse of confirm. Rolling back
-// rewrites the API's served spec (it archives the overlay's materialized revision and
-// promotes the prior revision back to current), so it is the same operator action as
-// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
-// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
-// restored revision's hosts) and nothing changes.
+// The overlay's revision is archived and the revision it superseded becomes
+// the API's current revision again, so the served spec reverts, and the
+// overlay is marked `deprecated`. Requires `overlays:confirm`, like
+// confirming.
+//
+// Preconditions: the overlay is `confirmed`, its revision is still the
+// live one, and the revision it replaced is still restorable. Otherwise
+// nothing changes and 409 is returned: `overlay_conflict`,
+// `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+// another vendor's live API now serves one of the restored revision's
+// hosts. Returns 204.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 func (c *Client) RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9865,9 +11854,17 @@ func (c *Client) RollbackOverlay(ctx context.Context, vendor string, name string
 	return c.Client.Do(req)
 }
 
-// ListApiRevisions List Api Revisions
+// ListApiRevisions List an API's revisions
 //
-// List revisions for an API with optional state filter and cursor pagination.
+// List every revision imported for an API, newest first.
+//
+// Each revision gives its `state` (`draft`, `published`, `imported` or
+// `archived`), whether it `is_current` (the one served), its source, spec
+// digest, operation count and lifecycle timestamps, plus links to the
+// actions valid in its state. Repeat `state` to filter by several states.
+// Results are cursor-paginated: pass `next_cursor` as `cursor` while
+// `has_more` is true. Fetch one revision with
+// `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/revisions (the `ListApiRevisions` operationId).
 func (c *Client) ListApiRevisions(ctx context.Context, vendor string, name string, version string, params *ListApiRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9882,9 +11879,13 @@ func (c *Client) ListApiRevisions(ctx context.Context, vendor string, name strin
 	return c.Client.Do(req)
 }
 
-// DeleteRevision Delete Revision
+// DeleteRevision Delete an archived API revision
 //
-// Delete an archived revision.
+// Permanently delete an archived revision.
+//
+// Only an `archived` revision can be deleted — archive it first; any other
+// state is refused with 409 (`revision_state_conflict`). Deletion cannot
+// be undone. Requires `apis:write`. Returns 204.
 //
 // Corresponds with DELETE /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `DeleteRevision` operationId).
 func (c *Client) DeleteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9899,9 +11900,15 @@ func (c *Client) DeleteRevision(ctx context.Context, vendor string, name string,
 	return c.Client.Do(req)
 }
 
-// GetApiRevision Get Api Revision
+// GetApiRevision Get an API revision
 //
-// Retrieve a single revision by ID.
+// Get one revision's metadata and lifecycle state.
+//
+// Returns the same fields as an entry in the revision list: `state`,
+// `is_current`, source, spec digest, operation count, timestamps, and links
+// to the actions valid in its state. This is metadata only — download the
+// spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+// revision does not exist.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `GetApiRevision` operationId).
 func (c *Client) GetApiRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9916,9 +11923,16 @@ func (c *Client) GetApiRevision(ctx context.Context, vendor string, name string,
 	return c.Client.Do(req)
 }
 
-// GetApiRevisionSpec Get Api Revision Spec
+// GetApiRevisionSpec Download an API revision's OpenAPI document
 //
-// Download the OpenAPI spec for a specific revision.
+// Download the stored OpenAPI document of one revision.
+//
+// Choose the format with `Accept`: `application/json` (the default), or
+// `application/openapi+yaml` / `application/yaml`; anything else returns
+// 406. The response carries `Content-Disposition: attachment` with a
+// `.json` or `.yaml` filename. The document is served exactly as stored —
+// a revision produced by confirming an overlay already includes it, so the
+// `overlays` flag currently has no effect.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi (the `GetApiRevisionSpec` operationId).
 func (c *Client) GetApiRevisionSpec(ctx context.Context, vendor string, name string, version string, revisionId string, params *GetApiRevisionSpecParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9933,9 +11947,14 @@ func (c *Client) GetApiRevisionSpec(ctx context.Context, vendor string, name str
 	return c.Client.Do(req)
 }
 
-// ListApiRevisionOperations List Api Revision Operations
+// ListApiRevisionOperations List the operations in an API revision
 //
-// List operations for a specific revision.
+// List every operation in one specific revision, live or not.
+//
+// Same rows, ordering and cursor pagination as the live-revision listing,
+// but for the named revision, so you can review a draft before promoting
+// it or compare against an archived one. Follow each row's `inspect` link
+// for full detail. 404 if the API or revision does not exist.
 //
 // Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations (the `ListApiRevisionOperations` operationId).
 func (c *Client) ListApiRevisionOperations(ctx context.Context, vendor string, name string, version string, revisionId string, params *ListApiRevisionOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9950,9 +11969,15 @@ func (c *Client) ListApiRevisionOperations(ctx context.Context, vendor string, n
 	return c.Client.Do(req)
 }
 
-// ArchiveRevision Archive Revision
+// ArchiveRevision Archive an API revision
 //
-// Archive a draft revision.
+// Retire a `draft` or `imported` revision without deleting it.
+//
+// The revision moves to `archived` and is kept for reference; it can then
+// be deleted. If it was the API's current revision, the API is left with
+// no live revision until another is promoted. A revision in any other
+// state is refused with 409 (`revision_state_conflict`). Requires
+// `apis:write`. Returns the archived revision.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive (the `ArchiveRevision` operationId).
 func (c *Client) ArchiveRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10010,6 +12035,9 @@ func (c *Client) ListApiSecuritySchemes(ctx context.Context, vendor string, name
 // ListAuditEntries List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Corresponds with GET /audit (the `ListAuditEntries` operationId).
 func (c *Client) ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10374,6 +12402,21 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params
 }
 
 // PollConnectSessionStatus Poll a connect session's status
+//
+// Poll the lifecycle status of a connect session.
+//
+// Returns the session's current “status“ and, once it has connected, the
+// resulting “credential_id“, the account it “connected_as“, and the
+// “bound_scopes“; a failed session carries an “error_code“. Agents and the
+// SPA poll this after “:connect“ until the status is terminal.
+//
+// Auth is intentionally lightweight: the caller must be authenticated with
+// “credentials:connect“ or “credentials:write“, but the real capability
+// that scopes the response is the session's “poll_token“ (or being the
+// target agent's owner / “org:admin“). An agent handed the token by
+// “:connect“ can poll without full session-read rights. A missing session,
+// a “poll_token“ mismatch, and a caller who is neither all answer a uniform
+// 403, so the endpoint is not a session-id enumeration oracle.
 //
 // Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12746,10 +14789,17 @@ func (c *Client) ListPermissionRuleSets(ctx context.Context, params *ListPermiss
 
 // CreatePermissionRuleSetWithBody Create permission rule set
 //
-// Create a named, shareable ordered rule list (theme 5 rule grouping).
+// Create a named, reusable list of permission rules.
 //
-// N agent-credential bindings can point at one set, so `permissions:test`
-// and "revoke this operation everywhere" stay single-place edits.
+// Attach the set to any number of agent-credential bindings
+// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+// its rules later updates every attached binding at once, so a policy
+// change such as "block this operation everywhere" is a single edit.
+// Supply a unique `name`, an optional `description`, and optional initial
+// ordered `rules`. A set created by an `org:admin` is *curated*: any
+// `credentials:write` holder may attach it, but only an `org:admin` may
+// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+// if the name is taken.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12768,10 +14818,17 @@ func (c *Client) CreatePermissionRuleSetWithBody(ctx context.Context, contentTyp
 
 // CreatePermissionRuleSet Create permission rule set
 //
-// Create a named, shareable ordered rule list (theme 5 rule grouping).
+// Create a named, reusable list of permission rules.
 //
-// N agent-credential bindings can point at one set, so `permissions:test`
-// and "revoke this operation everywhere" stay single-place edits.
+// Attach the set to any number of agent-credential bindings
+// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+// its rules later updates every attached binding at once, so a policy
+// change such as "block this operation everywhere" is a single edit.
+// Supply a unique `name`, an optional `description`, and optional initial
+// ordered `rules`. A set created by an `org:admin` is *curated*: any
+// `credentials:write` holder may attach it, but only an `org:admin` may
+// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+// if the name is taken.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12790,7 +14847,12 @@ func (c *Client) CreatePermissionRuleSet(ctx context.Context, body CreatePermiss
 
 // DeletePermissionRuleSet Delete permission rule set
 //
-// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+// Permanently delete a rule set that no binding uses.
+//
+// Detach the set from every binding first: while any binding still
+// references it the delete fails with 409 (`rule_set_in_use`) and nothing
+// changes. Same edit permission as updating the set (403
+// `rule_set_access_denied`). Returns 204.
 //
 // Corresponds with DELETE /permission-rule-sets/{rule_set_id} (the `DeletePermissionRuleSet` operationId).
 func (c *Client) DeletePermissionRuleSet(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12822,12 +14884,16 @@ func (c *Client) GetPermissionRuleSet(ctx context.Context, ruleSetId string, req
 	return c.Client.Do(req)
 }
 
-// UpdatePermissionRuleSetWithBody Update permission rule set
+// UpdatePermissionRuleSetWithBody Rename or re-describe a permission rule set
 //
-// Rename or re-describe a rule set.
+// Change a rule set's `name` and/or `description`.
 //
-// A curated set is editable by an org admin; any other set by its creator
-// or an org admin (403 `rule_set_access_denied` otherwise).
+// The rules themselves are replaced separately, with
+// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+// only by an `org:admin`; any other set by its creator or an `org:admin`
+// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+// its rules and the number of bindings referencing it; 409
+// (`rule_set_name_conflict`) if the new name is taken.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12844,12 +14910,16 @@ func (c *Client) UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId 
 	return c.Client.Do(req)
 }
 
-// UpdatePermissionRuleSet Update permission rule set
+// UpdatePermissionRuleSet Rename or re-describe a permission rule set
 //
-// Rename or re-describe a rule set.
+// Change a rule set's `name` and/or `description`.
 //
-// A curated set is editable by an org admin; any other set by its creator
-// or an org admin (403 `rule_set_access_denied` otherwise).
+// The rules themselves are replaced separately, with
+// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+// only by an `org:admin`; any other set by its creator or an `org:admin`
+// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+// its rules and the number of bindings referencing it; 409
+// (`rule_set_name_conflict`) if the new name is taken.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12866,12 +14936,16 @@ func (c *Client) UpdatePermissionRuleSet(ctx context.Context, ruleSetId string, 
 	return c.Client.Do(req)
 }
 
-// ReplacePermissionRuleSetRulesWithBody Replace rule set rules
+// ReplacePermissionRuleSetRulesWithBody Replace all rules in a permission rule set
 //
-// Replace the set's full ordered rule list (idempotent PUT).
+// Replace a rule set's entire ordered rule list with the body.
 //
-// Every binding pointing at the set picks the new list up at once — the
-// single-place edit rule grouping exists for.
+// This is a full replacement, not a merge: user rules missing from the body
+// are removed, and an empty list clears them. Platform-managed system rules
+// (`_system: true`) are kept. The request is idempotent.
+// Every binding attached to the set enforces the new rules immediately.
+// Same edit permission as updating the set (403 `rule_set_access_denied`).
+// Returns the stored rules in order.
 //
 // Takes any type of body and a specified content type.
 //
@@ -12888,12 +14962,16 @@ func (c *Client) ReplacePermissionRuleSetRulesWithBody(ctx context.Context, rule
 	return c.Client.Do(req)
 }
 
-// ReplacePermissionRuleSetRules Replace rule set rules
+// ReplacePermissionRuleSetRules Replace all rules in a permission rule set
 //
-// Replace the set's full ordered rule list (idempotent PUT).
+// Replace a rule set's entire ordered rule list with the body.
 //
-// Every binding pointing at the set picks the new list up at once — the
-// single-place edit rule grouping exists for.
+// This is a full replacement, not a merge: user rules missing from the body
+// are removed, and an empty list clears them. Platform-managed system rules
+// (`_system: true`) are kept. The request is idempotent.
+// Every binding attached to the set enforces the new rules immediately.
+// Same edit permission as updating the set (403 `rule_set_access_denied`).
+// Returns the stored rules in order.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12910,9 +14988,15 @@ func (c *Client) ReplacePermissionRuleSetRules(ctx context.Context, ruleSetId st
 	return c.Client.Do(req)
 }
 
-// ListPermissions List Permissions
+// ListPermissions List the permission catalogue
 //
-// List the permission catalogue visible to the caller.
+// List every permission, flagged with whether the caller may grant it to an agent.
+//
+// Each entry gives the permission `name`, a `description`, the permissions
+// it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+// `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+// `org:admin` is listed only to callers who hold it. Use it to build an
+// agent permission picker. Any signed-in caller may call it.
 //
 // Corresponds with GET /permissions (the `ListPermissions` operationId).
 func (c *Client) ListPermissions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13100,7 +15184,9 @@ func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 // ListUsers List Users
 //
-// List all users with cursor-based pagination.
+// List users with cursor-based pagination.
+//
+// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 //
 // Corresponds with GET /users (the `ListUsers` operationId).
 func (c *Client) ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13241,6 +15327,9 @@ func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...Re
 // GetUser Get User
 //
 // Get a user by ID.
+//
+// Scoped to the caller: org admins can read any user; anyone else only themselves.
+// Any other user answers 404.
 //
 // Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -13489,13 +15578,19 @@ func (c *Client) ListVendors(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// GetAuthCapabilities Get a vendor's SSO capabilities
+// GetAuthCapabilities Get a vendor's OAuth flows and scopes
 //
-// Full auth capabilities for one vendor — flows, scopes, classifications.
+// Describe how to connect a vendor: its OAuth flows and scope catalogue.
 //
-// Never returns client_secret (authorization-code flow's secret is stripped
-// at response build time). “UnknownVendorError“ maps to a 404 problem
-// detail via the handler registered in “control/web/app.py“.
+// `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+// name, the OAuth `flows` it supports (`authorization_code` and/or
+// `device_authorization`), and every scope with its `classification`
+// (`read`, `write` or `admin`), whether it is requested by default, and a
+// description. Use it to build a connect screen before starting a connect
+// session. When the vendor has several admin-registered OAuth apps, pass
+// `oauth_app_registration_id` to pick one; without it the request fails
+// with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+// An unknown vendor returns 404 (`unknown_vendor`).
 //
 // Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
 func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14503,7 +16598,7 @@ func NewCreateAgentRequestWithBody(server string, contentType string, body io.Re
 }
 
 // NewArchiveAgentRequest constructs an http.Request for the ArchiveAgent method
-func NewArchiveAgentRequest(server string, agentId string) (*http.Request, error) {
+func NewArchiveAgentRequest(server string, agentId string, params *ArchiveAgentParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14526,6 +16621,33 @@ func NewArchiveAgentRequest(server string, agentId string) (*http.Request, error
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Purge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "purge", *params.Purge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
@@ -22828,44 +24950,36 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
 	OauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthAuthorizationServerHTTPResp, error)
 
-	// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
+	// McpOauthAuthorizationServerWithResponse Get OAuth authorization server metadata for MCP clients
 	//
-	// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+	// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 	//
-	// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-	// the issuer `{base}/mcp` named by the protected-resource document. It
-	// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-	// and the public-client profile (`none` + PKCE S256) — the root document is a
-	// separate, unchanged surface whose `registration_endpoint` remains the agent
-	// `/register`.
+	// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+	// — the URL an MCP client derives from the protected-resource document
+	// (RFC 8414 §3.1). It lists the authorization, token and revocation
+	// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+	// the MCP tool scopes, and the public client profile: no client secret
+	// (`none`) with PKCE `S256`. It differs from the root
+	// `/.well-known/oauth-authorization-server` document, whose
+	// `registration_endpoint` is the agent `/register`. Returns 404 when
+	// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
 	McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error)
 
-	// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
+	// McpOauthProtectedResourceRootAliasWithResponse Get MCP protected resource metadata (root fallback)
 	//
-	// Root-path alias of the MCP protected-resource document.
+	// Serve the MCP protected-resource document at the root well-known path.
 	//
-	// Compatibility fallback for clients that probe the root
-	// `/.well-known/oauth-protected-resource` instead of following the 401's
-	// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-	// because this deployment has exactly one OAuth-protected resource, so the
-	// root and path-scoped documents are the same body.
-	//
-	// Two acknowledged trades:
-	//
-	// - RFC 9728 §3 says this well-known path corresponds to resource identifier
-	//   ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
-	//   the resource they queried. This body claims ``resource={base}/mcp`` — a
-	//   strict path-deriving validator would reject it, but Claude's fallback
-	//   validates against the MCP server URL (``{base}/mcp``), which is exactly
-	//   what the alias exists to satisfy. That is the intended trade.
-	// - The alias squats the deployment's only root PRM slot: a future non-MCP
-	//   protected resource at ``{base}`` cannot get its own root document
-	//   without breaking this fallback. The mounted MCP app must re-confirm the
-	//   "exactly one OAuth-protected resource" premise before adding one.
+	// Returns the same RFC 9728 body as
+	// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+	// its authorization server, and the MCP tool scopes. It exists for clients
+	// (such as Claude Code) that probe this root path instead of following the
+	// `resource_metadata` pointer in a 401. That is safe while this deployment
+	// has exactly one OAuth-protected resource. Returns 404 when interactive
+	// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22885,9 +24999,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
 	McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error)
 
-	// ListActorsWithResponse List Actors
+	// ListActorsWithResponse List users and agents
 	//
-	// List all actors (users and agents) for UI cache hydration.
+	// List users and agents with the minimal fields needed to label them.
+	//
+	// Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+	// and `active`. Requires `users:read`. Results are scoped to the caller:
+	// `org:admin` lists everyone; anyone else lists only themselves and the
+	// agents they may see (their own, or with `owner:agents:read` their owner's
+	// agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+	// already hold, use `GET /actors/lookup`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22896,16 +25017,18 @@ type ClientWithResponsesInterface interface {
 
 	// LookupActorsWithResponse Resolve actor names by id
 	//
-	// Resolve user and agent ids to display names for any signed-in caller.
+	// Resolve user and agent ids to display names.
 	//
-	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
-	// asked for, so a caller without ``users:read`` can label the owners,
-	// approvers and actors it already sees by id. Users resolve for any caller;
-	// agents only when the caller may see them (its own agents, itself, or with
-	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
-	// Ids that match no visible user or agent are left out of the response
-	// rather than reported as errors. Listing the whole directory stays behind
-	// ``users:read`` on ``GET /actors``.
+	// Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+	// `name` and `active` for each id the caller may see. Any signed-in caller
+	// may call it, so a UI can label the owners, approvers and actors it
+	// already holds by id without `users:read`.
+	//
+	// Users resolve for every caller. Agents resolve only when visible to the
+	// caller: itself, its own agents, its owner's agents with
+	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+	// visible actor are silently left out rather than reported as errors.
+	// Listing the whole directory needs `users:read` on `GET /actors`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23112,32 +25235,64 @@ type ClientWithResponsesInterface interface {
 	// ownership transfer the grant stays with the original consenter, so this
 	// column is how an admin spots stranded grants.
 	//
+	// Scoped to the caller: org admins see every grant. Anyone else sees grants
+	// they consented to and grants bound to agents they own.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
 	ListOauthGrantsWithResponse(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListOauthGrantsHTTPResp, error)
 
-	// ListAgentsWithResponse List Agents
+	// ListAgentsWithResponse List visible agents
 	//
-	// List agents — scoped by identity via dynamic query scoping.
+	// List the agents the caller can see, newest first.
+	//
+	// Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+	// else sees the agents they own. An agent caller also sees itself, and with
+	// `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+	// (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+	// cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+	// while `has_more` is true.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents (the `ListAgents` operationId).
 	ListAgentsWithResponse(ctx context.Context, params *ListAgentsParams, reqEditors ...RequestEditorFn) (*ListAgentsHTTPResp, error)
 
-	// CreateAgentWithBodyWithResponse Create Agent
+	// CreateAgentWithBodyWithResponse Create an agent
 	//
-	// Create a new agent manually.
+	// Create an agent owned by the caller.
+	//
+	// The agent is `active` immediately and owned by the caller. Supply `name`
+	// (required), an optional `description`, and optional `permissions`. When
+	// `permissions` is omitted the agent gets the default agent permission set.
+	// When supplied, every permission must be one the caller may grant (see
+	// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+	// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+	//
+	// The agent has no way to authenticate yet. Follow up with
+	// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+	// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents (the `CreateAgent` operationId).
 	CreateAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentHTTPResp, error)
 
-	// CreateAgentWithResponse Create Agent
+	// CreateAgentWithResponse Create an agent
 	//
-	// Create a new agent manually.
+	// Create an agent owned by the caller.
+	//
+	// The agent is `active` immediately and owned by the caller. Supply `name`
+	// (required), an optional `description`, and optional `permissions`. When
+	// `permissions` is omitted the agent gets the default agent permission set.
+	// When supplied, every permission must be one the caller may grant (see
+	// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+	// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+	//
+	// The agent has no way to authenticate yet. Follow up with
+	// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+	// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23146,108 +25301,176 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveAgentWithResponse Archive Agent
 	//
-	// Archive an agent — terminal-but-kept.
+	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
-	// The row is retained for history, but the action is not reversible and
+	// Archive keeps the row for history, but the action is not reversible and
 	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
+	// Purge removes the agent and its authority and session rows; it archives
+	// first if needed, so the agent's authority is gone before any cleanup runs,
+	// and a failed purge leaves the agent archived and can be retried. Archive
+	// returns 409 for an already-archived agent; purge accepts any status.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-	ArchiveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error)
+	ArchiveAgentWithResponse(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error)
 
-	// GetAgentWithResponse Get Agent
+	// GetAgentWithResponse Get an agent
 	//
-	// Get agent by ID — requires agents:read or self-read.
+	// Get one agent's profile and lifecycle state.
+	//
+	// Returns the agent's name, description, owner, `status`, approval or
+	// denial details, and whether it currently has an API key (`has_api_key`).
+	// Readable by the agent itself, its owner, and `org:admin`; an agent outside
+	// the caller's visibility answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents/{agent_id} (the `GetAgent` operationId).
 	GetAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentHTTPResp, error)
 
-	// UpdateAgentWithBodyWithResponse Update Agent
+	// UpdateAgentWithBodyWithResponse Update an agent
 	//
-	// Partially update an agent — name, description, or owner_id.
+	// Partially update an agent's `name`, `description` or `owner_id`.
+	//
+	// Only the fields present in the body change; an empty body returns the
+	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+	// else gets 404). Changing `owner_id` transfers ownership, is
+	// `org:admin`-only, and revokes every active OAuth client grant bound to
+	// the agent, so the new owner must re-consent any connected client. The
+	// agent's API key, permissions and credential bindings are unaffected. An
+	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /agents/{agent_id} (the `UpdateAgent` operationId).
 	UpdateAgentWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAgentHTTPResp, error)
 
-	// UpdateAgentWithResponse Update Agent
+	// UpdateAgentWithResponse Update an agent
 	//
-	// Partially update an agent — name, description, or owner_id.
+	// Partially update an agent's `name`, `description` or `owner_id`.
+	//
+	// Only the fields present in the body change; an empty body returns the
+	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+	// else gets 404). Changing `owner_id` transfers ownership, is
+	// `org:admin`-only, and revokes every active OAuth client grant bound to
+	// the agent, so the new owner must re-consent any connected client. The
+	// agent's API key, permissions and credential bindings are unaffected. An
+	// archived agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /agents/{agent_id} (the `UpdateAgent` operationId).
 	UpdateAgentWithResponse(ctx context.Context, agentId string, body UpdateAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentHTTPResp, error)
 
-	// GetAgentApiKeyInfoWithResponse Get Agent Api Key Info
+	// GetAgentApiKeyInfoWithResponse Get an agent's API key metadata
 	//
-	// Get API key metadata for an agent. Returns info even after revocation.
+	// Describe an agent's API key without revealing it.
+	//
+	// Returns the key record's `id`, `status` (`active`, or `revoked` once
+	// revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+	// is never returned — it is shown once, by `:generate-api-key`. Metadata
+	// stays available after revocation; the body is `null` if the agent never
+	// had a key. Allowed for the agent's owner or an `org:admin`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key (the `GetAgentApiKeyInfo` operationId).
 	GetAgentApiKeyInfoWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentApiKeyInfoHTTPResp, error)
 
-	// GetAgentApiKeyHistoryWithResponse Get Agent Api Key History
+	// GetAgentApiKeyHistoryWithResponse Get an agent's API key history
 	//
-	// Get the audit history of API key operations for an agent.
+	// List recent API key rotations and revocations for an agent.
+	//
+	// Each entry gives the audit `action`, its `reason` (key rotated or key
+	// revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+	// 50 most recent audit entries, newest first, so very old key events may
+	// not appear; it is not paginated. Allowed for the agent's owner or an
+	// `org:admin`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents/{agent_id}/api-key/history (the `GetAgentApiKeyHistory` operationId).
 	GetAgentApiKeyHistoryWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentApiKeyHistoryHTTPResp, error)
 
-	// ListAgentCredentialsWithResponse List Credentials
+	// ListAgentCredentialsWithResponse List an agent's credential bindings
 	//
-	// List direct credential bindings for an agent — requires agents:read or self.
+	// List the credentials bound directly to an agent.
+	//
+	// Each binding names the credential, the API it serves, when it was bound,
+	// whether it is `suspended` (and why), and any attached permission
+	// `rule_set_id`. Credential secrets are never returned. Readable by the
+	// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+	// paginated.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents/{agent_id}/credentials (the `ListAgentCredentials` operationId).
 	ListAgentCredentialsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ListAgentCredentialsHTTPResp, error)
 
-	// BindAgentCredentialWithBodyWithResponse Bind Credential
+	// BindAgentCredentialWithBodyWithResponse Bind a credential to an agent
 	//
-	// Directly bind a credential to an agent (theme 5 phase 1).
+	// Let an agent use a credential by binding it directly.
 	//
-	// The caller must own the target credential (or hold ``org:admin``); a
-	// credential that does not exist or that the caller does not own returns 404.
+	// A new binding starts with no permission rules, so the agent can make no
+	// calls with it until rules are set or a rule set is attached. The caller
+	// must be able to see the agent and must own the credential (or hold
+	// `org:admin`). A credential that does not exist or that the caller does
+	// not own returns 404; binding the same credential twice returns 409
+	// (`credential_binding_conflict`).
+	// Returns the new binding.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
 	BindAgentCredentialWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
 
-	// BindAgentCredentialWithResponse Bind Credential
+	// BindAgentCredentialWithResponse Bind a credential to an agent
 	//
-	// Directly bind a credential to an agent (theme 5 phase 1).
+	// Let an agent use a credential by binding it directly.
 	//
-	// The caller must own the target credential (or hold ``org:admin``); a
-	// credential that does not exist or that the caller does not own returns 404.
+	// A new binding starts with no permission rules, so the agent can make no
+	// calls with it until rules are set or a rule set is attached. The caller
+	// must be able to see the agent and must own the credential (or hold
+	// `org:admin`). A credential that does not exist or that the caller does
+	// not own returns 404; binding the same credential twice returns 409
+	// (`credential_binding_conflict`).
+	// Returns the new binding.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}/credentials (the `BindAgentCredential` operationId).
 	BindAgentCredentialWithResponse(ctx context.Context, agentId string, body BindAgentCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*BindAgentCredentialHTTPResp, error)
 
-	// UnbindAgentCredentialWithResponse Unbind Credential
+	// UnbindAgentCredentialWithResponse Suspend or remove a credential binding
 	//
-	// Unbind a credential from an agent — suspend by default, purge on request.
+	// Stop an agent using a credential: suspend the binding, or purge it.
+	//
+	// By default the binding is **suspended**: the agent loses access at once,
+	// but the binding and its permission rules are kept, and
+	// `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+	// With `purge=true` the binding and its inline permission rules are deleted
+	// outright, so a later re-bind starts from deny-all. An agent may suspend
+	// its own binding but not purge it. Both modes are audited. Returns 204; a
+	// missing binding returns 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /agents/{agent_id}/credentials/{credential_id} (the `UnbindAgentCredential` operationId).
 	UnbindAgentCredentialWithResponse(ctx context.Context, agentId string, credentialId string, params *UnbindAgentCredentialParams, reqEditors ...RequestEditorFn) (*UnbindAgentCredentialHTTPResp, error)
 
-	// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+	// ResumeAgentCredentialBindingWithResponse Resume a suspended credential binding
 	//
-	// Lift a suspended credential binding — the reverse of the default unbind.
+	// Restore an agent's access to a credential whose binding was suspended.
+	//
+	// Reverses the default (non-purge) unbind; a purged binding is gone and must
+	// be bound again instead. Because resuming re-grants the credential, the
+	// caller must own the credential (or hold `org:admin`) as well as see the
+	// agent, and an agent cannot resume its own binding. Returns the binding;
+	// 404 when no binding exists.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23280,16 +25503,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /agents/{agent_id}/jwks (the `UpdateAgentJwks` operationId).
 	UpdateAgentJwksWithResponse(ctx context.Context, agentId string, body UpdateAgentJwksJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAgentJwksHTTPResp, error)
 
-	// ListAgentOauthGrantsWithResponse List agent OAuth grants
+	// ListAgentOauthGrantsWithResponse List an agent's connected OAuth clients
 	//
-	// List OAuth consent grants binding clients to this agent.
+	// List the OAuth clients a user has consented to act as this agent.
 	//
-	// The "Connected clients" surface: every grant carries the client's display
-	// name and redirect-URI origin, the granted scopes, the consenting user,
-	// and created/last-used timestamps. Allowed for the agent's owner or an
-	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-	// same as an agent that does not exist.
+	// Each grant gives the client's display name and redirect-URI origin, the
+	// granted scopes, the consenting user, its `status`, created and last-used
+	// timestamps, and `can_revoke` for the caller. Filter by `status`
+	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
+	// agent's owner or an admin. An agent the caller cannot see answers 404,
+	// the same as one that does not exist. Revoke a grant with
+	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23526,45 +25750,79 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/openapi (the `GetApiSpec` operationId).
 	GetApiSpecWithResponse(ctx context.Context, vendor string, name string, version string, params *GetApiSpecParams, reqEditors ...RequestEditorFn) (*GetApiSpecHTTPResp, error)
 
-	// ListApiOperationsWithResponse List Api Operations
+	// ListApiOperationsWithResponse List the operations an API currently serves
 	//
-	// List operations for the API's current (live) revision.
+	// List every operation in the API's current (live) revision.
+	//
+	// Each row gives the operation's id, method, path, name, description, tags,
+	// `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+	// a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+	// Use this to browse an API exhaustively; to find operations by intent,
+	// use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+	// revision.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/operations (the `ListApiOperations` operationId).
 	ListApiOperationsWithResponse(ctx context.Context, vendor string, name string, version string, params *ListApiOperationsParams, reqEditors ...RequestEditorFn) (*ListApiOperationsHTTPResp, error)
 
-	// ListOverlaysWithResponse List Overlays
+	// ListOverlaysWithResponse List an API's overlays
 	//
-	// List overlays for an API with optional status filter and cursor pagination.
+	// List the overlays submitted against an API, newest first.
+	//
+	// Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+	// (applied to the served spec) or `deprecated` (retired) — and links to the
+	// actions valid in that state. Filter with `status`. Results are
+	// cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+	// true.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/overlays (the `ListOverlays` operationId).
 	ListOverlaysWithResponse(ctx context.Context, vendor string, name string, version string, params *ListOverlaysParams, reqEditors ...RequestEditorFn) (*ListOverlaysHTTPResp, error)
 
-	// SubmitOverlayWithBodyWithResponse Submit Overlay
+	// SubmitOverlayWithBodyWithResponse Submit an OpenAPI overlay
 	//
-	// Submit a new overlay for an API.
+	// Propose a change to an API's spec as an OpenAPI Overlay document.
+	//
+	// An overlay is a list of `actions` that patch the API's OpenAPI document —
+	// for example correcting a description or adding a missing parameter.
+	// Submitting stores it as `pending`; it changes nothing until an operator
+	// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+	// record a `contributed_by` label. The document must be a JSON object with
+	// an `actions` array (at most 512 actions, 1 MB), else 422
+	// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays (the `SubmitOverlay` operationId).
 	SubmitOverlayWithBodyWithResponse(ctx context.Context, vendor string, name string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitOverlayHTTPResp, error)
 
-	// SubmitOverlayWithResponse Submit Overlay
+	// SubmitOverlayWithResponse Submit an OpenAPI overlay
 	//
-	// Submit a new overlay for an API.
+	// Propose a change to an API's spec as an OpenAPI Overlay document.
+	//
+	// An overlay is a list of `actions` that patch the API's OpenAPI document —
+	// for example correcting a description or adding a missing parameter.
+	// Submitting stores it as `pending`; it changes nothing until an operator
+	// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+	// record a `contributed_by` label. The document must be a JSON object with
+	// an `actions` array (at most 512 actions, 1 MB), else 422
+	// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays (the `SubmitOverlay` operationId).
 	SubmitOverlayWithResponse(ctx context.Context, vendor string, name string, version string, body SubmitOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitOverlayHTTPResp, error)
 
-	// DeprecateOverlayWithResponse Deprecate Overlay
+	// DeprecateOverlayWithResponse Deprecate an overlay
 	//
-	// Deprecate an overlay (soft delete).
+	// Retire an overlay so it is no longer offered for confirmation.
+	//
+	// The overlay moves to `deprecated` but is kept, and remains readable for
+	// history; nothing is deleted. Deprecating does not rewrite the served
+	// spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+	// `apis:write`. Returns 204.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23580,148 +25838,195 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `GetOverlay` operationId).
 	GetOverlayWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*GetOverlayHTTPResp, error)
 
-	// UpdateOverlayWithBodyWithResponse Update Overlay
+	// UpdateOverlayWithBodyWithResponse Edit an overlay
 	//
-	// Update an overlay's document or target revision.
+	// Change an overlay's `document` or `target_revision_id`.
 	//
-	// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-	// ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-	// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-	// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-	// the API's served spec (D1). That is an operator action, so it additionally requires
-	// ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-	// (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-	// overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-	// if no clean base was recorded to re-apply over.
+	// What the edit does depends on the overlay's state:
+	//
+	// - **Pending** (or confirmed but not yet applied): the stored overlay is
+	//   updated; the served spec is untouched. Requires `apis:write`.
+	// - **Confirmed and live**: the edited document is re-applied over the
+	//   overlay's original base and the result replaces the API's served spec.
+	//   This also requires `overlays:confirm`, else 403
+	//   (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+	//   overlay is no longer the live revision, or
+	//   (`overlay_rollback_target_missing`) if no clean base was recorded.
+	//
+	// Returns the updated overlay.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `UpdateOverlay` operationId).
 	UpdateOverlayWithBodyWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateOverlayHTTPResp, error)
 
-	// UpdateOverlayWithResponse Update Overlay
+	// UpdateOverlayWithResponse Edit an overlay
 	//
-	// Update an overlay's document or target revision.
+	// Change an overlay's `document` or `target_revision_id`.
 	//
-	// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-	// ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-	// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-	// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-	// the API's served spec (D1). That is an operator action, so it additionally requires
-	// ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-	// (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-	// overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-	// if no clean base was recorded to re-apply over.
+	// What the edit does depends on the overlay's state:
+	//
+	// - **Pending** (or confirmed but not yet applied): the stored overlay is
+	//   updated; the served spec is untouched. Requires `apis:write`.
+	// - **Confirmed and live**: the edited document is re-applied over the
+	//   overlay's original base and the result replaces the API's served spec.
+	//   This also requires `overlays:confirm`, else 403
+	//   (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+	//   overlay is no longer the live revision, or
+	//   (`overlay_rollback_target_missing`) if no clean base was recorded.
+	//
+	// Returns the updated overlay.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /apis/{vendor}/{name}/{version}/overlays/{overlay_id} (the `UpdateOverlay` operationId).
 	UpdateOverlayWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, body UpdateOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateOverlayHTTPResp, error)
 
-	// ConfirmOverlayWithBodyWithResponse Confirm Overlay
+	// ConfirmOverlayWithBodyWithResponse Confirm an overlay and apply it to the served spec
 	//
-	// Confirm an overlay, materializing it onto the served spec.
+	// Apply a pending overlay, producing a new current revision of the API.
 	//
-	// Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-	// re-ingests the base spec with the overlay applied and promotes the result to the
-	// current revision), so it is an operator action, not a contributor one (contributors
-	// ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-	// purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-	// owner can grant it to a trusted operator without handing over full admin power.
-	// ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-	// deliberately excluded from an agent's self-service grantable set so a low-privilege
-	// agent cannot escalate into it.
+	// The base spec is re-imported with the overlay applied and the result is
+	// promoted to the API's current revision, so it is what the API now serves.
+	// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+	// a no-op that returns it unchanged; a deprecated overlay is refused with
+	// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+	// with 409 (`overlay_apply_conflict`).
+	//
+	// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+	// overlays with `apis:write`, and an operator reviews and confirms them.
+	// Agents cannot grant themselves this permission. Returns the overlay.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm (the `ConfirmOverlay` operationId).
 	ConfirmOverlayWithBodyWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmOverlayHTTPResp, error)
 
-	// ConfirmOverlayWithResponse Confirm Overlay
+	// ConfirmOverlayWithResponse Confirm an overlay and apply it to the served spec
 	//
-	// Confirm an overlay, materializing it onto the served spec.
+	// Apply a pending overlay, producing a new current revision of the API.
 	//
-	// Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-	// re-ingests the base spec with the overlay applied and promotes the result to the
-	// current revision), so it is an operator action, not a contributor one (contributors
-	// ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-	// purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-	// owner can grant it to a trusted operator without handing over full admin power.
-	// ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-	// deliberately excluded from an agent's self-service grantable set so a low-privilege
-	// agent cannot escalate into it.
+	// The base spec is re-imported with the overlay applied and the result is
+	// promoted to the API's current revision, so it is what the API now serves.
+	// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+	// a no-op that returns it unchanged; a deprecated overlay is refused with
+	// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+	// with 409 (`overlay_apply_conflict`).
+	//
+	// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+	// overlays with `apis:write`, and an operator reviews and confirms them.
+	// Agents cannot grant themselves this permission. Returns the overlay.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm (the `ConfirmOverlay` operationId).
 	ConfirmOverlayWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, body ConfirmOverlayJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmOverlayHTTPResp, error)
 
-	// RollbackOverlayWithResponse Rollback Overlay
+	// RollbackOverlayWithResponse Roll back a confirmed overlay
 	//
-	// Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+	// Undo a confirmed overlay by restoring the revision it replaced.
 	//
-	// Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-	// rewrites the API's served spec (it archives the overlay's materialized revision and
-	// promotes the prior revision back to current), so it is the same operator action as
-	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-	// restored revision's hosts) and nothing changes.
+	// The overlay's revision is archived and the revision it superseded becomes
+	// the API's current revision again, so the served spec reverts, and the
+	// overlay is marked `deprecated`. Requires `overlays:confirm`, like
+	// confirming.
+	//
+	// Preconditions: the overlay is `confirmed`, its revision is still the
+	// live one, and the revision it replaced is still restorable. Otherwise
+	// nothing changes and 409 is returned: `overlay_conflict`,
+	// `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+	// another vendor's live API now serves one of the restored revision's
+	// hosts. Returns 204.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 	RollbackOverlayWithResponse(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*RollbackOverlayHTTPResp, error)
 
-	// ListApiRevisionsWithResponse List Api Revisions
+	// ListApiRevisionsWithResponse List an API's revisions
 	//
-	// List revisions for an API with optional state filter and cursor pagination.
+	// List every revision imported for an API, newest first.
+	//
+	// Each revision gives its `state` (`draft`, `published`, `imported` or
+	// `archived`), whether it `is_current` (the one served), its source, spec
+	// digest, operation count and lifecycle timestamps, plus links to the
+	// actions valid in its state. Repeat `state` to filter by several states.
+	// Results are cursor-paginated: pass `next_cursor` as `cursor` while
+	// `has_more` is true. Fetch one revision with
+	// `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions (the `ListApiRevisions` operationId).
 	ListApiRevisionsWithResponse(ctx context.Context, vendor string, name string, version string, params *ListApiRevisionsParams, reqEditors ...RequestEditorFn) (*ListApiRevisionsHTTPResp, error)
 
-	// DeleteRevisionWithResponse Delete Revision
+	// DeleteRevisionWithResponse Delete an archived API revision
 	//
-	// Delete an archived revision.
+	// Permanently delete an archived revision.
+	//
+	// Only an `archived` revision can be deleted — archive it first; any other
+	// state is refused with 409 (`revision_state_conflict`). Deletion cannot
+	// be undone. Requires `apis:write`. Returns 204.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `DeleteRevision` operationId).
 	DeleteRevisionWithResponse(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*DeleteRevisionHTTPResp, error)
 
-	// GetApiRevisionWithResponse Get Api Revision
+	// GetApiRevisionWithResponse Get an API revision
 	//
-	// Retrieve a single revision by ID.
+	// Get one revision's metadata and lifecycle state.
+	//
+	// Returns the same fields as an entry in the revision list: `state`,
+	// `is_current`, source, spec digest, operation count, timestamps, and links
+	// to the actions valid in its state. This is metadata only — download the
+	// spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+	// revision does not exist.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id} (the `GetApiRevision` operationId).
 	GetApiRevisionWithResponse(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*GetApiRevisionHTTPResp, error)
 
-	// GetApiRevisionSpecWithResponse Get Api Revision Spec
+	// GetApiRevisionSpecWithResponse Download an API revision's OpenAPI document
 	//
-	// Download the OpenAPI spec for a specific revision.
+	// Download the stored OpenAPI document of one revision.
+	//
+	// Choose the format with `Accept`: `application/json` (the default), or
+	// `application/openapi+yaml` / `application/yaml`; anything else returns
+	// 406. The response carries `Content-Disposition: attachment` with a
+	// `.json` or `.yaml` filename. The document is served exactly as stored —
+	// a revision produced by confirming an overlay already includes it, so the
+	// `overlays` flag currently has no effect.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi (the `GetApiRevisionSpec` operationId).
 	GetApiRevisionSpecWithResponse(ctx context.Context, vendor string, name string, version string, revisionId string, params *GetApiRevisionSpecParams, reqEditors ...RequestEditorFn) (*GetApiRevisionSpecHTTPResp, error)
 
-	// ListApiRevisionOperationsWithResponse List Api Revision Operations
+	// ListApiRevisionOperationsWithResponse List the operations in an API revision
 	//
-	// List operations for a specific revision.
+	// List every operation in one specific revision, live or not.
+	//
+	// Same rows, ordering and cursor pagination as the live-revision listing,
+	// but for the named revision, so you can review a draft before promoting
+	// it or compare against an archived one. Follow each row's `inspect` link
+	// for full detail. 404 if the API or revision does not exist.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations (the `ListApiRevisionOperations` operationId).
 	ListApiRevisionOperationsWithResponse(ctx context.Context, vendor string, name string, version string, revisionId string, params *ListApiRevisionOperationsParams, reqEditors ...RequestEditorFn) (*ListApiRevisionOperationsHTTPResp, error)
 
-	// ArchiveRevisionWithResponse Archive Revision
+	// ArchiveRevisionWithResponse Archive an API revision
 	//
-	// Archive a draft revision.
+	// Retire a `draft` or `imported` revision without deleting it.
+	//
+	// The revision moves to `archived` and is kept for reference; it can then
+	// be deleted. If it was the API's current revision, the API is left with
+	// no live revision until another is promoted. A revision in any other
+	// state is refused with 409 (`revision_state_conflict`). Requires
+	// `apis:write`. Returns the archived revision.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23755,6 +26060,9 @@ type ClientWithResponsesInterface interface {
 	// ListAuditEntriesWithResponse List Audit Entries
 	//
 	// List audit entries with optional filters.
+	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -23967,6 +26275,21 @@ type ClientWithResponsesInterface interface {
 	GetConnectSessionWithResponse(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*GetConnectSessionHTTPResp, error)
 
 	// PollConnectSessionStatusWithResponse Poll a connect session's status
+	//
+	// Poll the lifecycle status of a connect session.
+	//
+	// Returns the session's current ``status`` and, once it has connected, the
+	// resulting ``credential_id``, the account it ``connected_as``, and the
+	// ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+	// SPA poll this after ``:connect`` until the status is terminal.
+	//
+	// Auth is intentionally lightweight: the caller must be authenticated with
+	// ``credentials:connect`` or ``credentials:write``, but the real capability
+	// that scopes the response is the session's ``poll_token`` (or being the
+	// target agent's owner / ``org:admin``). An agent handed the token by
+	// ``:connect`` can poll without full session-read rights. A missing session,
+	// a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+	// 403, so the endpoint is not a session-id enumeration oracle.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25441,10 +27764,17 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
 	//
-	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	// Create a named, reusable list of permission rules.
 	//
-	// N agent-credential bindings can point at one set, so `permissions:test`
-	// and "revoke this operation everywhere" stay single-place edits.
+	// Attach the set to any number of agent-credential bindings
+	// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+	// its rules later updates every attached binding at once, so a policy
+	// change such as "block this operation everywhere" is a single edit.
+	// Supply a unique `name`, an optional `description`, and optional initial
+	// ordered `rules`. A set created by an `org:admin` is *curated*: any
+	// `credentials:write` holder may attach it, but only an `org:admin` may
+	// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+	// if the name is taken.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25453,10 +27783,17 @@ type ClientWithResponsesInterface interface {
 
 	// CreatePermissionRuleSetWithResponse Create permission rule set
 	//
-	// Create a named, shareable ordered rule list (theme 5 rule grouping).
+	// Create a named, reusable list of permission rules.
 	//
-	// N agent-credential bindings can point at one set, so `permissions:test`
-	// and "revoke this operation everywhere" stay single-place edits.
+	// Attach the set to any number of agent-credential bindings
+	// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+	// its rules later updates every attached binding at once, so a policy
+	// change such as "block this operation everywhere" is a single edit.
+	// Supply a unique `name`, an optional `description`, and optional initial
+	// ordered `rules`. A set created by an `org:admin` is *curated*: any
+	// `credentials:write` holder may attach it, but only an `org:admin` may
+	// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+	// if the name is taken.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25465,7 +27802,12 @@ type ClientWithResponsesInterface interface {
 
 	// DeletePermissionRuleSetWithResponse Delete permission rule set
 	//
-	// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+	// Permanently delete a rule set that no binding uses.
+	//
+	// Detach the set from every binding first: while any binding still
+	// references it the delete fails with 409 (`rule_set_in_use`) and nothing
+	// changes. Same edit permission as updating the set (403
+	// `rule_set_access_denied`). Returns 204.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25481,57 +27823,79 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /permission-rule-sets/{rule_set_id} (the `GetPermissionRuleSet` operationId).
 	GetPermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, reqEditors ...RequestEditorFn) (*GetPermissionRuleSetHTTPResp, error)
 
-	// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+	// UpdatePermissionRuleSetWithBodyWithResponse Rename or re-describe a permission rule set
 	//
-	// Rename or re-describe a rule set.
+	// Change a rule set's `name` and/or `description`.
 	//
-	// A curated set is editable by an org admin; any other set by its creator
-	// or an org admin (403 `rule_set_access_denied` otherwise).
+	// The rules themselves are replaced separately, with
+	// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+	// only by an `org:admin`; any other set by its creator or an `org:admin`
+	// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+	// its rules and the number of bindings referencing it; 409
+	// (`rule_set_name_conflict`) if the new name is taken.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
 	UpdatePermissionRuleSetWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
 
-	// UpdatePermissionRuleSetWithResponse Update permission rule set
+	// UpdatePermissionRuleSetWithResponse Rename or re-describe a permission rule set
 	//
-	// Rename or re-describe a rule set.
+	// Change a rule set's `name` and/or `description`.
 	//
-	// A curated set is editable by an org admin; any other set by its creator
-	// or an org admin (403 `rule_set_access_denied` otherwise).
+	// The rules themselves are replaced separately, with
+	// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+	// only by an `org:admin`; any other set by its creator or an `org:admin`
+	// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+	// its rules and the number of bindings referencing it; 409
+	// (`rule_set_name_conflict`) if the new name is taken.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /permission-rule-sets/{rule_set_id} (the `UpdatePermissionRuleSet` operationId).
 	UpdatePermissionRuleSetWithResponse(ctx context.Context, ruleSetId string, body UpdatePermissionRuleSetJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePermissionRuleSetHTTPResp, error)
 
-	// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+	// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace all rules in a permission rule set
 	//
-	// Replace the set's full ordered rule list (idempotent PUT).
+	// Replace a rule set's entire ordered rule list with the body.
 	//
-	// Every binding pointing at the set picks the new list up at once — the
-	// single-place edit rule grouping exists for.
+	// This is a full replacement, not a merge: user rules missing from the body
+	// are removed, and an empty list clears them. Platform-managed system rules
+	// (`_system: true`) are kept. The request is idempotent.
+	// Every binding attached to the set enforces the new rules immediately.
+	// Same edit permission as updating the set (403 `rule_set_access_denied`).
+	// Returns the stored rules in order.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
 	ReplacePermissionRuleSetRulesWithBodyWithResponse(ctx context.Context, ruleSetId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
 
-	// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+	// ReplacePermissionRuleSetRulesWithResponse Replace all rules in a permission rule set
 	//
-	// Replace the set's full ordered rule list (idempotent PUT).
+	// Replace a rule set's entire ordered rule list with the body.
 	//
-	// Every binding pointing at the set picks the new list up at once — the
-	// single-place edit rule grouping exists for.
+	// This is a full replacement, not a merge: user rules missing from the body
+	// are removed, and an empty list clears them. Platform-managed system rules
+	// (`_system: true`) are kept. The request is idempotent.
+	// Every binding attached to the set enforces the new rules immediately.
+	// Same edit permission as updating the set (403 `rule_set_access_denied`).
+	// Returns the stored rules in order.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /permission-rule-sets/{rule_set_id}/rules (the `ReplacePermissionRuleSetRules` operationId).
 	ReplacePermissionRuleSetRulesWithResponse(ctx context.Context, ruleSetId string, body ReplacePermissionRuleSetRulesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePermissionRuleSetRulesHTTPResp, error)
 
-	// ListPermissionsWithResponse List Permissions
+	// ListPermissionsWithResponse List the permission catalogue
 	//
-	// List the permission catalogue visible to the caller.
+	// List every permission, flagged with whether the caller may grant it to an agent.
+	//
+	// Each entry gives the permission `name`, a `description`, the permissions
+	// it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+	// `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+	// `org:admin` is listed only to callers who hold it. Use it to build an
+	// agent permission picker. Any signed-in caller may call it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25631,7 +27995,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsersWithResponse List Users
 	//
-	// List all users with cursor-based pagination.
+	// List users with cursor-based pagination.
+	//
+	// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25708,6 +28074,9 @@ type ClientWithResponsesInterface interface {
 	// GetUserWithResponse Get User
 	//
 	// Get a user by ID.
+	//
+	// Scoped to the caller: org admins can read any user; anyone else only themselves.
+	// Any other user answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25836,13 +28205,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /vendors (the `ListVendors` operationId).
 	ListVendorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVendorsHTTPResp, error)
 
-	// GetAuthCapabilitiesWithResponse Get a vendor's SSO capabilities
+	// GetAuthCapabilitiesWithResponse Get a vendor's OAuth flows and scopes
 	//
-	// Full auth capabilities for one vendor — flows, scopes, classifications.
+	// Describe how to connect a vendor: its OAuth flows and scope catalogue.
 	//
-	// Never returns client_secret (authorization-code flow's secret is stripped
-	// at response build time). ``UnknownVendorError`` maps to a 404 problem
-	// detail via the handler registered in ``control/web/app.py``.
+	// `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+	// name, the OAuth `flows` it supports (`authorization_code` and/or
+	// `device_authorization`), and every scope with its `classification`
+	// (`read`, `write` or `admin`), whether it is requested by default, and a
+	// description. Use it to build a connect screen before starting a connect
+	// session. When the vendor has several admin-registered OAuth apps, pass
+	// `oauth_app_registration_id` to pick one; without it the request fails
+	// with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+	// An unknown vendor returns 404 (`unknown_vendor`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25995,6 +28370,8 @@ type McpOauthAuthorizationServerHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -26011,6 +28388,11 @@ func (r McpOauthAuthorizationServerHTTPResp) GetJSON200() *map[string]interface{
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -26064,6 +28446,8 @@ type McpOauthProtectedResourceRootAliasHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -26080,6 +28464,11 @@ func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON200() *map[string]int
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -26133,6 +28522,8 @@ type McpOauthProtectedResourceHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -26149,6 +28540,11 @@ func (r McpOauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthProtectedResourceHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -29524,6 +31920,10 @@ type DeleteApiHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -29545,6 +31945,16 @@ func (r DeleteApiHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r DeleteApiHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteApiHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteApiHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35170,11 +37580,11 @@ type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *RootHealthResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetHealthHTTPResp) GetJSON200() *interface{} {
+func (r GetHealthHTTPResp) GetJSON200() *RootHealthResponse {
 	return r.JSON200
 }
 
@@ -35784,6 +38194,41 @@ func (r CancelJobHTTPResp) ContentType() string {
 type LoginPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LoginPageHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -35822,6 +38267,8 @@ type LoginSubmitHTTPResp struct {
 	JSON200 *interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35838,6 +38285,11 @@ func (r LoginSubmitHTTPResp) GetJSON200() *interface{} {
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r LoginSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LoginSubmitHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37162,6 +39614,8 @@ type RegisterOauthClientEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *OAuthClientRegistrationResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -37171,6 +39625,11 @@ type RegisterOauthClientEndpointHTTPResp struct {
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
 func (r RegisterOauthClientEndpointHTTPResp) GetJSON201() *OAuthClientRegistrationResponse {
 	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -37300,6 +39759,8 @@ type ApprovalDecisionEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
@@ -37315,6 +39776,11 @@ type ApprovalDecisionEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ApprovalDecisionEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -37376,6 +39842,8 @@ type ApprovalStatusEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37387,6 +39855,11 @@ type ApprovalStatusEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ApprovalStatusEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37505,6 +39978,34 @@ func (r AuthorizeOauthCallbackHTTPResp) ContentType() string {
 type ConsentPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -37679,6 +40180,8 @@ type ConsentAgentStatusHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ConsentAgentStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37690,6 +40193,11 @@ type ConsentAgentStatusHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ConsentAgentStatusHTTPResp) GetJSON200() *ConsentAgentStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37824,10 +40332,18 @@ type RevokeEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *OAuthErrorResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -37839,14 +40355,34 @@ func (r RevokeEndpointHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
 }
 
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
+}
+
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON413() *OAuthErrorResponse {
+	return r.JSON413
+}
+
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON429() *OAuthErrorResponse {
+	return r.JSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -37893,10 +40429,14 @@ type SessionContinueEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthSessionContinueResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -37910,6 +40450,11 @@ func (r SessionContinueEndpointHTTPResp) GetJSON200() *OAuthSessionContinueRespo
 	return r.JSON200
 }
 
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
@@ -37918,6 +40463,11 @@ func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *Problem
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SessionContinueEndpointHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -37969,6 +40519,10 @@ type TokenEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TokenResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -37978,6 +40532,16 @@ type TokenEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r TokenEndpointHTTPResp) GetJSON200() *TokenResponse {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r TokenEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r TokenEndpointHTTPResp) GetJSON429() *OAuthErrorResponse {
+	return r.JSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -39572,6 +42136,8 @@ type GetUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -39598,6 +42164,11 @@ func (r GetUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -40414,16 +42985,19 @@ func (c *ClientWithResponses) OauthAuthorizationServerWithResponse(ctx context.C
 	return ParseOauthAuthorizationServerHTTPResp(rsp)
 }
 
-// McpOauthAuthorizationServerWithResponse OAuth authorization server metadata for the MCP resource
+// McpOauthAuthorizationServerWithResponse Get OAuth authorization server metadata for MCP clients
 //
-// RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 //
-// RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-// the issuer `{base}/mcp` named by the protected-resource document. It
-// advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-// and the public-client profile (`none` + PKCE S256) — the root document is a
-// separate, unchanged surface whose `registration_endpoint` remains the agent
-// `/register`.
+// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+// — the URL an MCP client derives from the protected-resource document
+// (RFC 8414 §3.1). It lists the authorization, token and revocation
+// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+// the MCP tool scopes, and the public client profile: no client secret
+// (`none`) with PKCE `S256`. It differs from the root
+// `/.well-known/oauth-authorization-server` document, whose
+// `registration_endpoint` is the agent `/register`. Returns 404 when
+// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40436,28 +43010,17 @@ func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx contex
 	return ParseMcpOauthAuthorizationServerHTTPResp(rsp)
 }
 
-// McpOauthProtectedResourceRootAliasWithResponse OAuth protected resource metadata (root alias for the MCP resource)
+// McpOauthProtectedResourceRootAliasWithResponse Get MCP protected resource metadata (root fallback)
 //
-// Root-path alias of the MCP protected-resource document.
+// Serve the MCP protected-resource document at the root well-known path.
 //
-// Compatibility fallback for clients that probe the root
-// `/.well-known/oauth-protected-resource` instead of following the 401's
-// `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-// because this deployment has exactly one OAuth-protected resource, so the
-// root and path-scoped documents are the same body.
-//
-// Two acknowledged trades:
-//
-//   - RFC 9728 §3 says this well-known path corresponds to resource identifier
-//     “{base}“ (no path), and §3.3 has clients validate “resource“ against
-//     the resource they queried. This body claims “resource={base}/mcp“ — a
-//     strict path-deriving validator would reject it, but Claude's fallback
-//     validates against the MCP server URL (“{base}/mcp“), which is exactly
-//     what the alias exists to satisfy. That is the intended trade.
-//   - The alias squats the deployment's only root PRM slot: a future non-MCP
-//     protected resource at “{base}“ cannot get its own root document
-//     without breaking this fallback. The mounted MCP app must re-confirm the
-//     "exactly one OAuth-protected resource" premise before adding one.
+// Returns the same RFC 9728 body as
+// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+// its authorization server, and the MCP tool scopes. It exists for clients
+// (such as Claude Code) that probe this root path instead of following the
+// `resource_metadata` pointer in a 401. That is safe while this deployment
+// has exactly one OAuth-protected resource. Returns 404 when interactive
+// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40489,9 +43052,16 @@ func (c *ClientWithResponses) McpOauthProtectedResourceWithResponse(ctx context.
 	return ParseMcpOauthProtectedResourceHTTPResp(rsp)
 }
 
-// ListActorsWithResponse List Actors
+// ListActorsWithResponse List users and agents
 //
-// List all actors (users and agents) for UI cache hydration.
+// List users and agents with the minimal fields needed to label them.
+//
+// Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+// and `active`. Requires `users:read`. Results are scoped to the caller:
+// `org:admin` lists everyone; anyone else lists only themselves and the
+// agents they may see (their own, or with `owner:agents:read` their owner's
+// agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+// already hold, use `GET /actors/lookup`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40506,16 +43076,18 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 
 // LookupActorsWithResponse Resolve actor names by id
 //
-// Resolve user and agent ids to display names for any signed-in caller.
+// Resolve user and agent ids to display names.
 //
-// Returns only “id“, “actor_type“, “name“ and “active“ for the ids
-// asked for, so a caller without “users:read“ can label the owners,
-// approvers and actors it already sees by id. Users resolve for any caller;
-// agents only when the caller may see them (its own agents, itself, or with
-// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
-// Ids that match no visible user or agent are left out of the response
-// rather than reported as errors. Listing the whole directory stays behind
-// “users:read“ on “GET /actors“.
+// Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+// `name` and `active` for each id the caller may see. Any signed-in caller
+// may call it, so a UI can label the owners, approvers and actors it
+// already holds by id without `users:read`.
+//
+// Users resolve for every caller. Agents resolve only when visible to the
+// caller: itself, its own agents, its owner's agents with
+// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+// visible actor are silently left out rather than reported as errors.
+// Listing the whole directory needs `users:read` on `GET /actors`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40830,6 +43402,9 @@ func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, i
 // ownership transfer the grant stays with the original consenter, so this
 // column is how an admin spots stranded grants.
 //
+// Scoped to the caller: org admins see every grant. Anyone else sees grants
+// they consented to and grants bound to agents they own.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
@@ -40841,9 +43416,16 @@ func (c *ClientWithResponses) ListOauthGrantsWithResponse(ctx context.Context, p
 	return ParseListOauthGrantsHTTPResp(rsp)
 }
 
-// ListAgentsWithResponse List Agents
+// ListAgentsWithResponse List visible agents
 //
-// List agents — scoped by identity via dynamic query scoping.
+// List the agents the caller can see, newest first.
+//
+// Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+// else sees the agents they own. An agent caller also sees itself, and with
+// `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+// (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+// cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+// while `has_more` is true.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40856,9 +43438,20 @@ func (c *ClientWithResponses) ListAgentsWithResponse(ctx context.Context, params
 	return ParseListAgentsHTTPResp(rsp)
 }
 
-// CreateAgentWithBodyWithResponse Create Agent
+// CreateAgentWithBodyWithResponse Create an agent
 //
-// Create a new agent manually.
+// Create an agent owned by the caller.
+//
+// The agent is `active` immediately and owned by the caller. Supply `name`
+// (required), an optional `description`, and optional `permissions`. When
+// `permissions` is omitted the agent gets the default agent permission set.
+// When supplied, every permission must be one the caller may grant (see
+// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+//
+// The agent has no way to authenticate yet. Follow up with
+// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40871,9 +43464,20 @@ func (c *ClientWithResponses) CreateAgentWithBodyWithResponse(ctx context.Contex
 	return ParseCreateAgentHTTPResp(rsp)
 }
 
-// CreateAgentWithResponse Create Agent
+// CreateAgentWithResponse Create an agent
 //
-// Create a new agent manually.
+// Create an agent owned by the caller.
+//
+// The agent is `active` immediately and owned by the caller. Supply `name`
+// (required), an optional `description`, and optional `permissions`. When
+// `permissions` is omitted the agent gets the default agent permission set.
+// When supplied, every permission must be one the caller may grant (see
+// `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+// with 403 (`agent_permission_not_grantable`). Returns the created agent.
+//
+// The agent has no way to authenticate yet. Follow up with
+// `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+// for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40888,27 +43492,37 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 
 // ArchiveAgentWithResponse Archive Agent
 //
-// Archive an agent — terminal-but-kept.
+// Archive an agent — or, with “purge=true“, hard-delete it.
 //
-// The row is retained for history, but the action is not reversible and
+// Archive keeps the row for history, but the action is not reversible and
 // the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
+// Purge removes the agent and its authority and session rows; it archives
+// first if needed, so the agent's authority is gone before any cleanup runs,
+// and a failed purge leaves the agent archived and can be retried. Archive
+// returns 409 for an already-archived agent; purge accepts any status.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error) {
-	rsp, err := c.ArchiveAgent(ctx, agentId, reqEditors...)
+func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error) {
+	rsp, err := c.ArchiveAgent(ctx, agentId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseArchiveAgentHTTPResp(rsp)
 }
 
-// GetAgentWithResponse Get Agent
+// GetAgentWithResponse Get an agent
 //
-// Get agent by ID — requires agents:read or self-read.
+// Get one agent's profile and lifecycle state.
+//
+// Returns the agent's name, description, owner, `status`, approval or
+// denial details, and whether it currently has an API key (`has_api_key`).
+// Readable by the agent itself, its owner, and `org:admin`; an agent outside
+// the caller's visibility answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40921,9 +43535,17 @@ func (c *ClientWithResponses) GetAgentWithResponse(ctx context.Context, agentId 
 	return ParseGetAgentHTTPResp(rsp)
 }
 
-// UpdateAgentWithBodyWithResponse Update Agent
+// UpdateAgentWithBodyWithResponse Update an agent
 //
-// Partially update an agent — name, description, or owner_id.
+// Partially update an agent's `name`, `description` or `owner_id`.
+//
+// Only the fields present in the body change; an empty body returns the
+// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+// else gets 404). Changing `owner_id` transfers ownership, is
+// `org:admin`-only, and revokes every active OAuth client grant bound to
+// the agent, so the new owner must re-consent any connected client. The
+// agent's API key, permissions and credential bindings are unaffected. An
+// archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40936,9 +43558,17 @@ func (c *ClientWithResponses) UpdateAgentWithBodyWithResponse(ctx context.Contex
 	return ParseUpdateAgentHTTPResp(rsp)
 }
 
-// UpdateAgentWithResponse Update Agent
+// UpdateAgentWithResponse Update an agent
 //
-// Partially update an agent — name, description, or owner_id.
+// Partially update an agent's `name`, `description` or `owner_id`.
+//
+// Only the fields present in the body change; an empty body returns the
+// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+// else gets 404). Changing `owner_id` transfers ownership, is
+// `org:admin`-only, and revokes every active OAuth client grant bound to
+// the agent, so the new owner must re-consent any connected client. The
+// agent's API key, permissions and credential bindings are unaffected. An
+// archived agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40951,9 +43581,15 @@ func (c *ClientWithResponses) UpdateAgentWithResponse(ctx context.Context, agent
 	return ParseUpdateAgentHTTPResp(rsp)
 }
 
-// GetAgentApiKeyInfoWithResponse Get Agent Api Key Info
+// GetAgentApiKeyInfoWithResponse Get an agent's API key metadata
 //
-// Get API key metadata for an agent. Returns info even after revocation.
+// Describe an agent's API key without revealing it.
+//
+// Returns the key record's `id`, `status` (`active`, or `revoked` once
+// revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+// is never returned — it is shown once, by `:generate-api-key`. Metadata
+// stays available after revocation; the body is `null` if the agent never
+// had a key. Allowed for the agent's owner or an `org:admin`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40966,9 +43602,15 @@ func (c *ClientWithResponses) GetAgentApiKeyInfoWithResponse(ctx context.Context
 	return ParseGetAgentApiKeyInfoHTTPResp(rsp)
 }
 
-// GetAgentApiKeyHistoryWithResponse Get Agent Api Key History
+// GetAgentApiKeyHistoryWithResponse Get an agent's API key history
 //
-// Get the audit history of API key operations for an agent.
+// List recent API key rotations and revocations for an agent.
+//
+// Each entry gives the audit `action`, its `reason` (key rotated or key
+// revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+// 50 most recent audit entries, newest first, so very old key events may
+// not appear; it is not paginated. Allowed for the agent's owner or an
+// `org:admin`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40981,9 +43623,15 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 	return ParseGetAgentApiKeyHistoryHTTPResp(rsp)
 }
 
-// ListAgentCredentialsWithResponse List Credentials
+// ListAgentCredentialsWithResponse List an agent's credential bindings
 //
-// List direct credential bindings for an agent — requires agents:read or self.
+// List the credentials bound directly to an agent.
+//
+// Each binding names the credential, the API it serves, when it was bound,
+// whether it is `suspended` (and why), and any attached permission
+// `rule_set_id`. Credential secrets are never returned. Readable by the
+// agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+// paginated.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -40996,12 +43644,17 @@ func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Conte
 	return ParseListAgentCredentialsHTTPResp(rsp)
 }
 
-// BindAgentCredentialWithBodyWithResponse Bind Credential
+// BindAgentCredentialWithBodyWithResponse Bind a credential to an agent
 //
-// Directly bind a credential to an agent (theme 5 phase 1).
+// Let an agent use a credential by binding it directly.
 //
-// The caller must own the target credential (or hold “org:admin“); a
-// credential that does not exist or that the caller does not own returns 404.
+// A new binding starts with no permission rules, so the agent can make no
+// calls with it until rules are set or a rule set is attached. The caller
+// must be able to see the agent and must own the credential (or hold
+// `org:admin`). A credential that does not exist or that the caller does
+// not own returns 404; binding the same credential twice returns 409
+// (`credential_binding_conflict`).
+// Returns the new binding.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41014,12 +43667,17 @@ func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx contex
 	return ParseBindAgentCredentialHTTPResp(rsp)
 }
 
-// BindAgentCredentialWithResponse Bind Credential
+// BindAgentCredentialWithResponse Bind a credential to an agent
 //
-// Directly bind a credential to an agent (theme 5 phase 1).
+// Let an agent use a credential by binding it directly.
 //
-// The caller must own the target credential (or hold “org:admin“); a
-// credential that does not exist or that the caller does not own returns 404.
+// A new binding starts with no permission rules, so the agent can make no
+// calls with it until rules are set or a rule set is attached. The caller
+// must be able to see the agent and must own the credential (or hold
+// `org:admin`). A credential that does not exist or that the caller does
+// not own returns 404; binding the same credential twice returns 409
+// (`credential_binding_conflict`).
+// Returns the new binding.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41032,9 +43690,17 @@ func (c *ClientWithResponses) BindAgentCredentialWithResponse(ctx context.Contex
 	return ParseBindAgentCredentialHTTPResp(rsp)
 }
 
-// UnbindAgentCredentialWithResponse Unbind Credential
+// UnbindAgentCredentialWithResponse Suspend or remove a credential binding
 //
-// Unbind a credential from an agent — suspend by default, purge on request.
+// Stop an agent using a credential: suspend the binding, or purge it.
+//
+// By default the binding is **suspended**: the agent loses access at once,
+// but the binding and its permission rules are kept, and
+// `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+// With `purge=true` the binding and its inline permission rules are deleted
+// outright, so a later re-bind starts from deny-all. An agent may suspend
+// its own binding but not purge it. Both modes are audited. Returns 204; a
+// missing binding returns 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41047,9 +43713,15 @@ func (c *ClientWithResponses) UnbindAgentCredentialWithResponse(ctx context.Cont
 	return ParseUnbindAgentCredentialHTTPResp(rsp)
 }
 
-// ResumeAgentCredentialBindingWithResponse Resume Credential Binding
+// ResumeAgentCredentialBindingWithResponse Resume a suspended credential binding
 //
-// Lift a suspended credential binding — the reverse of the default unbind.
+// Restore an agent's access to a credential whose binding was suspended.
+//
+// Reverses the default (non-purge) unbind; a purged binding is gone and must
+// be bound again instead. Because resuming re-grants the credential, the
+// caller must own the credential (or hold `org:admin`) as well as see the
+// agent, and an agent cannot resume its own binding. Returns the binding;
+// 404 when no binding exists.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41100,16 +43772,17 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 	return ParseUpdateAgentJwksHTTPResp(rsp)
 }
 
-// ListAgentOauthGrantsWithResponse List agent OAuth grants
+// ListAgentOauthGrantsWithResponse List an agent's connected OAuth clients
 //
-// List OAuth consent grants binding clients to this agent.
+// List the OAuth clients a user has consented to act as this agent.
 //
-// The "Connected clients" surface: every grant carries the client's display
-// name and redirect-URI origin, the granted scopes, the consenting user,
-// and created/last-used timestamps. Allowed for the agent's owner or an
-// admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics. An agent the caller cannot see answers 404, the
-// same as an agent that does not exist.
+// Each grant gives the client's display name and redirect-URI origin, the
+// granted scopes, the consenting user, its `status`, created and last-used
+// timestamps, and `can_revoke` for the caller. Filter by `status`
+// (`active` or `revoked`); results are cursor-paginated. Allowed for the
+// agent's owner or an admin. An agent the caller cannot see answers 404,
+// the same as one that does not exist. Revoke a grant with
+// `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41472,9 +44145,16 @@ func (c *ClientWithResponses) GetApiSpecWithResponse(ctx context.Context, vendor
 	return ParseGetApiSpecHTTPResp(rsp)
 }
 
-// ListApiOperationsWithResponse List Api Operations
+// ListApiOperationsWithResponse List the operations an API currently serves
 //
-// List operations for the API's current (live) revision.
+// List every operation in the API's current (live) revision.
+//
+// Each row gives the operation's id, method, path, name, description, tags,
+// `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+// a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+// Use this to browse an API exhaustively; to find operations by intent,
+// use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+// revision.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41487,9 +44167,15 @@ func (c *ClientWithResponses) ListApiOperationsWithResponse(ctx context.Context,
 	return ParseListApiOperationsHTTPResp(rsp)
 }
 
-// ListOverlaysWithResponse List Overlays
+// ListOverlaysWithResponse List an API's overlays
 //
-// List overlays for an API with optional status filter and cursor pagination.
+// List the overlays submitted against an API, newest first.
+//
+// Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+// (applied to the served spec) or `deprecated` (retired) — and links to the
+// actions valid in that state. Filter with `status`. Results are
+// cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+// true.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41502,9 +44188,17 @@ func (c *ClientWithResponses) ListOverlaysWithResponse(ctx context.Context, vend
 	return ParseListOverlaysHTTPResp(rsp)
 }
 
-// SubmitOverlayWithBodyWithResponse Submit Overlay
+// SubmitOverlayWithBodyWithResponse Submit an OpenAPI overlay
 //
-// Submit a new overlay for an API.
+// Propose a change to an API's spec as an OpenAPI Overlay document.
+//
+// An overlay is a list of `actions` that patch the API's OpenAPI document —
+// for example correcting a description or adding a missing parameter.
+// Submitting stores it as `pending`; it changes nothing until an operator
+// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+// record a `contributed_by` label. The document must be a JSON object with
+// an `actions` array (at most 512 actions, 1 MB), else 422
+// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41517,9 +44211,17 @@ func (c *ClientWithResponses) SubmitOverlayWithBodyWithResponse(ctx context.Cont
 	return ParseSubmitOverlayHTTPResp(rsp)
 }
 
-// SubmitOverlayWithResponse Submit Overlay
+// SubmitOverlayWithResponse Submit an OpenAPI overlay
 //
-// Submit a new overlay for an API.
+// Propose a change to an API's spec as an OpenAPI Overlay document.
+//
+// An overlay is a list of `actions` that patch the API's OpenAPI document —
+// for example correcting a description or adding a missing parameter.
+// Submitting stores it as `pending`; it changes nothing until an operator
+// confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+// record a `contributed_by` label. The document must be a JSON object with
+// an `actions` array (at most 512 actions, 1 MB), else 422
+// (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41532,9 +44234,14 @@ func (c *ClientWithResponses) SubmitOverlayWithResponse(ctx context.Context, ven
 	return ParseSubmitOverlayHTTPResp(rsp)
 }
 
-// DeprecateOverlayWithResponse Deprecate Overlay
+// DeprecateOverlayWithResponse Deprecate an overlay
 //
-// Deprecate an overlay (soft delete).
+// Retire an overlay so it is no longer offered for confirmation.
+//
+// The overlay moves to `deprecated` but is kept, and remains readable for
+// history; nothing is deleted. Deprecating does not rewrite the served
+// spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+// `apis:write`. Returns 204.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41562,19 +44269,22 @@ func (c *ClientWithResponses) GetOverlayWithResponse(ctx context.Context, vendor
 	return ParseGetOverlayHTTPResp(rsp)
 }
 
-// UpdateOverlayWithBodyWithResponse Update Overlay
+// UpdateOverlayWithBodyWithResponse Edit an overlay
 //
-// Update an overlay's document or target revision.
+// Change an overlay's `document` or `target_revision_id`.
 //
-// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-// ordinary contributor edit — “apis:write“. Editing a *materialized* overlay
-// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-// the API's served spec (D1). That is an operator action, so it additionally requires
-// “overlays:confirm“; a caller with only “apis:write“ gets a 403
-// (“overlay_rematerialize_forbidden“). The re-materialize is refused with a 409 if the
-// overlay is no longer the live revision, and with “overlay_rollback_target_missing“
-// if no clean base was recorded to re-apply over.
+// What the edit does depends on the overlay's state:
+//
+//   - **Pending** (or confirmed but not yet applied): the stored overlay is
+//     updated; the served spec is untouched. Requires `apis:write`.
+//   - **Confirmed and live**: the edited document is re-applied over the
+//     overlay's original base and the result replaces the API's served spec.
+//     This also requires `overlays:confirm`, else 403
+//     (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+//     overlay is no longer the live revision, or
+//     (`overlay_rollback_target_missing`) if no clean base was recorded.
+//
+// Returns the updated overlay.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41587,19 +44297,22 @@ func (c *ClientWithResponses) UpdateOverlayWithBodyWithResponse(ctx context.Cont
 	return ParseUpdateOverlayHTTPResp(rsp)
 }
 
-// UpdateOverlayWithResponse Update Overlay
+// UpdateOverlayWithResponse Edit an overlay
 //
-// Update an overlay's document or target revision.
+// Change an overlay's `document` or `target_revision_id`.
 //
-// Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-// ordinary contributor edit — “apis:write“. Editing a *materialized* overlay
-// (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-// is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-// the API's served spec (D1). That is an operator action, so it additionally requires
-// “overlays:confirm“; a caller with only “apis:write“ gets a 403
-// (“overlay_rematerialize_forbidden“). The re-materialize is refused with a 409 if the
-// overlay is no longer the live revision, and with “overlay_rollback_target_missing“
-// if no clean base was recorded to re-apply over.
+// What the edit does depends on the overlay's state:
+//
+//   - **Pending** (or confirmed but not yet applied): the stored overlay is
+//     updated; the served spec is untouched. Requires `apis:write`.
+//   - **Confirmed and live**: the edited document is re-applied over the
+//     overlay's original base and the result replaces the API's served spec.
+//     This also requires `overlays:confirm`, else 403
+//     (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+//     overlay is no longer the live revision, or
+//     (`overlay_rollback_target_missing`) if no clean base was recorded.
+//
+// Returns the updated overlay.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41612,19 +44325,20 @@ func (c *ClientWithResponses) UpdateOverlayWithResponse(ctx context.Context, ven
 	return ParseUpdateOverlayHTTPResp(rsp)
 }
 
-// ConfirmOverlayWithBodyWithResponse Confirm Overlay
+// ConfirmOverlayWithBodyWithResponse Confirm an overlay and apply it to the served spec
 //
-// Confirm an overlay, materializing it onto the served spec.
+// Apply a pending overlay, producing a new current revision of the API.
 //
-// Requires “overlays:confirm“: confirming rewrites the API's served spec (it
-// re-ingests the base spec with the overlay applied and promotes the result to the
-// current revision), so it is an operator action, not a contributor one (contributors
-// “submit“ overlays with “apis:write“; an operator reviews and confirms). This is a
-// purpose-scoped downgrade from the former “org:admin“ gate — narrow enough that an
-// owner can grant it to a trusted operator without handing over full admin power.
-// “org:admin“ still satisfies it (it implies “overlays:confirm“), and the scope is
-// deliberately excluded from an agent's self-service grantable set so a low-privilege
-// agent cannot escalate into it.
+// The base spec is re-imported with the overlay applied and the result is
+// promoted to the API's current revision, so it is what the API now serves.
+// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+// a no-op that returns it unchanged; a deprecated overlay is refused with
+// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+// with 409 (`overlay_apply_conflict`).
+//
+// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+// overlays with `apis:write`, and an operator reviews and confirms them.
+// Agents cannot grant themselves this permission. Returns the overlay.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41637,19 +44351,20 @@ func (c *ClientWithResponses) ConfirmOverlayWithBodyWithResponse(ctx context.Con
 	return ParseConfirmOverlayHTTPResp(rsp)
 }
 
-// ConfirmOverlayWithResponse Confirm Overlay
+// ConfirmOverlayWithResponse Confirm an overlay and apply it to the served spec
 //
-// Confirm an overlay, materializing it onto the served spec.
+// Apply a pending overlay, producing a new current revision of the API.
 //
-// Requires “overlays:confirm“: confirming rewrites the API's served spec (it
-// re-ingests the base spec with the overlay applied and promotes the result to the
-// current revision), so it is an operator action, not a contributor one (contributors
-// “submit“ overlays with “apis:write“; an operator reviews and confirms). This is a
-// purpose-scoped downgrade from the former “org:admin“ gate — narrow enough that an
-// owner can grant it to a trusted operator without handing over full admin power.
-// “org:admin“ still satisfies it (it implies “overlays:confirm“), and the scope is
-// deliberately excluded from an agent's self-service grantable set so a low-privilege
-// agent cannot escalate into it.
+// The base spec is re-imported with the overlay applied and the result is
+// promoted to the API's current revision, so it is what the API now serves.
+// The overlay becomes `confirmed`. Confirming an already-applied overlay is
+// a no-op that returns it unchanged; a deprecated overlay is refused with
+// 409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+// with 409 (`overlay_apply_conflict`).
+//
+// Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+// overlays with `apis:write`, and an operator reviews and confirms them.
+// Agents cannot grant themselves this permission. Returns the overlay.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41662,18 +44377,21 @@ func (c *ClientWithResponses) ConfirmOverlayWithResponse(ctx context.Context, ve
 	return ParseConfirmOverlayHTTPResp(rsp)
 }
 
-// RollbackOverlayWithResponse Rollback Overlay
+// RollbackOverlayWithResponse Roll back a confirmed overlay
 //
-// Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+// Undo a confirmed overlay by restoring the revision it replaced.
 //
-// Requires “overlays:confirm“ — the symmetric inverse of confirm. Rolling back
-// rewrites the API's served spec (it archives the overlay's materialized revision and
-// promotes the prior revision back to current), so it is the same operator action as
-// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
-// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
-// restored revision's hosts) and nothing changes.
+// The overlay's revision is archived and the revision it superseded becomes
+// the API's current revision again, so the served spec reverts, and the
+// overlay is marked `deprecated`. Requires `overlays:confirm`, like
+// confirming.
+//
+// Preconditions: the overlay is `confirmed`, its revision is still the
+// live one, and the revision it replaced is still restorable. Otherwise
+// nothing changes and 409 is returned: `overlay_conflict`,
+// `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+// another vendor's live API now serves one of the restored revision's
+// hosts. Returns 204.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41686,9 +44404,17 @@ func (c *ClientWithResponses) RollbackOverlayWithResponse(ctx context.Context, v
 	return ParseRollbackOverlayHTTPResp(rsp)
 }
 
-// ListApiRevisionsWithResponse List Api Revisions
+// ListApiRevisionsWithResponse List an API's revisions
 //
-// List revisions for an API with optional state filter and cursor pagination.
+// List every revision imported for an API, newest first.
+//
+// Each revision gives its `state` (`draft`, `published`, `imported` or
+// `archived`), whether it `is_current` (the one served), its source, spec
+// digest, operation count and lifecycle timestamps, plus links to the
+// actions valid in its state. Repeat `state` to filter by several states.
+// Results are cursor-paginated: pass `next_cursor` as `cursor` while
+// `has_more` is true. Fetch one revision with
+// `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41701,9 +44427,13 @@ func (c *ClientWithResponses) ListApiRevisionsWithResponse(ctx context.Context, 
 	return ParseListApiRevisionsHTTPResp(rsp)
 }
 
-// DeleteRevisionWithResponse Delete Revision
+// DeleteRevisionWithResponse Delete an archived API revision
 //
-// Delete an archived revision.
+// Permanently delete an archived revision.
+//
+// Only an `archived` revision can be deleted — archive it first; any other
+// state is refused with 409 (`revision_state_conflict`). Deletion cannot
+// be undone. Requires `apis:write`. Returns 204.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41716,9 +44446,15 @@ func (c *ClientWithResponses) DeleteRevisionWithResponse(ctx context.Context, ve
 	return ParseDeleteRevisionHTTPResp(rsp)
 }
 
-// GetApiRevisionWithResponse Get Api Revision
+// GetApiRevisionWithResponse Get an API revision
 //
-// Retrieve a single revision by ID.
+// Get one revision's metadata and lifecycle state.
+//
+// Returns the same fields as an entry in the revision list: `state`,
+// `is_current`, source, spec digest, operation count, timestamps, and links
+// to the actions valid in its state. This is metadata only — download the
+// spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+// revision does not exist.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41731,9 +44467,16 @@ func (c *ClientWithResponses) GetApiRevisionWithResponse(ctx context.Context, ve
 	return ParseGetApiRevisionHTTPResp(rsp)
 }
 
-// GetApiRevisionSpecWithResponse Get Api Revision Spec
+// GetApiRevisionSpecWithResponse Download an API revision's OpenAPI document
 //
-// Download the OpenAPI spec for a specific revision.
+// Download the stored OpenAPI document of one revision.
+//
+// Choose the format with `Accept`: `application/json` (the default), or
+// `application/openapi+yaml` / `application/yaml`; anything else returns
+// 406. The response carries `Content-Disposition: attachment` with a
+// `.json` or `.yaml` filename. The document is served exactly as stored —
+// a revision produced by confirming an overlay already includes it, so the
+// `overlays` flag currently has no effect.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41746,9 +44489,14 @@ func (c *ClientWithResponses) GetApiRevisionSpecWithResponse(ctx context.Context
 	return ParseGetApiRevisionSpecHTTPResp(rsp)
 }
 
-// ListApiRevisionOperationsWithResponse List Api Revision Operations
+// ListApiRevisionOperationsWithResponse List the operations in an API revision
 //
-// List operations for a specific revision.
+// List every operation in one specific revision, live or not.
+//
+// Same rows, ordering and cursor pagination as the live-revision listing,
+// but for the named revision, so you can review a draft before promoting
+// it or compare against an archived one. Follow each row's `inspect` link
+// for full detail. 404 if the API or revision does not exist.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41761,9 +44509,15 @@ func (c *ClientWithResponses) ListApiRevisionOperationsWithResponse(ctx context.
 	return ParseListApiRevisionOperationsHTTPResp(rsp)
 }
 
-// ArchiveRevisionWithResponse Archive Revision
+// ArchiveRevisionWithResponse Archive an API revision
 //
-// Archive a draft revision.
+// Retire a `draft` or `imported` revision without deleting it.
+//
+// The revision moves to `archived` and is kept for reference; it can then
+// be deleted. If it was the API's current revision, the API is left with
+// no live revision until another is promoted. A revision in any other
+// state is refused with 409 (`revision_state_conflict`). Requires
+// `apis:write`. Returns the archived revision.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -41815,6 +44569,9 @@ func (c *ClientWithResponses) ListApiSecuritySchemesWithResponse(ctx context.Con
 // ListAuditEntriesWithResponse List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -42135,6 +44892,21 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 }
 
 // PollConnectSessionStatusWithResponse Poll a connect session's status
+//
+// Poll the lifecycle status of a connect session.
+//
+// Returns the session's current “status“ and, once it has connected, the
+// resulting “credential_id“, the account it “connected_as“, and the
+// “bound_scopes“; a failed session carries an “error_code“. Agents and the
+// SPA poll this after “:connect“ until the status is terminal.
+//
+// Auth is intentionally lightweight: the caller must be authenticated with
+// “credentials:connect“ or “credentials:write“, but the real capability
+// that scopes the response is the session's “poll_token“ (or being the
+// target agent's owner / “org:admin“). An agent handed the token by
+// “:connect“ can poll without full session-read rights. A missing session,
+// a “poll_token“ mismatch, and a caller who is neither all answer a uniform
+// 403, so the endpoint is not a session-id enumeration oracle.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44203,10 +46975,17 @@ func (c *ClientWithResponses) ListPermissionRuleSetsWithResponse(ctx context.Con
 
 // CreatePermissionRuleSetWithBodyWithResponse Create permission rule set
 //
-// Create a named, shareable ordered rule list (theme 5 rule grouping).
+// Create a named, reusable list of permission rules.
 //
-// N agent-credential bindings can point at one set, so `permissions:test`
-// and "revoke this operation everywhere" stay single-place edits.
+// Attach the set to any number of agent-credential bindings
+// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+// its rules later updates every attached binding at once, so a policy
+// change such as "block this operation everywhere" is a single edit.
+// Supply a unique `name`, an optional `description`, and optional initial
+// ordered `rules`. A set created by an `org:admin` is *curated*: any
+// `credentials:write` holder may attach it, but only an `org:admin` may
+// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+// if the name is taken.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44221,10 +47000,17 @@ func (c *ClientWithResponses) CreatePermissionRuleSetWithBodyWithResponse(ctx co
 
 // CreatePermissionRuleSetWithResponse Create permission rule set
 //
-// Create a named, shareable ordered rule list (theme 5 rule grouping).
+// Create a named, reusable list of permission rules.
 //
-// N agent-credential bindings can point at one set, so `permissions:test`
-// and "revoke this operation everywhere" stay single-place edits.
+// Attach the set to any number of agent-credential bindings
+// (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+// its rules later updates every attached binding at once, so a policy
+// change such as "block this operation everywhere" is a single edit.
+// Supply a unique `name`, an optional `description`, and optional initial
+// ordered `rules`. A set created by an `org:admin` is *curated*: any
+// `credentials:write` holder may attach it, but only an `org:admin` may
+// edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+// if the name is taken.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44239,7 +47025,12 @@ func (c *ClientWithResponses) CreatePermissionRuleSetWithResponse(ctx context.Co
 
 // DeletePermissionRuleSetWithResponse Delete permission rule set
 //
-// Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+// Permanently delete a rule set that no binding uses.
+//
+// Detach the set from every binding first: while any binding still
+// references it the delete fails with 409 (`rule_set_in_use`) and nothing
+// changes. Same edit permission as updating the set (403
+// `rule_set_access_denied`). Returns 204.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44267,12 +47058,16 @@ func (c *ClientWithResponses) GetPermissionRuleSetWithResponse(ctx context.Conte
 	return ParseGetPermissionRuleSetHTTPResp(rsp)
 }
 
-// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
+// UpdatePermissionRuleSetWithBodyWithResponse Rename or re-describe a permission rule set
 //
-// Rename or re-describe a rule set.
+// Change a rule set's `name` and/or `description`.
 //
-// A curated set is editable by an org admin; any other set by its creator
-// or an org admin (403 `rule_set_access_denied` otherwise).
+// The rules themselves are replaced separately, with
+// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+// only by an `org:admin`; any other set by its creator or an `org:admin`
+// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+// its rules and the number of bindings referencing it; 409
+// (`rule_set_name_conflict`) if the new name is taken.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44285,12 +47080,16 @@ func (c *ClientWithResponses) UpdatePermissionRuleSetWithBodyWithResponse(ctx co
 	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
 }
 
-// UpdatePermissionRuleSetWithResponse Update permission rule set
+// UpdatePermissionRuleSetWithResponse Rename or re-describe a permission rule set
 //
-// Rename or re-describe a rule set.
+// Change a rule set's `name` and/or `description`.
 //
-// A curated set is editable by an org admin; any other set by its creator
-// or an org admin (403 `rule_set_access_denied` otherwise).
+// The rules themselves are replaced separately, with
+// `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+// only by an `org:admin`; any other set by its creator or an `org:admin`
+// (403 `rule_set_access_denied` otherwise). Returns the updated set with
+// its rules and the number of bindings referencing it; 409
+// (`rule_set_name_conflict`) if the new name is taken.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44303,12 +47102,16 @@ func (c *ClientWithResponses) UpdatePermissionRuleSetWithResponse(ctx context.Co
 	return ParseUpdatePermissionRuleSetHTTPResp(rsp)
 }
 
-// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace rule set rules
+// ReplacePermissionRuleSetRulesWithBodyWithResponse Replace all rules in a permission rule set
 //
-// Replace the set's full ordered rule list (idempotent PUT).
+// Replace a rule set's entire ordered rule list with the body.
 //
-// Every binding pointing at the set picks the new list up at once — the
-// single-place edit rule grouping exists for.
+// This is a full replacement, not a merge: user rules missing from the body
+// are removed, and an empty list clears them. Platform-managed system rules
+// (`_system: true`) are kept. The request is idempotent.
+// Every binding attached to the set enforces the new rules immediately.
+// Same edit permission as updating the set (403 `rule_set_access_denied`).
+// Returns the stored rules in order.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44321,12 +47124,16 @@ func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithBodyWithResponse(
 	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
 }
 
-// ReplacePermissionRuleSetRulesWithResponse Replace rule set rules
+// ReplacePermissionRuleSetRulesWithResponse Replace all rules in a permission rule set
 //
-// Replace the set's full ordered rule list (idempotent PUT).
+// Replace a rule set's entire ordered rule list with the body.
 //
-// Every binding pointing at the set picks the new list up at once — the
-// single-place edit rule grouping exists for.
+// This is a full replacement, not a merge: user rules missing from the body
+// are removed, and an empty list clears them. Platform-managed system rules
+// (`_system: true`) are kept. The request is idempotent.
+// Every binding attached to the set enforces the new rules immediately.
+// Same edit permission as updating the set (403 `rule_set_access_denied`).
+// Returns the stored rules in order.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -44339,9 +47146,15 @@ func (c *ClientWithResponses) ReplacePermissionRuleSetRulesWithResponse(ctx cont
 	return ParseReplacePermissionRuleSetRulesHTTPResp(rsp)
 }
 
-// ListPermissionsWithResponse List Permissions
+// ListPermissionsWithResponse List the permission catalogue
 //
-// List the permission catalogue visible to the caller.
+// List every permission, flagged with whether the caller may grant it to an agent.
+//
+// Each entry gives the permission `name`, a `description`, the permissions
+// it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+// `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+// `org:admin` is listed only to callers who hold it. Use it to build an
+// agent permission picker. Any signed-in caller may call it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44501,7 +47314,9 @@ func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEdi
 
 // ListUsersWithResponse List Users
 //
-// List all users with cursor-based pagination.
+// List users with cursor-based pagination.
+//
+// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44620,6 +47435,9 @@ func (c *ClientWithResponses) DeleteUserWithResponse(ctx context.Context, userId
 // GetUserWithResponse Get User
 //
 // Get a user by ID.
+//
+// Scoped to the caller: org admins can read any user; anyone else only themselves.
+// Any other user answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44826,13 +47644,19 @@ func (c *ClientWithResponses) ListVendorsWithResponse(ctx context.Context, reqEd
 	return ParseListVendorsHTTPResp(rsp)
 }
 
-// GetAuthCapabilitiesWithResponse Get a vendor's SSO capabilities
+// GetAuthCapabilitiesWithResponse Get a vendor's OAuth flows and scopes
 //
-// Full auth capabilities for one vendor — flows, scopes, classifications.
+// Describe how to connect a vendor: its OAuth flows and scope catalogue.
 //
-// Never returns client_secret (authorization-code flow's secret is stripped
-// at response build time). “UnknownVendorError“ maps to a 404 problem
-// detail via the handler registered in “control/web/app.py“.
+// `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+// name, the OAuth `flows` it supports (`authorization_code` and/or
+// `device_authorization`), and every scope with its `classification`
+// (`read`, `write` or `admin`), whether it is requested by default, and a
+// description. Use it to build a connect screen before starting a connect
+// session. When the vendor has several admin-registered OAuth apps, pass
+// `oauth_app_registration_id` to pick one; without it the request fails
+// with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+// An unknown vendor returns 404 (`unknown_vendor`).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -44981,8 +47805,12 @@ func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuth
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -45038,8 +47866,12 @@ func ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp *http.Response) (*McpOa
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -45095,8 +47927,12 @@ func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtec
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -47902,6 +50738,20 @@ func ParseDeleteApiHTTPResp(rsp *http.Response) (*DeleteApiHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -52556,7 +55406,7 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest RootHealthResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -53049,6 +55899,44 @@ func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -53080,8 +55968,12 @@ func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54184,8 +57076,12 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 		}
 		response.JSON201 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
@@ -54298,8 +57194,12 @@ func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisio
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -54362,8 +57262,12 @@ func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEnd
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54456,6 +57360,37 @@ func ParseConsentPageHTTPResp(rsp *http.Response) (*ConsentPageHTTPResp, error) 
 	response := &ConsentPageHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	return response, nil
@@ -54590,8 +57525,12 @@ func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTT
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54708,8 +57647,12 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -54718,11 +57661,19 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON401 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 413:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54731,8 +57682,12 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON422 = &dest
 
-	case rsp.StatusCode == 429:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
@@ -54774,8 +57729,12 @@ func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueE
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -54791,8 +57750,12 @@ func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueE
 		}
 		response.ApplicationproblemJSON403 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -54841,11 +57804,19 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 429:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
@@ -56170,6 +59141,13 @@ func ParseGetUserHTTPResp(rsp *http.Response) (*GetUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

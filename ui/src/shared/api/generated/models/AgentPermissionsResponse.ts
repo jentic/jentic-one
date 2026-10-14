@@ -6,6 +6,9 @@
  * Response containing an agent's current permissions.
  */
 export type AgentPermissionsResponse = {
+    /**
+     * Permissions currently granted to the agent.
+     */
     permissions: Array<string>;
 };
 

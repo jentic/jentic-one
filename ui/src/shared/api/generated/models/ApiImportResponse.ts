@@ -8,7 +8,13 @@ import type { ApiImportLinksResponse } from './ApiImportLinksResponse';
  */
 export type ApiImportResponse = {
     _links: ApiImportLinksResponse;
+    /**
+     * ID of the import job.
+     */
     job_id: string;
+    /**
+     * Status of the job when accepted; `queued`.
+     */
     status: string;
 };
 

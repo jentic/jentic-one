@@ -6,6 +6,9 @@
  * Request body for denying an agent.
  */
 export type DenyRequest = {
+    /**
+     * Why the agent is being denied.
+     */
     reason: string;
 };
 

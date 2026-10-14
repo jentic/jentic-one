@@ -7,8 +7,8 @@
  * (`?status=active|completed|failed`); this body reads it. While any job on
  * the newest page is still queued/running, the list re-polls so it settles
  * without a manual refresh. Clicking a row opens the job in the detail pane,
- * which carries the Cancel action (org:admin only). Jobs carry no actor on
- * the wire, so the record resolves "who" from the audit log by `job_id`.
+ * which carries the Cancel action (org:admin only) and who enqueued the job
+ * (read off the job record's `actor_id`/`actor_type`).
  *
  * A caller without `jobs:read` (or `org:admin`) reads nothing and sees a plain
  * "No access" state; a 401/403 from the read lands there too.
@@ -161,7 +161,6 @@ export function JobsTab() {
 														aria-hidden="true"
 													/>
 												}
-												label={`View ${row.kind} job ${row.job_id}`}
 												active={openKey === `job:${row.job_id}`}
 												onOpen={() => open({ kind: 'job', id: row.job_id })}
 											/>

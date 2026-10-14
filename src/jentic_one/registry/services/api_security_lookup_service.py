@@ -26,12 +26,15 @@ _LIVE_REVISION_STATES = frozenset(
 
 def _declared_scheme(scheme: SecurityScheme) -> DeclaredSecurityScheme:
     scopes: list[str] = []
+    descriptions: dict[str, str] = {}
     authorization_url: str | None = None
     token_url: str | None = None
     for flow in scheme.flows:
-        for name in flow.scopes or {}:
+        for name, description in (flow.scopes or {}).items():
             if name not in scopes:
                 scopes.append(str(name))
+            if isinstance(description, str) and description.strip():
+                descriptions.setdefault(str(name), description.strip())
         if flow.flow_type == "authorizationCode":
             authorization_url = flow.authorization_url
             token_url = flow.token_url
@@ -42,6 +45,7 @@ def _declared_scheme(scheme: SecurityScheme) -> DeclaredSecurityScheme:
         location=scheme.in_location,
         field_name=scheme.param_name,
         oauth_scopes=tuple(scopes),
+        oauth_scope_descriptions=tuple(descriptions.items()),
         authorization_url=authorization_url,
         token_url=token_url,
     )

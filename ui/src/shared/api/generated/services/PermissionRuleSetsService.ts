@@ -22,7 +22,13 @@ export class PermissionRuleSetsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of rule sets to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<RuleSetListResponse> {
         return __request(OpenAPI, {
@@ -44,16 +50,26 @@ export class PermissionRuleSetsService {
     }
     /**
      * Create permission rule set
-     * Create a named, shareable ordered rule list (theme 5 rule grouping).
+     * Create a named, reusable list of permission rules.
      *
-     * N agent-credential bindings can point at one set, so `permissions:test`
-     * and "revoke this operation everywhere" stay single-place edits.
+     * Attach the set to any number of agent-credential bindings
+     * (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+     * its rules later updates every attached binding at once, so a policy
+     * change such as "block this operation everywhere" is a single edit.
+     * Supply a unique `name`, an optional `description`, and optional initial
+     * ordered `rules`. A set created by an `org:admin` is *curated*: any
+     * `credentials:write` holder may attach it, but only an `org:admin` may
+     * edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+     * if the name is taken.
      * @returns RuleSetResponse Successful Response
      * @throws ApiError
      */
     public static createPermissionRuleSet({
         requestBody,
     }: {
+        /**
+         * Create a shared permission rule set (theme 5 phase 1, Q-04).
+         */
         requestBody: RuleSetCreateRequest,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -74,13 +90,21 @@ export class PermissionRuleSetsService {
     }
     /**
      * Delete permission rule set
-     * Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+     * Permanently delete a rule set that no binding uses.
+     *
+     * Detach the set from every binding first: while any binding still
+     * references it the delete fails with 409 (`rule_set_in_use`) and nothing
+     * changes. Same edit permission as updating the set (403
+     * `rule_set_access_denied`). Returns 204.
      * @returns void
      * @throws ApiError
      */
     public static deletePermissionRuleSet({
         ruleSetId,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -110,6 +134,9 @@ export class PermissionRuleSetsService {
     public static getPermissionRuleSet({
         ruleSetId,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -130,11 +157,15 @@ export class PermissionRuleSetsService {
         });
     }
     /**
-     * Update permission rule set
-     * Rename or re-describe a rule set.
+     * Rename or re-describe a permission rule set
+     * Change a rule set's `name` and/or `description`.
      *
-     * A curated set is editable by an org admin; any other set by its creator
-     * or an org admin (403 `rule_set_access_denied` otherwise).
+     * The rules themselves are replaced separately, with
+     * `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+     * only by an `org:admin`; any other set by its creator or an `org:admin`
+     * (403 `rule_set_access_denied` otherwise). Returns the updated set with
+     * its rules and the number of bindings referencing it; 409
+     * (`rule_set_name_conflict`) if the new name is taken.
      * @returns RuleSetResponse Successful Response
      * @throws ApiError
      */
@@ -142,7 +173,13 @@ export class PermissionRuleSetsService {
         ruleSetId,
         requestBody,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
+        /**
+         * Rename or re-describe a rule set.
+         */
         requestBody: RuleSetUpdateRequest,
     }): CancelablePromise<RuleSetResponse> {
         return __request(OpenAPI, {
@@ -165,11 +202,15 @@ export class PermissionRuleSetsService {
         });
     }
     /**
-     * Replace rule set rules
-     * Replace the set's full ordered rule list (idempotent PUT).
+     * Replace all rules in a permission rule set
+     * Replace a rule set's entire ordered rule list with the body.
      *
-     * Every binding pointing at the set picks the new list up at once — the
-     * single-place edit rule grouping exists for.
+     * This is a full replacement, not a merge: user rules missing from the body
+     * are removed, and an empty list clears them. Platform-managed system rules
+     * (`_system: true`) are kept. The request is idempotent.
+     * Every binding attached to the set enforces the new rules immediately.
+     * Same edit permission as updating the set (403 `rule_set_access_denied`).
+     * Returns the stored rules in order.
      * @returns PermissionRuleListResponse Successful Response
      * @throws ApiError
      */
@@ -177,7 +218,13 @@ export class PermissionRuleSetsService {
         ruleSetId,
         requestBody,
     }: {
+        /**
+         * ID of the permission rule set.
+         */
         ruleSetId: string,
+        /**
+         * Request payload for the `replacePermissionRuleSetRules` operation.
+         */
         requestBody: Array<PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {

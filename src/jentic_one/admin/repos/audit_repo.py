@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
@@ -91,8 +93,19 @@ class AuditRepository:
         return entry
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, audit_id: str) -> AuditEntry | None:
-        return await session.get(AuditEntry, audit_id)
+    async def get_by_id(
+        session: AsyncSession,
+        audit_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> AuditEntry | None:
+        if filters is None:
+            return await session.get(AuditEntry, audit_id)
+        stmt = select(AuditEntry).where(AuditEntry.id == audit_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def list_by_target(
@@ -106,6 +119,7 @@ class AuditRepository:
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
         """List entries for a target, ordered by occurred_at DESC, cursor-paginated."""
         stmt = (
@@ -124,6 +138,8 @@ class AuditRepository:
             stmt = stmt.where(AuditEntry.occurred_at >= since)
         if until is not None:
             stmt = stmt.where(AuditEntry.occurred_at <= until)
+        for f in filters or ():
+            stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -137,6 +153,7 @@ class AuditRepository:
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
         """List entries for an actor, ordered by occurred_at DESC, cursor-paginated."""
         stmt = (
@@ -153,6 +170,8 @@ class AuditRepository:
             stmt = stmt.where(AuditEntry.occurred_at >= since)
         if until is not None:
             stmt = stmt.where(AuditEntry.occurred_at <= until)
+        for f in filters or ():
+            stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -165,6 +184,7 @@ class AuditRepository:
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
         """Global feed ordered by occurred_at DESC with optional time bounds."""
         stmt = select(AuditEntry).order_by(AuditEntry.occurred_at.desc()).limit(limit)
@@ -176,5 +196,7 @@ class AuditRepository:
             stmt = stmt.where(AuditEntry.occurred_at >= since)
         if until is not None:
             stmt = stmt.where(AuditEntry.occurred_at <= until)
+        for f in filters or ():
+            stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())

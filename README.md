@@ -18,6 +18,7 @@
 <p align="center">
   <a href="https://github.com/jentic/jentic-one/actions/workflows/ci.yml"><img src="https://github.com/jentic/jentic-one/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-A3CACC.svg" alt="License: Apache 2.0"></a>
+  <a href="https://www.opensourcealternatives.to"><img src="https://www.opensourcealternatives.to/badge-osa.svg" alt="Listed on Open Source Alternatives"></a>
   <img src="https://img.shields.io/badge/Python-3.12-68BAEC.svg?logo=python&logoColor=white" alt="Python 3.12">
   <img src="https://img.shields.io/badge/Go-1.26-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/PostgreSQL-16-A3CACC.svg?logo=postgresql&logoColor=white" alt="PostgreSQL">
@@ -86,6 +87,17 @@ docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
   ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
 
 curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
+```
+
+Prefer one file? The
+[quickstart compose file](deploy/docker/quickstart/docker-compose.yaml) has
+the same settings built in and runs the migrations, the control plane and the
+broker as one stack:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+docker compose up -d
+docker compose exec app python -m jentic_one create-admin --email you@example.com
 ```
 
 `quickstart.env` turns on anonymous product telemetry

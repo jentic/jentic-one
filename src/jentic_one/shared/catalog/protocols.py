@@ -59,8 +59,9 @@ class DeclaredSecurityScheme:
     ``openIdConnect``, ``mutualTLS``). ``http_scheme`` is the lowercased
     ``scheme`` of an ``http`` scheme (``bearer``, ``basic``); ``location`` and
     ``field_name`` are an ``apiKey`` scheme's ``in`` and ``name``. The OAuth
-    fields come from the scheme's flows: every scope any flow declares, and the
-    authorization-code flow's endpoints when it has one.
+    fields come from the scheme's flows: every scope any flow declares (with the
+    spec's description of it, when it gives one), and the authorization-code
+    flow's endpoints when it has one.
     """
 
     name: str
@@ -69,6 +70,8 @@ class DeclaredSecurityScheme:
     location: str | None = None
     field_name: str | None = None
     oauth_scopes: tuple[str, ...] = ()
+    #: ``(scope, description)`` pairs, for the scopes whose description is non-empty.
+    oauth_scope_descriptions: tuple[tuple[str, str], ...] = ()
     authorization_url: str | None = None
     token_url: str | None = None
 

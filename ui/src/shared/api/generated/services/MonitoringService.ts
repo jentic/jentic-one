@@ -18,6 +18,9 @@ export class MonitoringService {
     public static getExecutionStats({
         days = 7,
     }: {
+        /**
+         * Number of days back from now to aggregate over (1-30, default 7).
+         */
         days?: number,
     }): CancelablePromise<ExecutionStatsResponse> {
         return __request(OpenAPI, {
@@ -52,13 +55,37 @@ export class MonitoringService {
         agentId,
         status,
     }: {
+        /**
+         * Start of the window in Unix epoch seconds (inclusive); defaults to 24 hours before `until`.
+         */
         since?: (number | null),
+        /**
+         * End of the window in Unix epoch seconds (exclusive); defaults to the next minute boundary after now.
+         */
         until?: (number | null),
+        /**
+         * Dimension to group the `top` rows by; defaults to `api`.
+         */
         groupBy?: (GroupBy | null),
+        /**
+         * Maximum number of `top` rows to return (1-50, default 10).
+         */
         topLimit?: number,
+        /**
+         * Legacy: only count executions mediated by this toolkit.
+         */
         toolkitId?: (string | null),
+        /**
+         * Only count executions of this API, given as `vendor/name`.
+         */
         apiId?: (string | null),
+        /**
+         * Only count executions run by this actor ID.
+         */
         agentId?: (string | null),
+        /**
+         * Only count executions with this status, e.g. `completed` or `failed`.
+         */
         status?: (string | null),
     }): CancelablePromise<UsageResponse> {
         return __request(OpenAPI, {

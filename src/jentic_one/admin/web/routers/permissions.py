@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path
 
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.user_service import UserService
@@ -20,17 +22,25 @@ from jentic_one.admin.web.schemas.permissions import (
 from jentic_one.admin.web.schemas.users import UserResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
 
-@router.get("/permissions")
+@router.get("/permissions", summary="List the permission catalogue")
 async def list_permissions(
     identity: Identity = get_current_identity(),
     perm_svc: PermissionService = Depends(get_permission_service),
 ) -> PermissionListResponse:
-    """List the permission catalogue visible to the caller."""
+    """List every permission, flagged with whether the caller may grant it to an agent.
+
+    Each entry gives the permission `name`, a `description`, the permissions
+    it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+    `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+    `org:admin` is listed only to callers who hold it. Use it to build an
+    agent permission picker. Any signed-in caller may call it.
+    """
     entries = await perm_svc.list_catalogue(identity.sub)
     return PermissionListResponse(
         data=[
@@ -53,7 +63,9 @@ async def list_permissions(
     ),
 )
 async def set_user_permissions(
-    user_id: str,
+    user_id: Annotated[
+        str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
+    ],
     body: SetPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     perm_svc: PermissionService = Depends(get_permission_service),

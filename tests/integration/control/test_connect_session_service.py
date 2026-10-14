@@ -2047,7 +2047,7 @@ async def test_create_session_refuses_api_target_while_gate_is_off(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     target = ApiTarget(vendor="example-com", name="example", version="1.0.0")
-    assert ctx.config.control.connect.manual_flows_enabled is False
+    monkeypatch.setattr(ctx.config.control.connect, "manual_flows_enabled", False)
     with pytest.raises(ManualFlowsDisabledError):
         await svc.create_session(
             vendor_key="example-com",

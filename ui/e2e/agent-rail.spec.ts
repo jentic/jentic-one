@@ -111,7 +111,7 @@ test.describe('Activity rail — shell-mounted live event feed', () => {
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await login(page);
 		await gotoRailPage(page);
-		await page.getByRole('button', { name: /^Notifications \(\d+ needs? you\)/ }).click();
+		await page.getByRole('button', { name: /^Notifications, \d+ unread/ }).click();
 		const panel = page.getByRole('dialog', { name: /^Notifications/ });
 		await expect(panel.getByRole('region', { name: 'Approvals' })).toBeVisible();
 		await panel.getByRole('button', { name: 'Notification settings' }).click();

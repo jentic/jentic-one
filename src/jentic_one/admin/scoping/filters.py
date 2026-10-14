@@ -8,10 +8,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
@@ -24,6 +26,8 @@ _OWNER_MODELS: dict[type[Any], Any] = {
     Job: Job.created_by,
     ExecutionRecord: ExecutionRecord.actor_id,
     Event: Event.actor_id,
+    AuditEntry: AuditEntry.actor_id,
+    OAuthClientGrant: OAuthClientGrant.user_id,
     # ExecutionApproval rows are owned by the agent that created the hold.
     # The human owner of that agent can see their agent's approval rows too
     # (via the _OWNED_AGENT_ACTOR_MODELS check).
@@ -33,9 +37,11 @@ _OWNER_MODELS: dict[type[Any], Any] = {
 # Extra subject columns matched the same way as the owner column. An event names
 # what it is about in ``created_by``: the credential owner on credential use and
 # health events, the agent on binding events, the consenting user on an OAuth
-# grant. ``actor_id`` stays whoever acted.
+# grant. ``actor_id`` stays whoever acted. An OAuth grant is owned by the
+# consenting user (``user_id``) and is about the agent it binds (``agent_id``).
 _EXTRA_OWNER_COLUMNS: dict[type[Any], tuple[Any, ...]] = {
     Event: (Event.created_by,),
+    OAuthClientGrant: (OAuthClientGrant.agent_id,),
 }
 
 _ID_MODELS: dict[type[Any], Any] = {
@@ -48,9 +54,12 @@ _DELEGATION_PERMISSIONS: dict[type[Any], str] = {
 
 # Models whose owner column records the acting subject (a user *or* an agent).
 # The human owner of an agent is accountable for what it does, so a row created
-# by one of the caller's agents is visible to the caller as well.
+# by one of the caller's agents is visible to the caller as well. An audit entry
+# is attributed to whoever acted (``actor_id``), so the audit log shows the caller
+# their own changes plus those made by their agents. An OAuth grant bound to one
+# of the caller's agents is visible to the caller even when someone else consented.
 _OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset(
-    {Job, ExecutionRecord, Event, ExecutionApproval}
+    {Job, ExecutionRecord, Event, AuditEntry, OAuthClientGrant, ExecutionApproval}
 )
 
 
@@ -61,11 +70,13 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter (owner or delegator).
     3. Otherwise -> owner == self OR id == self (self-access for agents).
-    4. Models in ``_OWNED_AGENT_ACTOR_MODELS`` (``Job``, ``ExecutionRecord``, ``Event``)
-       additionally admit rows created by an agent the caller owns (``Agent.owner_id == sub``).
+    4. Models in ``_OWNED_AGENT_ACTOR_MODELS`` (``Job``, ``ExecutionRecord``, ``Event``,
+       ``AuditEntry``, ``OAuthClientGrant``) additionally admit rows whose subject is an
+       agent the caller owns (``Agent.owner_id == sub``).
     5. Columns in ``_EXTRA_OWNER_COLUMNS`` are matched like the owner column (self, and
        owned agents for models in ``_OWNED_AGENT_ACTOR_MODELS``). Rows with no matching
-       subject (system events with a NULL actor) are visible only to org:admin.
+       subject (system events or audit entries with a NULL actor) are visible only to
+       org:admin.
 
     Raises ValueError for an unknown model or empty sub.
     """

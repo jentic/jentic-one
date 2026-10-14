@@ -35,6 +35,7 @@ import {
 	formatStreamDayLabel,
 	formatStreamTime,
 	isApprovalEvent,
+	hasTrace,
 	isFailureSeverity,
 	isRetiredEventType,
 	primaryDestinationFor,
@@ -60,7 +61,6 @@ import { RecordDetail } from '@/modules/monitor/components/RecordDetail';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { detailKey, useLogDetail, type LogDetail } from '@/modules/monitor/lib/useLogDetail';
 import { useStatusFilter, type FeedStatus } from '@/modules/monitor/lib/statusFilters';
-import { hasTrace } from '@/modules/monitor/lib/links';
 
 /** Scrolled further than this from the top, new events wait behind the pill. */
 const TOP_THRESHOLD_PX = 160;
@@ -526,7 +526,6 @@ function FeedRow({
 				</>
 			}
 			action={action}
-			label={ev.title}
 			active={active}
 			nested={nested}
 			onOpen={onOpen}
@@ -585,7 +584,7 @@ function RunRow({
 						aria-hidden="true"
 					/>
 				}
-				label={`${events.length} successful calls — ${expanded ? 'collapse' : 'expand'}`}
+				expanded={expanded}
 				steppable={false}
 				onOpen={onToggle}
 			/>

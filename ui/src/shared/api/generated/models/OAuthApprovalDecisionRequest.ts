@@ -19,10 +19,19 @@
  * collision.
  */
 export type OAuthApprovalDecisionRequest = {
+    /**
+     * The decision: `approve` or `deny` the pending client.
+     */
     action: OAuthApprovalDecisionRequest.action;
+    /**
+     * Signed approval-state token issued by `/authorize` for this request.
+     */
     state: string;
 };
 export namespace OAuthApprovalDecisionRequest {
+    /**
+     * The decision: `approve` or `deny` the pending client.
+     */
     export enum action {
         APPROVE = 'approve',
         DENY = 'deny',

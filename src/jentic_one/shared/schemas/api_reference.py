@@ -9,23 +9,37 @@ class APIReference(BaseModel):
     Used in responses and as the canonical identity tuple.
     """
 
-    vendor: str
-    name: str
-    version: str
+    vendor: str = Field(description="Vendor of the API (for example `stripe.com`).")
+    name: str = Field(description="Name of the API within the vendor.")
+    version: str = Field(description="Version of the API.")
 
 
 class APIReferenceRequest(BaseModel):
     """Relaxed variant for request bodies where partial identification is allowed."""
 
-    vendor: str
-    name: str = ""
-    version: str = ""
+    vendor: str = Field(description="Vendor of the API (for example `stripe.com`).")
+    name: str = Field(
+        default="",
+        description="Name of the API within the vendor; empty to cover every API of the vendor.",
+    )
+    version: str = Field(
+        default="",
+        description="Version of the API; empty to cover every version.",
+    )
     # The catalog identity slug of the API this credential targets
     # (`domain[/sub-api]`, e.g. `nytimes.com/article_search`), when the client
     # knows it (catalog imports and workspace APIs carry it). Stored verbatim
     # so credential surfaces can derive friendly titles; purely display-side —
     # never part of credential-resolution identity.
-    catalog_api_id: str | None = Field(default=None, max_length=255)
+    catalog_api_id: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Catalog identity of the API (`domain[/sub-api]`, for example "
+            "`nytimes.com/article_search`), when known; used for display only, not for "
+            "matching."
+        ),
+    )
 
 
 class ServedApiRef(BaseModel):
@@ -38,6 +52,10 @@ class ServedApiRef(BaseModel):
     ``/me`` web schema use ONE model instead of two identical copies.
     """
 
-    api_vendor: str
-    api_name: str | None = None
-    api_version: str | None = None
+    api_vendor: str = Field(description="Vendor of the served API.")
+    api_name: str | None = Field(
+        default=None, description="Name of the served API; null means every API of the vendor."
+    )
+    api_version: str | None = Field(
+        default=None, description="Version of the served API; null means every version."
+    )

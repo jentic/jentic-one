@@ -162,7 +162,7 @@ afterEach(() => {
 describe('NotificationsMenu', () => {
 	it('badges the bell with the count and names it for assistive tech', async () => {
 		renderMenu();
-		const bell = await screen.findByRole('button', { name: 'Notifications (2 need you)' });
+		const bell = await screen.findByRole('button', { name: 'Notifications, 2 unread' });
 		expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
 		expect(bell).toHaveAttribute('aria-expanded', 'false');
 	});
@@ -170,7 +170,7 @@ describe('NotificationsMenu', () => {
 	it('opens a grouped list — alerts before approvals — with no a11y violations', async () => {
 		const user = userEvent.setup();
 		const { container } = renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 		const sections = within(dialog).getAllByRole('region');
 		expect(sections.map((s) => s.getAttribute('aria-label'))).toEqual(['Alerts', 'Approvals']);
@@ -184,7 +184,7 @@ describe('NotificationsMenu', () => {
 	it('approves an agent inline, dropping its row; the alert stays as a View link', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 
 		// An alert is append-only history — it offers a View link, not an inline
@@ -200,15 +200,64 @@ describe('NotificationsMenu', () => {
 			expect(within(dialog).queryByText(/inbox-triage-bot is waiting/)).toBeNull(),
 		);
 		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Notifications, 1 unread' })).toBeInTheDocument();
+	});
+
+	it('marks everything read: the badge clears, the rows stay, and it survives a remount', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(2);
+
+		await user.click(within(dialog).getByRole('button', { name: 'Mark all as read' }));
+		expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+		// Still waiting on the viewer, so still listed — just no longer unread.
+		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(0);
+		expect(within(dialog).queryByRole('button', { name: 'Mark all as read' })).toBeNull();
+
+		first.unmount();
+		renderMenu();
+		await screen.findByRole('button', { name: 'Notifications' });
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: /unread/ })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('counts an item that arrives after Mark all as read', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+		await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
+		await screen.findByRole('button', { name: 'Notifications' });
+		first.unmount();
+
+		const later: EventResponse = {
+			...failure,
+			event_id: 'evt_fail_2',
+			summary: 'Execution failed: github.getUser',
+			created_at: new Date().toISOString(),
+		};
+		worker.use(
+			http.get('/events', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('requires_action') !== 'true')
+					return HttpResponse.json(page([]));
+				return HttpResponse.json(page([later, failure]));
+			}),
+		);
+		// A fresh mount refetches; only the new alert is unread.
+		renderMenu();
 		expect(
-			screen.getByRole('button', { name: 'Notifications (1 needs you)' }),
+			await screen.findByRole('button', { name: 'Notifications, 1 unread' }),
 		).toBeInTheDocument();
 	});
 
 	it('closes when a row link is followed', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		await user.click(screen.getByRole('link', { name: 'Review' }));
 		expect(screen.getByTestId('location')).toHaveTextContent('/agents?agent=agnt_waiting');
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -217,7 +266,7 @@ describe('NotificationsMenu', () => {
 	it('closes on Escape', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 		await user.keyboard('{Escape}');
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -266,7 +315,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(3/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			const approvals = within(dialog).getByRole('region', { name: 'Approvals' });
 			const row = await within(approvals).findByText(
@@ -308,7 +357,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(4/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 4/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			expect(
 				await within(dialog).findByText("Abandoned Slack sign-in isn't finished"),
@@ -346,7 +395,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(3/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			const approvals = within(dialog).getByRole('region', { name: 'Approvals' });
 			const row = await within(approvals).findByText(
@@ -371,7 +420,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(3/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			const row = await within(dialog).findByText(
 				'scout-bot is waiting for you to approve a call to api.stripe.com/payments',

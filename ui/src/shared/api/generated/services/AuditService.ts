@@ -12,6 +12,9 @@ export class AuditService {
     /**
      * List Audit Entries
      * List audit entries with optional filters.
+     *
+     * Scoped to the caller: their own entries plus those made by agents they own.
+     * Org admins see every entry.
      * @returns AuditListResponse Successful Response
      * @throws ApiError
      */
@@ -25,13 +28,37 @@ export class AuditService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Only return entries for this target type; must be sent together with `target_id`.
+         */
         targetType?: (AuditTargetType | null),
+        /**
+         * Only return entries for this target ID; must be sent together with `target_type`.
+         */
         targetId?: (string | null),
+        /**
+         * Only return entries made by this actor.
+         */
         actorId?: (string | null),
+        /**
+         * Only return entries initiated from this surface, e.g. `dashboard` or `cli`.
+         */
         origin?: (string | null),
+        /**
+         * Only return entries that occurred at or after this time (RFC 3339).
+         */
         since?: (string | null),
+        /**
+         * Only return entries that occurred at or before this time (RFC 3339).
+         */
         until?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of entries to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<AuditListResponse> {
         return __request(OpenAPI, {
@@ -66,6 +93,9 @@ export class AuditService {
     public static getAuditEntry({
         auditId,
     }: {
+        /**
+         * ID of the audit entry.
+         */
         auditId: string,
     }): CancelablePromise<AuditResponse> {
         return __request(OpenAPI, {

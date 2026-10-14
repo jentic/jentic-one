@@ -36,6 +36,36 @@ class ApiNotFoundError(RegistryServiceError):
         self.version = version
 
 
+class ApiDeleteBlockedError(RegistryServiceError):
+    """Raised when deleting an API is refused by a referential constraint.
+
+    The API delete hit a foreign key from a table that still references the
+    API (or one of its revisions) and does not cascade. The client message is
+    deliberately generic — the constraint/table names are internal schema
+    detail and are carried on the instance for server-side logging only.
+    """
+
+    def __init__(
+        self,
+        vendor: str,
+        name: str,
+        version: str,
+        *,
+        constraint: str | None = None,
+        table: str | None = None,
+    ) -> None:
+        super().__init__(
+            f"API '{vendor}/{name}/{version}' can't be deleted because other records "
+            "still reference it. Nothing was deleted; the blocking reference is "
+            "recorded in the server log (event 'api_delete_blocked')."
+        )
+        self.vendor = vendor
+        self.name = name
+        self.version = version
+        self.constraint = constraint
+        self.table = table
+
+
 class RevisionNotFoundError(RegistryServiceError):
     """Raised when a revision does not exist for a given API."""
 

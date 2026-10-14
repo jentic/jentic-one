@@ -459,7 +459,7 @@ function buildColumns(
 				<button
 					type="button"
 					onClick={(): void => onOpenDetail(row)}
-					aria-label={`View grants for ${row.name}`}
+					aria-label={`${row.active_grant_count ?? 0} ${(row.active_grant_count ?? 0) === 1 ? 'grant' : 'grants'} — view grants for ${row.name}`}
 					className="text-foreground hover:text-primary focus-visible:ring-ring cursor-pointer rounded-sm font-mono text-xs tabular-nums focus-visible:ring-2 focus-visible:outline-none"
 				>
 					{row.active_grant_count ?? 0}
