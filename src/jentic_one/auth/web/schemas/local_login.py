@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.web import openapi_examples as ex
+
 
 class OAuthSessionContinueRequest(BaseModel):
     """Front-channel session-continue exchange posted from the login page.
@@ -21,7 +23,8 @@ class OAuthSessionContinueRequest(BaseModel):
     """
 
     state: str = Field(
-        description="Signed login carry-through token (`ls`) issued for this authorize request."
+        description="Signed login carry-through token (`ls`) issued for this authorize request.",
+        examples=[ex.SIGNED_FLOW_STATE],
     )
 
 
@@ -37,5 +40,9 @@ class OAuthSessionContinueResponse(BaseModel):
     """
 
     redirect_url: str = Field(
-        description="Relative `/authorize` URL to navigate to in order to resume the flow."
+        description="Relative `/authorize` URL to navigate to in order to resume the flow.",
+        examples=[
+            f"/authorize?response_type=code&client_id={ex.OAUTH_PUBLIC_CLIENT_ID}"
+            f"&state={ex.OAUTH_STATE}"
+        ],
     )

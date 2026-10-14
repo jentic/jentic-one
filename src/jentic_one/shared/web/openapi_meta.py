@@ -1239,6 +1239,8 @@ def install_openapi_metadata(app: FastAPI) -> None:
             _summarise_path_item(path_item)
             _describe_path_item(path_item)
 
+        _compose_component_examples(components.get("schemas", {}))
+
         app.openapi_schema = schema
         return schema
 
@@ -1314,3 +1316,93 @@ def _describe_request_body(operation: dict[str, Any], schemas: dict[str, Any]) -
     op_id = operation.get("operationId")
     if op_id:
         body["description"] = f"Request payload for the `{op_id}` operation."
+
+
+_MISSING = object()
+
+
+def _example_for(schema: Any, schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    """One example for ``schema``, or ``_MISSING`` if it cannot be built from leaves.
+
+    Uses the schema's own ``examples``/``example``, else follows a ``$ref`` to the
+    component (composing it if needed), else the first ``anyOf``/``oneOf`` branch
+    that yields one, else builds an array from ``items`` or an object from its
+    properties. ``stack`` stops recursion through self-referencing models.
+    """
+    if not isinstance(schema, dict):
+        return _MISSING
+    if schema.get("examples"):
+        return schema["examples"][0]
+    if "example" in schema:
+        return schema["example"]
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        name = ref.rsplit("/", 1)[-1]
+        if name in stack or name not in schemas:
+            return _MISSING
+        return _component_example(name, schemas, stack)
+    for key in ("anyOf", "oneOf"):
+        for branch in schema.get(key) or []:
+            if isinstance(branch, dict) and branch.get("type") == "null":
+                continue
+            value = _example_for(branch, schemas, stack)
+            if value is not _MISSING:
+                return value
+    if schema.get("type") == "array":
+        item = _example_for(schema.get("items"), schemas, stack)
+        return _MISSING if item is _MISSING else [item]
+    if "properties" in schema:
+        return _object_example(schema, schemas, stack)
+    return _MISSING
+
+
+def _object_example(schema: dict[str, Any], schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    """An object example from its properties; ``_MISSING`` if a required one has none."""
+    required = set(schema.get("required") or [])
+    value: dict[str, Any] = {}
+    for prop, prop_schema in (schema.get("properties") or {}).items():
+        example = _example_for(prop_schema, schemas, stack)
+        if example is _MISSING:
+            if prop in required:
+                return _MISSING
+            continue
+        value[prop] = example
+    return value
+
+
+def _component_example(name: str, schemas: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    component = schemas[name]
+    if component.get("examples"):
+        return component["examples"][0]
+    if "example" in component:
+        return component["example"]
+    if "properties" not in component:
+        return _example_for(component, schemas, (*stack, name))
+    return _object_example(component, schemas, (*stack, name))
+
+
+def _compose_component_examples(schemas: dict[str, Any]) -> None:
+    """Give object components and their nested-model properties a composed example.
+
+    Field-level ``examples=`` sit on leaf properties; a property typed as another
+    model (``$ref``, ``list[Model]``, ``Model | None``) and the component as a
+    whole have none. Composing them from the leaves keeps one source of truth —
+    a composed value is valid exactly when its leaves are, which the arch tests
+    check — while giving readers (and agents) a complete, realistic object.
+    Components that already declare ``examples`` are left as written.
+    """
+    for name, component in schemas.items():
+        if not isinstance(component, dict) or "properties" not in component:
+            continue
+        for prop_schema in component["properties"].values():
+            if not isinstance(prop_schema, dict) or "examples" in prop_schema:
+                continue
+            if "example" in prop_schema:
+                continue
+            value = _example_for(prop_schema, schemas, (name,))
+            if value is not _MISSING:
+                prop_schema["examples"] = [value]
+        if "examples" not in component and "example" not in component:
+            value = _object_example(component, schemas, (name,))
+            if value is not _MISSING and value:
+                component["examples"] = [value]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 
@@ -24,20 +25,28 @@ class TokenResponse(BaseModel):
     """Token endpoint success response."""
 
     access_token: str = Field(
-        json_schema_extra=SENSITIVE, description="The access token to send as a bearer token."
+        json_schema_extra=SENSITIVE,
+        description="The access token to send as a bearer token.",
+        examples=["at_example-access-token"],  # pragma: allowlist secret
     )
     refresh_token: str | None = Field(
         default=None,
         json_schema_extra=SENSITIVE,
         description="Refresh token for obtaining new tokens; omitted when none was issued.",
+        examples=["rt_example-refresh-token"],  # pragma: allowlist secret
     )
     id_token: str | None = Field(
         default=None,
         json_schema_extra=SENSITIVE,
         description="OpenID Connect ID token; omitted when none was issued.",
+        examples=["example-id-token"],  # pragma: allowlist secret
     )
-    token_type: str = Field(default="bearer", description="Token type; always `bearer`.")
-    expires_in: int = Field(description="Lifetime of the access token, in seconds.")
+    token_type: str = Field(
+        default="bearer", description="Token type; always `bearer`.", examples=["bearer"]
+    )
+    expires_in: int = Field(
+        description="Lifetime of the access token, in seconds.", examples=[3600]
+    )
     scope: str | None = Field(
         default=None,
         description="Space-delimited effective scopes of the minted access token "
@@ -50,6 +59,7 @@ class TokenResponse(BaseModel):
         "solely on legs where the client requested no scopes at the token endpoint "
         "(the token request carries no scope parameter, and consent fails closed on "
         "an empty intersection).",
+        examples=["apis:read capabilities:execute"],
     )
 
 
@@ -64,12 +74,17 @@ class RevokeRequest(BaseModel):
     JSON arm, where the platform identity scopes the revocation instead.
     """
 
-    token: str = Field(json_schema_extra=SENSITIVE, description="The token to revoke.")
+    token: str = Field(
+        json_schema_extra=SENSITIVE,
+        description="The token to revoke.",
+        examples=["rt_example-refresh-token"],  # pragma: allowlist secret
+    )
     token_type_hint: str | None = Field(
         default=None,
         description=(
             "Optional hint, `access_token` or `refresh_token`; both types are checked regardless."
         ),
+        examples=["refresh_token"],
     )
     client_id: str | None = Field(
         default=None,
@@ -77,6 +92,7 @@ class RevokeRequest(BaseModel):
             "Public client's client_id, used on form-encoded requests; ignored on"
             " bearer-authenticated JSON requests."
         ),
+        examples=[ex.OAUTH_PUBLIC_CLIENT_ID],
     )
 
 
@@ -90,19 +106,24 @@ class IntrospectRequest(BaseModel):
 class IntrospectResponse(BaseModel):
     """RFC 7662 introspection response."""
 
-    active: bool = Field(description="Whether the token is currently valid.")
+    active: bool = Field(description="Whether the token is currently valid.", examples=[True])
     sub: str | None = Field(
-        default=None, description="ID of the actor the token was issued to; omitted if unknown."
+        default=None,
+        description="ID of the actor the token was issued to; omitted if unknown.",
+        examples=[ex.AGENT_ID],
     )
     scope: str | None = Field(
         default=None,
         description="Space-separated effective scopes of the token; omitted if unknown.",
+        examples=["apis:read capabilities:execute"],
     )
     exp: int | None = Field(
         default=None,
         description="Token expiry, in seconds since the Unix epoch; omitted if unknown.",
+        examples=[ex.EPOCH_UNTIL],
     )
     token_type: str | None = Field(
         default=None,
         description="Kind of token: `access_token` or `refresh_token`; omitted if unknown.",
+        examples=["access_token"],
     )

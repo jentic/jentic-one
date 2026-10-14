@@ -15,6 +15,7 @@ from jentic_one.control.web.schemas.permission_rules import (
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 __all__ = ["APIReferenceRequest", "APIReferenceResponse"]
@@ -28,10 +29,14 @@ class RuntimeConfig(BaseModel):
     """Optional per-upstream-call overrides."""
 
     headers: dict[str, str] | None = Field(
-        default=None, description="Header overrides for upstream calls."
+        default=None,
+        description="Header overrides for upstream calls.",
+        examples=[{"Stripe-Version": ex.API_VERSION}],
     )
     query_params: dict[str, str] | None = Field(
-        default=None, description="Query-parameter overrides for upstream calls."
+        default=None,
+        description="Query-parameter overrides for upstream calls.",
+        examples=[{"locale": "en-GB"}],
     )
 
 
@@ -73,22 +78,30 @@ def _reject_control_chars(v: str | None, info: ValidationInfo) -> str | None:
 class BearerTokenCreateRequest(BaseModel):
     """Create request for bearer_token credentials."""
 
-    type: Literal["bearer_token"] = Field(description="Credential type; always `bearer_token`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["bearer_token"] = Field(
+        description="Credential type; always `bearer_token`.", examples=["bearer_token"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
     token: str = Field(
         description="The bearer token secret. Stored encrypted; never returned after create.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -114,27 +127,39 @@ class ApiKeyCreateRequest(BaseModel):
         }
     )
 
-    type: Literal["api_key"] = Field(description="Credential type; always `api_key`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["api_key"] = Field(
+        description="Credential type; always `api_key`.", examples=["api_key"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest = Field(
         description="Loose (vendor, name, version) API identity tuple."
     )
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
     key: str = Field(
         description="The API key secret. Stored encrypted; never returned after create.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
-    location: CredentialLocation = Field(description="Where to inject the key on upstream calls.")
-    field_name: str = Field(description="Header or query-parameter name carrying the key.")
+    location: CredentialLocation = Field(
+        description="Where to inject the key on upstream calls.", examples=["header"]
+    )
+    field_name: str = Field(
+        description="Header or query-parameter name carrying the key.", examples=["Authorization"]
+    )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
     _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
@@ -143,23 +168,33 @@ class ApiKeyCreateRequest(BaseModel):
 class BasicAuthCreateRequest(BaseModel):
     """Create request for basic credentials."""
 
-    type: Literal["basic"] = Field(description="Credential type; always `basic`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["basic"] = Field(
+        description="Credential type; always `basic`.", examples=["basic"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
-    username: str = Field(description="Username sent with HTTP Basic auth.")
+    username: str = Field(
+        description="Username sent with HTTP Basic auth.", examples=["svc-reporting"]
+    )
     password: str = Field(
         description="Password for HTTP Basic auth. Stored encrypted; never returned after create.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -172,36 +207,48 @@ class OAuth2CreateRequest(BaseModel):
     are optional — the connect flow handles authentication without caller-supplied client details.
     """
 
-    type: Literal["oauth2"] = Field(description="Credential type; always `oauth2`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["oauth2"] = Field(
+        description="Credential type; always `oauth2`.", examples=["oauth2"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
     grant_type: str = Field(
         default="client_credentials",
+        examples=["client_credentials"],
         description="OAuth2 grant type (e.g. client_credentials, authorization_code, device_code).",
     )
     token_url: str | None = Field(
         default=None,
+        examples=["https://connect.stripe.com/oauth/token"],
         description="Token endpoint URL; required for non-managed providers.",
     )
     authorize_url: str | None = Field(
         default=None,
+        examples=["https://connect.stripe.com/oauth/authorize"],
         description=(
             "Authorization endpoint URL; for the device_code grant, the device "
             "authorization endpoint."
         ),
     )
     client_id: str | None = Field(
-        default=None, description="OAuth client ID; required for non-managed providers."
+        default=None,
+        description="OAuth client ID; required for non-managed providers.",
+        examples=["ca_example123"],
     )
     client_secret: str | None = Field(
         default=None,
@@ -210,8 +257,11 @@ class OAuth2CreateRequest(BaseModel):
             "grant. Stored encrypted; never returned after create."
         ),
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
-    scopes: list[str] | None = Field(default=None, description="OAuth scopes to request.")
+    scopes: list[str] | None = Field(
+        default=None, description="OAuth scopes to request.", examples=[["read_write"]]
+    )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -225,17 +275,24 @@ class NoAuthCreateRequest(BaseModel):
     it as a no-op auth (see broker credential resolver / injection).
     """
 
-    type: Literal["no_auth"] = Field(description="Credential type; always `no_auth`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["no_auth"] = Field(
+        description="Credential type; always `no_auth`.", examples=["no_auth"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
 
@@ -245,25 +302,36 @@ class NoAuthCreateRequest(BaseModel):
 class Sigv4CreateRequest(BaseModel):
     """Create request for sigv4 (AWS Signature V4) credentials."""
 
-    type: Literal["sigv4"] = Field(description="Credential type; always `sigv4`.")
-    name: str = Field(description="Human-readable label for the credential.")
+    type: Literal["sigv4"] = Field(
+        description="Credential type; always `sigv4`.", examples=["sigv4"]
+    )
+    name: str = Field(
+        description="Human-readable label for the credential.", examples=["Stripe live key"]
+    )
     api: APIReferenceRequest = Field(
         description="Loose (vendor, name, version) API identity tuple."
     )
     provider: str = Field(
-        default="static", description="Credential provider; 'static' for stored secrets."
+        default="static",
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["static"],
     )
     runtime_config: RuntimeConfig | None = Field(
         default=None, description="Per-upstream-call overrides; reserved and not currently applied."
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution (at most 20).",
     )
-    access_key_id: str = Field(description="AWS access key id (public identifier).")
+    access_key_id: str = Field(
+        description="AWS access key id (public identifier).",
+        examples=["AKIAIOSFODNN7EXAMPLE"],  # pragma: allowlist secret
+    )
     secret_access_key: str = Field(
         description="AWS secret access key. Stored encrypted; never returned after create.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     session_token: str | None = Field(
         default=None,
@@ -271,9 +339,12 @@ class Sigv4CreateRequest(BaseModel):
             "Optional temporary-credential session token (STS). Expires; re-save when it does."
         ),
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
-    aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
-    aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
+    aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.", examples=["us-east-1"])
+    aws_service: str = Field(
+        description="Signing service, e.g. 'aoss', 'execute-api', 's3'.", examples=["execute-api"]
+    )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
     # Region/service ride the ``Authorization`` credential scope, so they are
@@ -300,12 +371,17 @@ CredentialCreateRequest = Annotated[
 class BearerTokenUpdateRequest(BaseModel):
     """Update request for bearer_token credentials."""
 
-    type: Literal["bearer_token"] = Field(description="Credential type; always `bearer_token`.")
+    type: Literal["bearer_token"] = Field(
+        description="Credential type; always `bearer_token`.", examples=["bearer_token"]
+    )
     name: str | None = Field(
-        default=None, description="New label for the credential; omit to leave unchanged."
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Stripe live key"],
     )
     active: bool | None = Field(
         default=None,
+        examples=[True],
         description="Enable or disable the credential for injection; omit to leave unchanged.",
     )
     runtime_config: RuntimeConfig | None = Field(
@@ -313,12 +389,14 @@ class BearerTokenUpdateRequest(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
     token: str | None = Field(
         default=None,
         description="Replacement bearer token; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -328,12 +406,17 @@ class BearerTokenUpdateRequest(BaseModel):
 class ApiKeyUpdateRequest(BaseModel):
     """Update request for api_key credentials."""
 
-    type: Literal["api_key"] = Field(description="Credential type; always `api_key`.")
+    type: Literal["api_key"] = Field(
+        description="Credential type; always `api_key`.", examples=["api_key"]
+    )
     name: str | None = Field(
-        default=None, description="New label for the credential; omit to leave unchanged."
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Stripe live key"],
     )
     active: bool | None = Field(
         default=None,
+        examples=[True],
         description="Enable or disable the credential for injection; omit to leave unchanged.",
     )
     runtime_config: RuntimeConfig | None = Field(
@@ -341,15 +424,18 @@ class ApiKeyUpdateRequest(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
     key: str | None = Field(
         default=None,
         description="Replacement API key; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     location: CredentialLocation | None = Field(
         default=None,
+        examples=["header"],
         description=(
             "Immutable after create. Accepted for backward compatibility; if "
             "provided it must equal the stored value, otherwise the request is "
@@ -358,6 +444,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
     field_name: str | None = Field(
         default=None,
+        examples=["Authorization"],
         description=(
             "Immutable after create. Accepted for backward compatibility; if "
             "provided it must equal the stored value, otherwise the request is "
@@ -372,12 +459,17 @@ class ApiKeyUpdateRequest(BaseModel):
 class BasicAuthUpdateRequest(BaseModel):
     """Update request for basic credentials."""
 
-    type: Literal["basic"] = Field(description="Credential type; always `basic`.")
+    type: Literal["basic"] = Field(
+        description="Credential type; always `basic`.", examples=["basic"]
+    )
     name: str | None = Field(
-        default=None, description="New label for the credential; omit to leave unchanged."
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Stripe live key"],
     )
     active: bool | None = Field(
         default=None,
+        examples=[True],
         description="Enable or disable the credential for injection; omit to leave unchanged.",
     )
     runtime_config: RuntimeConfig | None = Field(
@@ -385,15 +477,19 @@ class BasicAuthUpdateRequest(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
     username: str | None = Field(
-        default=None, description="Replacement username; omit to leave unchanged."
+        default=None,
+        description="Replacement username; omit to leave unchanged.",
+        examples=["svc-reporting"],
     )
     password: str | None = Field(
         default=None,
         description="Replacement password; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -402,12 +498,17 @@ class BasicAuthUpdateRequest(BaseModel):
 class OAuth2UpdateRequest(BaseModel):
     """Update request for oauth2 credentials."""
 
-    type: Literal["oauth2"] = Field(description="Credential type; always `oauth2`.")
+    type: Literal["oauth2"] = Field(
+        description="Credential type; always `oauth2`.", examples=["oauth2"]
+    )
     name: str | None = Field(
-        default=None, description="New label for the credential; omit to leave unchanged."
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Stripe live key"],
     )
     active: bool | None = Field(
         default=None,
+        examples=[True],
         description="Enable or disable the credential for injection; omit to leave unchanged.",
     )
     runtime_config: RuntimeConfig | None = Field(
@@ -415,6 +516,7 @@ class OAuth2UpdateRequest(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
     client_secret: str | None = Field(
@@ -424,13 +526,16 @@ class OAuth2UpdateRequest(BaseModel):
             "are applied only together with it."
         ),
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     token_url: str | None = Field(
         default=None,
+        examples=["https://connect.stripe.com/oauth/token"],
         description="Replacement token endpoint URL; applied only when client_secret is sent.",
     )
     scopes: list[str] | None = Field(
         default=None,
+        examples=[["read_write"]],
         description="Replacement OAuth scopes; applied only when client_secret is sent.",
     )
 
@@ -440,12 +545,17 @@ class OAuth2UpdateRequest(BaseModel):
 class Sigv4UpdateRequest(BaseModel):
     """Update request for sigv4 credentials (key rotation / scope edit)."""
 
-    type: Literal["sigv4"] = Field(description="Credential type; always `sigv4`.")
+    type: Literal["sigv4"] = Field(
+        description="Credential type; always `sigv4`.", examples=["sigv4"]
+    )
     name: str | None = Field(
-        default=None, description="New label for the credential; omit to leave unchanged."
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Stripe live key"],
     )
     active: bool | None = Field(
         default=None,
+        examples=[True],
         description="Enable or disable the credential for injection; omit to leave unchanged.",
     )
     runtime_config: RuntimeConfig | None = Field(
@@ -453,31 +563,40 @@ class Sigv4UpdateRequest(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
     access_key_id: str | None = Field(
         default=None,
+        examples=["AKIAIOSFODNN7EXAMPLE"],  # pragma: allowlist secret
         description="Replacement AWS access key ID; must be sent with secret_access_key.",
     )
     secret_access_key: str | None = Field(
         default=None,
         description="Replacement AWS secret access key; must be sent with access_key_id.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     session_token: str | None = Field(
         default=None,
         description="Replacement STS session token; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
+        examples=["example-secret"],  # pragma: allowlist secret
     )
     clear_session_token: bool = Field(
         default=False,
+        examples=[False],
         description="Remove the stored session token; takes precedence over session_token.",
     )
     aws_region: str | None = Field(
-        default=None, description="Replacement signing region; omit to leave unchanged."
+        default=None,
+        description="Replacement signing region; omit to leave unchanged.",
+        examples=["us-east-1"],
     )
     aws_service: str | None = Field(
-        default=None, description="Replacement signing service; omit to leave unchanged."
+        default=None,
+        description="Replacement signing service; omit to leave unchanged.",
+        examples=["execute-api"],
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -556,33 +675,61 @@ class CredentialRedactedResponse(BaseModel):
         }
     )
 
-    credential_id: str = Field(description="Stable credential identifier, prefixed `cred_`.")
-    type: CredentialType = Field(
-        description="Credential auth type (api_key, bearer_token, basic, oauth2)."
+    credential_id: str = Field(
+        description="Stable credential identifier, prefixed `cred_`.", examples=[ex.CREDENTIAL_ID]
     )
-    name: str = Field(description="Human-readable label.")
+    type: CredentialType = Field(
+        description="Credential auth type (api_key, bearer_token, basic, oauth2).",
+        examples=["oauth2"],
+    )
+    name: str = Field(description="Human-readable label.", examples=["Stripe Connect"])
     api: APIReferenceResponse = Field(
         description="The (vendor, name, version) API this credential targets."
     )
     catalog_api_id: str | None = Field(
         default=None,
+        examples=[ex.CATALOG_API_ID],
         description=(
             "Catalog identity slug of the target API (`domain[/sub-api]`), when "
             "recorded at create time. Display-only; null for older credentials."
         ),
     )
-    provider: str = Field(description="Credential provider; 'static' for stored secrets.")
+    provider: str = Field(
+        description="Credential provider; 'static' for stored secrets.",
+        examples=["direct_oauth2"],
+    )
     provider_account_ref: str | None = Field(
-        default=None, description="Opaque reference to the provider account, when applicable."
+        default=None,
+        description="Opaque reference to the provider account, when applicable.",
+        examples=["acct_1Nv0FGQ9RKHgCVdK"],
     )
-    active: bool = Field(description="Whether the credential is enabled for injection.")
+    active: bool = Field(
+        description="Whether the credential is enabled for injection.", examples=[True]
+    )
     created_by: str | None = Field(
-        default=None, description="Identity that created the credential (its owner)."
+        default=None,
+        description="Identity that created the credential (its owner).",
+        examples=[ex.USER_ID],
     )
-    created_at: datetime = Field(description="Creation timestamp (UTC).")
-    updated_at: datetime | None = Field(default=None, description="Last update timestamp (UTC).")
+    created_at: datetime = Field(
+        description="Creation timestamp (UTC).", examples=["2026-01-15T09:30:00Z"]
+    )
+    updated_at: datetime | None = Field(
+        default=None,
+        description="Last update timestamp (UTC).",
+        examples=["2026-01-20T14:05:00Z"],
+    )
     details: dict[str, Any] | None = Field(
         default=None,
+        examples=[
+            {
+                "client_id": "ca_example123",
+                "token_url": "https://connect.stripe.com/oauth/token",
+                "grant_type": "authorization_code",
+                "scopes": ["read_write"],
+                "connected": True,
+            }
+        ],
         description=(
             "Redacted, type-specific projection (hints/last-N chars; never the "
             "secret). For oauth2: client_id, token_url, grant_type "
@@ -593,10 +740,12 @@ class CredentialRedactedResponse(BaseModel):
     )
     server_variables: dict[str, str] | None = Field(
         default=None,
+        examples=[{"region": "eu"}],
         description="OpenAPI server-variable values for URL template substitution.",
     )
     oauth_app_registration_id: str | None = Field(
         default=None,
+        examples=[ex.OAUTH_APP_REGISTRATION_ID],
         description=(
             "Id of the shared ``oauth_app_registrations`` row this credential "
             "was minted through, if any. Null for legacy embedded OAuth "
@@ -605,6 +754,7 @@ class CredentialRedactedResponse(BaseModel):
     )
     oauth_app_registration_name: str | None = Field(
         default=None,
+        examples=["MyOrg Stripe"],
         description=(
             "Admin-facing name of the shared OAuth app registration this "
             "credential was minted through. Null when the credential is not "
@@ -659,9 +809,11 @@ class CredentialCreateResponse(BaseModel):
     secret: dict[str, Any] = Field(
         description="Type-specific secret material, returned only in this create response.",
         json_schema_extra=SENSITIVE,
+        examples=[{"key": "example-secret"}],  # pragma: allowlist secret
     )
     warnings: list[str] | None = Field(
         default=None,
+        examples=[["API scope 'stripe.com/stripe/2024-04-10' matches no imported API."]],
         description=(
             "Advisory warnings from create — e.g. the credential's API scope "
             "matches no imported API identity, so execution through it would "
@@ -675,9 +827,13 @@ class CredentialListResponse(BaseModel):
     """Paginated list of credentials."""
 
     data: list[CredentialRedactedResponse] = Field(description="The page of credentials.")
-    has_more: bool = Field(description="Whether more results exist after this page.")
+    has_more: bool = Field(
+        description="Whether more results exist after this page.", examples=[True]
+    )
     next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page; null when there are no more results."
+        default=None,
+        description="Cursor for the next page; null when there are no more results.",
+        examples=[ex.CURSOR],
     )
 
 
@@ -687,9 +843,13 @@ class CredentialListResponse(BaseModel):
 class ConnectRequestBody(BaseModel):
     """Request body for initiating a credential connect flow."""
 
-    scopes: list[str] = Field(default_factory=list, description="OAuth scopes to request.")
+    scopes: list[str] = Field(
+        default_factory=list, description="OAuth scopes to request.", examples=[["read_write"]]
+    )
     extra: dict[str, str] = Field(
-        default_factory=dict, description="Additional provider-specific connect parameters."
+        default_factory=dict,
+        description="Additional provider-specific connect parameters.",
+        examples=[{"prompt": "consent"}],
     )
 
 
@@ -729,19 +889,22 @@ ConnectChallengeResponse = Annotated[
 class ProviderDiscoveryEntryResponse(BaseModel):
     """Discovery metadata for a single credential provider."""
 
-    id: str = Field(description="Provider identifier (registry key).")
-    label: str = Field(description="Human-readable provider name.")
+    id: str = Field(description="Provider identifier (registry key).", examples=[ex.PROVIDER_NAME])
+    label: str = Field(description="Human-readable provider name.", examples=["Pipedream"])
     managed: bool = Field(
-        description="Whether the provider handles vendor sign-in on behalf of the user."
+        description="Whether the provider handles vendor sign-in on behalf of the user.",
+        examples=[True],
     )
     types: list[CredentialType] = Field(
-        description="Wire-level credential types this provider supports."
+        description="Wire-level credential types this provider supports.",
+        examples=[["oauth2", "api_key"]],
     )
     configured: bool = Field(
-        description="Whether the provider is fully configured and operational."
+        description="Whether the provider is fully configured and operational.", examples=[True]
     )
     callback_url: str | None = Field(
         default=None,
+        examples=["https://jentic.example.com/api/v1/credentials/oauth/callback"],
         description=(
             "OAuth2 redirect URI for providers that require it. When no explicit "
             "redirect_uri is configured, this is derived from the deployment's "
@@ -763,19 +926,24 @@ class ProviderDiscoveryResponse(BaseModel):
 class CredentialAgentResponse(BaseModel):
     """Agent directly bound to a credential (theme 5 phase 1)."""
 
-    agent_id: str = Field(description="ID of the bound agent.")
-    agent_name: str = Field(description="Name of the bound agent.")
-    status: str = Field(description="Status of the bound agent.")
-    bound_at: datetime = Field(description="When the agent was bound to the credential (RFC 3339).")
+    agent_id: str = Field(description="ID of the bound agent.", examples=[ex.AGENT_ID])
+    agent_name: str = Field(description="Name of the bound agent.", examples=["billing-assistant"])
+    status: str = Field(description="Status of the bound agent.", examples=["active"])
+    bound_at: datetime = Field(
+        description="When the agent was bound to the credential (RFC 3339).",
+        examples=["2026-01-15T09:30:00Z"],
+    )
     suspended: bool = Field(
+        examples=[False],
         description=(
             "True when the binding is soft-suspended (reversible cut-off): the "
             "binding and its rules survive, but the agent cannot execute "
             "through this credential until resumed."
-        )
+        ),
     )
     rule_set_id: str | None = Field(
         default=None,
+        examples=[ex.RULE_SET_ID],
         description=(
             "Shared permission rule set this binding points at, if any. While "
             "attached, the set's ordered list is the binding's effective "
@@ -788,24 +956,35 @@ class CredentialAgentListResponse(BaseModel):
     """Paginated list of agents directly bound to a credential."""
 
     data: list[CredentialAgentResponse] = Field(description="The page of bound agents.")
-    has_more: bool = Field(description="Whether more results exist after this page.")
+    has_more: bool = Field(
+        description="Whether more results exist after this page.", examples=[True]
+    )
     next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page; null when there are no more results."
+        default=None,
+        description="Cursor for the next page; null when there are no more results.",
+        examples=[ex.CURSOR],
     )
 
 
 class RuleSetAttachRequest(BaseModel):
     """Point a direct agent↔credential binding at a shared rule set."""
 
-    rule_set_id: str = Field(description="Id (`prs_…`) of the rule set to attach.")
+    rule_set_id: str = Field(
+        description="Id (`prs_…`) of the rule set to attach.", examples=[ex.RULE_SET_ID]
+    )
 
 
 class RuleSetCreateRequest(BaseModel):
     """Create a shared permission rule set (theme 5 phase 1, Q-04)."""
 
-    name: str = Field(max_length=255, description="Unique human-readable name.")
+    name: str = Field(
+        max_length=255, description="Unique human-readable name.", examples=["Stripe read-only"]
+    )
     description: str | None = Field(
-        default=None, max_length=1000, description="Optional free-text description of the set."
+        default=None,
+        max_length=1000,
+        description="Optional free-text description of the set.",
+        examples=["Allows GET requests to the Stripe API; denies everything else."],
     )
     rules: Annotated[list[PermissionRuleSchema], Field(max_length=100)] = Field(
         default_factory=list,
@@ -817,67 +996,102 @@ class RuleSetUpdateRequest(BaseModel):
     """Rename or re-describe a rule set."""
 
     name: str | None = Field(
-        default=None, max_length=255, description="New unique name; omit to leave unchanged."
+        default=None,
+        max_length=255,
+        description="New unique name; omit to leave unchanged.",
+        examples=["Stripe read-only"],
     )
     description: str | None = Field(
-        default=None, max_length=1000, description="New description; omit to leave unchanged."
+        default=None,
+        max_length=1000,
+        description="New description; omit to leave unchanged.",
+        examples=["Allows GET requests to the Stripe API; denies everything else."],
     )
 
 
 class RuleSetSummaryResponse(BaseModel):
     """Rule set list entry."""
 
-    rule_set_id: str = Field(description="Unique ID of the rule set (`prs_…`).")
-    name: str = Field(description="Unique human-readable name of the rule set.")
-    description: str | None = Field(
-        default=None, description="Free-text description of the rule set; null if unset."
+    rule_set_id: str = Field(
+        description="Unique ID of the rule set (`prs_…`).", examples=[ex.RULE_SET_ID]
     )
-    rule_count: int = Field(description="Number of rules in the set.")
+    name: str = Field(
+        description="Unique human-readable name of the rule set.", examples=["Stripe read-only"]
+    )
+    description: str | None = Field(
+        default=None,
+        description="Free-text description of the rule set; null if unset.",
+        examples=["Allows GET requests to the Stripe API; denies everything else."],
+    )
+    rule_count: int = Field(description="Number of rules in the set.", examples=[2])
     curated: bool = Field(
+        examples=[True],
         description=(
             "True when an org admin created the set. A curated set can be attached by any "
             "caller allowed to write a binding's rules and edited only by an org admin; "
             "any other set is attachable and editable by its creator or an org admin."
-        )
+        ),
     )
     created_by: str | None = Field(
-        default=None, description="ID of the actor that created the rule set."
+        default=None,
+        description="ID of the actor that created the rule set.",
+        examples=[ex.USER_ID],
     )
-    created_at: datetime = Field(description="When the rule set was created (RFC 3339).")
+    created_at: datetime = Field(
+        description="When the rule set was created (RFC 3339).",
+        examples=["2026-01-15T09:30:00Z"],
+    )
 
 
 class RuleSetResponse(BaseModel):
     """Rule set detail — the ordered rules plus its referencing-binding count."""
 
-    rule_set_id: str = Field(description="Unique ID of the rule set (`prs_…`).")
-    name: str = Field(description="Unique human-readable name of the rule set.")
+    rule_set_id: str = Field(
+        description="Unique ID of the rule set (`prs_…`).", examples=[ex.RULE_SET_ID]
+    )
+    name: str = Field(
+        description="Unique human-readable name of the rule set.", examples=["Stripe read-only"]
+    )
     description: str | None = Field(
-        default=None, description="Free-text description of the rule set; null if unset."
+        default=None,
+        description="Free-text description of the rule set; null if unset.",
+        examples=["Allows GET requests to the Stripe API; denies everything else."],
     )
     rules: list[PermissionRuleReadSchema] = Field(
         description="Ordered rule list (first-match-wins, default-deny)."
     )
     binding_count: int = Field(
-        description="How many agent-credential bindings currently point at this set."
+        description="How many agent-credential bindings currently point at this set.",
+        examples=[3],
     )
     curated: bool = Field(
+        examples=[True],
         description=(
             "True when an org admin created the set. A curated set can be attached by any "
             "caller allowed to write a binding's rules and edited only by an org admin; "
             "any other set is attachable and editable by its creator or an org admin."
-        )
+        ),
     )
     created_by: str | None = Field(
-        default=None, description="ID of the actor that created the rule set."
+        default=None,
+        description="ID of the actor that created the rule set.",
+        examples=[ex.USER_ID],
     )
-    created_at: datetime = Field(description="When the rule set was created (RFC 3339).")
+    created_at: datetime = Field(
+        description="When the rule set was created (RFC 3339).",
+        examples=["2026-01-15T09:30:00Z"],
+    )
 
 
 class RuleSetListResponse(BaseModel):
     """Paginated list of rule sets."""
 
     data: list[RuleSetSummaryResponse] = Field(description="The page of rule sets.")
-    has_more: bool = Field(description="Whether more results exist after this page.")
+    has_more: bool = Field(
+        description="Whether more results exist after this page.", examples=[True]
+    )
     next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page; null when there are no more results."
+        default=None,
+        description="Cursor for the next page; null when there are no more results.",
+        examples=[ex.CURSOR],
     )

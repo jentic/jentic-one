@@ -41,10 +41,13 @@ class OAuthErrorResponse(BaseModel):
 
     error: str = Field(
         description="ASCII error code, e.g. `invalid_request`, `invalid_grant`, "
-        "`invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`."
+        "`invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.",
+        examples=["invalid_request"],
     )
     error_description: str | None = Field(
-        default=None, description="Human-readable explanation of the error."
+        default=None,
+        description="Human-readable explanation of the error.",
+        examples=["missing required parameter"],
     )
 
 
@@ -57,7 +60,7 @@ class RouteNotFoundResponse(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"detail": "Not Found"}]})
 
-    detail: str = Field(description="Always `Not Found`.")
+    detail: str = Field(description="Always `Not Found`.", examples=["Not Found"])
 
 
 # Per-status canonical Problem Details, keyed by HTTP status code (as the string

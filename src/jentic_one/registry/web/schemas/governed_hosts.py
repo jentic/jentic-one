@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.web import openapi_examples as ex
+
 
 class GovernedHostsResponse(BaseModel):
     """The caller's governed host set (canonical order) with its change digest.
@@ -35,7 +37,8 @@ class GovernedHostsResponse(BaseModel):
             "excluded — the broker's discovery never matches them. On a `5xx` "
             "retain the last known set; never fall back to an empty "
             "(intercept-nothing) list."
-        )
+        ),
+        examples=[["api.github.com", "api.stripe.com", "files.stripe.com:8443"]],
     )
     digest: str = Field(
         description=(
@@ -44,5 +47,6 @@ class GovernedHostsResponse(BaseModel):
             'quoted — `If-None-Match: "<digest>"` (the bare digest is accepted '
             "as a compatibility form) — and expect an empty `304` until the "
             "host set changes. Poll at most once per minute."
-        )
+        ),
+        examples=[ex.GOVERNED_HOSTS_ETAG.strip('"')],
     )

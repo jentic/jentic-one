@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.web import openapi_examples as ex
+
 
 class OAuthApprovalStatusResponse(BaseModel):
     """Minimal tri-state approval status for a pending-client authorize request.
@@ -16,7 +18,8 @@ class OAuthApprovalStatusResponse(BaseModel):
     """
 
     status: Literal["pending", "approved", "denied"] = Field(
-        description="Approval state of the client: `pending`, `approved` or `denied`."
+        description="Approval state of the client: `pending`, `approved` or `denied`.",
+        examples=["approved"],
     )
 
 
@@ -35,7 +38,8 @@ class ConsentAgentStatusResponse(BaseModel):
         description=(
             "Approval state of the agent: `pending`, `approved` or `denied`; any state"
             " other than approved or denied reads as `pending`."
-        )
+        ),
+        examples=["pending"],
     )
 
 
@@ -57,8 +61,10 @@ class OAuthApprovalDecisionRequest(BaseModel):
     """
 
     state: str = Field(
-        description="Signed approval-state token issued by `/authorize` for this request."
+        description="Signed approval-state token issued by `/authorize` for this request.",
+        examples=[ex.SIGNED_FLOW_STATE],
     )
     action: Literal["approve", "deny"] = Field(
-        description="The decision: `approve` or `deny` the pending client."
+        description="The decision: `approve` or `deny` the pending client.",
+        examples=["approve"],
     )

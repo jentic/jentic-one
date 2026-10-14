@@ -367,3 +367,26 @@ def test_authenticated_operations_accept_bearer_or_oauth2(
         if operation.get("security") not in ([], [{"BearerAuth": []}, {"OAuth2": []}])
     ]
     assert not bad, "Unexpected security requirements:\n" + "\n".join(bad)
+
+def test_every_component_property_example_validates(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """Each property's ``examples`` (hand-written or composed) validates against that property."""
+    schemas: dict[str, Any] = (generated_control_spec.get("components") or {}).get("schemas") or {}
+    violations: list[str] = []
+    missing: list[str] = []
+    for name, schema in schemas.items():
+        if "properties" in schema and not (schema.get("examples") or "example" in schema):
+            missing.append(name)
+        for prop, prop_schema in (schema.get("properties") or {}).items():
+            subject = {k: v for k, v in prop_schema.items() if k not in ("examples", "example")}
+            subject["components"] = {"schemas": schemas}
+            validator = jsonschema.Draft202012Validator(subject)
+            for example in prop_schema.get("examples") or []:
+                for error in validator.iter_errors(example):
+                    violations.append(f"{name}.{prop}: {error.message}")
+    assert not violations, "Property examples that fail their schema:\n" + "\n".join(violations)
+    assert not missing, (
+        "Object components without an example (give their leaf fields `examples=`):\n"
+        + "\n".join(missing)
+    )

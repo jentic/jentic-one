@@ -18,15 +18,21 @@ class RootHealthResponse(BaseModel):
     status: str = Field(
         description="`ok` while the process is serving requests. A metered "
         "marketplace deployment whose entitlement lapsed answers `not_entitled` "
-        "(still HTTP 200, so orchestrators don't restart it)."
+        "(still HTTP 200, so orchestrators don't restart it).",
+        examples=["ok"],
     )
     version: str | None = Field(
         default=None,
         description="Running Jentic One release. Absent on the `not_entitled` body.",
+        examples=["1.0.0"],
     )
     reason: str | None = Field(
         default=None,
         description="Why the deployment is not entitled. Present only on the `not_entitled` body.",
+        examples=[
+            "AWS Marketplace subscription is not active for this deployment; "
+            "renew the subscription to restore service"
+        ],
     )
 
 
