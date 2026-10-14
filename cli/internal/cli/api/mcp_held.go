@@ -7,16 +7,17 @@ package api
 //
 //   - elicitation.url declared → a URL-mode elicitation of the review page as
 //     a multi-round-trip input-required result, carrying an HMAC-sealed
-//     requestState. The retry never re-sends the call: it reads the job
-//     (terminal → the result; still held → the short wait, then the held
-//     result). The elicitation accept is consent to open the link, never a
-//     decision — only a signed-in reviewer's :decide releases the job.
+//     requestState. The retry never re-sends the call: it reads the held
+//     execution (finished → the result; still held → the short wait, then
+//     the held result). The elicitation accept is consent to open the link,
+//     never a decision — only a signed-in reviewer's :decide releases the
+//     call.
 //   - otherwise → the held result at once: the broker's envelope as a normal
 //     tool result, so the model relays the review link straight away and
 //     polls with get_execution_result. Nobody can approve a call before seeing
 //     its review link, so waiting on the first call would only delay the link.
 //
-// The short wait (poll the job up to heldWaitBudget) runs only on the
+// The short wait (poll the held execution up to heldWaitBudget) runs only on the
 // URL-elicitation retry, after the client has sent the user to the review
 // page.
 //
@@ -60,23 +61,17 @@ const (
 const heldAgentDirective = "This call needs human approval. Most important: show the user the review_url, " +
 	"since they cannot approve it without that link, and end your turn so they see it. " +
 	"Do not call get_execution_result until the user replies; then call it once with " +
-	"job_id and wait_seconds: 30. If it is still held, tell the user it is waiting for " +
+	"held_execution_id and wait: 30000. If it is still held, tell the user it is waiting for " +
 	"approval and end your turn again. Do not re-send the call."
-
-// heldApproval is the approval sub-object of the broker's held envelope.
-type heldApproval struct {
-	ID        string `json:"id"`
-	ReviewURL string `json:"review_url"`
-	ExpiresAt string `json:"expires_at"`
-}
 
 // heldState is the sealed requestState of a URL-elicitation round trip.
 type heldState struct {
-	JobID    string         `json:"job_id"`
-	Agent    string         `json:"agent"`
-	Approval heldApproval   `json:"approval"`
-	Links    map[string]any `json:"links,omitempty"`
-	Exp      int64          `json:"exp"`
+	HeldExecutionID string         `json:"held_execution_id"`
+	Agent           string         `json:"agent"`
+	ReviewURL       string         `json:"review_url"`
+	ExpiresAt       string         `json:"expires_at"`
+	Links           map[string]any `json:"links,omitempty"`
+	Exp             int64          `json:"exp"`
 }
 
 var (
@@ -109,14 +104,10 @@ func heldEnvelope(status int, body any) map[string]any {
 	if st, _ := m["status"].(string); st != "held" {
 		return nil
 	}
-	if _, ok := m["job_id"].(string); !ok {
+	if _, ok := m["held_execution_id"].(string); !ok {
 		return nil
 	}
-	approval, ok := m["approval"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	if _, ok := approval["review_url"].(string); !ok {
+	if _, ok := m["review_url"].(string); !ok {
 		return nil
 	}
 	return m
@@ -165,7 +156,7 @@ func openHeldState(token, agent string) (*heldState, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return nil, errors.New("malformed requestState")
 	}
-	if st.Agent != agent || st.JobID == "" || time.Now().Unix() > st.Exp {
+	if st.Agent != agent || st.HeldExecutionID == "" || st.ReviewURL == "" || time.Now().Unix() > st.Exp {
 		return nil, errors.New("requestState expired or not this identity's")
 	}
 	return &st, nil
@@ -182,19 +173,16 @@ func (s *mcpServer) answerHeld(
 	ctx context.Context, req *mcp.CallToolRequest, agent string,
 	envelope, payload map[string]any, method, path string,
 ) (*mcp.CallToolResult, error) {
-	jobID, _ := envelope["job_id"].(string)
+	heldExecutionID, _ := envelope["held_execution_id"].(string)
 	door := heldFrontDoor(req.ClientCapabilities())
-	s.logHeldFrontDoor(req, door, jobID)
+	s.logHeldFrontDoor(req, door, heldExecutionID)
 	if door == frontDoorURLElicitation {
-		raw, _ := json.Marshal(envelope["approval"])
-		var approval heldApproval
-		if err := json.Unmarshal(raw, &approval); err != nil {
-			return nil, fmt.Errorf("failed to read the held approval: %w", err)
-		}
+		reviewURL, _ := envelope["review_url"].(string)
+		expiresAt, _ := envelope["expires_at"].(string)
 		links, _ := envelope["_links"].(map[string]any)
 		token, err := sealHeldState(heldState{
-			JobID: jobID, Agent: agent, Approval: approval, Links: links,
-			Exp: time.Now().Add(heldStateTTL).Unix(),
+			HeldExecutionID: heldExecutionID, Agent: agent, ReviewURL: reviewURL, ExpiresAt: expiresAt,
+			Links: links, Exp: time.Now().Add(heldStateTTL).Unix(),
 		})
 		if err != nil {
 			return nil, err
@@ -204,7 +192,7 @@ func (s *mcpServer) answerHeld(
 				reviewInputKey: &mcp.ElicitParams{
 					Mode:    "url",
 					Message: heldReviewMessage(method, path),
-					URL:     approval.ReviewURL,
+					URL:     reviewURL,
 				},
 			},
 			RequestState: token,
@@ -214,15 +202,15 @@ func (s *mcpServer) answerHeld(
 }
 
 // resumeHeld answers a URL-elicitation retry: never re-sends the call, reads
-// the job the sealed state names instead.
+// the held execution the sealed state names instead.
 func (s *mcpServer) resumeHeld(ctx context.Context, req *mcp.CallToolRequest, agent string) (*mcp.CallToolResult, error) {
 	st, err := openHeldState(req.Params.RequestState, agent)
 	if err != nil {
 		s.logger.Warn("held requestState refused", "error", err)
 		return nil, invalidParams(errors.New("invalid or expired requestState"))
 	}
-	s.logHeldFrontDoor(req, "url_elicitation_retry", st.JobID)
-	if terminal := s.heldShortWait(ctx, st.JobID); terminal != nil {
+	s.logHeldFrontDoor(req, "url_elicitation_retry", st.HeldExecutionID)
+	if terminal := s.heldShortWait(ctx, st.HeldExecutionID); terminal != nil {
 		return s.result(ctx, terminal), nil
 	}
 	return s.result(ctx, map[string]any{
@@ -230,19 +218,28 @@ func (s *mcpServer) resumeHeld(ctx context.Context, req *mcp.CallToolRequest, ag
 		"status":         202,
 		"headers":        map[string]string{},
 		"body": map[string]any{
-			"job_id":          st.JobID,
-			"status":          "held",
-			"approval":        st.Approval,
-			"agent_directive": heldAgentDirective,
-			"_links":          st.Links,
+			"status":            "held",
+			"held_execution_id": st.HeldExecutionID,
+			"review_url":        st.ReviewURL,
+			"expires_at":        st.ExpiresAt,
+			"agent_directive":   heldAgentDirective,
+			"_links":            linksOrEmpty(st.Links),
 		},
 	}), nil
 }
 
-// heldShortWait polls the job for up to heldWaitBudget; the terminal poll
-// payload, or nil when the window lapses (or a poll fails — the held result
-// still tells the model how to poll).
-func (s *mcpServer) heldShortWait(ctx context.Context, jobID string) map[string]any {
+// linksOrEmpty is a held envelope's _links, never null.
+func linksOrEmpty(links map[string]any) map[string]any {
+	if links == nil {
+		return map[string]any{}
+	}
+	return links
+}
+
+// heldShortWait polls the held execution for up to heldWaitBudget; the
+// finished poll payload, or nil when the window lapses (or a poll fails —
+// the held result still tells the model how to poll).
+func (s *mcpServer) heldShortWait(ctx context.Context, heldExecutionID string) map[string]any {
 	budget := s.heldWaitBudget
 	if budget <= 0 {
 		budget = defaultHeldWaitBudget
@@ -253,7 +250,7 @@ func (s *mcpServer) heldShortWait(ctx context.Context, jobID string) map[string]
 	}
 	deadline := time.Now().Add(budget)
 	for {
-		payload, soft := s.jobPollPayload(ctx, jobID)
+		payload, soft := s.heldPollPayload(ctx, heldExecutionID)
 		if soft != nil {
 			return nil
 		}
@@ -272,11 +269,11 @@ func (s *mcpServer) heldShortWait(ctx context.Context, jobID string) map[string]
 	}
 }
 
-func (s *mcpServer) logHeldFrontDoor(req *mcp.CallToolRequest, door, jobID string) {
+func (s *mcpServer) logHeldFrontDoor(req *mcp.CallToolRequest, door, heldExecutionID string) {
 	name, version := "", ""
 	if ci := req.ClientInfo(); ci != nil {
 		name, version = ci.Name, ci.Version
 	}
-	s.logger.Info("held execution front door", "front_door", door, "job_id", jobID,
+	s.logger.Info("held execution front door", "front_door", door, "held_execution_id", heldExecutionID,
 		"client_name", name, "client_version", version)
 }

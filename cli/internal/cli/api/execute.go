@@ -82,13 +82,14 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"agent_directive describing how to recover. execute surfaces that\n" +
 			"directive on stderr and exits 2 so a script can branch on the denial.\n\n" +
 			"When a permission rule requires approval, the broker holds the call\n" +
-			"for a human instead of running it and answers 202 with the held job\n" +
-			"and a review_url. execute prints that envelope, shows the review link\n" +
-			"on stderr, and exits 3 (TIMEOUT_PENDING). Show the user the link, then\n" +
-			"collect the outcome with `jentic jobs wait <job_id>` — never re-send the\n" +
-			"call. With --wait, execute waits for the decision itself (up to\n" +
-			"--timeout) and then prints the result exactly as if the call had run at\n" +
-			"once, or the denial/expiry (exit 2).\n\n" +
+			"for a human instead of running it and answers 202 with the held\n" +
+			"execution and a review_url. execute prints that envelope, shows the\n" +
+			"review link on stderr, and exits 3 (TIMEOUT_PENDING). Show the user the\n" +
+			"link, then collect the outcome with `jentic holds wait\n" +
+			"<held_execution_id>` — never re-send the call. With --wait, execute\n" +
+			"waits for the decision itself (up to --timeout) and then prints the\n" +
+			"result exactly as if the call had run at once, or the denial/expiry\n" +
+			"(exit 2).\n\n" +
 			"Exit codes:\n" +
 			"  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n" +
 			"  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n" +

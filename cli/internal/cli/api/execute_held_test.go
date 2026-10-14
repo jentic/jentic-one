@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,58 +16,77 @@ import (
 )
 
 const heldBody = `{
-	"job_id": "job_held1",
 	"status": "held",
-	"approval": {"id": "apr_1", "review_url": "http://ui.local/app/agents/approvals/apr_1", "expires_at": "2026-10-10T12:00:00Z"},
+	"held_execution_id": "exap_held1",
+	"review_url": "http://ui.local/app/agents/approvals/exap_held1",
+	"expires_at": "2026-10-10T12:00:00Z",
 	"agent_directive": "This call needs human approval.",
-	"_links": {"self": "http://ui.local/jobs/job_held1"}
+	"_links": {
+		"self": "http://ui.local/executions/holds/exap_held1",
+		"result": "http://ui.local/executions/holds/exap_held1/result",
+		"withdraw": "http://ui.local/executions/holds/exap_held1:withdraw"
+	}
 }`
 
-// heldStack is one httptest server playing the broker (every non-/jobs path
-// answers the held 202) and the control plane's job routes: GET /jobs/{id}
-// reports "held" for the first heldPolls polls, then status; GET
-// /jobs/{id}/result answers result (with resultType) or 409 when empty.
+// heldStack is one httptest server playing the broker (every path outside
+// /executions/holds answers the held 202) and the control plane's holds
+// routes: GET /executions/holds/{id} reports state "pending" and execution
+// status "held" for the first heldPolls polls, then state/status; GET
+// /executions/holds/{id}/result answers result (with resultType), or
+// resultStatus when non-zero, or 409 when empty.
 type heldStack struct {
-	heldPolls  int32
-	status     string
-	result     string
-	resultType string
-	jobStatus  int // non-zero: GET /jobs/{id} answers this status instead
-	brokerHits atomic.Int32
-	polls      atomic.Int32
+	heldPolls    int32
+	state        string
+	status       string
+	result       string
+	resultType   string
+	resultStatus int
+	holdStatus   int // non-zero: GET /executions/holds/{id} answers this status instead
+	brokerHits   atomic.Int32
+	polls        atomic.Int32
+	jobsHits     atomic.Int32
 }
 
 func (s *heldStack) serve(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/jobs/job_held1/result":
-			if s.result == "" {
+		case r.URL.Path == "/executions/holds/exap_held1/result":
+			if s.resultStatus != 0 || s.result == "" {
+				status := s.resultStatus
+				if status == 0 {
+					status = http.StatusConflict
+				}
 				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"type":"job_not_completed","status":409}`))
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"type":"held_execution_result_not_ready","status":` + strconv.Itoa(status) + `}`))
 				return
 			}
 			w.Header().Set("Content-Type", s.resultType)
 			_, _ = w.Write([]byte(s.result))
-		case strings.HasPrefix(r.URL.Path, "/jobs/"):
-			if s.jobStatus != 0 {
+		case strings.HasPrefix(r.URL.Path, "/executions/holds/"):
+			if s.holdStatus != 0 {
 				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(s.jobStatus)
-				_, _ = w.Write([]byte(`{"type":"not_found","status":404}`))
+				w.WriteHeader(s.holdStatus)
+				_, _ = w.Write([]byte(`{"type":"held_execution_not_found","status":404}`))
 				return
 			}
-			status := s.status
+			state, status := s.state, s.status
 			if s.polls.Add(1) <= s.heldPolls {
-				status = "held"
+				state, status = "pending", "held"
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"job_id": "job_held1", "kind": "execution", "status": status,
-				"approval_id": "apr_1", "execution_id": "exec_9",
+				"id": "exap_held1", "state": state, "execution_status": status,
+				"agent_id": "agt_1", "api_vendor": "example.com", "api_name": "orders", "api_version": "1",
+				"credential_id": "cred_1", "method": "POST", "path": "/v1/orders",
+				"execution_id": "exec_9", "expires_at": "2026-10-10T12:00:00Z",
 				"created_at": "2026-10-09T12:00:00Z",
-				"_links":     map[string]any{"self": "/jobs/job_held1"},
+				"_links":     map[string]any{"self": "/executions/holds/exap_held1"},
 			})
+		case strings.HasPrefix(r.URL.Path, "/jobs/"):
+			s.jobsHits.Add(1)
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			s.brokerHits.Add(1)
 			w.Header().Set("Content-Type", "application/json")
@@ -117,6 +137,8 @@ func envelopeOf(t *testing.T, stdout string) map[string]any {
 	return env
 }
 
+const reviewURL = "http://ui.local/app/agents/approvals/exap_held1"
+
 func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	s := &heldStack{}
 	srv := s.serve(t)
@@ -126,30 +148,35 @@ func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	if code != ux.ExitTimeoutPending || coded.Code != ux.CodeTimeoutPending {
 		t.Fatalf("exit %d code %v, want 3 TIMEOUT_PENDING", code, coded)
 	}
-	if coded.Details["job_id"] != "job_held1" || coded.Details["review_url"] != "http://ui.local/app/agents/approvals/apr_1" {
+	if coded.Details["held_execution_id"] != "exap_held1" || coded.Details["review_url"] != reviewURL {
 		t.Errorf("details = %v", coded.Details)
 	}
-	if !strings.Contains(coded.Actionable, "jentic jobs wait job_held1") {
-		t.Errorf("actionable %q does not name jobs wait", coded.Actionable)
+	if _, ok := coded.Details["job_id"]; ok {
+		t.Errorf("details = %v, want no job_id", coded.Details)
+	}
+	if !strings.Contains(coded.Msg, "held execution exap_held1") ||
+		!strings.Contains(coded.Actionable, "jentic holds wait exap_held1") {
+		t.Errorf("msg %q / actionable %q do not name the held execution and holds wait", coded.Msg, coded.Actionable)
 	}
 	env := envelopeOf(t, stdout)
 	body, _ := env["body"].(map[string]any)
-	if env["status"] != float64(202) || body["status"] != "held" || body["job_id"] != "job_held1" {
+	if env["status"] != float64(202) || body["status"] != "held" || body["held_execution_id"] != "exap_held1" {
 		t.Errorf("stdout envelope = %v", env)
 	}
-	for _, want := range []string{"needs human approval", "http://ui.local/app/agents/approvals/apr_1", "jentic jobs wait job_held1"} {
+	for _, want := range []string{"needs human approval", reviewURL, "jentic holds wait exap_held1"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
 	if s.polls.Load() != 0 {
-		t.Errorf("without --wait the job is never polled (polled %d times)", s.polls.Load())
+		t.Errorf("without --wait the hold is never polled (polled %d times)", s.polls.Load())
 	}
 }
 
 func TestExecuteWaitPrintsTheApprovedRunLikeASyncCall(t *testing.T) {
 	s := &heldStack{
 		heldPolls:  2,
+		state:      "approved",
 		status:     "completed",
 		resultType: "application/json",
 		result: `{"execution_id":"exec_9","status":"completed","http_status":201,"duration_ms":5,"body_b64":"` +
@@ -172,6 +199,9 @@ func TestExecuteWaitPrintsTheApprovedRunLikeASyncCall(t *testing.T) {
 	if s.brokerHits.Load() != 1 {
 		t.Errorf("the call was sent %d times; --wait never re-sends it", s.brokerHits.Load())
 	}
+	if s.polls.Load() != 3 || s.jobsHits.Load() != 0 {
+		t.Errorf("polls=%d jobs=%d, want three hold polls and no /jobs read", s.polls.Load(), s.jobsHits.Load())
+	}
 	if !strings.Contains(stderr, "waiting for the decision") {
 		t.Errorf("stderr = %s", stderr)
 	}
@@ -179,11 +209,12 @@ func TestExecuteWaitPrintsTheApprovedRunLikeASyncCall(t *testing.T) {
 
 func TestExecuteWaitDeniedExits2WithTheReason(t *testing.T) {
 	s := &heldStack{
+		state:      "denied",
 		status:     "failed",
 		resultType: "application/problem+json",
 		result: `{"type":"approval_denied","title":"Execution approval denied","status":403,` +
 			`"detail":"A reviewer denied this held execution: not today","error_origin":"broker",` +
-			`"approval":{"id":"apr_1","state":"denied"}}`,
+			`"held_execution":{"id":"exap_held1","state":"denied"}}`,
 	}
 	srv := s.serve(t)
 	stdout, stderr, err := runHeld(t, srv, "execute", "POST:/v1/orders", "--wait", "--json")
@@ -205,7 +236,7 @@ func TestExecuteWaitDeniedExits2WithTheReason(t *testing.T) {
 }
 
 func TestExecuteWaitTimeoutExits3WithTheHeldEnvelope(t *testing.T) {
-	s := &heldStack{heldPolls: 1 << 20, status: "held"}
+	s := &heldStack{heldPolls: 1 << 20}
 	srv := s.serve(t)
 	stdout, _, err := runHeld(t, srv, "execute", "GET:/v1/items", "--wait", "--timeout", "30ms", "--json")
 	code, coded := exitOf(t, err)
@@ -216,7 +247,7 @@ func TestExecuteWaitTimeoutExits3WithTheHeldEnvelope(t *testing.T) {
 		t.Errorf("envelope = %v", env)
 	}
 	if s.polls.Load() == 0 {
-		t.Error("--wait never polled the job")
+		t.Error("--wait never polled the hold")
 	}
 }
 
@@ -232,7 +263,7 @@ func TestExecuteWaitRejectsANonPositiveTimeout(t *testing.T) {
 	}
 }
 
-func TestJobsWait(t *testing.T) {
+func TestHoldsWait(t *testing.T) {
 	upstream404 := `{"execution_id":"exec_9","status":"failed","http_status":404,"duration_ms":3,"body_b64":"` +
 		base64.StdEncoding.EncodeToString([]byte(`{"error":"no such order"}`)) + `"}`
 	cases := []struct {
@@ -244,7 +275,7 @@ func TestJobsWait(t *testing.T) {
 	}{
 		{
 			name:     "an upstream 4xx is data (exit 0)",
-			stack:    &heldStack{status: "completed", resultType: "application/json", result: upstream404},
+			stack:    &heldStack{state: "approved", status: "completed", resultType: "application/json", result: upstream404},
 			wantExit: 0,
 			check: func(t *testing.T, stdout, _ string) {
 				env := envelopeOf(t, stdout)
@@ -256,16 +287,17 @@ func TestJobsWait(t *testing.T) {
 		},
 		{
 			name: "a run-time denial exits 2",
-			stack: &heldStack{status: "failed", resultType: "application/json", result: `{"execution_id":"exec_9",` +
+			stack: &heldStack{state: "approved", status: "failed", resultType: "application/json", result: `{"execution_id":"exec_9",` +
 				`"status":"failed","http_status":403,"duration_ms":0,"problem":{"type":"action_denied",` +
 				`"title":"Denied","status":403,"error_origin":"broker"}}`},
 			wantExit: ux.ExitDenied,
 			wantCode: ux.CodeBrokerDenied,
 		},
 		{
-			name: "an expired approval exits 2",
-			stack: &heldStack{status: "failed", resultType: "application/problem+json", result: `{"type":"approval_expired",` +
-				`"title":"Execution approval expired","status":403,"error_origin":"broker"}`},
+			name: "an expired hold exits 2",
+			stack: &heldStack{state: "expired", status: "failed", resultType: "application/problem+json", result: `{"type":"approval_expired",` +
+				`"title":"Execution approval expired","status":403,"error_origin":"broker",` +
+				`"held_execution":{"id":"exap_held1","state":"expired"}}`},
 			wantExit: ux.ExitDenied,
 			wantCode: ux.CodeBrokerDenied,
 			check: func(t *testing.T, _, stderr string) {
@@ -275,20 +307,26 @@ func TestJobsWait(t *testing.T) {
 			},
 		},
 		{
-			name:     "a withdrawn hold (cancelled) exits 2",
-			stack:    &heldStack{status: "cancelled"},
+			name:     "a withdrawn hold exits 2",
+			stack:    &heldStack{state: "withdrawn", status: "cancelled"},
 			wantExit: ux.ExitDenied,
 			wantCode: ux.CodeBrokerDenied,
 		},
 		{
 			name:     "a run with no upstream answer exits 1",
-			stack:    &heldStack{status: "failed"},
+			stack:    &heldStack{state: "approved", status: "failed"},
 			wantExit: ux.ExitError,
 			wantCode: ux.CodeTransportError,
 		},
 		{
-			name:     "an unknown job id exits 2",
-			stack:    &heldStack{jobStatus: http.StatusNotFound},
+			name:     "a result past retention exits 2",
+			stack:    &heldStack{state: "approved", status: "completed", resultStatus: http.StatusGone},
+			wantExit: ux.ExitDenied,
+			wantCode: ux.CodeResolveFailed,
+		},
+		{
+			name:     "an unknown held execution id exits 2",
+			stack:    &heldStack{holdStatus: http.StatusNotFound},
 			wantExit: ux.ExitDenied,
 			wantCode: ux.CodeResolveFailed,
 		},
@@ -297,13 +335,13 @@ func TestJobsWait(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := tc.stack
 			srv := s.serve(t)
-			stdout, stderr, err := runHeld(t, srv, "jobs", "wait", "job_held1", "--json")
+			stdout, stderr, err := runHeld(t, srv, "holds", "wait", "exap_held1", "--json")
 			code, coded := exitOf(t, err)
 			if code != tc.wantExit || (tc.wantCode != "" && coded.Code != tc.wantCode) {
 				t.Fatalf("exit %d code %v, want %d %s\nstderr: %s", code, coded, tc.wantExit, tc.wantCode, stderr)
 			}
-			if s.brokerHits.Load() != 0 {
-				t.Error("jobs wait never sends a call")
+			if s.brokerHits.Load() != 0 || s.jobsHits.Load() != 0 {
+				t.Error("holds wait never sends a call and never reads /jobs")
 			}
 			if tc.check != nil {
 				tc.check(t, stdout, stderr)
@@ -312,12 +350,24 @@ func TestJobsWait(t *testing.T) {
 	}
 }
 
-func TestJobsWaitTimeoutOnAHeldJobExits3(t *testing.T) {
+func TestHoldsWaitTimeoutOnAPendingHoldExits3(t *testing.T) {
 	s := &heldStack{heldPolls: 1 << 20}
 	srv := s.serve(t)
-	_, _, err := runHeld(t, srv, "jobs", "wait", "job_held1", "--timeout", "20ms")
+	_, _, err := runHeld(t, srv, "holds", "wait", "exap_held1", "--timeout", "20ms")
 	code, coded := exitOf(t, err)
-	if code != ux.ExitTimeoutPending || coded.Details["approval_id"] != "apr_1" || coded.Details["job_status"] != "held" {
+	if code != ux.ExitTimeoutPending || coded.Details["held_execution_id"] != "exap_held1" ||
+		coded.Details["state"] != "pending" || coded.Details["execution_status"] != "held" {
 		t.Fatalf("exit %d code %v", code, coded)
+	}
+	if !strings.Contains(coded.Actionable, "review_url") || !strings.Contains(coded.Actionable, "jentic holds wait exap_held1") {
+		t.Errorf("actionable = %q", coded.Actionable)
+	}
+}
+
+func TestJobsWaitIsNotACommand(t *testing.T) {
+	s := &heldStack{}
+	srv := s.serve(t)
+	if _, _, err := runHeld(t, srv, "jobs", "wait", "job_1"); err == nil {
+		t.Fatal("`jentic jobs wait` must not exist; held calls are waited on with `jentic holds wait`")
 	}
 }

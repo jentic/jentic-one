@@ -2,12 +2,12 @@ exit: 2
 --- stdout ---
 {
   "body": {
-    "approval": {
-      "id": "apr_1",
-      "state": "denied"
-    },
     "detail": "A reviewer denied this held execution: not today",
     "error_origin": "broker",
+    "held_execution": {
+      "id": "exap_held1",
+      "state": "denied"
+    },
     "status": 403,
     "title": "Execution approval denied",
     "type": "approval_denied"
@@ -23,7 +23,7 @@ exit: 2
 --- stderr ---
 Held — this call needs human approval before it runs:
   Show the user this link; they approve or deny the call there.
-  open: https://console.example/app/agents/approvals/apr_1
+  open: https://console.example/app/agents/approvals/exap_held1
   expires: 2026-10-10T12:00:00Z
   waiting for the decision …
 Denied by a reviewer — the call never ran.

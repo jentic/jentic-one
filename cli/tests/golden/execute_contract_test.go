@@ -158,33 +158,37 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		}`))
 	}
 
-	// A call a require-approval rule held: the 202 held envelope (job, review
-	// link, directive) instead of a run.
+	// A call a require-approval rule held: the 202 held envelope (held
+	// execution, review link, directive, links) instead of a run.
 	brokerHeld := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Preference-Applied", "respond-async")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"job_id":"job_held1","status":"held",` +
-			`"approval":{"id":"apr_1","review_url":"https://console.example/app/agents/approvals/apr_1",` +
-			`"expires_at":"2026-10-10T12:00:00Z"},"agent_directive":"This call needs human approval.",` +
-			`"_links":{"self":"https://console.example/jobs/job_held1"}}`))
+		_, _ = w.Write([]byte(`{"status":"held","held_execution_id":"exap_held1",` +
+			`"review_url":"https://console.example/app/agents/approvals/exap_held1",` +
+			`"expires_at":"2026-10-10T12:00:00Z","agent_directive":"This call needs human approval.",` +
+			`"_links":{"self":"https://console.example/executions/holds/exap_held1",` +
+			`"result":"https://console.example/executions/holds/exap_held1/result",` +
+			`"withdraw":"https://console.example/executions/holds/exap_held1:withdraw"}}`))
 	}
-	// The held job's control-plane routes once a reviewer denied it: the job
-	// failed and its result is the approval_denied problem.
-	jobsDenied := func(w http.ResponseWriter, r *http.Request) {
+	// The held execution's control-plane routes once a reviewer denied it:
+	// the call failed and its result is the approval_denied problem.
+	holdsDenied := func(w http.ResponseWriter, r *http.Request) {
 		w.Header()["Date"] = nil
-		if r.URL.Path == "/jobs/job_held1/result" {
+		if r.URL.Path == "/executions/holds/exap_held1/result" {
 			w.Header().Set("Content-Type", "application/problem+json")
 			_, _ = w.Write([]byte(`{"type":"approval_denied","title":"Execution approval denied","status":403,` +
 				`"detail":"A reviewer denied this held execution: not today","error_origin":"broker",` +
-				`"approval":{"id":"apr_1","state":"denied"}}`))
+				`"held_execution":{"id":"exap_held1","state":"denied"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"job_id":"job_held1","kind":"execution","status":"failed","approval_id":"apr_1",` +
-			`"execution_id":"exec_held1","error":"approval denied","created_at":"2026-10-09T12:00:00Z",` +
-			`"_links":{"self":"/jobs/job_held1"}}`))
+		_, _ = w.Write([]byte(`{"id":"exap_held1","state":"denied","execution_status":"failed",` +
+			`"agent_id":"agt_1","api_vendor":"example.com","api_name":"orders","api_version":"1",` +
+			`"credential_id":"cred_1","method":"POST","path":"/v1/orders","execution_id":"exec_held1",` +
+			`"expires_at":"2026-10-10T12:00:00Z","created_at":"2026-10-09T12:00:00Z",` +
+			`"_links":{"self":"/executions/holds/exap_held1","result":"/executions/holds/exap_held1/result"}}`))
 	}
 
 	cases := []struct {
@@ -193,8 +197,9 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		flags   []string // appended after the broker flags
 		inspect http.HandlerFunc
 		broker  http.HandlerFunc
-		// jobs plays the control plane's /jobs routes (--wait on a held call).
-		jobs http.HandlerFunc
+		// holds plays the control plane's /executions/holds routes (--wait on
+		// a held call).
+		holds http.HandlerFunc
 		// fixedBroker overrides the mock's address with a static broker target
 		// (the SEC-1 transport case must not depend on an ephemeral port).
 		fixedBroker []string
@@ -254,7 +259,7 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			target: "POST:/v1/orders",
 			flags:  []string{"--wait"},
 			broker: brokerHeld,
-			jobs:   jobsDenied,
+			holds:  holdsDenied,
 		},
 		{
 			name:    "execute_resolve_not_found_json",
@@ -280,13 +285,13 @@ func TestGolden_ExecuteContract(t *testing.T) {
 					tc.inspect(w, r)
 					return
 				}
-				if strings.HasPrefix(r.URL.Path, "/jobs/") {
-					if tc.jobs == nil {
+				if strings.HasPrefix(r.URL.Path, "/executions/holds/") {
+					if tc.holds == nil {
 						t.Errorf("unexpected %s call in case %s", r.URL.Path, tc.name)
 						w.WriteHeader(http.StatusNotFound)
 						return
 					}
-					tc.jobs(w, r)
+					tc.holds(w, r)
 					return
 				}
 				if tc.broker == nil {

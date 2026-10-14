@@ -90,9 +90,9 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "agent", newSearchCmd(app))
 	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))
-	// Waiting on the agent's own jobs (a held execution's outcome). Not
-	// fenced: a read of the agent's own data-plane jobs.
-	cmdcore.AddGrouped(root, "agent", newJobsCmd(app))
+	// Waiting on the agent's own held executions (a held call's outcome).
+	// Not fenced: a server-side-scoped read of the agent's own holds.
+	cmdcore.AddGrouped(root, "agent", newHoldsCmd(app))
 	// Execution history + live events over the SDK (Phase 5 items 3-4).
 	cmdcore.AddGrouped(root, "agent", newHistoryCmd(app))
 	cmdcore.AddGrouped(root, "agent", newEventsCmd(app))

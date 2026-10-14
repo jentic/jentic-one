@@ -141,9 +141,9 @@ func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status in
 // HeldNotice describes a call the broker held for human approval, for
 // RenderHeld.
 type HeldNotice struct {
-	JobID     string
-	ReviewURL string
-	ExpiresAt string
+	HeldExecutionID string
+	ReviewURL       string
+	ExpiresAt       string
 	// Waiting is true when the command goes on to wait for the decision
 	// (`execute --wait`), false when it stops at the hold.
 	Waiting bool
@@ -151,7 +151,7 @@ type HeldNotice struct {
 
 // RenderHeld writes the held-call notice to w (the caller's stderr): the
 // review link a person must open to approve or deny the call, when the
-// approval lapses, and how to collect the result.
+// hold expires, and how to collect the result.
 func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(w, st.Warn.Render("Held — this call needs human approval before it runs:"))
@@ -164,11 +164,11 @@ func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 		fmt.Fprintln(w, "  waiting for the decision …")
 		return
 	}
-	fmt.Fprintln(w, "  then: "+st.Accent.Render("jentic jobs wait "+n.JobID)+" (do not re-send the call)")
+	fmt.Fprintln(w, "  then: "+st.Accent.Render("jentic holds wait "+n.HeldExecutionID)+" (do not re-send the call)")
 }
 
 // Problem types of a held call that never ran: the reviewer denied it, its
-// approval lapsed undecided, or the worker running it stopped mid-run.
+// hold expired undecided, or the worker running it stopped mid-run.
 const (
 	ApprovalDeniedType       = "approval_denied"
 	ApprovalExpiredType      = "approval_expired"
@@ -201,7 +201,7 @@ func RenderApprovalOutcome(ctx context.Context, w io.Writer, problemType, detail
 			"The upstream may have received it: check `jentic history` before sending it again.",
 		}
 	case ApprovalRequiredType:
-		lines = []string{"A permission rule requires approval for this call and the job carries none; it never ran."}
+		lines = []string{"A permission rule requires approval for this call and it carries none; it never ran."}
 	default:
 		return false
 	}

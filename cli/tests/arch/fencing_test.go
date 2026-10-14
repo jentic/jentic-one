@@ -83,9 +83,9 @@ var fencingExemptPrefixes = []string{
 	// mutation here is server-side-scope-authorized, not host management.
 	"search", "execute", "inspect", "endpoints",
 	"apis", "catalog", "api", "history", "events", "credentials", "access",
-	// Waiting on the agent's own jobs (a held execution's outcome): a
+	// Waiting on the agent's own held executions (a held call's outcome): a
 	// server-side-scoped read, no host state.
-	"jobs",
+	"holds",
 	// Agent-facing self-check (read-only) and login/logout of the agent's own
 	// session (not an operator context switch).
 	"doctor", "whoami", "login", "logout",

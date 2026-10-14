@@ -69,21 +69,27 @@ var executeParams = []paramSpec{
 	{name: "idempotency_key", kind: paramString},
 }
 
-// jobIDSpec is get_execution_result's single parameter. `execution_id` is NOT
-// an alias: the broker's Jentic-Execution-Id names the execution record, not
-// the job — folding them would silently poll the wrong resource.
+// heldExecutionIDSpec names the held execution a held (202) execute carries;
+// get_execution_result reads it through the holds routes.
+var heldExecutionIDSpec = paramSpec{name: "held_execution_id", aliases: []string{"held_execution"}, kind: paramString}
+
+// jobIDSpec names the job an async (202) execute carries. `execution_id` is
+// NOT an alias: the broker's Jentic-Execution-Id names the execution record,
+// not the job — folding them would silently poll the wrong resource.
 var jobIDSpec = paramSpec{name: "job_id", aliases: []string{"id", "job"}, kind: paramString}
 
-// waitSecondsSpec is get_execution_result's optional bounded wait: absent or
-// zero polls once and answers at once; otherwise the tool re-polls until the
-// job is terminal or the wait (capped at maxPollWaitSeconds) lapses.
-var waitSecondsSpec = paramSpec{name: "wait_seconds", kind: paramInt}
+// waitSpec is get_execution_result's optional bounded wait, in milliseconds:
+// absent or zero polls once and answers at once; otherwise the tool re-polls
+// until the call has finished or the wait (capped at maxPollWaitMillis)
+// lapses.
+var waitSpec = paramSpec{name: "wait", kind: paramInt}
 
-// maxPollWaitSeconds caps get_execution_result's wait_seconds.
-const maxPollWaitSeconds = 30
+// maxPollWaitMillis caps get_execution_result's wait.
+const maxPollWaitMillis = 30000
 
-// getExecutionResultParams declares the poll tool's argument table.
-var getExecutionResultParams = []paramSpec{jobIDSpec, waitSecondsSpec}
+// getExecutionResultParams declares the poll tool's argument table: exactly
+// one of held_execution_id and job_id, plus the optional wait.
+var getExecutionResultParams = []paramSpec{heldExecutionIDSpec, jobIDSpec, waitSpec}
 
 // resolveMCPBrokerTarget resolves the broker scheme/host for the MCP execute
 // path. Precedence is a strict subset of executeE's: the environment's
@@ -401,7 +407,8 @@ func (s *mcpServer) executeTransportError(ctx context.Context, err error, retryS
 			Msg:  coded.Msg + " — the failure happened mid-flight, so the request may already have reached the upstream",
 			Actionable: "Do not re-send this call blindly: it may have executed. Verify the effect with a read " +
 				"(execute_read) first, or re-send with an idempotency_key so the broker de-duplicates the retry. " +
-				"If the execute returned a held (202) job, poll it with get_execution_result — never re-send.",
+				"If the execute returned a held (202) call, poll it with get_execution_result using its " +
+				"held_execution_id — never re-send.",
 			Details: coded.Details,
 			Cause:   coded.Cause,
 		}
@@ -695,11 +702,14 @@ func headerCost(k, v string) int64 {
 	return int64(len(k) + len(v) + perEntryOverhead)
 }
 
-// handleGetExecutionResult polls one job through the LIVE control-plane
-// routes: GET /jobs/{id} for the status, plus GET /jobs/{id}/result once the
-// job completed (agent tokens hold jobs:read by default — §3.4/§3.2). This is
-// the recovery path for a held (202) execute: poll until terminal, never
-// re-send the execute.
+// handleGetExecutionResult polls a held execution or a job through the LIVE
+// control-plane routes. A held_execution_id (from a held 202) reads the held
+// execution itself — GET /executions/holds/{id} for where the call stands,
+// plus its /result once the call has finished — and needs no jobs:*
+// permission. A job_id (from an async 202) reads GET /jobs/{id}, plus
+// GET /jobs/{id}/result once the job completed (agent tokens hold jobs:read
+// by default — §3.4/§3.2). Either way this is the recovery path for a 202
+// execute: poll until finished, never re-send the execute.
 func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.noteClient(req.ClientInfo())
 
@@ -707,31 +717,39 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 	if err != nil {
 		return nil, invalidParams(err)
 	}
+	heldExecutionID, _ := args["held_execution_id"].(string)
 	jobID, _ := args["job_id"].(string)
-	if jobID == "" {
-		return nil, invalidParams(errors.New(`get_execution_result requires "job_id" (aliases: "id", "job"): ` +
-			`the job id from a held (202) execute response`))
+	if (heldExecutionID == "") == (jobID == "") {
+		return nil, invalidParams(errors.New(`get_execution_result requires exactly one of "held_execution_id" ` +
+			`(from a held 202 execute response) or "job_id" (aliases: "id", "job"; from an async one)`))
 	}
-	waitSeconds, _ := args["wait_seconds"].(int)
-	wait := time.Duration(min(max(waitSeconds, 0), maxPollWaitSeconds)) * time.Second
+	waitMillis, _ := args["wait"].(int)
+	wait := time.Duration(min(max(waitMillis, 0), maxPollWaitMillis)) * time.Millisecond
 
 	// The call deadline covers the wait on top of the control-plane budget,
 	// so a full wait still leaves room for the last poll.
 	cctx, cancel := context.WithTimeout(ctx, mcpCallTimeout+wait)
 	defer cancel()
 
-	payload, soft := s.pollJobUntilTerminal(cctx, jobID, wait)
+	poll, target := s.jobPollPayload, jobID
+	if heldExecutionID != "" {
+		poll, target = s.heldPollPayload, heldExecutionID
+	}
+	payload, soft := s.pollUntilFinished(cctx, poll, target, wait)
 	if soft != nil {
 		return soft, nil
 	}
 	return s.result(cctx, payload), nil
 }
 
-// pollJobUntilTerminal polls the job, re-polling every heldWaitPoll until it
-// is terminal or wait lapses; a zero wait polls exactly once. A failed poll
-// comes back as the soft-error result to return instead.
-func (s *mcpServer) pollJobUntilTerminal(
-	ctx context.Context, jobID string, wait time.Duration,
+// pollPayloadFunc reads one poll payload for a held execution or job id; a
+// failure comes back as the soft-error result to return instead.
+type pollPayloadFunc func(ctx context.Context, id string) (map[string]any, *mcp.CallToolResult)
+
+// pollUntilFinished polls id, re-polling every heldWaitPoll until its status
+// is terminal or wait lapses; a zero wait polls exactly once.
+func (s *mcpServer) pollUntilFinished(
+	ctx context.Context, poll pollPayloadFunc, id string, wait time.Duration,
 ) (map[string]any, *mcp.CallToolResult) {
 	interval := s.heldWaitPoll
 	if interval <= 0 {
@@ -739,7 +757,7 @@ func (s *mcpServer) pollJobUntilTerminal(
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		payload, soft := s.jobPollPayload(ctx, jobID)
+		payload, soft := poll(ctx, id)
 		if soft != nil || isTerminalJobStatus(payload["status"]) {
 			return payload, soft
 		}
@@ -755,7 +773,9 @@ func (s *mcpServer) pollJobUntilTerminal(
 	}
 }
 
-// isTerminalJobStatus reports whether a polled job status is final.
+// isTerminalJobStatus reports whether a polled status is final. A held
+// execution's statuses are a subset of a job's (a dead-lettered held call
+// reads as failed).
 func isTerminalJobStatus(status any) bool {
 	switch status {
 	case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
@@ -764,10 +784,92 @@ func isTerminalJobStatus(status any) bool {
 	return false
 }
 
+// heldPollPayload polls one held execution — GET /executions/holds/{id},
+// plus its /result once the call has finished (completed, or failed: the
+// upstream response, or the problem explaining why it never ran). The
+// payload is {held_execution_id, state, status, execution_id?, result?}:
+// state is the decision, status where the call stands. Kept in parity with
+// the mounted app's held_execution_poll_payload.
+func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string) (map[string]any, *mcp.CallToolResult) {
+	client, err := s.app.controlClient(cctx)
+	if err != nil {
+		s.logger.Warn("get_execution_result failed", "error", err)
+		return nil, s.softError(cctx, err)
+	}
+	resp, callErr := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
+	if err := apiErrorFor(resp, callErr); err != nil {
+		var he *HTTPError
+		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
+			// The identity resolved fine — the id is wrong (or not this
+			// agent's), so the recovery is re-reading the held execute
+			// envelope and calling this tool again (self-pointer).
+			return nil, s.softErrorNext(cctx, &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  fmt.Sprintf("held execution %q not found", heldExecutionID),
+				Actionable: "Re-check the id — it is the held_execution_id of the held (202) execute response — " +
+					"and call get_execution_result again with the exact value.",
+			}, "get_execution_result")
+		}
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
+		// A transport failure on the recovery path is a retryable
+		// TRANSPORT_ERROR (§3.7 transport row): the poll is a GET.
+		return nil, s.executeTransportError(cctx, classifyTransportErr(err), true)
+	}
+	if resp.JSON200 == nil {
+		return nil, s.softError(cctx, &ux.CodedError{
+			Code: ux.CodeInternalError,
+			Msg:  fmt.Sprintf("unexpected backend response (status %d)", resp.StatusCode()),
+		})
+	}
+
+	held := resp.JSON200
+	var status any
+	if held.ExecutionStatus != nil {
+		status = string(*held.ExecutionStatus)
+	}
+	payload := map[string]any{
+		"schema_version":    mcpSchemaVersion,
+		"held_execution_id": held.Id,
+		"state":             string(held.State),
+		"status":            status,
+	}
+	if held.ExecutionId != nil && *held.ExecutionId != "" {
+		payload["execution_id"] = *held.ExecutionId
+	}
+	if status == agentops.HeldStatusCompleted || status == agentops.HeldStatusFailed {
+		s.attachHeldResult(cctx, client, heldExecutionID, payload)
+	}
+	return payload, nil
+}
+
+// attachHeldResult adds a finished held call's result to the payload
+// (GET /executions/holds/{id}/result), size-capped like every relayed body.
+// A 409 (a failed call with no recorded result) attaches nothing; any other
+// fetch failure degrades to a `result_error` note rather than failing the
+// poll — the status the model asked for is already in hand.
+func (s *mcpServer) attachHeldResult(ctx context.Context, client heldResultClient, heldExecutionID string, payload map[string]any) {
+	resp, err := client.GetHeldExecutionResultWithResponse(ctx, heldExecutionID)
+	if err := apiErrorFor(resp, err); err != nil {
+		var he *HTTPError
+		if errors.As(err, &he) && he.StatusCode == http.StatusConflict {
+			return
+		}
+		s.logger.Warn("get_execution_result: result fetch failed", "held_execution_id", heldExecutionID, "error", err)
+		payload["result_error"] = fmt.Sprintf("the call finished but its result could not be fetched: %v", err)
+		return
+	}
+	s.attachResultBody(resp.Body, payload)
+}
+
+// heldResultClient is the one generated-client method attachHeldResult
+// needs — a seam so tests can drive the result fetch without the whole SDK.
+type heldResultClient interface {
+	GetHeldExecutionResultWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...control.RequestEditorFn) (*control.GetHeldExecutionResultHTTPResp, error)
+}
+
 // jobPollPayload polls one job — GET /jobs/{id}, plus GET /jobs/{id}/result
-// once the job is terminal with a result (completed, or a failed execution
-// whose result is its problem body, e.g. a denied or expired approval). A
-// failure comes back as the soft-error result to return instead.
+// once the job completed. A failure comes back as the soft-error result to
+// return instead.
 func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[string]any, *mcp.CallToolResult) {
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
@@ -780,12 +882,12 @@ func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[stri
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			// The identity resolved fine — the job id is wrong, so the
 			// get_started default would be a dead end. The recovery is
-			// re-reading the held execute envelope and calling this tool
+			// re-reading the async execute envelope and calling this tool
 			// again (self-pointer, deliberate).
 			return nil, s.softErrorNext(cctx, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("job %q not found", jobID),
-				Actionable: "Re-check the job id — it is carried by the held (202) execute response — and call " +
+				Actionable: "Re-check the job id — it is carried by the async (202) execute response — and call " +
 					"get_execution_result again with the exact value.",
 			}, "get_execution_result")
 		}
@@ -816,40 +918,41 @@ func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[stri
 	if job.ExecutionId != nil && *job.ExecutionId != "" {
 		payload["execution_id"] = *job.ExecutionId
 	}
-	if job.Status == catJobCompleted || (job.Status == catJobFailed && job.Kind == "execution") {
+	if job.Status == catJobCompleted {
 		s.attachJobResult(cctx, client, jobID, payload)
 	}
 	return payload, nil
 }
 
 // attachJobResult adds the completed job's result document to the payload
-// (GET /jobs/{id}/result), size-capped like every relayed body (a capped
-// result is its leading maxResultBytes bytes, sanitized to valid UTF-8). A
-// result fetch failure degrades to a `result_error` note rather than failing
-// the poll — the status the model asked for is already in hand.
+// (GET /jobs/{id}/result), size-capped like every relayed body. A result
+// fetch failure degrades to a `result_error` note rather than failing the
+// poll — the status the model asked for is already in hand.
 func (s *mcpServer) attachJobResult(ctx context.Context, client jobResultClient, jobID string, payload map[string]any) {
 	resp, err := client.GetJobResultWithResponse(ctx, jobID)
 	if err := apiErrorFor(resp, err); err != nil {
-		var he *HTTPError
-		if errors.As(err, &he) && he.StatusCode == http.StatusConflict {
-			// A failed job with no recorded problem body has no result.
-			return
-		}
 		s.logger.Warn("get_execution_result: result fetch failed", "job_id", jobID, "error", err)
 		payload["result_error"] = fmt.Sprintf("the job completed but its result could not be fetched: %v", err)
 		return
 	}
-	if int64(len(resp.Body)) > s.maxResultBytes {
-		payload["result"] = strings.ToValidUTF8(string(resp.Body[:s.maxResultBytes]), "")
+	s.attachResultBody(resp.Body, payload)
+}
+
+// attachResultBody sets payload["result"] from a fetched result body: the
+// decoded JSON, else the text; a body over maxResultBytes is its leading
+// maxResultBytes bytes, sanitized to valid UTF-8, with {truncated, total_bytes}.
+func (s *mcpServer) attachResultBody(body []byte, payload map[string]any) {
+	if int64(len(body)) > s.maxResultBytes {
+		payload["result"] = strings.ToValidUTF8(string(body[:s.maxResultBytes]), "")
 		payload["truncated"] = true
-		payload["total_bytes"] = len(resp.Body)
+		payload["total_bytes"] = len(body)
 		return
 	}
 	var result any
-	if len(resp.Body) > 0 && json.Unmarshal(resp.Body, &result) == nil {
+	if len(body) > 0 && json.Unmarshal(body, &result) == nil {
 		payload["result"] = result
-	} else if len(resp.Body) > 0 {
-		payload["result"] = string(resp.Body)
+	} else if len(body) > 0 {
+		payload["result"] = string(body)
 	}
 }
 
@@ -903,17 +1006,22 @@ func executeInputSchema(withBody bool) map[string]any {
 var getExecutionResultSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
+		"held_execution_id": map[string]any{
+			"type": "string",
+			"description": "The held execution to poll (\"held_execution\" is an accepted alias): the " +
+				"held_execution_id of a held (202) execute response. Pass exactly one of held_execution_id and job_id.",
+		},
 		"job_id": map[string]any{
 			"type": "string",
-			"description": "The job to poll (required; \"id\" and \"job\" are accepted aliases), from a held (202) " +
-				"execute response.",
+			"description": "The job to poll (\"id\" and \"job\" are accepted aliases): the job_id of an " +
+				"asynchronous (202) execute response that is not held. Pass exactly one of held_execution_id and job_id.",
 		},
-		"wait_seconds": map[string]any{
+		"wait": map[string]any{
 			"type":    "integer",
 			"minimum": 0,
-			"maximum": maxPollWaitSeconds,
-			"description": "Optional. Wait up to this many seconds (max 30) for the job to finish, re-polling " +
-				"and returning as soon as it is terminal. Omit (or 0) to return the current status at once.",
+			"maximum": maxPollWaitMillis,
+			"description": "Optional. Wait up to this many milliseconds (max 30000) for the call to finish, " +
+				"re-polling and returning as soon as it has. Omit (or 0) to return the current status at once.",
 		},
 	},
 }
@@ -941,9 +1049,9 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"Returns {status, headers, body, execution_id}: any HTTP status, including upstream " +
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
 					"error result with recovery directions instead. A 202 response with status \"held\" means " +
-					"the call is HELD for human approval: above all, show the user its approval.review_url (a reviewer " +
+					"the call is HELD for human approval: above all, show the user its review_url (a reviewer " +
 					"signs in there to approve or deny it) and end your turn so they see it; once the user " +
-					"replies, call get_execution_result once with the job_id it carries and wait_seconds: 30 " +
+					"replies, call get_execution_result once with the held_execution_id it carries and wait: 30000 " +
 					"— never re-send the execute. Large bodies are truncated " +
 					"({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see " +
 					"the rest. Prefer execute_read for pure reads — it is approved more readily.",
@@ -970,17 +1078,19 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			tool: &mcp.Tool{
 				Name:  "get_execution_result",
 				Title: "Poll a held or asynchronous execution",
-				Description: "Poll a job by id: returns {job_id, kind, status, ...} and, once terminal, the " +
-					"result document — the upstream response when \"completed\", the problem when a held call " +
-					"\"failed\" (denied or expired approval, or a failed run). Use it when execute returns a " +
-					"202 HELD response (human approval required): above all, show the user the review_url from that " +
-					"response and end your turn so they see it. Only after the user replies, call this once " +
-					"with the job id it carries and wait_seconds: 30 (it returns early once the status is " +
-					"terminal: completed, failed, cancelled, dead_letter). If it is still held, tell the user " +
-					"it is waiting for approval and end your turn again. NEVER re-send the execute while a job is pending; approval happens " +
-					"out-of-band and re-sending duplicates the call. " +
-					`Example: {"job_id": "job_abc123", "wait_seconds": 30}. Omit wait_seconds to read the ` +
-					"current status at once.",
+				Description: "Poll a held or asynchronous execution. Pass held_execution_id for a 202 HELD " +
+					"response (human approval required): returns {held_execution_id, state, status, ...} — state is " +
+					"the decision (pending, approved, denied, expired, withdrawn), status where the call stands " +
+					"(held, queued, running, completed, failed, cancelled) — and, once the call has finished, the " +
+					"result: the upstream response, or the problem explaining why it never ran (denied or expired). " +
+					"Above all, show the user the review_url from the held response and end your turn so they see " +
+					"it. Only after the user replies, call this once with the held_execution_id and wait: 30000 (it " +
+					"returns early once the call has finished). If it is still held, tell the user it is waiting " +
+					"for approval and end your turn again. Pass job_id instead for an asynchronous 202 that is not " +
+					"held: returns {job_id, kind, status, ...} and, once \"completed\", the result document. NEVER " +
+					"re-send the execute while a call is pending; approval happens out-of-band and re-sending " +
+					`duplicates the call. Example: {"held_execution_id": "exap_abc123", "wait": 30000}. Omit wait ` +
+					"to read the current status at once.",
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},

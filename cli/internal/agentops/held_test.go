@@ -7,7 +7,9 @@ import (
 )
 
 func TestParseHeld(t *testing.T) {
-	held := `{"job_id":"job_1","status":"held","approval":{"id":"apr_1","review_url":"http://ui/r","expires_at":"x"}}`
+	held := `{"status":"held","held_execution_id":"exap_1","review_url":"http://ui/r","expires_at":"x",` +
+		`"agent_directive":"d","_links":{"self":"http://ui/executions/holds/exap_1",` +
+		`"result":"http://ui/executions/holds/exap_1/result","withdraw":"http://ui/executions/holds/exap_1:withdraw"}}`
 	cases := []struct {
 		name   string
 		status int
@@ -16,7 +18,8 @@ func TestParseHeld(t *testing.T) {
 	}{
 		{"the held envelope", http.StatusAccepted, held, true},
 		{"a plain respond-async job", http.StatusAccepted, `{"job_id":"job_1","status":"queued"}`, false},
-		{"held without a review link", http.StatusAccepted, `{"job_id":"job_1","status":"held","approval":{}}`, false},
+		{"held without a review link", http.StatusAccepted, `{"status":"held","held_execution_id":"exap_1"}`, false},
+		{"held without an id", http.StatusAccepted, `{"status":"held","review_url":"http://ui/r"}`, false},
 		{"held but not a 202", http.StatusOK, held, false},
 		{"not JSON", http.StatusAccepted, `held`, false},
 	}
@@ -26,7 +29,8 @@ func TestParseHeld(t *testing.T) {
 			if ok != tc.want {
 				t.Fatalf("ParseHeld = %v, want %v", ok, tc.want)
 			}
-			if ok && (h.JobID != "job_1" || h.Approval.ReviewURL != "http://ui/r" || h.Approval.ID != "apr_1") {
+			if ok && (h.HeldExecutionID != "exap_1" || h.ReviewURL != "http://ui/r" ||
+				h.Links.Result != "http://ui/executions/holds/exap_1/result") {
 				t.Errorf("held = %+v", h)
 			}
 		})
@@ -36,11 +40,11 @@ func TestParseHeld(t *testing.T) {
 	}
 }
 
-func TestExecutionResultFromJob(t *testing.T) {
+func TestExecutionResultFromHeld(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString
 	t.Run("a run mirrors the upstream status and body", func(t *testing.T) {
 		doc := `{"execution_id":"exec_1","status":"completed","http_status":200,"body_b64":"` + b64([]byte(`{"a":1}`)) + `"}`
-		r, ok := ExecutionResultFromJob("application/json", []byte(doc), "")
+		r, ok := ExecutionResultFromHeld("application/json", []byte(doc), "")
 		if !ok || r.Status != 200 || string(r.Body) != `{"a":1}` || r.ExecutionID != "exec_1" {
 			t.Fatalf("result = %+v, %v", r, ok)
 		}
@@ -53,20 +57,20 @@ func TestExecutionResultFromJob(t *testing.T) {
 	})
 	t.Run("an upstream error is stamped upstream, not a denial", func(t *testing.T) {
 		doc := `{"execution_id":"exec_1","status":"failed","http_status":403,"body_b64":"` + b64([]byte(`no`)) + `"}`
-		r, ok := ExecutionResultFromJob("text/plain", []byte(doc), "")
+		r, ok := ExecutionResultFromHeld("text/plain", []byte(doc), "")
 		if !ok || r.Status != 403 || r.Headers.Get("Jentic-Error-Origin") != "upstream" || Classify(r) != nil {
 			t.Fatalf("result = %+v, %v", r, ok)
 		}
 	})
 	t.Run("an empty upstream body carries no content type", func(t *testing.T) {
-		r, ok := ExecutionResultFromJob("application/json", []byte(`{"status":"completed","http_status":204}`), "exec_2")
+		r, ok := ExecutionResultFromHeld("application/json", []byte(`{"status":"completed","http_status":204}`), "exec_2")
 		if !ok || r.Status != 204 || len(r.Body) != 0 || r.Headers.Get("Content-Type") != "" || r.ExecutionID != "exec_2" {
 			t.Fatalf("result = %+v, %v", r, ok)
 		}
 	})
 	t.Run("a held decision's problem is a broker denial", func(t *testing.T) {
 		doc := `{"type":"approval_expired","title":"t","status":403,"error_origin":"broker"}`
-		r, ok := ExecutionResultFromJob("application/problem+json", []byte(doc), "exec_3")
+		r, ok := ExecutionResultFromHeld("application/problem+json", []byte(doc), "exec_3")
 		d := Classify(r)
 		if !ok || r.Status != 403 || d == nil || d.ProblemType != "approval_expired" {
 			t.Fatalf("result = %+v, %v, denial %+v", r, ok, d)
@@ -74,34 +78,34 @@ func TestExecutionResultFromJob(t *testing.T) {
 	})
 	t.Run("a run-time denial's nested problem is a broker denial", func(t *testing.T) {
 		doc := `{"execution_id":"exec_4","status":"failed","http_status":409,"problem":{"type":"approval_resume_failed","status":409}}`
-		r, ok := ExecutionResultFromJob("application/json", []byte(doc), "")
+		r, ok := ExecutionResultFromHeld("application/json", []byte(doc), "")
 		d := Classify(r)
 		if !ok || r.Status != 409 || d == nil || d.ProblemType != "approval_resume_failed" || r.ExecutionID != "exec_4" {
 			t.Fatalf("result = %+v, %v, denial %+v", r, ok, d)
 		}
 	})
 	t.Run("a run with no upstream answer has no result", func(t *testing.T) {
-		if _, ok := ExecutionResultFromJob("", []byte(`{"status":"failed","http_status":null}`), ""); ok {
+		if _, ok := ExecutionResultFromHeld("", []byte(`{"status":"failed","http_status":null}`), ""); ok {
 			t.Error("want false")
 		}
-		if _, ok := ExecutionResultFromJob("", []byte(`not json`), ""); ok {
+		if _, ok := ExecutionResultFromHeld("", []byte(`not json`), ""); ok {
 			t.Error("want false")
 		}
 	})
 }
 
-func TestJobStatuses(t *testing.T) {
-	for _, s := range []string{JobCompleted, JobFailed, JobCancelled, JobDeadLetter} {
-		if !IsTerminalJobStatus(s) {
-			t.Errorf("%s is terminal", s)
+func TestHeldStatuses(t *testing.T) {
+	for _, s := range []string{HeldStatusCompleted, HeldStatusFailed, HeldStatusCancelled} {
+		if !IsFinishedHeldStatus(s) {
+			t.Errorf("%s is finished", s)
 		}
 	}
-	for _, s := range []string{"queued", "running", "held"} {
-		if IsTerminalJobStatus(s) {
-			t.Errorf("%s is not terminal", s)
+	for _, s := range []string{HeldStatusHeld, HeldStatusQueued, HeldStatusRunning, ""} {
+		if IsFinishedHeldStatus(s) {
+			t.Errorf("%q is not finished", s)
 		}
 	}
-	if !IsHeldJobStatus("held") || IsHeldJobStatus("queued") {
-		t.Error("IsHeldJobStatus")
+	if !HasHeldResult(HeldStatusCompleted) || !HasHeldResult(HeldStatusFailed) || HasHeldResult(HeldStatusCancelled) {
+		t.Error("HasHeldResult")
 	}
 }
