@@ -157,7 +157,9 @@ func TestExecuteStoppedLocalInstanceHint(t *testing.T) {
 				if env.ErrorCode != tc.wantCode || strings.Contains(env.Actionable, "jenticctl") {
 					t.Errorf("envelope = %+v, want error_code %s with the hint kept off it", env, tc.wantCode)
 				}
-			} else if !strings.Contains(report, "connection refused") {
+			} else if !strings.Contains(report, "refused") {
+				// "refused" matches both Unix ("connection refused") and Windows
+				// ("…the target machine actively refused it.").
 				t.Errorf("human error report %q should name the refused connection", report)
 			}
 		})

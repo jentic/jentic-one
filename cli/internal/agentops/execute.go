@@ -421,7 +421,7 @@ func TransportFailurePreSend(err error) bool {
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	if isConnRefused(err) {
 		return true
 	}
 	// TLS handshake/verification failures: the connection never carried the
@@ -444,8 +444,22 @@ func TransportFailurePreSend(err error) bool {
 	return errors.As(err, &hostname)
 }
 
+// wsaeconnrefused is Winsock's WSAECONNREFUSED (10061), the errno a refused
+// dial carries on Windows. There syscall.ECONNREFUSED is a synthetic POSIX
+// constant (APPLICATION_ERROR+10) that net.Dial never returns, and
+// syscall.Errno.Is does not map 10061 onto it. No Unix errno has the value
+// 10061, so matching it on every GOOS is safe and keeps the Windows branch
+// testable on any host.
+const wsaeconnrefused = syscall.Errno(10061)
+
+// isConnRefused reports whether err is a refused TCP connection on any
+// platform: ECONNREFUSED on Unix, WSAECONNREFUSED on Windows.
+func isConnRefused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, wsaeconnrefused)
+}
+
 // LoopbackConnRefused reports whether err is a refused TCP connection
-// (ECONNREFUSED) to a loopback target — 127.0.0.0/8, ::1, or "localhost" —
+// (isConnRefused) to a loopback target — 127.0.0.0/8, ::1, or "localhost" —
 // the signature of a local jentic-one install that is not running (#849).
 //
 // The target is read from every host the chain names: the request URL on a
@@ -455,7 +469,7 @@ func TransportFailurePreSend(err error) bool {
 // a stopped local instance; requiring the dialed address keeps a loopback URL
 // that was rerouted elsewhere from counting either.
 func LoopbackConnRefused(err error) bool {
-	if err == nil || !errors.Is(err, syscall.ECONNREFUSED) {
+	if err == nil || !isConnRefused(err) {
 		return false
 	}
 	sawHost := false

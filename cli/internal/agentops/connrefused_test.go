@@ -70,6 +70,8 @@ func TestLoopbackConnRefused(t *testing.T) {
 		{"IPv6 loopback URL", refusedAt("http://[::1]:8100/v1/pets", loopV6), true},
 		{"127/8 beyond .1", refusedAt("http://127.0.0.2:8100/", &net.TCPAddr{IP: net.ParseIP("127.0.0.2"), Port: 8100}), true},
 		{"dial address only (no URL)", &net.OpError{Op: "dial", Net: "tcp", Addr: loopV4, Err: syscall.ECONNREFUSED}, true},
+		{"Windows WSAECONNREFUSED, loopback", &url.Error{Op: "Post", URL: "http://127.0.0.1:8100/v1/pets", Err: &net.OpError{Op: "dial", Net: "tcp", Addr: loopV4, Err: wsaeconnrefused}}, true},
+		{"Windows WSAECONNREFUSED, remote", &url.Error{Op: "Post", URL: "https://broker.example.com/v1/pets", Err: &net.OpError{Op: "dial", Net: "tcp", Addr: remote, Err: wsaeconnrefused}}, false},
 		{"wrapped in a CodedError cause", &ux.CodedError{Code: ux.CodeResolveFailed, Cause: refusedAt("http://127.0.0.1:8000/inspect", loopV4)}, true},
 		{"remote URL", refusedAt("https://broker.example.com/v1/pets", remote), false},
 		{"remote URL via a refused loopback proxy", refusedAt("https://broker.example.com/v1/pets", loopV4), false},
@@ -110,7 +112,7 @@ func TestResolveOperationKeepsTransportCause(t *testing.T) {
 	if coded.ExitCode() != ux.ExitDenied {
 		t.Errorf("exit = %d, want %d (RESOLVE_FAILED)", coded.ExitCode(), ux.ExitDenied)
 	}
-	if !errors.Is(err, syscall.ECONNREFUSED) || !LoopbackConnRefused(err) {
+	if !isConnRefused(err) || !LoopbackConnRefused(err) {
 		t.Errorf("resolve error %v lost its refused-dial cause", err)
 	}
 }

@@ -233,6 +233,11 @@ func TestTransportFailurePreSend(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "Windows WSAECONNREFUSED is pre-send",
+			err:  wsaeconnrefused,
+			want: true,
+		},
+		{
 			name: "DNS failure is pre-send",
 			err:  &net.DNSError{Err: "no such host", Name: "broker.invalid"},
 			want: true,
