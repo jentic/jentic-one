@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, exists, select
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -28,14 +28,17 @@ def _invite_state_clause(invite_state: InviteState) -> ColumnElement[bool]:
     """
     if invite_state not in (InviteState.PENDING, InviteState.EXPIRED):
         return User.invite_state == invite_state
-    active_invite_user_ids = select(InviteToken.user_id).where(
+    # Correlated on ``user_id`` so each candidate user probes
+    # ``ix_invite_tokens_user_id`` instead of materialising every active token.
+    has_active_invite = exists().where(
+        InviteToken.user_id == User.id,
         InviteToken.redeemed_at.is_(None),
         InviteToken.expires_at > sa_func.now(),
     )
     is_pending = User.invite_state == InviteState.PENDING
     if invite_state == InviteState.PENDING:
-        return and_(is_pending, User.id.in_(active_invite_user_ids))
-    return and_(is_pending, User.id.not_in(active_invite_user_ids))
+        return and_(is_pending, has_active_invite)
+    return and_(is_pending, ~has_active_invite)
 
 
 class UserRepository:
