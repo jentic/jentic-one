@@ -136,7 +136,10 @@ async def get_user(
     return _user_response(view)
 
 
-@router.patch("/users/{user_id}")
+@router.patch(
+    "/users/{user_id}",
+    responses=with_responses(not_found(), conflict("The email is already in use")),
+)
 async def update_user(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
@@ -145,7 +148,11 @@ async def update_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
-    """Update a user's profile fields."""
+    """Update a user's profile fields.
+
+    Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+    else only themselves. Any other user answers 404.
+    """
     view = await user_svc.update(
         user_id,
         UserUpdatePayload(

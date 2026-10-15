@@ -133,7 +133,7 @@ async def test_update_records_audit_with_before_and_after(
     await service.update(
         user_id,
         UserUpdatePayload(email="audit-new@test.local", first_name="New", last_name=None),
-        identity=Identity(sub=admin_user, email="test@local"),
+        identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"]),
     )
 
     entries = await _audit_entries_for(ctx, user_id)

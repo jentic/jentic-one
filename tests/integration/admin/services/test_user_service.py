@@ -202,7 +202,7 @@ async def test_update(integration_context: Context, admin_user: str) -> None:
     updated = await service.update(
         user_id,
         UserUpdatePayload(first_name="New"),
-        identity=Identity(sub="usr_test", email="test@local"),
+        identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"]),
     )
     assert updated.first_name == "New"
     assert updated.last_name == "Name"

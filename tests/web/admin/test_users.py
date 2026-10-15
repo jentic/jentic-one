@@ -121,10 +121,14 @@ def test_disable_and_enable(authed_client: TestClient, managed_user_id: str) -> 
     assert resp.status_code == 204
 
 
-def test_users_write_cannot_change_admin_email(
+def test_users_write_cannot_update_or_manage_admin(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str, managed_user_id: str
 ) -> None:
-    """A users:write holder without the target's permissions gets a 403."""
+    """A users:write holder cannot PATCH another user (404) or manage a stronger one (403).
+
+    Pins #1654: the PATCH answers the same 404 as ``GET /users/{id}`` for any
+    payload, leaks no profile, and changes nothing.
+    """
 
     async def _grant() -> None:
         async with web_context.admin_db.transaction() as session:
@@ -147,11 +151,29 @@ def test_users_write_cannot_change_admin_email(
     token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
     headers = {"Authorization": f"Bearer {token}"}
 
+    for body in ({"email": "web-other@test.local"}, {"first_name": "Hijacked"}, {}):
+        resp = unauthed_client.patch(f"/users/{admin_user_id}", json=body, headers=headers)
+        assert resp.status_code == 404
+        problem = resp.json()
+        assert problem["type"] == "user_not_found"
+        assert ADMIN_EMAIL not in resp.text
+        assert "permissions" not in problem
+
+    async def _admin_row() -> User | None:
+        async with web_context.admin_db.session() as session:
+            return await session.get(User, admin_user_id)
+
+    admin = asyncio.get_event_loop().run_until_complete(_admin_row())
+    assert admin is not None
+    assert (admin.email, admin.first_name) == (ADMIN_EMAIL, "Web")
+
+    # Self-edit stays allowed and returns the caller's own profile.
     resp = unauthed_client.patch(
-        f"/users/{admin_user_id}", json={"email": "web-other@test.local"}, headers=headers
+        f"/users/{managed_user_id}", json={"last_name": "Self"}, headers=headers
     )
-    assert resp.status_code == 403
-    assert resp.json()["type"] == "user_management_forbidden"
+    assert resp.status_code == 200
+    assert resp.json()["id"] == managed_user_id
+    assert resp.json()["last_name"] == "Self"
 
     resp = unauthed_client.post(f"/users/{admin_user_id}:disable", headers=headers)
     assert resp.status_code == 403

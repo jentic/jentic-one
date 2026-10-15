@@ -11631,6 +11631,9 @@ type ClientInterface interface {
 	//
 	// Update a user's profile fields.
 	//
+	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+	// else only themselves. Any other user answers 404.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
@@ -11639,6 +11642,9 @@ type ClientInterface interface {
 	// UpdateUser Update User
 	//
 	// Update a user's profile fields.
+	//
+	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+	// else only themselves. Any other user answers 404.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -16295,6 +16301,9 @@ func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...Reque
 //
 // Update a user's profile fields.
 //
+// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+// else only themselves. Any other user answers 404.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
@@ -16313,6 +16322,9 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 // UpdateUser Update User
 //
 // Update a user's profile fields.
+//
+// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+// else only themselves. Any other user answers 404.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -27692,6 +27704,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Update a user's profile fields.
 	//
+	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+	// else only themselves. Any other user answers 404.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
@@ -27700,6 +27715,9 @@ type ClientWithResponsesInterface interface {
 	// UpdateUserWithResponse Update User
 	//
 	// Update a user's profile fields.
+	//
+	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+	// else only themselves. Any other user answers 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -41257,6 +41275,10 @@ type UpdateUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -41285,6 +41307,16 @@ func (r UpdateUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r UpdateUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -45997,6 +46029,9 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId st
 //
 // Update a user's profile fields.
 //
+// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+// else only themselves. Any other user answers 404.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /users/{user_id} (the `UpdateUser` operationId).
@@ -46011,6 +46046,9 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 // UpdateUserWithResponse Update User
 //
 // Update a user's profile fields.
+//
+// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+// else only themselves. Any other user answers 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -57500,6 +57538,20 @@ func ParseUpdateUserHTTPResp(rsp *http.Response) (*UpdateUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
