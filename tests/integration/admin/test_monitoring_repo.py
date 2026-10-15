@@ -301,7 +301,7 @@ async def test_grouped_top_by_agent_concat_key(
 async def test_overall_stats_counts_unfinished_execution_jobs(
     admin_db: DatabaseSession, clean_execution_records: None, clean_jobs: None
 ) -> None:
-    """``pending`` counts unfinished execution jobs in the window; ``active_now`` all of them."""
+    """``pending`` counts unfinished execution jobs in the window; ``active_now`` running ones."""
     now = datetime.now(UTC)
     cutoff = now - timedelta(hours=1)
     until = now + timedelta(minutes=1)
@@ -318,8 +318,10 @@ async def test_overall_stats_counts_unfinished_execution_jobs(
     ):
         await _seed_job(admin_db, now - timedelta(minutes=3), finished)
     await _seed_job(admin_db, now - timedelta(minutes=2), JobStatus.QUEUED, kind=JobKind.IMPORT)
-    # Before the window: still in flight, so it counts towards active_now only.
+    # Before the window: a running job counts towards active_now only; a queued one
+    # counts towards neither.
     await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.RUNNING)
+    await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.QUEUED)
     await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.COMPLETED)
     # At the exclusive upper bound: outside the window.
     await _seed_job(admin_db, until, JobStatus.QUEUED)
@@ -329,8 +331,10 @@ async def test_overall_stats_counts_unfinished_execution_jobs(
 
     assert stats.total == 1
     assert stats.success == 1
+    # Only the two running execution jobs (one in the window, one before it) are
+    # active; queued jobs never are, wherever they sit.
     assert stats.pending == 2
-    assert stats.active_now == 4
+    assert stats.active_now == 2
 
 
 async def test_overall_stats_unfinished_counts_follow_filters(
@@ -352,11 +356,11 @@ async def test_overall_stats_unfinished_counts_follow_filters(
             )
         return stats.pending, stats.active_now
 
-    assert await _stats(UsageQueryFilters()) == (3, 4)
-    assert await _stats(UsageQueryFilters(actor_id="usr_test")) == (2, 3)
+    assert await _stats(UsageQueryFilters()) == (3, 2)
+    assert await _stats(UsageQueryFilters(actor_id="usr_test")) == (2, 1)
     assert await _stats(UsageQueryFilters(actor_id="agnt_other")) == (1, 1)
-    assert await _stats(UsageQueryFilters(api_vendor="github", api_name="rest")) == (2, 3)
-    assert await _stats(UsageQueryFilters(api_vendor="stripe", api_name="payments")) == (1, 1)
+    assert await _stats(UsageQueryFilters(api_vendor="github", api_name="rest")) == (2, 2)
+    assert await _stats(UsageQueryFilters(api_vendor="stripe", api_name="payments")) == (1, 0)
     # Execution jobs carry no toolkit, and no unfinished execution has a final status.
     assert await _stats(UsageQueryFilters(toolkit_id="tk_test000000000000000000")) == (0, 0)
     assert await _stats(UsageQueryFilters(status="completed")) == (0, 0)

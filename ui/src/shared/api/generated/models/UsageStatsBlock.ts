@@ -7,7 +7,7 @@
  */
 export type UsageStatsBlock = {
     /**
-     * Number of asynchronous executions in flight right now (queued or running), regardless of the window. The same filters apply as for `pending`.
+     * Number of asynchronous executions a worker is running right now, regardless of the window. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.
      */
     active_now: number;
     /**

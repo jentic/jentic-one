@@ -72,7 +72,7 @@ class UsageQueryFilters:
         return clauses
 
     def to_job_clauses(self) -> list[ColumnElement[bool]]:
-        """The same filters applied to unfinished execution jobs.
+        """The same filters applied to execution jobs.
 
         An execution job carries its attribution in its payload and its actor
         on ``created_by``. The ``status`` filter names a terminal execution
@@ -239,25 +239,30 @@ class MonitoringRepository:
                 .label("p95_ms"),
             ]
         # Executions are recorded only once they finish, so the unfinished ones
-        # come from the execution jobs still queued or running (async runs; a
-        # synchronous run has no row until it returns). Scalar subqueries keep
-        # everything in one round trip.
-        unfinished_job = [
+        # come from the execution jobs (async runs; a synchronous run has no row
+        # until it returns). `pending` is every unfinished job queued in the
+        # window; `active_now` is only the jobs a worker is running right now.
+        # Scalar subqueries keep everything in one round trip.
+        execution_job = [
             Job.kind == JobKind.EXECUTION,
-            Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
             *(filters.to_job_clauses() if filters else []),
         ]
         pending_col = (
             select(func.count())
             .select_from(Job)
-            .where(*unfinished_job, Job.created_at >= cutoff, Job.created_at < until)
+            .where(
+                *execution_job,
+                Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
+                Job.created_at >= cutoff,
+                Job.created_at < until,
+            )
             .scalar_subquery()
             .label("pending")
         )
         active_now_col = (
             select(func.count())
             .select_from(Job)
-            .where(*unfinished_job)
+            .where(*execution_job, Job.status == JobStatus.RUNNING)
             .scalar_subquery()
             .label("active_now")
         )

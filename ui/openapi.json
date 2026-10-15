@@ -16776,7 +16776,7 @@
             "group_by": "api",
             "since": 1767225600,
             "stats": {
-              "active_now": 5,
+              "active_now": 2,
               "avg_ms": 245.6,
               "failed": 80,
               "p50_ms": 180.0,
@@ -16854,7 +16854,7 @@
             "$ref": "#/components/schemas/UsageStatsBlock",
             "examples": [
               {
-                "active_now": 5,
+                "active_now": 2,
                 "avg_ms": 245.6,
                 "failed": 80,
                 "p50_ms": 180.0,
@@ -16918,7 +16918,7 @@
         "description": "Overall usage statistics for a time window.",
         "examples": [
           {
-            "active_now": 5,
+            "active_now": 2,
             "avg_ms": 245.6,
             "failed": 80,
             "p50_ms": 180.0,
@@ -16930,9 +16930,9 @@
         ],
         "properties": {
           "active_now": {
-            "description": "Number of asynchronous executions in flight right now (queued or running), regardless of the window. The same filters apply as for `pending`.",
+            "description": "Number of asynchronous executions a worker is running right now, regardless of the window. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.",
             "examples": [
-              5
+              2
             ],
             "title": "Active Now",
             "type": "integer"
@@ -41442,7 +41442,7 @@
                   "group_by": "api",
                   "since": 1767225600,
                   "stats": {
-                    "active_now": 5,
+                    "active_now": 2,
                     "avg_ms": 245.6,
                     "failed": 80,
                     "p50_ms": 180.0,
