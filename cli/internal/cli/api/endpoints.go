@@ -129,6 +129,16 @@ func parseEndpoints(body []byte) ([]endpoint, error) {
 		}
 	}
 	eps := doc.Endpoints
+	// Public endpoints omit actor_types/required_permissions; emit [] so a JSON
+	// consumer can iterate them without a null check.
+	for i := range eps {
+		if eps[i].ActorTypes == nil {
+			eps[i].ActorTypes = []string{}
+		}
+		if eps[i].Permissions == nil {
+			eps[i].Permissions = []string{}
+		}
+	}
 	sort.Slice(eps, func(i, j int) bool {
 		if eps[i].Path != eps[j].Path {
 			return eps[i].Path < eps[j].Path
