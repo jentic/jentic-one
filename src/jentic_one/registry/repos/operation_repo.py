@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import TableClause, and_, bindparam, delete, or_, select, update
+import structlog
+from sqlalchemy import String, TableClause, and_, bindparam, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -16,6 +17,8 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.shared.models import ApiRevisionState
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -36,6 +39,61 @@ def _generate_operation_id(revision_id: uuid.UUID, path: str, method: str) -> st
     key = f"{revision_id}:{path}:{method}"
     digest = hashlib.sha256(key.encode()).hexdigest()[:40]
     return f"op_{digest}"[:50]
+
+
+_SPEC_OPERATION_ID_MAX_LEN = cast(String, Operation.__table__.c.operation_id.type).length or 255
+
+
+def _assign_spec_operation_ids(
+    revision_id: uuid.UUID, operations: list[OperationInput]
+) -> list[str | None]:
+    """Return a storable spec ``operationId`` per input, in input order.
+
+    Duplicate operationIds are invalid OpenAPI but common in real specs, and
+    ``uq_operations_revision_operation_id`` plus the column length would reject
+    the whole import (#1437). Over-long ids are truncated to the column length;
+    the first holder of an id keeps it and each later duplicate becomes
+    ``<id>_<n>`` (``n`` from 2, skipping any id the spec itself declares) so
+    every operation stays addressable by a deterministic operationId.
+    """
+    truncated = [
+        op.operation_id[:_SPEC_OPERATION_ID_MAX_LEN] if op.operation_id else op.operation_id
+        for op in operations
+    ]
+    declared = {op_id for op_id in truncated if op_id}
+    used: set[str] = set()
+    assigned: list[str | None] = []
+    for op_input, candidate in zip(operations, truncated, strict=True):
+        if not candidate:
+            assigned.append(candidate)
+            continue
+        reasons: list[str] = []
+        if candidate != op_input.operation_id:
+            reasons.append("too_long")
+        if candidate in used:
+            reasons.append("duplicate")
+            n = 2
+            while True:
+                suffix = f"_{n}"
+                renamed = candidate[: _SPEC_OPERATION_ID_MAX_LEN - len(suffix)] + suffix
+                if renamed not in used and renamed not in declared:
+                    break
+                n += 1
+            candidate = renamed
+        used.add(candidate)
+        assigned.append(candidate)
+        if reasons:
+            logger.warning(
+                "spec_operation_id_coerced",
+                revision_id=str(revision_id),
+                path=op_input.path,
+                method=op_input.method,
+                reasons=reasons,
+                original_operation_id=(op_input.operation_id or "")[:_SPEC_OPERATION_ID_MAX_LEN],
+                original_length=len(op_input.operation_id or ""),
+                stored_operation_id=candidate,
+            )
+    return assigned
 
 
 class OperationRepository:
@@ -59,14 +117,17 @@ class OperationRepository:
         for op_input in operations:
             deduped[(op_input.path, op_input.method)] = op_input
 
+        unique_inputs = list(deduped.values())
+        spec_operation_ids = _assign_spec_operation_ids(revision_id, unique_inputs)
+
         ids: list[str] = []
-        for op_input in deduped.values():
+        for op_input, spec_operation_id in zip(unique_inputs, spec_operation_ids, strict=True):
             op_id = _generate_operation_id(revision_id, op_input.path, op_input.method)
             summary = op_input.summary[:500] if op_input.summary else None
             operation = Operation(
                 id=op_id,
                 revision_id=revision_id,
-                operation_id=op_input.operation_id,
+                operation_id=spec_operation_id,
                 path=op_input.path,
                 method=op_input.method,
                 summary=summary,

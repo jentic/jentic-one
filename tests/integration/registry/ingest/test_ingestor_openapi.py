@@ -242,6 +242,63 @@ async def test_ingest_trailing_slash_spec_produces_resolvable_index(
         assert resolved.path_params == {"elementId": "42"}
 
 
+async def test_ingest_tolerates_duplicate_and_over_long_operation_ids(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Pins #1437: a spec that reuses an operationId across paths, or declares
+    one longer than the column, imports with every operation intact instead of
+    failing the whole ingest on ``uq_operations_revision_operation_id``."""
+    long_id = "x" * 300
+    spec_content = {
+        "openapi": "3.1.0",
+        "info": {"title": "Highways", "version": "1.0.0"},
+        "servers": [{"url": "https://webtris.example.com/api"}],
+        "paths": {
+            "/v1/areas": {
+                "get": {"operationId": "Areas_Get", "responses": {"200": {"description": "ok"}}}
+            },
+            "/v1.0/areas": {
+                "get": {"operationId": "Areas_Get", "responses": {"200": {"description": "ok"}}}
+            },
+            "/v1/long": {
+                "get": {"operationId": long_id, "responses": {"200": {"description": "ok"}}}
+            },
+        },
+    }
+    spec = IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=ApiIdentifier(vendor="highways", name="webtris", version="1.0.0"),
+        sha="dup1437",
+        content=spec_content,
+        source_type=ApiRevisionSourceType.INLINE,
+        source_url=None,
+        source_filename="openapi.json",
+        submitted_by="test-harness",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        result = await Ingestor(ingest_context).ingest(spec, created_by="usr_test")
+    assert result.operation_count == 3
+
+    async with registry_db.session() as session:
+        ops = (await session.execute(select(Operation))).unique().scalars().all()
+    by_path = {op.path: op.operation_id for op in ops}
+    assert by_path == {
+        "/v1/areas": "Areas_Get",
+        "/v1.0/areas": "Areas_Get_2",
+        "/v1/long": "x" * 255,
+    }
+
+    coerced = [e for e in logs if e["event"] == "spec_operation_id_coerced"]
+    assert {(e["path"], tuple(e["reasons"])) for e in coerced} == {
+        ("/v1.0/areas", ("duplicate",)),
+        ("/v1/long", ("too_long",)),
+    }
+    assert all(e["log_level"] == "warning" for e in coerced)
+
+
 async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
     ingest_context: Context,
     registry_db: DatabaseSession,
