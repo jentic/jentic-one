@@ -109,6 +109,13 @@ STATUS_EXAMPLES: dict[str, dict[str, Any]] = {
         "detail": "The resource is no longer available and the operation has self-closed.",
         "instance": "/example/path",
     },
+    "413": {
+        "type": "payload_too_large",
+        "title": "Content Too Large",
+        "status": 413,
+        "detail": "Import request body exceeds the 52428800-byte limit",
+        "instance": "/example/path",
+    },
     "422": {
         "type": "validation_error",
         "title": "Unprocessable Entity",

@@ -754,20 +754,32 @@ class CatalogService:
         windowing, so the search box / tag chips in the UI cover every operation
         in the spec — not just the loaded page — and ``total`` reflects the
         filtered count the "Load more" affordance pages through.
+
+        The upstream fetch + projection is cached per spec URL on the process
+        (``Context.catalog_preview_cache``), so paging, filtering, or reloading
+        the same entry within ``catalog.preview_cache_ttl_seconds`` does not
+        refetch it; concurrent misses for one URL share a single fetch.
         """
         entry = await self.get(api_id)
-        if not entry.spec_url:
+        spec_url = entry.spec_url
+        if not spec_url:
             raise CatalogUnavailableError(f"catalog entry '{api_id}' has no spec url")
-        try:
-            doc = await fetch_json(entry.spec_url, config=self._ingest_cfg)
-        except CatalogFetchError as exc:
-            raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
 
-        projection = mb.project_preview(doc, tag=tag, q=q)
-        total = len(projection.operations)
+        async def _load() -> mb.PreviewProjection:
+            try:
+                doc = await fetch_json(spec_url, config=self._ingest_cfg)
+            except CatalogFetchError as exc:
+                raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
+            return mb.project_preview(doc)
+
+        # The unfiltered projection is cached (not the raw doc, which can be tens
+        # of MB once parsed); tag/q filtering and windowing run per request on it.
+        projection = await self._ctx.catalog_preview_cache.get_or_load(spec_url, _load)
+        operations = mb.filter_preview_operations(projection.operations, tag=tag, q=q)
+        total = len(operations)
         capped_limit = max(0, min(limit, mb.PREVIEW_MAX_OPERATIONS))
         start = max(0, offset)
-        window = projection.operations[start : start + capped_limit]
+        window = operations[start : start + capped_limit]
         return CatalogPreviewView(
             operations=window,
             total=total,

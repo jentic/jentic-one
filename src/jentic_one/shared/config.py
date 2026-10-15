@@ -2116,12 +2116,31 @@ class IngestConfig(BaseModel):
     # 25 MiB comfortably covers the largest specs in jentic-public-apis while
     # still bounding memory per fetch.
     max_spec_bytes: int = 25 * 1024 * 1024
+    # Enforced before the body is parsed, so an oversized batch never reaches
+    # the job queue. The 2x default leaves room for one maximum-size inline spec
+    # plus JSON-string escaping, and scales when ``max_spec_bytes`` is raised.
+    max_import_request_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Cap on the raw `POST /apis` request body (all sources together). "
+            "Unset means twice `max_spec_bytes`. Each inline source's content is "
+            "separately capped at `max_spec_bytes`."
+        ),
+    )
     fetch_timeout_s: float = 30.0
     max_redirects: int = 5
     # SSRF/egress policy for fetching URL sources. Strict by default (private
     # ranges blocked); opt in to internal targets for in-cluster/corporate
     # imports — mirrors broker.egress. See EgressConfig.
     egress: EgressConfig = Field(default_factory=EgressConfig)
+
+    @property
+    def import_request_cap_bytes(self) -> int:
+        """Effective ``POST /apis`` body cap (``max_import_request_bytes`` or its default)."""
+        if self.max_import_request_bytes is not None:
+            return self.max_import_request_bytes
+        return 2 * self.max_spec_bytes
 
 
 class CatalogConfig(BaseModel):
@@ -2165,6 +2184,27 @@ class CatalogConfig(BaseModel):
     # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
     # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Catalog preview (``GET /catalog/{id}/operations``) fetches the upstream
+    # spec (up to ``ingest.max_spec_bytes``); the slimmed operation projection is
+    # kept in-process so repeated previews of the same spec within the TTL cost
+    # one upstream fetch. Entries are bounded by count, not bytes, so keep the
+    # count small: a projection of a very large spec can itself be several MB.
+    preview_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=0,
+        description=(
+            "How long a catalog preview's upstream spec projection is reused before "
+            "refetching. Zero disables the cache."
+        ),
+    )
+    preview_cache_max_entries: int = Field(
+        default=16,
+        ge=0,
+        description=(
+            "Maximum number of catalog spec projections held in memory per process "
+            "(least recently used evicted first). Zero disables the cache."
+        ),
+    )
 
 
 class McpOAuthConfig(BaseModel):
