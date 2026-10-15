@@ -97,9 +97,12 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 		}
 		// A non-404 inspect failure (transport, 5xx, malformed) still exits 2,
 		// but surface the cause so the agent isn't left with a bare exit code.
+		// Cause keeps the transport chain classifiable (e.g. a refused
+		// loopback dial, LoopbackConnRefused) without changing the rendering.
 		return nil, &ux.CodedError{
-			Code: ux.CodeResolveFailed,
-			Msg:  fmt.Sprintf("resolve %q failed: %v", target, err),
+			Code:  ux.CodeResolveFailed,
+			Msg:   fmt.Sprintf("resolve %q failed: %v", target, err),
+			Cause: err,
 		}
 	}
 
@@ -439,6 +442,43 @@ func TransportFailurePreSend(err error) bool {
 	}
 	var hostname x509.HostnameError
 	return errors.As(err, &hostname)
+}
+
+// LoopbackConnRefused reports whether err is a refused TCP connection
+// (ECONNREFUSED) to a loopback target — 127.0.0.0/8, ::1, or "localhost" —
+// the signature of a local jentic-one install that is not running (#849).
+//
+// The target is read from every host the chain names: the request URL on a
+// *url.Error and the dialed address on a *net.OpError. All of them must be
+// loopback, and at least one must be present. Requiring the URL host keeps a
+// refused loopback forward proxy in front of a REMOTE target from reading as
+// a stopped local instance; requiring the dialed address keeps a loopback URL
+// that was rerouted elsewhere from counting either.
+func LoopbackConnRefused(err error) bool {
+	if err == nil || !errors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	sawHost := false
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		u, perr := url.Parse(urlErr.URL)
+		if perr != nil || !IsLoopbackHost(u.Hostname()) {
+			return false
+		}
+		sawHost = true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Addr != nil {
+		host := opErr.Addr.String()
+		if h, _, serr := net.SplitHostPort(host); serr == nil {
+			host = h
+		}
+		if !IsLoopbackHost(host) {
+			return false
+		}
+		sawHost = true
+	}
+	return sawHost
 }
 
 // brokerTLSMismatch reports whether err is the "https client hit an http server"

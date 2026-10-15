@@ -107,6 +107,19 @@ func RenderDirective(ctx context.Context, w io.Writer, d Directive) {
 	fmt.Fprintln(w, "  stuck? "+st.Accent.Render("jentic doctor"))
 }
 
+// StoppedInstanceHint is the recovery line for a refused dial to a loopback
+// jentic-one target (#849): on a local install that almost always means the
+// instance is not running, which jenticctl starts and diagnoses.
+const StoppedInstanceHint = "jentic-one appears to be stopped; run 'jenticctl start' (check with 'jenticctl status')"
+
+// RenderStoppedInstanceHint writes StoppedInstanceHint as one line to w (the
+// caller's stderr). It is a diagnostic beside the error envelope, never part of
+// it, so the machine contract (error_code, exit code, stdout) is untouched.
+func RenderStoppedInstanceHint(ctx context.Context, w io.Writer) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(w, st.Warn.Render(StoppedInstanceHint))
+}
+
 // RenderSynthesizedDenialRecovery writes a best-effort recovery hint for a
 // broker denial that carried no agent_directive, keyed off the HTTP status the
 // broker already returned (UX7). It mirrors RenderDirective's shape
