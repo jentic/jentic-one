@@ -86,12 +86,13 @@ func installInterceptor(app *App, root *cobra.Command) {
 			}
 		}
 
-		// 2. Resolve theme. STAGE 0 — mode gate: agent mode forces
-		// no-color, beating --theme/JENTIC_THEME/NO_COLOR/config so machine output is
-		// never corrupted by ANSI. Human falls through to the normal ladder.
+		// 2. Resolve theme. STAGE 0 — mode gate: machine mode (agent, or any
+		// unknown mode failing closed to agent) forces no-color, beating
+		// --theme/JENTIC_THEME/NO_COLOR/config so machine output is never
+		// corrupted by ANSI. Human falls through to the normal ladder.
 		var palette ux.Palette
 		var themeName string
-		if state.Mode == clictx.ModeAgent {
+		if state.IsMachine() {
 			palette, themeName = theme.Themes["no-color"], "no-color"
 		} else {
 			palette, themeName = theme.ResolveThemeWithName(flagValue(cmd, "theme"), state.ThemeName)
@@ -112,11 +113,11 @@ func installInterceptor(app *App, root *cobra.Command) {
 		}
 
 		// 3.5. Diagnostics bootstrap (impl/3.2 §2d): install the mode-dependent
-		// slog default (text for human, JSON for agent), always to stderr and
-		// redacted. This is the ONLY slog.SetDefault call in the process, so every
-		// later log line — including the SDK's via the default logger — carries
-		// the mode-appropriate, secret-scrubbed handler.
-		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
+		// slog default (text for human, JSON for machine mode), always to stderr
+		// and redacted. This is the ONLY slog.SetDefault call in the process, so
+		// every later log line — including the SDK's via the default logger —
+		// carries the mode-appropriate, secret-scrubbed handler.
+		setupSlog(app, state.IsMachine(), boolFlag(cmd, "verbose"))
 
 		// An unknown mode (typo, or the retired `service-account` alias — 14
 		// BC-12) already failed closed to AgentUX above; say so on stderr only,
@@ -163,8 +164,9 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// prompts/paginators aren't cut off. Long-running commands (annotation
 		// above) are exempt: their lifetime is caller-owned and they bound their
 		// own per-call contexts. The cancel is released in PersistentPostRunE
-		// above.
-		if state.Mode == clictx.ModeAgent &&
+		// above. Keyed off IsMachine so an unknown mode, which already runs as
+		// AgentUX, is bounded too.
+		if state.IsMachine() &&
 			cmd.Annotations[LongRunningAnnotation] != "true" {
 			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
 			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)

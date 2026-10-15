@@ -81,8 +81,8 @@ func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
 // TestFencing_RetiredServiceAccountModeFailsClosed pins the 14 BC-12 removal:
 // the retired service-account alias is now an ordinary unknown mode, so it
 // fails closed to the fenced AgentUX (impl/3.2 §2) — never the unfenced human
-// path. It no longer emits a deprecation notice; the generic UNKNOWN_MODE
-// warning goes to stderr as a text slog line (13 §1: stdout stays reserved).
+// path. It emits no deprecation notice; the generic UNKNOWN_MODE warning goes
+// to stderr as a JSON slog line (13 §1: stdout stays reserved).
 func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -111,9 +111,9 @@ func TestFencing_RetiredServiceAccountModeFailsClosed(t *testing.T) {
 			if strings.Contains(stderr, "DEPRECATED_MODE") {
 				t.Errorf("the retired alias must not warn as deprecated any more:\n%s", stderr)
 			}
-			// setupSlog keeps the text handler for an unknown mode (only canonical
-			// agent gets JSON), so match the text-handler key=value form.
-			for _, want := range []string{`code=UNKNOWN_MODE`, `mode=service-account`, `actionable_step="use --mode agent|human`} {
+			// An unknown mode is machine mode (IsMachine), so setupSlog installs
+			// the JSON handler: match the JSON key/value form (#1413).
+			for _, want := range []string{`"code":"UNKNOWN_MODE"`, `"mode":"service-account"`, `"actionable_step":"use --mode agent|human`} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr missing %s:\n%s", want, stderr)
 				}

@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -53,14 +52,15 @@ func slogLevel(verbose bool) slog.Level {
 // mode-dependent and MUST be the only place that calls slog.SetDefault:
 //   - destination is ALWAYS stderr (stdout belongs exclusively to Render
 //     payloads — 13 §1);
-//   - human mode → text handler (readable next to prose); agent → JSON
-//     handler (agents capture 2>&1 and parse it next to the error
-//     envelope, where prose would be noise);
+//   - human mode → text handler (readable next to prose); machine mode
+//     (clictx.ActiveState.IsMachine: agent, or an unknown mode failing closed
+//     to agent) → JSON handler (agents capture 2>&1 and parse it next to the
+//     error envelope, where prose would be noise);
 //   - every line is redacted (M6 applies to slog too).
 //
 // It writes to app.Err (overridable in tests) rather than os.Stderr directly, so
 // diagnostics honor the same stream the Audience reports errors on.
-func setupSlog(app *App, mode string, verbose bool) {
+func setupSlog(app *App, machine bool, verbose bool) {
 	dst := app.Err
 	if dst == nil {
 		dst = os.Stderr
@@ -69,10 +69,9 @@ func setupSlog(app *App, mode string, verbose bool) {
 	opts := &slog.HandlerOptions{Level: slogLevel(verbose)}
 
 	var handler slog.Handler
-	switch mode {
-	case clictx.ModeAgent:
+	if machine {
 		handler = slog.NewJSONHandler(out, opts)
-	default: // human (and any fail-closed default)
+	} else {
 		handler = slog.NewTextHandler(out, opts)
 	}
 	slog.SetDefault(slog.New(handler))

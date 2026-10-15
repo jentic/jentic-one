@@ -1,11 +1,17 @@
 package cmdcore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
 // newProbeRoot builds a minimal root with the interceptor installed and a "probe"
@@ -15,7 +21,13 @@ import (
 // exist for the mode ladder to see it).
 func newProbeRoot(t *testing.T, capture *func(ctx context.Context)) *cobra.Command {
 	t.Helper()
-	app := &App{}
+	return newProbeRootWithApp(t, &App{}, capture)
+}
+
+// newProbeRootWithApp is newProbeRoot over a caller-supplied App, so a test can
+// capture the diagnostics stream (app.Err) the interceptor's slog handler writes.
+func newProbeRootWithApp(t *testing.T, app *App, capture *func(ctx context.Context)) *cobra.Command {
+	t.Helper()
 	root := &cobra.Command{Use: "jentic", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().String("mode", "", "")
 	root.PersistentFlags().String("context", "", "")
@@ -100,5 +112,55 @@ func TestInterceptor_LongRunningExemptFromAgentDeadline(t *testing.T) {
 	}
 	if _, ok := seen.Deadline(); ok {
 		t.Error("a long-running command in agent mode must NOT carry the interceptor's wall-clock deadline")
+	}
+}
+
+// TestInterceptor_UnknownModeGetsMachineGates pins #1413: an unknown mode
+// (typo'd --mode / JENTIC_MODE) fails closed to AgentUX, so every other
+// machine-mode gate must apply too — forced no-color (beating an explicit
+// --theme), the wall-clock deadline, and the JSON slog handler. Missing any of
+// them would leak ANSI into machine output, let the CLI hang on a wedged
+// Control Plane, or emit prose logs an agent can't parse.
+func TestInterceptor_UnknownModeGetsMachineGates(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	for _, tc := range []struct {
+		name string
+		env  string
+		args []string
+	}{
+		{"flag", "", []string{"--mode", "agnet", "--theme", "dark", "probe"}},
+		{"env", "agnet", []string{"--theme", "dark", "probe"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen context.Context
+			capture := func(ctx context.Context) { seen = ctx }
+			stderr := new(bytes.Buffer)
+			root := newProbeRootWithApp(t, &App{Err: stderr}, &capture)
+
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("JENTIC_MODE", tc.env)
+			root.SetArgs(tc.args)
+			if err := root.ExecuteContext(context.Background()); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+
+			if got := theme.ThemeNameFromContext(seen); got != "no-color" {
+				t.Errorf("theme = %q, want no-color for an unknown mode", got)
+			}
+			if _, ok := seen.Deadline(); !ok {
+				t.Error("an unknown mode must carry the machine-mode wall-clock deadline")
+			}
+
+			line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+			var rec map[string]any
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("unknown-mode warning must be a JSON slog line, got %q: %v", stderr.String(), err)
+			}
+			if rec["code"] != "UNKNOWN_MODE" || rec["mode"] != "agnet" {
+				t.Errorf("slog record = %v, want code=UNKNOWN_MODE mode=agnet", rec)
+			}
+		})
 	}
 }
