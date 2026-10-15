@@ -125,3 +125,29 @@ async def test_zero_bound_disables_caching(max_entries: int, ttl: float) -> None
     assert loader.calls == 2
     assert not cache.enabled
     assert len(cache) == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_evicts_and_discards_in_flight_load() -> None:
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(max_entries=4, ttl_seconds=60, clock=_Clock())
+    await cache.get_or_load("a", _Loader())
+    cache.clear()
+    assert len(cache) == 0
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_loader() -> str:
+        started.set()
+        await release.wait()
+        return "stale"
+
+    async with asyncio.TaskGroup() as tg:
+        task = tg.create_task(cache.get_or_load("b", slow_loader))
+        await started.wait()
+        cache.clear()
+        release.set()
+
+    # The caller still gets its value, but the pre-clear result is not stored.
+    assert task.result() == "stale"
+    assert len(cache) == 0

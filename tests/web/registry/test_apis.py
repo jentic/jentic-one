@@ -291,7 +291,11 @@ async def test_import_request_body_over_cap_413_without_job(
     resp = authed_client.post("/apis", json={"sources": sources})
 
     assert resp.status_code == 413
-    assert resp.json()["type"] == "payload_too_large"
+    body = resp.json()
+    assert body["type"] == "payload_too_large"
+    assert body["instance"] == "/apis"
+    # Runs before auth, so the configured byte figure is not echoed back.
+    assert "2048" not in body["detail"]
     assert await _job_count(web_context) == before
 
 

@@ -98,7 +98,11 @@ def _mock_github() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 async def _clean_catalog(web_context: Context) -> AsyncGenerator[None, None]:
-    """Empty the catalog cache around each test for deterministic counts."""
+    """Empty the catalog cache around each test for deterministic counts.
+
+    The preview cache needs no reset: ``web_context`` is function-scoped, so each
+    test gets a fresh ``Context`` and with it an empty preview cache.
+    """
 
     async def _truncate() -> None:
         async with web_context.registry_db.session() as session:
@@ -525,6 +529,18 @@ def test_preview_reuses_upstream_fetch_within_ttl(admin_client: TestClient) -> N
     filtered = admin_client.get("/catalog/stripe.com/operations", params={"q": "create"}).json()
     assert filtered["total"] == 1
     assert len(_SPEC_FETCHES) == 1
+
+
+def test_catalog_refresh_invalidates_preview_cache(admin_client: TestClient) -> None:
+    """`POST /catalog:refresh` drops cached previews, so the next preview refetches."""
+    admin_client.post("/catalog:refresh")
+    admin_client.get("/catalog/stripe.com/operations")
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 1
+
+    assert admin_client.post("/catalog:refresh").status_code == 200
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 2
 
 
 def test_preview_refetches_after_ttl_expiry(

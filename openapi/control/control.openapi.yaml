@@ -15828,7 +15828,7 @@ paths:
           content:
             application/problem+json:
               example:
-                detail: Import request body exceeds the 52428800-byte limit
+                detail: Import request body exceeds the size limit
                 instance: /example/path
                 status: 413
                 title: Content Too Large
