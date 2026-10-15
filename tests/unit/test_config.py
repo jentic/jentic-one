@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -37,6 +38,7 @@ from jentic_one.shared.config import (
     _csv_to_list,
     _deep_merge,
     _env_overrides,
+    _oneshot_cache_key,
     bind_origin,
     check_public_url_consistency,
     connect_approval_url,
@@ -1046,6 +1048,57 @@ def test_oneshot_cache_is_keyed_on_source_identity_not_path(
     finally:
         if read_b >= 0:
             os.close(read_b)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
+    sample_config_dict: dict[str, Any],
+):
+    """Pins #1499: (device, inode) is not a stable identity — macOS reports
+    pipes with st_dev 0 and hands a freed pipe's inode to the next pipe. An
+    entry cached for an earlier source on the same device, inode, and path
+    (but a different ctime) must never be served for the new source."""
+    sample_config_dict["databases"]["registry"]["name"] = "fresh"
+    doc = yaml.dump(sample_config_dict)
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc.encode())
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        dev, ino, ctime_ns, _ = _oneshot_cache_key(os.fstat(read_fd), pipe_path)
+        _ONESHOT_CONFIG_CACHE[(dev, ino, ctime_ns - 1, str(pipe_path))] = "stale: true"
+        loaded = load_config(pipe_path)
+        assert loaded.databases.registry.name == "fresh"
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
+    """Every pipe write bumps its ctime, so a supervisor still streaming the
+    document after the loader opened the fd must not leave the cache keyed on
+    a pre-drain identity — the repeat load would miss and hit EOF."""
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+
+    def stream() -> None:
+        for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
+            # Longer than a Linux timestamp tick, so each write moves the ctime.
+            time.sleep(0.05)
+            os.write(write_fd, chunk)
+        os.close(write_fd)
+
+    writer = threading.Thread(target=stream)
+    try:
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        writer.start()
+        first = load_config(pipe_path)
+        writer.join()
+        second = load_config(pipe_path)
+        assert first.databases.registry.name == second.databases.registry.name
+    finally:
+        writer.join()
+        os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
 
