@@ -607,9 +607,39 @@ class AgentService:
         passes its own revocation cause so a purge never reads as an archive.
         Flush-only and not best-effort: a failed sweep rolls the caller's
         transaction back.
+
+        The permission-grant wipe gets its own ``REVOKE`` audit entry on the
+        agent, snapshotting the grants held at archive time; it is skipped
+        when the agent holds none.
         """
         await AgentRepository.archive(session, agent.id)
+        held = [
+            g.permission
+            for g in await ActorPermissionGrantRepository.list_for_actor(
+                session, agent.id, actor_type=ActorType.AGENT
+            )
+        ]
         await ActorPermissionGrantRepository.revoke_all(session, agent.id)
+        if held:
+            await record_audit(
+                session,
+                action=AuditAction.REVOKE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent.id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"permissions": held},
+                after={"permissions": []},
+                reason=f"permissions revoked: agent {summary_cause}",
+                origin=identity.origin.value,
+            )
+            logger.info(
+                "agent_permissions_revoked",
+                agent_id=agent.id,
+                actor_id=identity.sub,
+                permissions=len(held),
+                cause=summary_cause,
+            )
         await AgentCredentialBindingRepository.delete_for_agent(session, agent.id)
         await revoke_active_grants_for_agent(
             session,

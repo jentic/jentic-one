@@ -6,9 +6,8 @@ end state of a fresh database):
 
 - existing rows must survive with their values and ``asg_`` ids intact;
 - on SQLite the column rename and the unique-constraint swap need separate
-  batch rebuilds, or the rebuild drops the constraint that the
-  ``ON CONFLICT (actor_id, permission)`` upsert in
-  ``EffectsRepository.grant_permission_to_actor`` depends on.
+  batch rebuilds, or the rebuild drops the ``(actor_id, permission)`` unique
+  constraint that keeps an actor from holding the same permission twice.
 
 Each test migrates a throwaway database (a fresh Postgres schema, or a fresh
 SQLite file) to the revision just before the rename, seeds rows the way the old
@@ -187,7 +186,7 @@ def _assert_new_shape(target: _Target) -> None:
 
 
 def _assert_upsert_is_idempotent(target: _Target) -> None:
-    """The grant path's ``ON CONFLICT (actor_id, permission)`` needs the unique constraint."""
+    """``ON CONFLICT (actor_id, permission)`` resolves only while the unique constraint exists."""
     for _ in range(2):
         _run(
             target,
