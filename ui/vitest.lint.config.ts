@@ -23,5 +23,9 @@ export default defineConfig({
 		include: ['src/**/*.lint.test.ts'],
 		// ESLint must lint real source files from disk; no setup/mocking.
 		setupFiles: [],
+		// The first `lintText` call in a file pays ESLint's cold start (loading
+		// the config, plugins and the TypeScript import resolver) — about a
+		// second locally, enough to pass the 5s default on a loaded CI runner.
+		testTimeout: 30_000,
 	},
 });

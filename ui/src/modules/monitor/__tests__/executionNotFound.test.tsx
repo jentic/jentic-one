@@ -3,6 +3,11 @@
  * none) reads "Call not found" after ONE read — a 404 is the answer, so the
  * query does not retry it. Rendered under the app's own QueryClient
  * (`createQueryClient`), whose default policy would otherwise apply.
+ *
+ * The retry backoff is zeroed, so every retry the policy allows fires at once
+ * and each test waits on the settled UI rather than on wall-clock time. A query
+ * only exposes its error once its retries are spent, so the read count at that
+ * point is final.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -16,9 +21,17 @@ import { AuthProvider } from '@/shared/auth';
 import MonitorPage from '@/modules/monitor/pages/MonitorPage';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 
+/** The app's QueryClient: its retry policy as shipped, with no backoff. */
+function appQueryClient() {
+	const client = createQueryClient();
+	const defaults = client.getDefaultOptions();
+	client.setDefaultOptions({ ...defaults, queries: { ...defaults.queries, retryDelay: 0 } });
+	return client;
+}
+
 function renderMonitor(route: string) {
 	return render(
-		<QueryClientProvider client={createQueryClient()}>
+		<QueryClientProvider client={appQueryClient()}>
 			<AuthProvider>
 				<MemoryRouter initialEntries={[route]}>
 					<MonitorPage />
@@ -53,8 +66,6 @@ describe('Monitor call record — a foreign execution deep link', () => {
 
 		const dialog = await screen.findByRole('dialog');
 		expect(await within(dialog).findByText('Call not found')).toBeInTheDocument();
-		// Past where a first and second retry would have fired.
-		await new Promise((r) => setTimeout(r, 3500));
 		expect(calls.reads).toBe(1);
 	});
 
@@ -62,8 +73,9 @@ describe('Monitor call record — a foreign execution deep link', () => {
 		const calls = trackExecutionReads('exec_flaky', 503);
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_flaky');
 
-		await screen.findByRole('dialog');
-		await new Promise((r) => setTimeout(r, 1800));
-		expect(calls.reads).toBeGreaterThan(1);
+		const dialog = await screen.findByRole('dialog');
+		expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+		// The first read plus the default policy's two retries.
+		expect(calls.reads).toBe(3);
 	});
 });
