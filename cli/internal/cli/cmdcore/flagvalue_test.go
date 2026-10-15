@@ -7,11 +7,10 @@ import (
 )
 
 // TestFlagValue_ReadsRootPersistentNotLocalShadow pins #1412: a subcommand's
-// local flag that shares a name with a root session flag (e.g. `context create
-// --mode`) must not be read as the session value, while the root flag still
-// reaches every command that does not shadow it. cobra binds every `--mode`
-// token on the shadowing command to its local flag, so the session mode there
-// comes from $JENTIC_MODE / the persisted context.
+// local flag that shares a name with a root session flag must not be read as
+// the session value, while the root flag still reaches every command that does
+// not shadow it. (The api tree forbids such shadowing outright; this keeps the
+// lookup itself honest.)
 func TestFlagValue_ReadsRootPersistentNotLocalShadow(t *testing.T) {
 	newRoot := func() (root, shadow, plain *cobra.Command) {
 		root = &cobra.Command{Use: "jentic"}
