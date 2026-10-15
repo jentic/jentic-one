@@ -3,8 +3,9 @@
  * "No access to jobs" state, no request without `jobs:read`, and a refused
  * read (403) answered once, never retried, never shown as a raw error.
  *
- * Rendered under the app's own QueryClient (`createQueryClient`), so the
- * retry policy under test is the one the app ships.
+ * Rendered under the app's own QueryClient (`appQueryClient`:
+ * `createQueryClient` with no backoff), so the retry policy under test is the
+ * one the app ships.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -13,10 +14,10 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, checkA11y, waitFor, within } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
-import { createQueryClient } from '@/shared/app';
 import { AuthProvider } from '@/shared/auth';
 import MonitorPage from '@/modules/monitor/pages/MonitorPage';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { appQueryClient } from '@/modules/monitor/__tests__/appQueryClient';
 
 /** A member's effective permissions with the usual defaults. */
 const MEMBER_DEFAULTS = [
@@ -46,7 +47,7 @@ function viewer(permissions: readonly string[]) {
 
 function renderJobs() {
 	return render(
-		<QueryClientProvider client={createQueryClient()}>
+		<QueryClientProvider client={appQueryClient()}>
 			<AuthProvider>
 				<MemoryRouter initialEntries={['/app/monitor?show=jobs']}>
 					<MonitorPage />
@@ -112,8 +113,6 @@ describe('Monitor Jobs — read access', () => {
 		expect(await screen.findByText('No access to jobs')).toBeInTheDocument();
 		expect(screen.queryByText(/This action requires one of/)).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-		// Past the default retry backoff (1s, then 2s).
-		await new Promise((r) => setTimeout(r, 3500));
 		expect(calls.list).toBe(1);
 	});
 });
@@ -127,7 +126,7 @@ describe('Monitor Audit log — read access', () => {
 
 	function renderAudit() {
 		return render(
-			<QueryClientProvider client={createQueryClient()}>
+			<QueryClientProvider client={appQueryClient()}>
 				<AuthProvider>
 					<MemoryRouter initialEntries={['/app/monitor?show=audit']}>
 						<MonitorPage />
