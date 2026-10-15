@@ -696,6 +696,21 @@ func (e NoAuthCreateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for NoAuthUpdateRequestType.
+const (
+	NoAuthUpdateRequestTypeNoAuth NoAuthUpdateRequestType = "no_auth"
+)
+
+// Valid indicates whether the value is a known member of the NoAuthUpdateRequestType enum.
+func (e NoAuthUpdateRequestType) Valid() bool {
+	switch e {
+	case NoAuthUpdateRequestTypeNoAuth:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NoteConfidence.
 const (
 	Observed  NoteConfidence = "observed"
@@ -4460,6 +4475,41 @@ type NoAuthCreateRequest struct {
 // Examples: no_auth
 type NoAuthCreateRequestType string
 
+// NoAuthUpdateRequest Update request for no_auth credentials (label, enablement, server variables).
+//
+// Examples: {"active":true,"name":"Open-Meteo","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"no_auth"}
+type NoAuthUpdateRequest struct {
+	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
+	Active *bool `json:"active,omitempty"`
+
+	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Open-Meteo
+	Name *string `json:"name,omitempty"`
+
+	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
+	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
+
+	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
+	ServerVariables *map[string]string `json:"server_variables,omitempty"`
+
+	// Type Credential type; always `no_auth`.
+	//
+	// Examples: no_auth
+	Type NoAuthUpdateRequestType `json:"type"`
+}
+
+// NoAuthUpdateRequestType Credential type; always `no_auth`.
+//
+// Examples: no_auth
+type NoAuthUpdateRequestType string
+
 // NoteApiReference Loose “(vendor, name, version)“ identity tuple for a registered API.
 //
 // Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
@@ -4661,7 +4711,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
-	// ClientSecret Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.
+	// ClientSecret Replacement client secret; omit to leave unchanged.
 	//
 	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
@@ -4676,7 +4726,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
-	// Scopes Replacement OAuth scopes; applied only when client_secret is sent.
+	// Scopes Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them.
 	//
 	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
@@ -4686,7 +4736,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
-	// TokenUrl Replacement token endpoint URL; applied only when client_secret is sent.
+	// TokenUrl Replacement token endpoint URL; omit to leave unchanged.
 	//
 	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
@@ -9205,6 +9255,40 @@ func (t *UpdateCredentialJSONBody) MergeOAuth2UpdateRequest(v OAuth2UpdateReques
 	return err
 }
 
+// AsNoAuthUpdateRequest returns the union data inside the UpdateCredentialJSONBody as a NoAuthUpdateRequest
+func (t UpdateCredentialJSONBody) AsNoAuthUpdateRequest() (NoAuthUpdateRequest, error) {
+	var body NoAuthUpdateRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromNoAuthUpdateRequest overwrites any union data inside the UpdateCredentialJSONBody as the provided NoAuthUpdateRequest
+func (t *UpdateCredentialJSONBody) FromNoAuthUpdateRequest(v NoAuthUpdateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"no_auth"}`))
+	t.union = b
+	return err
+}
+
+// MergeNoAuthUpdateRequest performs a merge with any union data inside the UpdateCredentialJSONBody, using the provided NoAuthUpdateRequest
+func (t *UpdateCredentialJSONBody) MergeNoAuthUpdateRequest(v NoAuthUpdateRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"no_auth"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsSigv4UpdateRequest returns the union data inside the UpdateCredentialJSONBody as a Sigv4UpdateRequest
 func (t UpdateCredentialJSONBody) AsSigv4UpdateRequest() (Sigv4UpdateRequest, error) {
 	var body Sigv4UpdateRequest
@@ -9259,6 +9343,8 @@ func (t UpdateCredentialJSONBody) ValueByDiscriminator() (interface{}, error) {
 		return t.AsBasicAuthUpdateRequest()
 	case "bearer_token":
 		return t.AsBearerTokenUpdateRequest()
+	case "no_auth":
+		return t.AsNoAuthUpdateRequest()
 	case "oauth2":
 		return t.AsOAuth2UpdateRequest()
 	case "sigv4":

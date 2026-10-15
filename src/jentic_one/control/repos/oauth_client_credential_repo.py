@@ -49,7 +49,9 @@ class OAuthClientCredentialRepository:
         encrypted_client_secret: str | None = None,
         token_url: str | None = None,
         scope: str | None = None,
+        clear_scope: bool = False,
     ) -> OAuthClientCredential | None:
+        """Apply each provided field independently; ``clear_scope`` drops the stored scope."""
         row = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
         if row is None:
             return None
@@ -57,7 +59,9 @@ class OAuthClientCredentialRepository:
             row.encrypted_client_secret = encrypted_client_secret
         if token_url is not None:
             row.token_url = token_url
-        if scope is not None:
+        if clear_scope:
+            row.scope = None
+        elif scope is not None:
             row.scope = scope
         await session.flush()
         return row

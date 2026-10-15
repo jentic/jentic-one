@@ -394,6 +394,7 @@ class BearerTokenUpdateRequest(BaseModel):
     )
     token: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement bearer token; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
@@ -429,6 +430,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
     key: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement API key; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
@@ -482,11 +484,13 @@ class BasicAuthUpdateRequest(BaseModel):
     )
     username: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement username; omit to leave unchanged.",
         examples=["svc-reporting"],
     )
     password: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement password; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
@@ -521,22 +525,49 @@ class OAuth2UpdateRequest(BaseModel):
     )
     client_secret: str | None = Field(
         default=None,
-        description=(
-            "Replacement client secret; omit to leave unchanged. token_url and scopes "
-            "are applied only together with it."
-        ),
+        min_length=1,
+        description="Replacement client secret; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
     )
     token_url: str | None = Field(
         default=None,
+        min_length=1,
         examples=["https://connect.stripe.com/oauth/token"],
-        description="Replacement token endpoint URL; applied only when client_secret is sent.",
+        description="Replacement token endpoint URL; omit to leave unchanged.",
     )
     scopes: list[str] | None = Field(
         default=None,
         examples=[["read_write"]],
-        description="Replacement OAuth scopes; applied only when client_secret is sent.",
+        description=("Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them."),
+    )
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
+class NoAuthUpdateRequest(BaseModel):
+    """Update request for no_auth credentials (label, enablement, server variables)."""
+
+    type: Literal["no_auth"] = Field(
+        description="Credential type; always `no_auth`.", examples=["no_auth"]
+    )
+    name: str | None = Field(
+        default=None,
+        description="New label for the credential; omit to leave unchanged.",
+        examples=["Open-Meteo"],
+    )
+    active: bool | None = Field(
+        default=None,
+        examples=[True],
+        description="Enable or disable the credential for injection; omit to leave unchanged.",
+    )
+    runtime_config: RuntimeConfig | None = Field(
+        default=None, description="Per-upstream-call overrides; reserved and not currently applied."
+    )
+    server_variables: dict[str, str] | None = Field(
+        default=None,
+        examples=[{"region": "eu"}],
+        description="Replacement OpenAPI server-variable values; omit to leave unchanged.",
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -568,17 +599,20 @@ class Sigv4UpdateRequest(BaseModel):
     )
     access_key_id: str | None = Field(
         default=None,
+        min_length=1,
         examples=["AKIAIOSFODNN7EXAMPLE"],  # pragma: allowlist secret
         description="Replacement AWS access key ID; must be sent with secret_access_key.",
     )
     secret_access_key: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement AWS secret access key; must be sent with access_key_id.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
     )
     session_token: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement STS session token; omit to leave unchanged.",
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
@@ -590,11 +624,13 @@ class Sigv4UpdateRequest(BaseModel):
     )
     aws_region: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement signing region; omit to leave unchanged.",
         examples=["us-east-1"],
     )
     aws_service: str | None = Field(
         default=None,
+        min_length=1,
         description="Replacement signing service; omit to leave unchanged.",
         examples=["execute-api"],
     )
@@ -612,6 +648,7 @@ CredentialUpdateRequest = Annotated[
     | ApiKeyUpdateRequest
     | BasicAuthUpdateRequest
     | OAuth2UpdateRequest
+    | NoAuthUpdateRequest
     | Sigv4UpdateRequest,
     Field(discriminator="type"),
 ]
