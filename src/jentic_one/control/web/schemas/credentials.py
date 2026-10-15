@@ -924,7 +924,7 @@ class ProviderDiscoveryResponse(BaseModel):
 
 
 class CredentialAgentResponse(BaseModel):
-    """Agent directly bound to a credential (theme 5 phase 1)."""
+    """Agent directly bound to a credential."""
 
     agent_id: str = Field(description="ID of the bound agent.", examples=[ex.AGENT_ID])
     agent_name: str = Field(description="Name of the bound agent.", examples=["billing-assistant"])

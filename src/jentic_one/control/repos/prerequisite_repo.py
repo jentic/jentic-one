@@ -18,7 +18,7 @@ from jentic_one.shared.db.types import UTCDateTime
 
 
 class CredentialBoundAgentRow(NamedTuple):
-    """Result row for agents directly bound to a credential (theme 5 phase 1)."""
+    """Result row for agents directly bound to a credential."""
 
     binding_id: str
     agent_id: str
@@ -150,8 +150,8 @@ class PrerequisiteRepository:
     ) -> list[CredentialBoundAgentRow]:
         """Return agents directly bound to a credential, paginated by (bound_at DESC, id DESC).
 
-        The reverse lookup behind ``GET /credentials/{id}/agents`` (theme 5
-        phase 1), reading ``agent_credential_bindings``. Suspended bindings
+        The reverse lookup behind ``GET /credentials/{id}/agents``, reading
+        ``agent_credential_bindings``. Suspended bindings
         are included (with their flag and reason) so the
         credential-detail view can show a reversible cut-off, not hide it.
 

@@ -2953,7 +2953,7 @@ components:
       title: CredentialAgentListResponse
       type: object
     CredentialAgentResponse:
-      description: Agent directly bound to a credential (theme 5 phase 1).
+      description: Agent directly bound to a credential.
       examples:
       - agent_id: agnt_6968b3984d1c238dbe7e2e29
         agent_name: billing-assistant
@@ -20535,9 +20535,9 @@ paths:
       description: |-
         List agents directly bound to a credential with cursor-based pagination.
 
-        The reverse lookup for the credential-detail "Agents" view (theme 5
-        phase 1) — the direct-binding successor of the removed
-        ``GET /toolkits/{id}/agents``.
+        The reverse lookup for the credential-detail "Agents" view: every agent
+        whose direct binding points at this credential, filtered to the agents
+        the caller may see.
         Suspended bindings are included with their flag set and, when known, the
         reason (`api_deleted` when the credential's API was deleted).
       operationId: listCredentialAgents

@@ -4696,7 +4696,7 @@
         "type": "object"
       },
       "CredentialAgentResponse": {
-        "description": "Agent directly bound to a credential (theme 5 phase 1).",
+        "description": "Agent directly bound to a credential.",
         "examples": [
           {
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
@@ -35439,7 +35439,7 @@
     "/credentials/{credential_id}/agents": {
       "description": "`GET`: List agents bound to credential.",
       "get": {
-        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view (theme 5\nphase 1) — the direct-binding successor of the removed\n``GET /toolkits/{id}/agents``.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
+        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
         "operationId": "listCredentialAgents",
         "parameters": [
           {

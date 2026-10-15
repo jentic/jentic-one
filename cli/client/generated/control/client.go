@@ -2696,7 +2696,7 @@ type CredentialAgentListResponse struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
-// CredentialAgentResponse Agent directly bound to a credential (theme 5 phase 1).
+// CredentialAgentResponse Agent directly bound to a credential.
 //
 // Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}
 type CredentialAgentResponse struct {
@@ -10394,9 +10394,9 @@ type ClientInterface interface {
 	//
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
-	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding successor of the removed
-	// ``GET /toolkits/{id}/agents``.
+	// The reverse lookup for the credential-detail "Agents" view: every agent
+	// whose direct binding points at this credential, filtered to the agents
+	// the caller may see.
 	// Suspended bindings are included with their flag set and, when known, the
 	// reason (`api_deleted` when the credential's API was deleted).
 	//
@@ -14119,9 +14119,9 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 //
 // List agents directly bound to a credential with cursor-based pagination.
 //
-// The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding successor of the removed
-// “GET /toolkits/{id}/agents“.
+// The reverse lookup for the credential-detail "Agents" view: every agent
+// whose direct binding points at this credential, filtered to the agents
+// the caller may see.
 // Suspended bindings are included with their flag set and, when known, the
 // reason (`api_deleted` when the credential's API was deleted).
 //
@@ -26375,9 +26375,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
-	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding successor of the removed
-	// ``GET /toolkits/{id}/agents``.
+	// The reverse lookup for the credential-detail "Agents" view: every agent
+	// whose direct binding points at this credential, filtered to the agents
+	// the caller may see.
 	// Suspended bindings are included with their flag set and, when known, the
 	// reason (`api_deleted` when the credential's API was deleted).
 	//
@@ -44117,9 +44117,9 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 //
 // List agents directly bound to a credential with cursor-based pagination.
 //
-// The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding successor of the removed
-// “GET /toolkits/{id}/agents“.
+// The reverse lookup for the credential-detail "Agents" view: every agent
+// whose direct binding points at this credential, filtered to the agents
+// the caller may see.
 // Suspended bindings are included with their flag set and, when known, the
 // reason (`api_deleted` when the credential's API was deleted).
 //

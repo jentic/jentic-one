@@ -224,9 +224,9 @@ export class CredentialsService {
      * List agents bound to credential
      * List agents directly bound to a credential with cursor-based pagination.
      *
-     * The reverse lookup for the credential-detail "Agents" view (theme 5
-     * phase 1) — the direct-binding successor of the removed
-     * ``GET /toolkits/{id}/agents``.
+     * The reverse lookup for the credential-detail "Agents" view: every agent
+     * whose direct binding points at this credential, filtered to the agents
+     * the caller may see.
      * Suspended bindings are included with their flag set and, when known, the
      * reason (`api_deleted` when the credential's API was deleted).
      * @returns CredentialAgentListResponse Successful Response

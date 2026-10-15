@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Agent directly bound to a credential (theme 5 phase 1).
+ * Agent directly bound to a credential.
  */
 export type CredentialAgentResponse = {
     /**
