@@ -168,6 +168,9 @@ class CatalogService:
             count = await CatalogRepository.replace(
                 session, source_url=self._cfg.manifest_url, entries=entries
             )
+        # An explicit refresh is the operator's "pick up upstream changes" lever,
+        # so cached preview projections are dropped along with the old snapshot.
+        self._ctx.catalog_preview_cache.clear()
         return CatalogRefreshResult(count=count)
 
     def _is_stale(self, fetched_at: datetime | None) -> bool:
@@ -786,7 +789,7 @@ class CatalogService:
             offset=start,
             truncated=start + len(window) < total,
             info=projection.info,
-            security_schemes=projection.security_schemes,
+            security_schemes=dict(projection.security_schemes),
         )
 
     # ── import ───────────────────────────────────────────────────────────────

@@ -189,24 +189,26 @@ async def list_api_security_schemes(
 
 
 def _payload_too_large(
-    detail: str, *, errors: list[ErrorItem | dict[str, Any]] | None = None
+    detail: str, *, instance: str, errors: list[ErrorItem | dict[str, Any]] | None = None
 ) -> Exception:
     return ProblemDetailException(
         status_code=413,
         detail=detail,
         type="payload_too_large",
-        instance="/apis",
+        instance=instance,
         errors=errors,
     )
 
 
 class _ImportBodyCapRoute(APIRoute):
-    """Bounds the raw ``POST /apis`` body before FastAPI buffers and parses it.
+    """Bounds the raw ``POST /apis`` body while FastAPI reads it.
 
-    FastAPI reads the whole body ahead of dependency resolution, so the cap has
-    to sit in the route handler. The declared ``Content-Length`` is rejected up
-    front; the stream is also counted so a chunked body without one is cut off
-    at the same cap rather than read to completion.
+    FastAPI reads the whole body ahead of dependency resolution (auth included),
+    so the cap has to sit in the route handler. A declared ``Content-Length``
+    over the cap is rejected up front; otherwise ``receive`` is wrapped to count
+    bytes as Starlette buffers them, so a chunked body without a length is cut
+    off at the cap without a second copy being held. The detail omits the byte
+    figure because this runs before the caller is authenticated.
     """
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -215,28 +217,23 @@ class _ImportBodyCapRoute(APIRoute):
         async def handler(request: Request) -> Response:
             ctx: Context = request.app.state.ctx
             cap = ctx.config.ingest.import_request_cap_bytes
-            too_large = f"Import request body exceeds the {cap}-byte limit"
-            declared = request.headers.get("content-length")
-            if declared is not None and declared.isdigit() and int(declared) > cap:
-                raise _payload_too_large(too_large)
-            chunks: list[bytes] = []
+            instance = request.url.path
+            too_large = "Import request body exceeds the size limit"
+            declared = (request.headers.get("content-length") or "").strip()
+            if declared.isdigit() and int(declared) > cap:
+                raise _payload_too_large(too_large, instance=instance)
             total = 0
-            async for chunk in request.stream():
-                total += len(chunk)
-                if total > cap:
-                    raise _payload_too_large(too_large)
-                chunks.append(chunk)
-            body = b"".join(chunks)
-            replayed = False
 
-            async def receive() -> Message:
-                nonlocal replayed
-                if not replayed:
-                    replayed = True
-                    return {"type": "http.request", "body": body, "more_body": False}
-                return await request.receive()
+            async def capped_receive() -> Message:
+                nonlocal total
+                message = await request.receive()
+                if message["type"] == "http.request":
+                    total += len(message.get("body", b""))
+                    if total > cap:
+                        raise _payload_too_large(too_large, instance=instance)
+                return message
 
-            return await original(Request(request.scope, receive))
+            return await original(Request(request.scope, capped_receive))
 
         return handler
 
@@ -244,7 +241,7 @@ class _ImportBodyCapRoute(APIRoute):
 _import_router = APIRouter(route_class=_ImportBodyCapRoute)
 
 
-def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int) -> None:
+def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int, instance: str) -> None:
     """Reject inline sources whose content exceeds the ingest per-spec cap (413)."""
     errors: list[ErrorItem | dict[str, Any]] = [
         ErrorItem(
@@ -257,6 +254,7 @@ def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int) -> None:
     if errors:
         raise _payload_too_large(
             f"{len(errors)} inline source(s) exceed the {max_bytes}-byte spec size limit",
+            instance=instance,
             errors=errors,
         )
 
@@ -285,7 +283,7 @@ async def import_apis(
     content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
     request is refused with 413 before any job is queued.
     """
-    _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes)
+    _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes, request.url.path)
     # Attribute each resulting revision to the authenticated principal unless the
     # client supplied an explicit `submitted_by` override (e.g. importing on
     # behalf of someone else). The job row's `created_by` records the caller

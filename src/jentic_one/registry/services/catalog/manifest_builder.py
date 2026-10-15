@@ -13,7 +13,7 @@ scope (workflows stay deferred per D-001).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -384,9 +384,13 @@ class PreviewInfo:
     description: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PreviewProjection:
-    """Full pure projection of a spec doc for preview (pre-pagination)."""
+    """Full pure projection of a spec doc for preview (pre-pagination).
+
+    Frozen because one instance is shared across requests by the catalog preview
+    cache; per-request filtering builds new lists rather than mutating it.
+    """
 
     operations: list[PreviewOperation]
     info: PreviewInfo
@@ -486,19 +490,19 @@ def parse_preview_operations(
 
 
 def filter_preview_operations(
-    ops: list[PreviewOperation], *, tag: str | None = None, q: str | None = None
+    ops: Sequence[PreviewOperation], *, tag: str | None = None, q: str | None = None
 ) -> list[PreviewOperation]:
     """Apply the preview ``tag`` / ``q`` filters to an already-projected operation list.
 
     ``tag`` is a case-insensitive substring match on any of the operation's tags;
     ``q`` is a case-insensitive substring match over method + path + summary +
-    operationId. Order is preserved. Pure, so a cached unfiltered projection can be
-    filtered per request.
+    operationId. Order is preserved. Always returns a new list, so a cached
+    unfiltered projection can be filtered per request without being aliased.
     """
     tag_lower = tag.lower() if tag else None
     q_lower = q.strip().lower() if q and q.strip() else None
     if tag_lower is None and q_lower is None:
-        return ops
+        return list(ops)
     out: list[PreviewOperation] = []
     for op in ops:
         if tag_lower is not None and not any(tag_lower in t.lower() for t in op.tags):

@@ -113,7 +113,7 @@ STATUS_EXAMPLES: dict[str, dict[str, Any]] = {
         "type": "payload_too_large",
         "title": "Content Too Large",
         "status": 413,
-        "detail": "Import request body exceeds the 52428800-byte limit",
+        "detail": "Import request body exceeds the size limit",
         "instance": "/example/path",
     },
     "422": {

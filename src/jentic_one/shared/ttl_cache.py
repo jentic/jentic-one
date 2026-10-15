@@ -9,7 +9,8 @@ and then read the freshly stored value, so a burst of identical requests costs
 one upstream fetch.
 
 Failures are not cached — a loader exception propagates to its caller and the
-next caller for that key runs the loader again. ``ttl_seconds <= 0`` or
+next caller for that key runs the loader again. ``clear()`` drops every entry and
+discards the result of any load already in flight when it is called. ``ttl_seconds <= 0`` or
 ``max_entries <= 0`` disables caching entirely (every call runs the loader).
 """
 
@@ -49,6 +50,9 @@ class AsyncTTLCache[K: Hashable, V]:
         self._clock = clock if clock is not None else time.monotonic
         self._entries: OrderedDict[K, _Entry[V]] = OrderedDict()
         self._locks: dict[K, _KeyLock] = {}
+        # Bumped by clear(); a load that started before a clear must not store
+        # its (pre-clear) result afterwards.
+        self._generation = 0
 
     @property
     def enabled(self) -> bool:
@@ -59,8 +63,9 @@ class AsyncTTLCache[K: Hashable, V]:
         return len(self._entries)
 
     def clear(self) -> None:
-        """Drop every cached value."""
+        """Drop every cached value; loads already in flight will not be stored."""
         self._entries.clear()
+        self._generation += 1
 
     async def get_or_load(self, key: K, loader: Callable[[], Awaitable[V]]) -> V:
         """Return the live cached value for ``key``, running ``loader`` on a miss."""
@@ -82,8 +87,10 @@ class AsyncTTLCache[K: Hashable, V]:
                 hit = self._lookup(key)
                 if hit is not None:
                     return hit.value
+                generation = self._generation
                 value = await loader()
-                self._store(key, value)
+                if generation == self._generation:
+                    self._store(key, value)
                 return value
         finally:
             key_lock.users -= 1
