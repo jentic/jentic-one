@@ -1076,28 +1076,48 @@ def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
 
 def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
     """Every pipe write bumps its ctime, so a supervisor still streaming the
-    document after the loader opened the fd must not leave the cache keyed on
-    a pre-drain identity — the repeat load would miss and hit EOF."""
+    document after the loaders opened the fd must not leave any of them keyed
+    on a pre-drain identity: a concurrent loader waiting on the drain, and a
+    repeat load after it, must both take the cached document instead of
+    hitting EOF on the drained pipe."""
     doc = yaml.dump(sample_config_dict).encode()
     read_fd, write_fd = os.pipe()
 
     def stream() -> None:
+        # The first delay lets both loaders open and stat the fd before any
+        # data arrives; each delay outlasts a Linux timestamp tick, so every
+        # write moves the ctime.
         for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
-            # Longer than a Linux timestamp tick, so each write moves the ctime.
-            time.sleep(0.05)
+            time.sleep(0.1)
             os.write(write_fd, chunk)
         os.close(write_fd)
 
-    writer = threading.Thread(target=stream)
+    pipe_path = Path(f"/dev/fd/{read_fd}")
+    loaded: list[AppConfig] = []
+    errors: list[BaseException] = []
+
+    def load() -> None:
+        try:
+            loaded.append(load_config(pipe_path))
+        except BaseException as exc:  # surfaced via the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=stream)] + [threading.Thread(target=load) for _ in range(2)]
     try:
-        pipe_path = Path(f"/dev/fd/{read_fd}")
-        writer.start()
-        first = load_config(pipe_path)
-        writer.join()
-        second = load_config(pipe_path)
-        assert first.databases.registry.name == second.databases.registry.name
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        loaded.append(load_config(pipe_path))
+        assert {c.databases.registry.name for c in loaded} == {
+            sample_config_dict["databases"]["registry"]["name"]
+        }
+        assert len(loaded) == 3
     finally:
-        writer.join()
+        for t in threads:
+            if t.is_alive():
+                t.join()
         os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 

@@ -2347,10 +2347,13 @@ def _read_config_text(path: Path) -> str:
             # semantics), so rewind before reading.
             f.seek(0)
             return f.read()
-        key = _oneshot_cache_key(fst, path)
         # The drain-and-cache is a single critical section: a concurrent loader
         # must wait and take the cached document, never race the pipe read.
         with _ONESHOT_CACHE_LOCK:
+            # Stat inside the lock: a loader that waited here while another
+            # drained a still-streaming source must see the post-drain ctime
+            # the drainer stored, not the one from before the lock.
+            key = _oneshot_cache_key(os.fstat(f.fileno()), path)
             if key in _ONESHOT_CONFIG_CACHE:
                 _logger.info("oneshot_config_cache_reused", source=str(path))
                 return _ONESHOT_CONFIG_CACHE[key]
