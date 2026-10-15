@@ -19,6 +19,11 @@ data:
         server {{ .Values.upstreams.control }}:8000;
     }
 
+    # Every location is checked against the backends' route tables by
+    # tests/arch/test_gateway_routes.py, which also keeps this configmap and
+    # deploy/docker/nginx/parts-gateway.conf identical. Only exact (=) and
+    # prefix locations are used, so nginx selects the exact match, else the
+    # longest matching prefix.
     server {
         listen 8000;
 
@@ -30,6 +35,22 @@ data:
         }
 
         # --- Admin surface ---
+        location /admin {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /actors {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location /auth {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
@@ -86,6 +107,14 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        location /monitoring {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         # --- Auth surface (colocated with admin, see admin.Dockerfile) ---
         location /register {
             proxy_pass http://admin_backend;
@@ -111,6 +140,14 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        location /login {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location /error {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
@@ -127,8 +164,25 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # --- Agent-discovery documents (served by every backend; routed to
-        # admin like /.well-known) ---
+        location = /me {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /agents {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # --- Agent-discovery documents and API docs (served by every backend;
+        # routed to admin like /.well-known). llms.txt links to the API docs, so
+        # they must resolve through the gateway too. ---
         location = /llms.txt {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
@@ -153,8 +207,6 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # llms.txt links to these API docs, so they must resolve through the
-        # gateway too.
         location = /openapi.json {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
@@ -171,6 +223,14 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        location /redoc {
+            proxy_pass http://admin_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location /reference {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
@@ -179,7 +239,7 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        location = /me {
+        location = /instance {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -187,7 +247,7 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        location /agents {
+        location /system {
             proxy_pass http://admin_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -196,6 +256,9 @@ data:
         }
 
         # --- Control surface ---
+        # /oauth-app-registrations is longer than the auth surface's /oauth prefix,
+        # so nginx's longest-prefix match sends it here rather than to admin. /mcp
+        # is the MCP transport; admin serves only a discovery placeholder there.
         location /credentials {
             proxy_pass http://control_backend;
             proxy_set_header Host $host;
@@ -212,8 +275,64 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        location /connect-sessions {
+            proxy_pass http://control_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /integrations {
+            proxy_pass http://control_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /vendors {
+            proxy_pass http://control_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /oauth-app-registrations {
+            proxy_pass http://control_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /mcp {
+            proxy_pass http://control_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         # --- Registry surface ---
         location /apis {
+            proxy_pass http://registry_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /catalog {
+            proxy_pass http://registry_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /governed-hosts {
             proxy_pass http://registry_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -230,14 +349,6 @@ data:
         }
 
         location /notes {
-            proxy_pass http://registry_backend;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location /overlays {
             proxy_pass http://registry_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

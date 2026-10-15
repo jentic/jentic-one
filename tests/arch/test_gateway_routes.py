@@ -1,0 +1,246 @@
+"""Route coverage for the split-deploy gateway (#1418).
+
+In the parts topology each surface runs as its own process and an nginx gateway
+maps path prefixes to them. The map is hand-written twice — the Docker
+reference config and the Helm gateway configmap — so a new router can ship with
+no gateway location (its routes 404 at the gateway) or land under a shorter
+prefix that belongs to another surface (``/oauth`` would send
+``/oauth-app-registrations`` to admin).
+
+This gate builds every backend the gateway fronts exactly as its image runs it
+(``JENTIC__APPS`` from ``deploy/docker/<backend>.Dockerfile``, assembled by the
+real composition root), walks its route table, and resolves each path against
+both gateway configs with nginx's location-selection rules. Every path must land
+on a backend that serves it, every proxied location must serve at least one
+path, and the two configs must carry the same location map.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from starlette.routing import Route
+
+from jentic_one.__main__ import _build_app, _build_context
+from jentic_one.mcp.app import McpChallengePlaceholder
+from jentic_one.shared.config import load_config
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+DOCKER_GATEWAY_CONF = REPO_ROOT / "deploy" / "docker" / "nginx" / "parts-gateway.conf"
+HELM_GATEWAY_CONFIGMAP = (
+    REPO_ROOT / "deploy" / "helm" / "jentic-one" / "charts" / "gateway" / "templates"
+) / "configmap.yaml"
+DOCKERFILE_DIR = REPO_ROOT / "deploy" / "docker"
+
+#: The SQLite config has no external dependencies; building an app never opens
+#: a database connection (same posture as ``tools/openapi_export``).
+DEFAULT_CONFIG = REPO_ROOT / "config" / "local-sqlite.yaml"
+
+_UPSTREAM_RE = re.compile(r"upstream\s+(\w+)_backend\s*\{")
+_LOCATION_RE = re.compile(r"location\s+(?:(=|\^~|~\*|~)\s+)?(\S+)\s*\{([^}]*)\}")
+_PROXY_PASS_RE = re.compile(r"proxy_pass\s+http://(\w+)_backend\b")
+_APPS_ENV_RE = re.compile(r"^ENV\s+JENTIC__APPS=(\S+)", re.MULTILINE)
+_PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
+
+#: Paths the gateway answers itself (its own ``location = /health``) rather than
+#: proxying, so no backend's copy is reachable or needs to be.
+_GATEWAY_OWNED_PATHS = frozenset({"/health"})
+
+
+@dataclass(frozen=True)
+class Location:
+    """One nginx ``location`` block: its match modifier, path and upstream."""
+
+    modifier: str  # "=" (exact) or "" (prefix)
+    path: str
+    backend: str | None  # ``<name>`` of ``<name>_backend``; None when not proxied
+
+    def __str__(self) -> str:
+        head = f"location {self.modifier} {self.path}" if self.modifier else f"location {self.path}"
+        return f"{head} -> {self.backend or '(gateway)'}"
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    """The parsed server block of one gateway config file."""
+
+    source: Path
+    backends: frozenset[str]
+    locations: tuple[Location, ...]
+
+    def resolve(self, path: str) -> Location | None:
+        """Select the location nginx serves ``path`` from.
+
+        An exact (``=``) match wins outright; otherwise the longest matching
+        prefix wins. Regex locations would make the order of blocks matter, so
+        :func:`_parse_gateway` refuses them rather than modelling them.
+        """
+        for loc in self.locations:
+            if loc.modifier == "=" and loc.path == path:
+                return loc
+        prefixes = [
+            loc for loc in self.locations if loc.modifier == "" and path.startswith(loc.path)
+        ]
+        return max(prefixes, key=lambda loc: len(loc.path), default=None)
+
+
+def _parse_gateway(source: Path, text: str) -> GatewayConfig:
+    locations: list[Location] = []
+    for modifier, path, body in _LOCATION_RE.findall(text):
+        if modifier not in ("", "="):
+            raise AssertionError(
+                f"{source}: `location {modifier} {path}` — the gateway map uses only exact (=) "
+                "and plain prefix locations; regex/^~ locations change nginx's selection order "
+                "and are not modelled by this gate"
+            )
+        proxy = _PROXY_PASS_RE.search(body)
+        locations.append(Location(modifier, path, proxy.group(1) if proxy else None))
+    return GatewayConfig(
+        source=source,
+        backends=frozenset(_UPSTREAM_RE.findall(text)),
+        locations=tuple(locations),
+    )
+
+
+def _helm_server_conf() -> str:
+    """The nginx config embedded in the Helm configmap's ``default.conf`` block.
+
+    Template expressions only appear in the upstream ``server`` lines, which the
+    gate reads by upstream name, so the raw template text parses as-is.
+    """
+    text = HELM_GATEWAY_CONFIGMAP.read_text()
+    marker = "default.conf: |"
+    assert marker in text, f"{HELM_GATEWAY_CONFIGMAP}: no `{marker}` block"
+    return text.split(marker, 1)[1]
+
+
+@cache
+def _gateways() -> tuple[GatewayConfig, ...]:
+    return (
+        _parse_gateway(DOCKER_GATEWAY_CONF, DOCKER_GATEWAY_CONF.read_text()),
+        _parse_gateway(HELM_GATEWAY_CONFIGMAP, _helm_server_conf()),
+    )
+
+
+def _backend_apps(backend: str) -> list[str]:
+    """The surfaces a backend's image serves (its baked ``JENTIC__APPS``)."""
+    dockerfile = DOCKERFILE_DIR / f"{backend}.Dockerfile"
+    assert dockerfile.is_file(), (
+        f"gateway upstream `{backend}_backend` has no image at {dockerfile.relative_to(REPO_ROOT)}"
+    )
+    match = _APPS_ENV_RE.search(dockerfile.read_text())
+    assert match, f"{dockerfile.relative_to(REPO_ROOT)}: no `ENV JENTIC__APPS=` line"
+    return match.group(1).split(",")
+
+
+def _iter_route_paths(routes: Iterable[Any], prefix: str = "") -> Iterator[str]:
+    """Flatten a route table into full paths, descending into included routers.
+
+    FastAPI wraps an included router in an ``_IncludedRouter`` whose child
+    routes carry only their own path; the include prefix lives on the wrapper.
+    """
+    for route in routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            context = getattr(route, "include_context", None)
+            yield from _iter_route_paths(original.routes, prefix + getattr(context, "prefix", ""))
+            continue
+        if isinstance(route, Route) and isinstance(route.endpoint, McpChallengePlaceholder):
+            # A discovery-challenge stand-in on shapes without control; the
+            # real /mcp transport lives with control, so this copy is not a
+            # route the gateway may send /mcp to.
+            continue
+        path = getattr(route, "path", None)
+        if path:
+            yield prefix + path
+
+
+def _build_backend(apps: list[str]) -> FastAPI:
+    os.environ.setdefault("JENTIC_CONFIG_FILE", str(DEFAULT_CONFIG))
+    config = load_config().model_copy(update={"apps": apps})
+    return _build_app(_build_context(config, apps), apps)
+
+
+@cache
+def _served_paths() -> dict[str, frozenset[str]]:
+    """Map each concrete request path to the gateway backends that serve it."""
+    backends = set().union(*(gateway.backends for gateway in _gateways()))
+    served: dict[str, set[str]] = {}
+    for backend in sorted(backends):
+        app = _build_backend(_backend_apps(backend))
+        for template in _iter_route_paths(app.routes):
+            # Any concrete value exercises the same location selection as the
+            # template; ``x`` keeps ``:verb`` suffixes and sub-paths intact.
+            served.setdefault(_PATH_PARAM_RE.sub("x", template), set()).add(backend)
+    return {path: frozenset(owners) for path, owners in served.items()}
+
+
+def _gateway_ids() -> list[str]:
+    return [str(gateway.source.relative_to(REPO_ROOT)) for gateway in _gateways()]
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("gateway", _gateways(), ids=_gateway_ids())
+def test_every_backend_route_is_routed_to_a_backend_that_serves_it(
+    gateway: GatewayConfig,
+) -> None:
+    """Each path a fronted backend serves resolves to a location proxying to it.
+
+    Catches both an unrouted router (gateway 404) and a shadowed one (a shorter
+    prefix owned by another surface swallows it).
+    """
+    violations: list[str] = []
+    for path, owners in sorted(_served_paths().items()):
+        if path in _GATEWAY_OWNED_PATHS:
+            continue
+        loc = gateway.resolve(path)
+        expected = " or ".join(f"{owner}_backend" for owner in sorted(owners))
+        if loc is None:
+            violations.append(f"{path} — no location matches (expected {expected})")
+        elif loc.backend not in owners:
+            violations.append(f"{path} — `{loc}` catches it (expected {expected})")
+    assert not violations, (
+        f"{gateway.source.relative_to(REPO_ROOT)} does not route every backend path to a "
+        "backend that serves it. Add (or lengthen) a location for each path below in BOTH "
+        "deploy/docker/nginx/parts-gateway.conf and the Helm gateway configmap:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("gateway", _gateways(), ids=_gateway_ids())
+def test_every_proxied_location_serves_a_backend_route(gateway: GatewayConfig) -> None:
+    """A proxied location no backend path resolves to is dead config (#1418)."""
+    used = {gateway.resolve(path) for path in _served_paths()}
+    dead = [str(loc) for loc in gateway.locations if loc.backend and loc not in used]
+    assert not dead, (
+        f"{gateway.source.relative_to(REPO_ROOT)} proxies locations that no backend route "
+        "resolves to — the routes are gone, so delete the blocks from BOTH gateway "
+        "configs:\n  " + "\n  ".join(dead)
+    )
+
+
+@pytest.mark.arch
+def test_docker_and_helm_gateways_share_one_location_map() -> None:
+    """The Docker reference config and the Helm configmap route identically."""
+    docker, helm = _gateways()
+    assert docker.backends == helm.backends, (
+        f"upstreams differ: docker={sorted(docker.backends)} helm={sorted(helm.backends)}"
+    )
+    docker_map, helm_map = set(docker.locations), set(helm.locations)
+    drift = [f"docker only: {loc}" for loc in sorted(docker_map - helm_map, key=str)] + [
+        f"helm only:   {loc}" for loc in sorted(helm_map - docker_map, key=str)
+    ]
+    assert not drift, (
+        "deploy/docker/nginx/parts-gateway.conf and the Helm gateway configmap have drifted; "
+        "keep their location maps identical:\n  " + "\n  ".join(drift)
+    )
