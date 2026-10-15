@@ -23,6 +23,10 @@ export class UsersService {
     /**
      * Log in
      * Authenticate and return a JWT token bundle.
+     *
+     * Attempts are rate limited per caller IP and per account email
+     * (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+     * rate_limit_exceeded`` with ``Retry-After`` before any credential check.
      * @returns LoginResponse Successful Response
      * @throws ApiError
      */
@@ -42,6 +46,7 @@ export class UsersService {
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
+                429: `Too many login attempts from this caller IP or for this account email; retry after the \`Retry-After\` delay.`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

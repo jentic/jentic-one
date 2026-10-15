@@ -25,6 +25,9 @@ type AdminAuthConfig struct {
 	// this bounds a single token, not the session.
 	JwtTtlSeconds int `json:"jwt_ttl_seconds,omitempty,omitzero" yaml:"jwt_ttl_seconds,omitempty" mapstructure:"jwt_ttl_seconds,omitempty"`
 
+	// Per-IP and per-email rate limits on ``POST /auth/login``.
+	LoginRateLimit *AdminLoginRateLimitConfig `json:"login_rate_limit,omitempty,omitzero" yaml:"login_rate_limit,omitempty" mapstructure:"login_rate_limit,omitempty"`
+
 	// Absolute cap on a web session: refresh re-mints the login JWT only while ``now
 	// - auth_time`` stays inside this window, so a leaked token cannot be kept alive
 	// indefinitely. Must be >= ``jwt_ttl_seconds``.
@@ -103,6 +106,75 @@ func (j *AdminInviteConfig) UnmarshalJSON(value []byte) error {
 		plain.TtlDays = 7
 	}
 	*j = AdminInviteConfig(plain)
+	return nil
+}
+
+// Pre-auth rate limits on “POST /auth/login“.
+//
+// Two token buckets guard every attempt: one per caller IP (bounds password
+// spraying from one host) and one per normalised email (bounds a distributed
+// guessing burst against one account, on top of the failed-login lockout).
+// The caller IP honours “auth.oauth_rate_limit.trusted_proxies“. Buckets
+// live on the shared-state backend (“broker.resilience.backend“): per
+// process for “memory“, cluster-wide for “redis“.
+type AdminLoginRateLimitConfig struct {
+	// Burst allowance (bucket capacity) for the per-email login bucket.
+	EmailBurst int `json:"email_burst,omitempty,omitzero" yaml:"email_burst,omitempty" mapstructure:"email_burst,omitempty"`
+
+	// Sustained login attempts/minute allowed per account email.
+	EmailRpm int `json:"email_rpm,omitempty,omitzero" yaml:"email_rpm,omitempty" mapstructure:"email_rpm,omitempty"`
+
+	// Enforce the ``POST /auth/login`` rate limits (429 when exhausted).
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Burst allowance (bucket capacity) for the per-IP login bucket.
+	IpBurst int `json:"ip_burst,omitempty,omitzero" yaml:"ip_burst,omitempty" mapstructure:"ip_burst,omitempty"`
+
+	// Sustained login attempts/minute allowed per caller IP. Behind a proxy, set
+	// ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's IP
+	// bucket.
+	IpRpm int `json:"ip_rpm,omitempty,omitzero" yaml:"ip_rpm,omitempty" mapstructure:"ip_rpm,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *AdminLoginRateLimitConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain AdminLoginRateLimitConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["email_burst"]; !ok || v == nil {
+		plain.EmailBurst = 10
+	}
+	if 0 >= plain.EmailBurst {
+		return fmt.Errorf("field %s: must be > %v", "email_burst", 0)
+	}
+	if v, ok := raw["email_rpm"]; !ok || v == nil {
+		plain.EmailRpm = 10
+	}
+	if 0 >= plain.EmailRpm {
+		return fmt.Errorf("field %s: must be > %v", "email_rpm", 0)
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = true
+	}
+	if v, ok := raw["ip_burst"]; !ok || v == nil {
+		plain.IpBurst = 20
+	}
+	if 0 >= plain.IpBurst {
+		return fmt.Errorf("field %s: must be > %v", "ip_burst", 0)
+	}
+	if v, ok := raw["ip_rpm"]; !ok || v == nil {
+		plain.IpRpm = 30
+	}
+	if 0 >= plain.IpRpm {
+		return fmt.Errorf("field %s: must be > %v", "ip_rpm", 0)
+	}
+	*j = AdminLoginRateLimitConfig(plain)
 	return nil
 }
 

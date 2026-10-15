@@ -117,7 +117,12 @@ async def test_login_lockout_logs_warning(
     threshold = ctx.config.admin.auth.failed_login_lockout_threshold
     async with ctx.admin_db.transaction() as session:
         for _ in range(threshold - 1):
-            await UserSecretRepository.record_failed_login(session, user_id)
+            await UserSecretRepository.record_failed_login(
+                session,
+                user_id,
+                lockout_threshold=threshold,
+                locked_until=datetime.now(UTC) + timedelta(minutes=15),
+            )
 
     service = AuthService(ctx)
     with structlog.testing.capture_logs() as logs, pytest.raises(InvalidCredentialsError):

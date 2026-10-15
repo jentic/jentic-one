@@ -16,6 +16,7 @@ from jentic_one.admin.web.deps import (
     get_invite_service,
     get_user_service,
 )
+from jentic_one.admin.web.login_rate_limit import enforce_login_rate_limit
 from jentic_one.admin.web.schemas.auth import (
     ChangePasswordRequest,
     CreateAdminRequest,
@@ -25,19 +26,39 @@ from jentic_one.admin.web.schemas.auth import (
     RedeemInviteRequest,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.context import Context
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.auth import extract_credential
-from jentic_one.shared.web.openapi_responses import PUBLIC_ERROR_RESPONSES, gone
+from jentic_one.shared.web.openapi_responses import (
+    PUBLIC_ERROR_RESPONSES,
+    gone,
+    too_many_requests,
+)
 
 router = APIRouter()
 
 
-@router.post("/auth/login", summary="Log in")
+@router.post(
+    "/auth/login",
+    summary="Log in",
+    responses=too_many_requests(
+        "Too many login attempts from this caller IP or for this account email; "
+        "retry after the `Retry-After` delay."
+    ),
+)
 async def login(
     body: LoginRequest,
+    request: Request,
+    ctx: Context = Depends(get_ctx),
     auth_svc: AuthService = Depends(get_auth_service),
 ) -> LoginResponse:
-    """Authenticate and return a JWT token bundle."""
+    """Authenticate and return a JWT token bundle.
+
+    Attempts are rate limited per caller IP and per account email
+    (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+    rate_limit_exceeded`` with ``Retry-After`` before any credential check.
+    """
+    await enforce_login_rate_limit(request, ctx, email=body.email)
     bundle = await auth_svc.login(LoginPayload(email=body.email, password=body.password))
     return LoginResponse(
         access_token=bundle.access_token,

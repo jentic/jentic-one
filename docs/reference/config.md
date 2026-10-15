@@ -179,6 +179,11 @@ Admin surface configuration.
 | `admin.auth.session_ttl_seconds` | integer (> 0) | `43200` | `JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS` | Absolute cap on a web session: refresh re-mints the login JWT only while `now - auth_time` stays inside this window, so a leaked token cannot be kept alive indefinitely. Must be >= `jwt_ttl_seconds`. |
 | `admin.auth.failed_login_lockout_threshold` | integer | `5` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_THRESHOLD` | Consecutive failed logins after which an admin account is locked. |
 | `admin.auth.failed_login_lockout_seconds` | integer | `900` | `JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_SECONDS` | How long a locked admin account stays locked before logins are accepted again. |
+| `admin.auth.login_rate_limit.enabled` | boolean | `true` | `JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__ENABLED` | Enforce the `POST /auth/login` rate limits (429 when exhausted). |
+| `admin.auth.login_rate_limit.ip_rpm` | integer (> 0) | `30` | `JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__IP_RPM` | Sustained login attempts/minute allowed per caller IP. Behind a proxy, set `auth.oauth_rate_limit.trusted_proxies` or every client shares the proxy's IP bucket. |
+| `admin.auth.login_rate_limit.ip_burst` | integer (> 0) | `20` | `JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__IP_BURST` | Burst allowance (bucket capacity) for the per-IP login bucket. |
+| `admin.auth.login_rate_limit.email_rpm` | integer (> 0) | `10` | `JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__EMAIL_RPM` | Sustained login attempts/minute allowed per account email. |
+| `admin.auth.login_rate_limit.email_burst` | integer (> 0) | `10` | `JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__EMAIL_BURST` | Burst allowance (bucket capacity) for the per-email login bucket. |
 | `admin.invite.ttl_days` | integer | `7` | `JENTIC__ADMIN__INVITE__TTL_DAYS` |  |
 | `admin.invite.pepper` | string (secret) | `""` | `JENTIC__ADMIN__INVITE__PEPPER` |  |
 

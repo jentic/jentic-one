@@ -8,6 +8,7 @@ from fastapi import APIRouter, FastAPI
 
 from jentic_one.admin.services.errors import AdminServiceError
 from jentic_one.admin.web.errors import database_error_handler, service_error_handler
+from jentic_one.admin.web.login_rate_limit import install_login_state_backend
 from jentic_one.admin.web.routers import (
     actors,
     audit,
@@ -78,11 +79,21 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
+def install_on_app(app: FastAPI, ctx: Context) -> None:
+    """Install the state backend ``POST /auth/login``'s rate limiter reads.
+
+    The identity verifier is not installed here: ``shared.web.app_factory``
+    owns it (``install_platform_token_verifier``).
+    """
+    install_login_state_backend(app, ctx)
+
+
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
     app = create_surface_app(
         ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
     )
+    install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     # The docs SPA is served from this surface, so its endpoint reference is
