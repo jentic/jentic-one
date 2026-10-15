@@ -44,7 +44,12 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     NotFoundError: (404, "not_found"),
     InvalidCredentialsError: (401, "invalid_credentials"),
     SessionExpiredError: (401, "session_expired"),
-    AccountLockedError: (423, "account_locked"),
+    # A locked account answers exactly like any other credential failure so an
+    # unauthenticated caller cannot use the response to confirm an account
+    # exists (or is under attack). The lockout stays visible server-side: the
+    # service audits it (reason ``account_locked``) and the handler logs the raw
+    # message as ``raw_detail``.
+    AccountLockedError: (401, "invalid_credentials"),
     EmailAlreadyExistsError: (409, "email_in_use"),
     InviteTokenAlreadyRedeemedError: (409, "invite_already_redeemed"),
     JobNotCancellableError: (409, "job_not_cancellable"),
@@ -62,7 +67,13 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InvalidCursorError: (400, "invalid_cursor"),
 }
 
-service_error_handler = make_service_error_handler(_ERROR_MAP)
+# ``str(AccountLockedError)`` names the user id; the client gets the same
+# detail as a wrong password instead.
+_SERVICE_SAFE_DETAILS: dict[type[Exception], str] = {
+    AccountLockedError: str(InvalidCredentialsError()),
+}
+
+service_error_handler = make_service_error_handler(_ERROR_MAP, safe_details=_SERVICE_SAFE_DETAILS)
 
 # A DB constraint violation that escapes a service unmapped (e.g. a unique-index
 # collision the service didn't anticipate) is a conflict, not a server fault.
