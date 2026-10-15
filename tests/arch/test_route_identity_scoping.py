@@ -21,8 +21,11 @@ scoped. A service object is:
 A route that is deliberately not caller-scoped goes in ``_ALLOWLIST`` with the
 reason it is safe, and an entry that no longer matches an unscoped route fails
 the test. A route handler with an ``Identity`` parameter the walker cannot
-recognise as ``get_current_identity`` also fails, so a wrapper or alias never
-silently drops a route from the check.
+recognise as ``get_current_identity`` also fails, and so does a route that
+resolves ``get_current_identity`` only through ``dependencies=`` (on the
+decorator or its ``APIRouter``) without binding a parameter, so neither a
+wrapper, an alias nor a dependency-only gate silently drops a route from the
+check.
 
 Routes without a ``get_current_identity`` dependency (health, discovery,
 OAuth browser pages) are out of scope here; ``test_web_layer.py`` decides
@@ -33,6 +36,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -150,12 +154,58 @@ def _name_of(node: ast.expr) -> str | None:
     return None
 
 
-def _is_route(func: _Func) -> bool:
-    return any(
-        isinstance(dec, ast.Call)
+def _route_decorators(func: _Func) -> list[ast.Call]:
+    """The ``@<router>.<verb>(...)`` decorators on *func*."""
+    return [
+        dec
+        for dec in func.decorator_list
+        if isinstance(dec, ast.Call)
         and isinstance(dec.func, ast.Attribute)
         and dec.func.attr in _ROUTE_VERBS
-        for dec in func.decorator_list
+    ]
+
+
+def _is_route(func: _Func) -> bool:
+    return bool(_route_decorators(func))
+
+
+def _declares_identity_dependency(call: ast.Call) -> bool:
+    """Whether *call* has ``dependencies=[..., get_current_identity(...), ...]``."""
+    return any(
+        kw.arg == "dependencies"
+        and isinstance(kw.value, ast.List | ast.Tuple)
+        and any(_is_identity_dep(elt) for elt in kw.value.elts)
+        for kw in call.keywords
+    )
+
+
+def _identity_gated_routers(tree: ast.Module) -> set[str]:
+    """Names bound to ``APIRouter(dependencies=[get_current_identity(...)])`` in *tree*."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _name_of(node.value.func) == "APIRouter"
+            and _declares_identity_dependency(node.value)
+        ):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+def _identity_dependency_without_param(func: _Func, gated_routers: set[str]) -> bool:
+    """Whether *func* resolves identity through ``dependencies=`` but binds no parameter.
+
+    Such a route authenticates the caller but has no name to hand the service,
+    and ``_identity_param`` returns ``None`` for it, so it would drop out of the
+    scoping check.
+    """
+    if _identity_param(func) is not None:
+        return False
+    return any(
+        _declares_identity_dependency(dec)
+        or (isinstance(dec.func, ast.Attribute) and _name_of(dec.func.value) in gated_routers)
+        for dec in _route_decorators(func)
     )
 
 
@@ -268,13 +318,17 @@ def _passes_to_service(func: _Func, name: str) -> bool:
 # --- Walkers -------------------------------------------------------------------
 
 
+@cache
+def _parse(py_file: Path) -> ast.Module:
+    return ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+
+
 def _route_handlers() -> Iterator[tuple[str, Path, _Func]]:
     """``(key, file, handler)`` for every route handler in the scoped web packages."""
     for web_dir in SCOPED_WEB_DIRS:
         surface = web_dir.parent.name
         for py_file in python_files_in(web_dir):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-            for node in ast.walk(tree):
+            for node in ast.walk(_parse(py_file)):
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _is_route(node):
                     yield f"{surface}/{py_file.stem}.{node.name}", py_file, node
 
@@ -336,6 +390,24 @@ def test_every_identity_parameter_is_recognised() -> None:
 
 
 @pytest.mark.arch
+def test_identity_dependency_binds_a_parameter() -> None:
+    """A route that resolves identity via ``dependencies=`` must also bind it as a parameter.
+
+    ``dependencies=[get_current_identity(...)]`` on the route decorator or its
+    ``APIRouter`` authenticates the caller without giving the handler a name to
+    pass to the service, so the route would silently skip the scoping check.
+    """
+    unbound = [
+        f"{py_file}:{func.lineno} — {key} resolves {_IDENTITY_DEP}(...) through "
+        "`dependencies=` but takes no identity parameter; declare "
+        f"`identity: Identity = {_IDENTITY_DEP}(...)` and pass it to the service"
+        for key, py_file, func in _route_handlers()
+        if _identity_dependency_without_param(func, _identity_gated_routers(_parse(py_file)))
+    ]
+    assert not unbound, "Identity resolved without a parameter:\n" + "\n".join(unbound)
+
+
+@pytest.mark.arch
 def test_route_identity_check_finds_routes() -> None:
     """Guard against the walker silently matching nothing (e.g. a decorator rename)."""
     total = sum(1 for _, _, func in _route_handlers() if _identity_param(func) is not None)
@@ -380,3 +452,33 @@ def test_service_shapes_are_recognised() -> None:
         name = _identity_param(func)
         assert name == "identity", source
         assert _passes_to_service(func, name), source
+
+
+@pytest.mark.arch
+def test_identity_dependency_shapes_are_detected() -> None:
+    """Self-check: identity gated via ``dependencies=`` without a parameter is caught."""
+    tree = ast.parse(
+        "router = APIRouter(dependencies=[get_current_identity()])\n"
+        "other = APIRouter()\n"
+        "@other.get('/a', dependencies=[get_current_identity()])\n"
+        "async def on_route(svc: FooService):\n"
+        "    return await svc.get()\n"
+        "@router.get('/b')\n"
+        "async def on_router(svc: FooService):\n"
+        "    return await svc.get()\n"
+        "@other.get('/c', dependencies=[get_current_identity()])\n"
+        "async def bound(svc: FooService, identity: Identity = get_current_identity()):\n"
+        "    return await svc.get(identity=identity)\n"
+        "@other.get('/d', dependencies=[Depends(check_rate_limit)])\n"
+        "async def unrelated(svc: FooService):\n"
+        "    return await svc.get()\n"
+    )
+    gated = _identity_gated_routers(tree)
+    assert gated == {"router"}
+    flagged = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and _identity_dependency_without_param(node, gated)
+    }
+    assert flagged == {"on_route", "on_router"}
