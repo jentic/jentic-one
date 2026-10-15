@@ -21,6 +21,7 @@ from jentic_one.shared.config import (
     _ONESHOT_CONFIG_CACHE,
     AdminAuthConfig,
     AdminInviteConfig,
+    AdminLoginRateLimitConfig,
     AppConfig,
     AuthConfig,
     CatalogConfig,
@@ -119,6 +120,31 @@ def test_env_coerces_int(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.databases.registry.port == 9999
+
+
+def test_admin_login_rate_limit_defaults_and_env_overrides(config_file: Path):
+    rl = load_config(config_file).admin.auth.login_rate_limit
+    assert (rl.enabled, rl.ip_rpm, rl.ip_burst, rl.email_rpm, rl.email_burst) == (
+        True,
+        30,
+        20,
+        10,
+        10,
+    )
+    env = {
+        "JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__ENABLED": "false",
+        "JENTIC__ADMIN__AUTH__LOGIN_RATE_LIMIT__EMAIL_BURST": "3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        rl = load_config(config_file).admin.auth.login_rate_limit
+    assert rl.enabled is False
+    assert rl.email_burst == 3
+
+
+@pytest.mark.parametrize("field", ["ip_rpm", "ip_burst", "email_rpm", "email_burst"])
+def test_admin_login_rate_limit_rejects_non_positive(field: str):
+    with pytest.raises(ValidationError):
+        AdminLoginRateLimitConfig.model_validate({field: 0})
 
 
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):

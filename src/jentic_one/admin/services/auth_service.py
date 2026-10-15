@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 
 import structlog
 
@@ -87,6 +88,22 @@ class AuthService:
             must_change_password=must_change_password,
         )
 
+    async def _reject_locked(self, user_id: str) -> NoReturn:
+        """Count and audit a login refused because the account is locked, then raise."""
+        login_counter.add(1, {"outcome": "lockout"})
+        async with self._ctx.admin_db.transaction() as audit_session:
+            await record_audit(
+                audit_session,
+                action=AuditAction.LOGIN_FAILED,
+                target_type=AuditTargetType.SESSION,
+                target_id=user_id,
+                actor_type=ActorType.USER,
+                actor_id=user_id,
+                reason="account_locked",
+                origin=None,
+            )
+        raise AccountLockedError(user_id)
+
     async def authenticate(self, payload: LoginPayload) -> str:
         """Verify email/password credentials and return the user id.
 
@@ -139,33 +156,26 @@ class AuthService:
                 account_locked_user_id = user.id
             else:
                 password_valid = verify_password(payload.password, secret.password_hash)
-                failed_count = secret.failed_login_count
 
         if account_locked_user_id is not None:
-            login_counter.add(1, {"outcome": "lockout"})
-            async with self._ctx.admin_db.transaction() as audit_session:
-                await record_audit(
-                    audit_session,
-                    action=AuditAction.LOGIN_FAILED,
-                    target_type=AuditTargetType.SESSION,
-                    target_id=account_locked_user_id,
-                    actor_type=ActorType.USER,
-                    actor_id=account_locked_user_id,
-                    reason="account_locked",
-                    origin=None,
-                )
-            raise AccountLockedError(account_locked_user_id)
+            await self._reject_locked(account_locked_user_id)
 
         if not password_valid:
+            locked_until = datetime.now(UTC) + timedelta(
+                seconds=config.failed_login_lockout_seconds
+            )
             async with self._ctx.admin_db.transaction() as session:
-                await UserSecretRepository.record_failed_login(session, user.id)
-                if failed_count + 1 >= config.failed_login_lockout_threshold:
-                    locked_until = datetime.now(UTC) + timedelta(
-                        seconds=config.failed_login_lockout_seconds
-                    )
-                    await UserSecretRepository.lock_until(
-                        session, user.id, locked_until=locked_until
-                    )
+                # Count and lock in one atomic statement, deciding the outcome
+                # from the database's post-increment count: concurrent wrong
+                # guesses each observe a distinct count, so a burst cannot
+                # slip past the threshold without tripping the lock (#1441).
+                new_count = await UserSecretRepository.record_failed_login(
+                    session,
+                    user.id,
+                    lockout_threshold=config.failed_login_lockout_threshold,
+                    locked_until=locked_until,
+                )
+                if new_count is not None and new_count >= config.failed_login_lockout_threshold:
                     logger.warning("account_locked", user_id=user.id, locked_until=locked_until)
                     login_counter.add(1, {"outcome": "lockout"})
                 else:
@@ -183,16 +193,27 @@ class AuthService:
             raise InvalidCredentialsError()
 
         async with self._ctx.admin_db.transaction() as session:
-            await UserSecretRepository.reset_failed_logins(session, user.id)
-            await record_audit(
-                session,
-                action=AuditAction.LOGIN,
-                target_type=AuditTargetType.SESSION,
-                target_id=user.id,
-                actor_type=ActorType.USER,
-                actor_id=user.id,
-                origin=None,
-            )
+            # A concurrent burst of wrong guesses may have locked the account
+            # after this request's lock check; the conditional reset refuses
+            # to clear that lock, so a correct guess racing the burst is
+            # rejected rather than admitted.
+            if not await UserSecretRepository.reset_failed_logins_unless_locked(
+                session, user.id, now=datetime.now(UTC)
+            ):
+                account_locked_user_id = user.id
+            else:
+                await record_audit(
+                    session,
+                    action=AuditAction.LOGIN,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=user.id,
+                    actor_type=ActorType.USER,
+                    actor_id=user.id,
+                    origin=None,
+                )
+
+        if account_locked_user_id is not None:
+            await self._reject_locked(account_locked_user_id)
 
         logger.info("login_success", user_id=user.id)
         login_counter.add(1, {"outcome": "success"})

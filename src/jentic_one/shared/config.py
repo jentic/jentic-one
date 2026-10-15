@@ -468,6 +468,47 @@ class ObservabilityConfig(BaseModel):
     tracing: TracingConfig = Field(default_factory=TracingConfig)
 
 
+class AdminLoginRateLimitConfig(BaseModel):
+    """Pre-auth rate limits on ``POST /auth/login``.
+
+    Two token buckets guard every attempt: one per caller IP (bounds password
+    spraying from one host) and one per normalised email (bounds a distributed
+    guessing burst against one account, on top of the failed-login lockout).
+    The caller IP honours ``auth.oauth_rate_limit.trusted_proxies``. Buckets
+    live on the shared-state backend (``broker.resilience.backend``): per
+    process for ``memory``, cluster-wide for ``redis``.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Enforce the ``POST /auth/login`` rate limits (429 when exhausted).",
+    )
+    ip_rpm: int = Field(
+        default=30,
+        gt=0,
+        description=(
+            "Sustained login attempts/minute allowed per caller IP. Behind a "
+            "proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every "
+            "client shares the proxy's IP bucket."
+        ),
+    )
+    ip_burst: int = Field(
+        default=20,
+        gt=0,
+        description="Burst allowance (bucket capacity) for the per-IP login bucket.",
+    )
+    email_rpm: int = Field(
+        default=10,
+        gt=0,
+        description="Sustained login attempts/minute allowed per account email.",
+    )
+    email_burst: int = Field(
+        default=10,
+        gt=0,
+        description="Burst allowance (bucket capacity) for the per-email login bucket.",
+    )
+
+
 class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
@@ -506,6 +547,10 @@ class AdminAuthConfig(BaseModel):
         description=(
             "How long a locked admin account stays locked before logins are accepted again."
         ),
+    )
+    login_rate_limit: AdminLoginRateLimitConfig = Field(
+        default_factory=AdminLoginRateLimitConfig,
+        description="Per-IP and per-email rate limits on ``POST /auth/login``.",
     )
 
     @model_validator(mode="after")

@@ -30,6 +30,10 @@
           "title": "Jwt Ttl Seconds",
           "type": "integer"
         },
+        "login_rate_limit": {
+          "$ref": "#/$defs/AdminLoginRateLimitConfig",
+          "description": "Per-IP and per-email rate limits on ``POST /auth/login``."
+        },
         "session_ttl_seconds": {
           "default": 43200,
           "description": "Absolute cap on a web session: refresh re-mints the login JWT only while ``now - auth_time`` stays inside this window, so a leaked token cannot be kept alive indefinitely. Must be >= ``jwt_ttl_seconds``.",
@@ -71,6 +75,47 @@
         }
       },
       "title": "AdminInviteConfig",
+      "type": "object"
+    },
+    "AdminLoginRateLimitConfig": {
+      "description": "Pre-auth rate limits on ``POST /auth/login``.\n\nTwo token buckets guard every attempt: one per caller IP (bounds password\nspraying from one host) and one per normalised email (bounds a distributed\nguessing burst against one account, on top of the failed-login lockout).\nThe caller IP honours ``auth.oauth_rate_limit.trusted_proxies``. Buckets\nlive on the shared-state backend (``broker.resilience.backend``): per\nprocess for ``memory``, cluster-wide for ``redis``.",
+      "properties": {
+        "email_burst": {
+          "default": 10,
+          "description": "Burst allowance (bucket capacity) for the per-email login bucket.",
+          "exclusiveMinimum": 0,
+          "title": "Email Burst",
+          "type": "integer"
+        },
+        "email_rpm": {
+          "default": 10,
+          "description": "Sustained login attempts/minute allowed per account email.",
+          "exclusiveMinimum": 0,
+          "title": "Email Rpm",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Enforce the ``POST /auth/login`` rate limits (429 when exhausted).",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "ip_burst": {
+          "default": 20,
+          "description": "Burst allowance (bucket capacity) for the per-IP login bucket.",
+          "exclusiveMinimum": 0,
+          "title": "Ip Burst",
+          "type": "integer"
+        },
+        "ip_rpm": {
+          "default": 30,
+          "description": "Sustained login attempts/minute allowed per caller IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's IP bucket.",
+          "exclusiveMinimum": 0,
+          "title": "Ip Rpm",
+          "type": "integer"
+        }
+      },
+      "title": "AdminLoginRateLimitConfig",
       "type": "object"
     },
     "AuthConfig": {

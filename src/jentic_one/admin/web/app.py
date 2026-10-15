@@ -10,6 +10,7 @@ from jentic.problem_details import Unauthorized
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import AdminServiceError
 from jentic_one.admin.web.errors import database_error_handler, service_error_handler
+from jentic_one.admin.web.login_rate_limit import install_login_state_backend
 from jentic_one.admin.web.routers import (
     actors,
     audit,
@@ -85,9 +86,10 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the admin token verifier on the app for shared identity resolution."""
+    """Install the admin token verifier and the login limiter's state backend."""
     if not hasattr(app.state, "verify_token"):
         app.state.verify_token = _make_verifier(ctx)
+    install_login_state_backend(app, ctx)
 
 
 def _make_verifier(ctx: Context) -> Any:

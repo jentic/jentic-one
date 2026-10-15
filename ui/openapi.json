@@ -32227,7 +32227,7 @@
     "/auth/login": {
       "description": "`POST`: Log in.",
       "post": {
-        "description": "Authenticate and return a JWT token bundle.",
+        "description": "Authenticate and return a JWT token bundle.\n\nAttempts are rate limited per caller IP and per account email\n(``admin.auth.login_rate_limit``); an exhausted bucket answers ``429\nrate_limit_exceeded`` with ``Retry-After`` before any credential check.",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -32300,6 +32300,23 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too many login attempts from this caller IP or for this account email; retry after the `Retry-After` delay."
           },
           "500": {
             "content": {

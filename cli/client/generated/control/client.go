@@ -10556,6 +10556,10 @@ type ClientInterface interface {
 	//
 	// Authenticate and return a JWT token bundle.
 	//
+	// Attempts are rate limited per caller IP and per account email
+	// (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+	// rate_limit_exceeded`` with ``Retry-After`` before any credential check.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /auth/login (the `Login` operationId).
@@ -10564,6 +10568,10 @@ type ClientInterface interface {
 	// Login Log in
 	//
 	// Authenticate and return a JWT token bundle.
+	//
+	// Attempts are rate limited per caller IP and per account email
+	// (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+	// rate_limit_exceeded`` with ``Retry-After`` before any credential check.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14115,6 +14123,10 @@ func (c *Client) AuthIdpDescriptor(ctx context.Context, reqEditors ...RequestEdi
 //
 // Authenticate and return a JWT token bundle.
 //
+// Attempts are rate limited per caller IP and per account email
+// (“admin.auth.login_rate_limit“); an exhausted bucket answers “429
+// rate_limit_exceeded“ with “Retry-After“ before any credential check.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /auth/login (the `Login` operationId).
@@ -14133,6 +14145,10 @@ func (c *Client) LoginWithBody(ctx context.Context, contentType string, body io.
 // Login Log in
 //
 // Authenticate and return a JWT token bundle.
+//
+// Attempts are rate limited per caller IP and per account email
+// (“admin.auth.login_rate_limit“); an exhausted bucket answers “429
+// rate_limit_exceeded“ with “Retry-After“ before any credential check.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -26992,6 +27008,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Authenticate and return a JWT token bundle.
 	//
+	// Attempts are rate limited per caller IP and per account email
+	// (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+	// rate_limit_exceeded`` with ``Retry-After`` before any credential check.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /auth/login (the `Login` operationId).
@@ -27000,6 +27020,10 @@ type ClientWithResponsesInterface interface {
 	// LoginWithResponse Log in
 	//
 	// Authenticate and return a JWT token bundle.
+	//
+	// Attempts are rate limited per caller IP and per account email
+	// (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+	// rate_limit_exceeded`` with ``Retry-After`` before any credential check.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34549,6 +34573,8 @@ type LoginHTTPResp struct {
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -34570,6 +34596,11 @@ func (r LoginHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r LoginHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r LoginHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -45207,6 +45238,10 @@ func (c *ClientWithResponses) AuthIdpDescriptorWithResponse(ctx context.Context,
 //
 // Authenticate and return a JWT token bundle.
 //
+// Attempts are rate limited per caller IP and per account email
+// (“admin.auth.login_rate_limit“); an exhausted bucket answers “429
+// rate_limit_exceeded“ with “Retry-After“ before any credential check.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /auth/login (the `Login` operationId).
@@ -45221,6 +45256,10 @@ func (c *ClientWithResponses) LoginWithBodyWithResponse(ctx context.Context, con
 // LoginWithResponse Log in
 //
 // Authenticate and return a JWT token bundle.
+//
+// Attempts are rate limited per caller IP and per account email
+// (“admin.auth.login_rate_limit“); an exhausted bucket answers “429
+// rate_limit_exceeded“ with “Retry-After“ before any credential check.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -52710,6 +52749,13 @@ func ParseLoginHTTPResp(rsp *http.Response) (*LoginHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
