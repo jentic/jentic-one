@@ -13,6 +13,8 @@ from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 
+pytestmark = pytest.mark.usefixtures("no_api_key")
+
 
 def _make_ctx() -> MagicMock:
     ctx = MagicMock()

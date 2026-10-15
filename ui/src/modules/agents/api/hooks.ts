@@ -863,10 +863,8 @@ export function useCreateAgent() {
 
 /**
  * Partial in-place edit (PATCH /agents/{id}): rename or re-describe from the
- * Settings sheet. Refetches the roster rather than seeding it from the PATCH
- * response — the response row is built without the `has_api_key` join (always
- * false), so seeding it would make the API key sheet forget an existing key.
- * The attention root covers the Notifications bell, which lists pending agents
+ * Settings sheet. Invalidates the roster so every list view refetches. The
+ * attention root covers the Notifications bell, which lists pending agents
  * by name.
  */
 export function useUpdateAgent() {

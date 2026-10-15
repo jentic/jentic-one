@@ -16,6 +16,8 @@ from jentic_one.auth.services.errors import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseIntegrityError
 
+pytestmark = pytest.mark.usefixtures("no_api_key")
+
 
 def _admin_identity() -> Identity:
     return Identity(

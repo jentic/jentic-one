@@ -18,6 +18,8 @@ from jentic_one.auth.services.errors import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 
+pytestmark = pytest.mark.usefixtures("no_api_key")
+
 _TOKEN = "claim-secret-xyz"
 _TOKEN_HASH = hashlib.sha256(_TOKEN.encode()).hexdigest()
 

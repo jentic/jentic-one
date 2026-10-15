@@ -731,7 +731,7 @@
           },
           "has_api_key": {
             "default": false,
-            "description": "Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.",
+            "description": "Whether the agent currently has an active API key.",
             "examples": [
               true
             ],

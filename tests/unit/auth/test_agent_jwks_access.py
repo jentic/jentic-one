@@ -17,6 +17,8 @@ from jentic_one.auth.services.errors import ActorNotFoundError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 
+pytestmark = pytest.mark.usefixtures("no_api_key")
+
 _VALID_JWKS: dict[str, object] = {
     "keys": [
         {

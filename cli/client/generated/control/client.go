@@ -1299,7 +1299,7 @@ type AgentResponse struct {
 	// Examples: Reconciles Stripe invoices against the ledger every night.
 	Description *string `json:"description,omitempty"`
 
-	// HasApiKey Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.
+	// HasApiKey Whether the agent currently has an active API key.
 	//
 	// Examples: true
 	HasApiKey *bool `json:"has_api_key,omitempty"`

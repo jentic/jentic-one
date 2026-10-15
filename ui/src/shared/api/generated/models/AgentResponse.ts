@@ -31,7 +31,7 @@ export type AgentResponse = {
      */
     description?: (string | null);
     /**
-     * Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.
+     * Whether the agent currently has an active API key.
      */
     has_api_key?: boolean;
     /**

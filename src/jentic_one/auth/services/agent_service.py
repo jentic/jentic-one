@@ -219,12 +219,17 @@ class AgentService:
                     cursor=cursor_dt,
                     filters=access_filters,
                 )
+            has_more = len(agents) > limit
+            if has_more:
+                agents = agents[:limit]
+            with_key = await AgentCredentialRepository.agent_ids_with_api_key(
+                session, [a.id for a in agents]
+            )
 
-        has_more = len(agents) > limit
-        if has_more:
-            agents = agents[:limit]
-
-        views = [AgentView.model_validate(a) for a in agents]
+        views = [
+            AgentView.model_validate(a).model_copy(update={"has_api_key": a.id in with_key})
+            for a in agents
+        ]
 
         next_cursor = None
         if has_more and agents:
@@ -238,10 +243,7 @@ class AgentService:
             agent = await AgentRepository.get_by_id(session, agent_id, filters=access_filters)
             if agent is None:
                 raise ActorNotFoundError(agent_id)
-            has_key = await AgentCredentialRepository.has_api_key(session, agent_id)
-        view = AgentView.model_validate(agent)
-        view.has_api_key = has_key
-        return view
+            return await self._view(session, agent)
 
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         """Activate a pending agent.
@@ -313,7 +315,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-        return AgentView.model_validate(agent)
+            return await self._view(session, agent)
 
     async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
         """Assign ownership of a self-registered agent to the claiming caller.
@@ -379,12 +381,13 @@ class AgentService:
                     reason="agent_ownership_claim",
                     origin=identity.origin.value,
                 )
+                view = await self._view(session, agent)
         except DatabaseIntegrityError:
             # owner_id is a FK to users.id. The actor-type guard above should make
             # this unreachable, but if the caller's sub is ever a non-user id that
             # slips the guard, surface a clean 403 rather than a raw 500.
             raise ClaimActorNotAllowedError(identity.actor_type.value) from None
-        return AgentView.model_validate(agent)
+        return view
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
         """Reject a pending agent; same authorization as :meth:`approve`."""
@@ -413,7 +416,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-        return AgentView.model_validate(agent)
+            return await self._view(session, agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
         # #1233 (disable arm, DECIDED): disable does NOT sweep oauth_client_grants.
@@ -1026,9 +1029,10 @@ class AgentService:
                     after=after,
                     origin=identity.origin.value,
                 )
+                view = await self._view(session, agent)
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
-        return AgentView.model_validate(agent)
+        return view
 
     async def update_jwks(
         self,
@@ -1064,7 +1068,14 @@ class AgentService:
                 after={"jwks": "[redacted]"},
                 origin=identity.origin.value,
             )
-        return AgentView.model_validate(agent)
+            return await self._view(session, agent)
+
+    @staticmethod
+    async def _view(session: AsyncSession, agent: Agent) -> AgentView:
+        """Build the ``AgentView`` for one agent, with ``has_api_key`` filled in."""
+        view = AgentView.model_validate(agent)
+        view.has_api_key = await AgentCredentialRepository.has_api_key(session, agent.id)
+        return view
 
     async def _load_owned_agent(
         self,
