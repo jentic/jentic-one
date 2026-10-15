@@ -96,6 +96,15 @@ IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 #: Only enforced when the document actually contains an alias.
 MAX_YAML_EXPANDED_NODES = 2_500_000
 
+#: Upper bound on the alias-expanded nesting depth of a YAML spec. Literal nesting
+#: is already bounded by PyYAML's recursive composer (~325 levels before
+#: ``RecursionError``), but an alias chain (``&a1 [*a0]``, ``&a2 [*a1]``, …) builds
+#: an arbitrarily deep tree from shallow source text, which recursive walkers
+#: downstream (``json.dumps``, validation, ``$ref`` resolution) then overflow on.
+#: Real OpenAPI documents rarely nest beyond a few dozen levels; 256 stays below
+#: the literal ceiling so aliases cannot produce a shape plain YAML cannot.
+MAX_YAML_EXPANDED_DEPTH = 256
+
 
 class YamlAliasExpansionError(yaml.YAMLError):
     """Raised when a YAML document's alias expansion exceeds the node budget."""
@@ -109,15 +118,16 @@ def _node_children(node: yaml.Node) -> list[yaml.Node]:
     return []
 
 
-def _check_alias_expansion(root: yaml.Node, limit: int) -> None:
-    """Raise ``YamlAliasExpansionError`` if ``root`` expands past ``limit`` nodes.
+def _check_alias_expansion(root: yaml.Node, *, max_nodes: int, max_depth: int) -> None:
+    """Raise ``YamlAliasExpansionError`` if ``root`` expands past either budget.
 
     Iterative post-order walk over the composed node graph, memoizing each
-    shared (anchored) node's expanded size so the cost is linear in the number
-    of distinct nodes, not in the expanded size — a bomb is rejected as soon as
-    any subtree's running total crosses ``limit``.
+    shared (anchored) node's expanded size and height so the cost is linear in
+    the number of distinct nodes, not in the expanded size — a bomb is rejected
+    as soon as any subtree crosses ``max_nodes`` or ``max_depth``.
     """
     sizes: dict[int, int] = {}
+    heights: dict[int, int] = {}
     in_progress: set[int] = set()
     stack: list[tuple[yaml.Node, bool]] = [(root, False)]
     while stack:
@@ -125,12 +135,19 @@ def _check_alias_expansion(root: yaml.Node, limit: int) -> None:
         key = id(node)
         if children_done:
             in_progress.discard(key)
-            total = 1 + sum(sizes[id(child)] for child in _node_children(node))
-            if total > limit:
+            children = _node_children(node)
+            total = 1 + sum(sizes[id(child)] for child in children)
+            if total > max_nodes:
                 raise YamlAliasExpansionError(
-                    f"YAML alias expansion exceeds the limit of {limit} nodes"
+                    f"YAML alias expansion exceeds the limit of {max_nodes} nodes"
+                )
+            height = 1 + max((heights[id(child)] for child in children), default=0)
+            if height > max_depth:
+                raise YamlAliasExpansionError(
+                    f"YAML alias expansion exceeds the nesting limit of {max_depth} levels"
                 )
             sizes[key] = total
+            heights[key] = height
             continue
         if key in sizes:
             continue
@@ -166,8 +183,9 @@ class _JsonSafeLoader(yaml.SafeLoader):
     walks the *expanded* tree, so a few hundred bytes of nested aliases (a
     "billion laughs" document) slips under the byte-size cap and still
     exhausts worker memory. When a document uses aliases, the composed node
-    graph's fully expanded size is counted before construction and the load
-    fails with ``YamlAliasExpansionError`` past ``MAX_YAML_EXPANDED_NODES``.
+    graph's fully expanded size and depth are counted before construction and
+    the load fails with ``YamlAliasExpansionError`` past
+    ``MAX_YAML_EXPANDED_NODES`` / ``MAX_YAML_EXPANDED_DEPTH``.
     Recursive aliases are rejected outright: they cannot be JSON-serialized.
     """
 
@@ -183,7 +201,9 @@ class _JsonSafeLoader(yaml.SafeLoader):
     def get_single_node(self) -> yaml.Node | None:
         node = super().get_single_node()
         if node is not None and self._saw_alias:
-            _check_alias_expansion(node, MAX_YAML_EXPANDED_NODES)
+            _check_alias_expansion(
+                node, max_nodes=MAX_YAML_EXPANDED_NODES, max_depth=MAX_YAML_EXPANDED_DEPTH
+            )
         return node
 
 

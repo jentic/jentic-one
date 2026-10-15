@@ -380,3 +380,35 @@ async def test_yaml_alias_expansion_limit_is_exact(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_NODES", 18)
     with pytest.raises(IngestStageError, match="limit of 18 nodes"):
         await load_specification(_make_inline(spec, filename="spec.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_yaml_deep_alias_chain_is_rejected() -> None:
+    """A linear alias chain (``&a1 [*a0]``, ``&a2 [*a1]``, …) has shallow source text
+    and a modest node count, yet expands into a tree far deeper than literal YAML
+    can express; it is rejected on depth before downstream recursive walkers run."""
+    lines = [
+        'openapi: "3.1.0"',
+        "info: {title: Chain, version: '1.0.0', x-vendor: acme}",
+        "x-0: &a0 [1]",
+    ]
+    lines += [f"x-{k}: &a{k} [*a{k - 1}]" for k in range(1, 1501)]
+    with pytest.raises(IngestStageError, match="nesting limit of 256 levels"):
+        await load_specification(_make_inline("\n".join(lines) + "\n", filename="spec.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_yaml_alias_depth_limit_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Depth counts levels of the expanded tree: at the limit loads, one more is rejected."""
+    # Root mapping (1) > x-b's value: the aliased [[1]] (2 more) > the scalar 1 = 4.
+    spec = (
+        'openapi: "3.1.0"\ninfo: {title: A, version: "1", x-vendor: acme}\nx-a: &a [[1]]\nx-b: *a\n'
+    )
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_DEPTH", 4)
+    result = await load_specification(_make_inline(spec, filename="spec.yaml"))
+    assert result.content is not None
+    assert result.content["x-b"] == [[1]]
+
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_DEPTH", 3)
+    with pytest.raises(IngestStageError, match="nesting limit of 3 levels"):
+        await load_specification(_make_inline(spec, filename="spec.yaml"))
