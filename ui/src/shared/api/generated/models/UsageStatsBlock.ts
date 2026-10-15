@@ -7,7 +7,7 @@
  */
 export type UsageStatsBlock = {
     /**
-     * Reserved count of in-flight executions; currently always 0.
+     * Number of asynchronous executions in flight right now (queued or running), regardless of the window. The same filters apply as for `pending`.
      */
     active_now: number;
     /**
@@ -27,7 +27,7 @@ export type UsageStatsBlock = {
      */
     p95_ms: (number | null);
     /**
-     * Reserved count of pending executions; currently always 0.
+     * Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.
      */
     pending: number;
     /**

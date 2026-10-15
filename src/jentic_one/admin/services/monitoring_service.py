@@ -303,11 +303,11 @@ class MonitoringService:
             total=stats_row.total,
             success=stats_row.success,
             failed=stats_row.failed,
-            pending=0,
+            pending=stats_row.pending,
             avg_ms=stats_row.avg_ms,
             p50_ms=stats_row.p50_ms,
             p95_ms=stats_row.p95_ms,
-            active_now=0,
+            active_now=stats_row.active_now,
             buckets=[
                 {
                     "ts": b.ts,
