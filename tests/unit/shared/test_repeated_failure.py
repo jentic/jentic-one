@@ -382,7 +382,7 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
         "method": "GET",
         "trace_id": _TRACE,
         "toolkit_id": _TOOLKIT,
-        "operation_id": _OPERATION,
+        "operation": {"id": _OPERATION},
     }
 
     # In production the executor persists the failing ExecutionRecord before the

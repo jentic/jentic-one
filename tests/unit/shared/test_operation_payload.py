@@ -1,4 +1,4 @@
-"""The async job payload fold: ``operation`` dict + legacy flat ``operation_id``."""
+"""The async job payload fold: the ``operation`` dict into one ``OperationInfo``."""
 
 from typing import Any
 
@@ -15,15 +15,10 @@ from jentic_one.shared.schemas import OperationInfo
             {"operation": {"id": "op_x", "path": "/v1/things", "method": "GET"}},
             OperationInfo(id="op_x", path="/v1/things", method="GET"),
         ),
-        # The dict wins over the dual-written flat id.
-        (
-            {"operation": {"id": "op_x", "path": "/a", "method": "GET"}, "operation_id": "op_y"},
-            OperationInfo(id="op_x", path="/a", method="GET"),
-        ),
-        # Legacy in-flight job: only the flat id.
-        ({"operation_id": "op_legacy"}, OperationInfo(id="op_legacy")),
-        # An empty dict or empty id carries no identity.
-        ({"operation": {}, "operation_id": ""}, None),
+        # A flat ``operation_id`` key carries no identity on its own.
+        ({"operation_id": "op_x"}, None),
+        # An empty dict carries no identity.
+        ({"operation": {}}, None),
         ({}, None),
     ],
 )
@@ -31,15 +26,11 @@ def test_fold(payload: dict[str, Any], expected: OperationInfo | None) -> None:
     assert operation_from_job_payload(payload) == expected
 
 
-def test_malformed_operation_dict_degrades_to_the_flat_id() -> None:
+def test_malformed_operation_dict_is_operation_less() -> None:
     """A dict missing its ``id`` must not fail the job — attribution metadata
-    degrades to the dual-written flat id rather than dropping the execution."""
-    payload = {"operation": {"path": "/v1/things", "method": "GET"}, "operation_id": "op_x"}
-    assert operation_from_job_payload(payload) == OperationInfo(id="op_x")
-
-
-def test_malformed_operation_dict_without_flat_id_is_operation_less() -> None:
-    assert operation_from_job_payload({"operation": {"path": 7}}) is None
+    degrades to no operation rather than dropping the execution."""
+    payload = {"operation": {"path": "/v1/things", "method": "GET"}}
+    assert operation_from_job_payload(payload) is None
 
 
 @pytest.mark.parametrize(

@@ -120,10 +120,8 @@ def _payload() -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
-        # The resolved operation rides the payload as one dict (plus the
-        # dual-written flat id for pre-dict workers).
+        # The resolved operation rides the payload as one dict.
         "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
-        "operation_id": "op_widgets",
     }
 
 
