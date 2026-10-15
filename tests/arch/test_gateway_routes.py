@@ -17,7 +17,6 @@ path, and the two configs must carry the same location map.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -42,12 +41,15 @@ HELM_GATEWAY_CONFIGMAP = (
 DOCKERFILE_DIR = REPO_ROOT / "deploy" / "docker"
 
 #: The SQLite config has no external dependencies; building an app never opens
-#: a database connection (same posture as ``tools/openapi_export``).
+#: a database connection (same posture as ``tools/openapi_export``). Passed to
+#: ``load_config`` explicitly so the shell's ``JENTIC_CONFIG_FILE`` never applies.
 DEFAULT_CONFIG = REPO_ROOT / "config" / "local-sqlite.yaml"
 
 _UPSTREAM_RE = re.compile(r"upstream\s+(\w+)_backend\s*\{")
 _LOCATION_RE = re.compile(r"location\s+(?:(=|\^~|~\*|~)\s+)?(\S+)\s*\{([^}]*)\}")
-_PROXY_PASS_RE = re.compile(r"proxy_pass\s+http://(\w+)_backend\b")
+#: The whole directive, ``;`` included: ``proxy_pass http://x_backend/;`` (any
+#: URI part) would forward a rewritten path, so it must not match.
+_PROXY_PASS_RE = re.compile(r"proxy_pass\s+http://(\w+)_backend\s*;")
 _APPS_ENV_RE = re.compile(r"^ENV\s+JENTIC__APPS=(\S+)", re.MULTILINE)
 _PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
 
@@ -96,13 +98,20 @@ class GatewayConfig:
 def _parse_gateway(source: Path, text: str) -> GatewayConfig:
     locations: list[Location] = []
     for modifier, path, body in _LOCATION_RE.findall(text):
+        head = f"location {modifier} {path}" if modifier else f"location {path}"
         if modifier not in ("", "="):
             raise AssertionError(
-                f"{source}: `location {modifier} {path}` — the gateway map uses only exact (=) "
+                f"{source}: `{head}` — the gateway map uses only exact (=) "
                 "and plain prefix locations; regex/^~ locations change nginx's selection order "
                 "and are not modelled by this gate"
             )
         proxy = _PROXY_PASS_RE.search(body)
+        if proxy is None and "proxy_pass" in body:
+            raise AssertionError(
+                f"{source}: `{head}` — proxy_pass must be exactly "
+                "`proxy_pass http://<name>_backend;`; a URI part (even a trailing `/`) makes "
+                "nginx replace the matched location prefix, so the backend sees a rewritten path"
+            )
         locations.append(Location(modifier, path, proxy.group(1) if proxy else None))
     return GatewayConfig(
         source=source,
@@ -165,8 +174,7 @@ def _iter_route_paths(routes: Iterable[Any], prefix: str = "") -> Iterator[str]:
 
 
 def _build_backend(apps: list[str]) -> FastAPI:
-    os.environ.setdefault("JENTIC_CONFIG_FILE", str(DEFAULT_CONFIG))
-    config = load_config().model_copy(update={"apps": apps})
+    config = load_config(DEFAULT_CONFIG).model_copy(update={"apps": apps})
     return _build_app(_build_context(config, apps), apps)
 
 
@@ -244,3 +252,15 @@ def test_docker_and_helm_gateways_share_one_location_map() -> None:
         "deploy/docker/nginx/parts-gateway.conf and the Helm gateway configmap have drifted; "
         "keep their location maps identical:\n  " + "\n  ".join(drift)
     )
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize(
+    "directive",
+    ["proxy_pass http://control_backend/;", "proxy_pass http://control_backend/vendors;"],
+)
+def test_parser_refuses_a_proxy_pass_with_a_uri_part(directive: str) -> None:
+    """A URI part on proxy_pass rewrites the forwarded path, so the gate refuses it."""
+    conf = f"upstream control_backend {{ server c:8000; }}\nlocation /vendors {{ {directive} }}"
+    with pytest.raises(AssertionError, match="proxy_pass must be exactly"):
+        _parse_gateway(Path("stub.conf"), conf)
