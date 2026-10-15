@@ -482,10 +482,39 @@ def parse_preview_operations(
     method + path + summary + operationId. Both are applied before counting, so a
     caller paginating the result sees a total that reflects the filtered set.
     """
-    ops: list[PreviewOperation] = []
-    doc_security = flatten_security(doc.get("security"))
+    return filter_preview_operations(_all_preview_operations(doc), tag=tag, q=q)
+
+
+def filter_preview_operations(
+    ops: list[PreviewOperation], *, tag: str | None = None, q: str | None = None
+) -> list[PreviewOperation]:
+    """Apply the preview ``tag`` / ``q`` filters to an already-projected operation list.
+
+    ``tag`` is a case-insensitive substring match on any of the operation's tags;
+    ``q`` is a case-insensitive substring match over method + path + summary +
+    operationId. Order is preserved. Pure, so a cached unfiltered projection can be
+    filtered per request.
+    """
     tag_lower = tag.lower() if tag else None
     q_lower = q.strip().lower() if q and q.strip() else None
+    if tag_lower is None and q_lower is None:
+        return ops
+    out: list[PreviewOperation] = []
+    for op in ops:
+        if tag_lower is not None and not any(tag_lower in t.lower() for t in op.tags):
+            continue
+        if q_lower is not None:
+            haystack = " ".join([op.method, op.path, op.summary, op.operation_id or ""]).lower()
+            if q_lower not in haystack:
+                continue
+        out.append(op)
+    return out
+
+
+def _all_preview_operations(doc: dict[str, Any]) -> list[PreviewOperation]:
+    """Project every operation in ``doc`` (unfiltered, spec order)."""
+    ops: list[PreviewOperation] = []
+    doc_security = flatten_security(doc.get("security"))
     for path, methods in (doc.get("paths") or {}).items():
         if not isinstance(methods, dict):
             continue
@@ -515,19 +544,13 @@ def parse_preview_operations(
             )
             raw_tags = op.get("tags") or []
             op_tags = [t for t in raw_tags if isinstance(t, str)]
-            if tag_lower is not None and not any(tag_lower in t.lower() for t in op_tags):
-                continue
             # Coerce to str up front: a malformed upstream spec can carry a
             # non-string summary/operationId (e.g. a number or object), which
-            # would crash the q-filter join below and surface as an uncaught 500.
+            # would crash the q-filter join and surface as an uncaught 500.
             raw_summary = op.get("summary")
             summary = raw_summary if isinstance(raw_summary, str) else ""
             raw_operation_id = op.get("operationId")
             operation_id = raw_operation_id if isinstance(raw_operation_id, str) else None
-            if q_lower is not None:
-                haystack = " ".join([method.upper(), path, summary, operation_id or ""]).lower()
-                if q_lower not in haystack:
-                    continue
             ops.append(
                 PreviewOperation(
                     method=method.upper(),

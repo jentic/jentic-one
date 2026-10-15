@@ -295,6 +295,7 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
 | `ingest.max_spec_bytes` | integer | `26214400` | `JENTIC__INGEST__MAX_SPEC_BYTES` |  |
+| `ingest.max_import_request_bytes` | integer (> 0) \| null | `null` | `JENTIC__INGEST__MAX_IMPORT_REQUEST_BYTES` | Cap on the raw `POST /apis` request body (all sources together). Unset means twice `max_spec_bytes`. Each inline source's content is separately capped at `max_spec_bytes`. |
 | `ingest.fetch_timeout_s` | number | `30.0` | `JENTIC__INGEST__FETCH_TIMEOUT_S` |  |
 | `ingest.max_redirects` | integer | `5` | `JENTIC__INGEST__MAX_REDIRECTS` |  |
 | `ingest.egress.allowed_private_subnets` | list of string | — | `JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
@@ -313,6 +314,8 @@ Public API catalog settings (manifest source + staleness).
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |
 | `catalog.update_sweep_jitter_ratio` | number (>= 0.0, <= 1.0) | `0.15` | `JENTIC__CATALOG__UPDATE_SWEEP_JITTER_RATIO` |  |
+| `catalog.preview_cache_ttl_seconds` | integer (>= 0) | `300` | `JENTIC__CATALOG__PREVIEW_CACHE_TTL_SECONDS` | How long a catalog preview's upstream spec projection is reused before refetching. Zero disables the cache. |
+| `catalog.preview_cache_max_entries` | integer (>= 0) | `16` | `JENTIC__CATALOG__PREVIEW_CACHE_MAX_ENTRIES` | Maximum number of catalog spec projections held in memory per process (least recently used evicted first). Zero disables the cache. |
 
 ## `credentials`
 

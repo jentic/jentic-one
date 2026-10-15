@@ -11,7 +11,7 @@ export type ApiSourceInline = {
      */
     api_name?: (string | null);
     /**
-     * Raw OpenAPI or Arazzo document as a JSON or YAML string.
+     * Raw OpenAPI or Arazzo document as a JSON or YAML string. At most `ingest.max_spec_bytes` UTF-8 bytes (25 MiB by default); larger content is refused with 413.
      */
     content: string;
     /**

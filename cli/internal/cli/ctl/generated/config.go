@@ -377,6 +377,14 @@ type CatalogConfig struct {
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
 
+	// Maximum number of catalog spec projections held in memory per process (least
+	// recently used evicted first). Zero disables the cache.
+	PreviewCacheMaxEntries int `json:"preview_cache_max_entries,omitempty,omitzero" yaml:"preview_cache_max_entries,omitempty" mapstructure:"preview_cache_max_entries,omitempty"`
+
+	// How long a catalog preview's upstream spec projection is reused before
+	// refetching. Zero disables the cache.
+	PreviewCacheTtlSeconds int `json:"preview_cache_ttl_seconds,omitempty,omitzero" yaml:"preview_cache_ttl_seconds,omitempty" mapstructure:"preview_cache_ttl_seconds,omitempty"`
+
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
 	// "update_check_interval_seconds".
 	UpdateCheckIntervalSeconds int `json:"update_check_interval_seconds,omitempty,omitzero" yaml:"update_check_interval_seconds,omitempty" mapstructure:"update_check_interval_seconds,omitempty"`
@@ -410,6 +418,18 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["manifest_url"]; !ok || v == nil {
 		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	}
+	if v, ok := raw["preview_cache_max_entries"]; !ok || v == nil {
+		plain.PreviewCacheMaxEntries = 16
+	}
+	if 0 > plain.PreviewCacheMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_max_entries", 0)
+	}
+	if v, ok := raw["preview_cache_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheTtlSeconds = 300
+	}
+	if 0 > plain.PreviewCacheTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_ttl_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
@@ -1446,12 +1466,19 @@ type IngestConfig struct {
 	// FetchTimeoutS corresponds to the JSON schema field "fetch_timeout_s".
 	FetchTimeoutS float64 `json:"fetch_timeout_s,omitempty,omitzero" yaml:"fetch_timeout_s,omitempty" mapstructure:"fetch_timeout_s,omitempty"`
 
+	// Cap on the raw `POST /apis` request body (all sources together). Unset means
+	// twice `max_spec_bytes`. Each inline source's content is separately capped at
+	// `max_spec_bytes`.
+	MaxImportRequestBytes interface{} `json:"max_import_request_bytes,omitempty,omitzero" yaml:"max_import_request_bytes,omitempty" mapstructure:"max_import_request_bytes,omitempty"`
+
 	// MaxRedirects corresponds to the JSON schema field "max_redirects".
 	MaxRedirects int `json:"max_redirects,omitempty,omitzero" yaml:"max_redirects,omitempty" mapstructure:"max_redirects,omitempty"`
 
 	// MaxSpecBytes corresponds to the JSON schema field "max_spec_bytes".
 	MaxSpecBytes int `json:"max_spec_bytes,omitempty,omitzero" yaml:"max_spec_bytes,omitempty" mapstructure:"max_spec_bytes,omitempty"`
 }
+
+type IngestConfigMaxImportRequestBytes_0 *int
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *IngestConfig) UnmarshalJSON(value []byte) error {

@@ -79,7 +79,11 @@ class ApiSourceInline(BaseModel):
         description="Source kind; always `inline` for this variant.", examples=["inline"]
     )
     content: str = Field(
-        description="Raw OpenAPI or Arazzo document as a JSON or YAML string.",
+        description=(
+            "Raw OpenAPI or Arazzo document as a JSON or YAML string. At most "
+            "`ingest.max_spec_bytes` UTF-8 bytes (25 MiB by default); larger content "
+            "is refused with 413."
+        ),
         examples=[
             '{"openapi": "3.1.0", "info": {"title": "Stripe API", "version": "2024-04-10"}, '
             '"paths": {}}'

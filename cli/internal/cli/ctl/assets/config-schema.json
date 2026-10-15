@@ -285,6 +285,20 @@
           "title": "Manifest Url",
           "type": "string"
         },
+        "preview_cache_max_entries": {
+          "default": 16,
+          "description": "Maximum number of catalog spec projections held in memory per process (least recently used evicted first). Zero disables the cache.",
+          "minimum": 0,
+          "title": "Preview Cache Max Entries",
+          "type": "integer"
+        },
+        "preview_cache_ttl_seconds": {
+          "default": 300,
+          "description": "How long a catalog preview's upstream spec projection is reused before refetching. Zero disables the cache.",
+          "minimum": 0,
+          "title": "Preview Cache Ttl Seconds",
+          "type": "integer"
+        },
         "update_check_interval_seconds": {
           "default": 86400,
           "title": "Update Check Interval Seconds",
@@ -1009,6 +1023,20 @@
           "default": 30.0,
           "title": "Fetch Timeout S",
           "type": "number"
+        },
+        "max_import_request_bytes": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cap on the raw `POST /apis` request body (all sources together). Unset means twice `max_spec_bytes`. Each inline source's content is separately capped at `max_spec_bytes`.",
+          "title": "Max Import Request Bytes"
         },
         "max_redirects": {
           "default": 5,

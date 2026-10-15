@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import AsyncGenerator, Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.app import create_app
+from jentic_one.shared import ttl_cache
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import encode_catalog_cursor
@@ -59,12 +61,17 @@ def _spec() -> dict[str, Any]:
     }
 
 
+#: Spec URLs the mock upstream served, in order — lets tests assert fetch counts.
+_SPEC_FETCHES: list[str] = []
+
+
 def _mock_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == _MANIFEST_URL:
             body = _manifest()
         elif url.endswith("/openapi.json"):
+            _SPEC_FETCHES.append(url)
             body = _spec()
         else:
             return httpx.Response(404, json={"error": "not found"})
@@ -84,6 +91,7 @@ def _mock_github() -> Iterator[None]:
         kwargs.pop("transport", None)
         return real_client_cls(transport=_mock_transport(), **kwargs)  # type: ignore[arg-type]
 
+    _SPEC_FETCHES.clear()
     with patch("jentic_one.registry.services.catalog.fetch.httpx.AsyncClient", _factory):
         yield
 
@@ -504,6 +512,48 @@ def test_preview_operations_q_at_max_length_accepted(admin_client: TestClient) -
     r = admin_client.get("/catalog/stripe.com/operations", params={"q": "x" * 500})
     assert r.status_code == 200
     assert r.json()["total"] == 0
+
+
+def test_preview_reuses_upstream_fetch_within_ttl(admin_client: TestClient) -> None:
+    """Paging, filtering, and reloading one entry fetch its upstream spec once (#1440)."""
+    admin_client.post("/catalog:refresh")
+    for params in ({}, {"q": "create"}, {"limit": 1, "offset": 1}, {}):
+        r = admin_client.get("/catalog/stripe.com/operations", params=params)
+        assert r.status_code == 200
+    assert len(_SPEC_FETCHES) == 1
+    # Filtering still runs per request against the cached projection.
+    filtered = admin_client.get("/catalog/stripe.com/operations", params={"q": "create"}).json()
+    assert filtered["total"] == 1
+    assert len(_SPEC_FETCHES) == 1
+
+
+def test_preview_refetches_after_ttl_expiry(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(ttl_cache, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    admin_client.post("/catalog:refresh")
+    ttl = admin_client.app.state.ctx.config.catalog.preview_cache_ttl_seconds  # type: ignore[attr-defined]
+
+    admin_client.get("/catalog/stripe.com/operations")
+    now[0] += ttl - 1
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 1
+
+    now[0] += 1
+    r = admin_client.get("/catalog/stripe.com/operations")
+    assert r.status_code == 200
+    assert len(_SPEC_FETCHES) == 2
+
+
+def test_preview_cache_disabled_by_zero_ttl(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_context.config.catalog, "preview_cache_ttl_seconds", 0)
+    admin_client.post("/catalog:refresh")
+    admin_client.get("/catalog/stripe.com/operations")
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 2
 
 
 # ── import ───────────────────────────────────────────────────────────────────

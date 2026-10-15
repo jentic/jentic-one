@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 import yaml
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
-from jentic.problem_details import BadRequest, ProblemDetailException
+from fastapi.routing import APIRoute
+from jentic.problem_details import BadRequest, ErrorItem, ProblemDetailException
+from starlette.types import Message
 
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.operation_service import OperationService, OperationSummaryPage
@@ -32,6 +35,7 @@ from jentic_one.registry.web.schemas.apis import (
     ApiRevisionResponse,
     ApiRevisionSourceInlineResponse,
     ApiRevisionSourceUrlResponse,
+    ApiSourceInline,
     ApiUpdateRequest,
     OperationSummaryLinksResponse,
     OperationSummaryListResponse,
@@ -47,7 +51,7 @@ from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, not_found
+from jentic_one.shared.web.openapi_responses import conflict, not_found, problem
 
 router = APIRouter()
 
@@ -184,14 +188,104 @@ async def list_api_security_schemes(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.post("/apis", status_code=202)
+def _payload_too_large(
+    detail: str, *, errors: list[ErrorItem | dict[str, Any]] | None = None
+) -> Exception:
+    return ProblemDetailException(
+        status_code=413,
+        detail=detail,
+        type="payload_too_large",
+        instance="/apis",
+        errors=errors,
+    )
+
+
+class _ImportBodyCapRoute(APIRoute):
+    """Bounds the raw ``POST /apis`` body before FastAPI buffers and parses it.
+
+    FastAPI reads the whole body ahead of dependency resolution, so the cap has
+    to sit in the route handler. The declared ``Content-Length`` is rejected up
+    front; the stream is also counted so a chunked body without one is cut off
+    at the same cap rather than read to completion.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            ctx: Context = request.app.state.ctx
+            cap = ctx.config.ingest.import_request_cap_bytes
+            too_large = f"Import request body exceeds the {cap}-byte limit"
+            declared = request.headers.get("content-length")
+            if declared is not None and declared.isdigit() and int(declared) > cap:
+                raise _payload_too_large(too_large)
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > cap:
+                    raise _payload_too_large(too_large)
+                chunks.append(chunk)
+            body = b"".join(chunks)
+            replayed = False
+
+            async def receive() -> Message:
+                nonlocal replayed
+                if not replayed:
+                    replayed = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return await request.receive()
+
+            return await original(Request(request.scope, receive))
+
+        return handler
+
+
+_import_router = APIRouter(route_class=_ImportBodyCapRoute)
+
+
+def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int) -> None:
+    """Reject inline sources whose content exceeds the ingest per-spec cap (413)."""
+    errors: list[ErrorItem | dict[str, Any]] = [
+        ErrorItem(
+            detail=f"Inline content exceeds the {max_bytes}-byte limit",
+            pointer=f"#/sources/{index}/content",
+        )
+        for index, source in enumerate(body.sources)
+        if isinstance(source, ApiSourceInline) and len(source.content.encode("utf-8")) > max_bytes
+    ]
+    if errors:
+        raise _payload_too_large(
+            f"{len(errors)} inline source(s) exceed the {max_bytes}-byte spec size limit",
+            errors=errors,
+        )
+
+
+@_import_router.post(
+    "/apis",
+    status_code=202,
+    responses={
+        413: problem(
+            "The request body exceeds `ingest.max_import_request_bytes`, or an inline "
+            "source's content exceeds `ingest.max_spec_bytes` (type `payload_too_large`). "
+            "Nothing was queued."
+        )
+    },
+)
 async def import_apis(
     request: Request,
     body: ApiImportRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Import OpenAPI/Arazzo content as new API revisions (async)."""
+    """Import OpenAPI/Arazzo content as new API revisions (async).
+
+    The whole request body is capped at `ingest.max_import_request_bytes`
+    (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+    content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+    request is refused with 413 before any job is queued.
+    """
+    _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes)
     # Attribute each resulting revision to the authenticated principal unless the
     # client supplied an explicit `submitted_by` override (e.g. importing on
     # behalf of someone else). The job row's `created_by` records the caller
@@ -219,6 +313,9 @@ async def import_apis(
         status_code=202,
         content=resp.model_dump(by_alias=True),
     )
+
+
+router.include_router(_import_router)
 
 
 def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
