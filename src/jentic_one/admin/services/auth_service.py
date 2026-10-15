@@ -150,6 +150,14 @@ class AuthService:
             raise AccountLockedError(account_locked_user_id)
 
         if not password_valid:
+            # Accepted timing residual (#1298): this write transaction (and the
+            # lockout arm's audit write) has no counterpart on the unknown-email,
+            # inactive, and missing-secret arms. It is one DB round-trip plus a
+            # commit (milliseconds), beneath the argon2id verify every arm pays
+            # (``passwords._hasher`` uses argon2-cffi's RFC 9106 low-memory
+            # profile: t=3, m=64 MiB, p=4). Equalizing it means writing rows for
+            # unknown emails, an anonymous write amplifier; the 423 lockout
+            # response on POST /auth/login already discloses existence anyway.
             async with self._ctx.admin_db.transaction() as session:
                 await UserSecretRepository.record_failed_login(session, user.id)
                 if failed_count + 1 >= config.failed_login_lockout_threshold:
