@@ -257,10 +257,18 @@ async def test_ingest_tolerates_duplicate_and_over_long_operation_ids(
         "servers": [{"url": "https://webtris.example.com/api"}],
         "paths": {
             "/v1/areas": {
-                "get": {"operationId": "Areas_Get", "responses": {"200": {"description": "ok"}}}
+                "get": {
+                    "operationId": "Areas_Get",
+                    "servers": [{"url": "https://v1.webtris.example.com"}],
+                    "responses": {"200": {"description": "ok"}},
+                }
             },
             "/v1.0/areas": {
-                "get": {"operationId": "Areas_Get", "responses": {"200": {"description": "ok"}}}
+                "get": {
+                    "operationId": "Areas_Get",
+                    "servers": [{"url": "https://v10.webtris.example.com"}],
+                    "responses": {"200": {"description": "ok"}},
+                }
             },
             "/v1/long": {
                 "get": {"operationId": long_id, "responses": {"200": {"description": "ok"}}}
@@ -284,12 +292,24 @@ async def test_ingest_tolerates_duplicate_and_over_long_operation_ids(
 
     async with registry_db.session() as session:
         ops = (await session.execute(select(Operation))).unique().scalars().all()
+        op_servers = (
+            (await session.execute(select(Server).where(Server.operation_id.is_not(None))))
+            .unique()
+            .scalars()
+            .all()
+        )
     by_path = {op.path: op.operation_id for op in ops}
     assert by_path == {
         "/v1/areas": "Areas_Get",
         "/v1.0/areas": "Areas_Get_2",
         "/v1/long": "x" * 255,
     }
+    # Each duplicate keeps its own operation-level servers.
+    path_by_op_id = {op.id: op.path for op in ops}
+    assert sorted((path_by_op_id[str(s.operation_id)], s.url) for s in op_servers) == [
+        ("/v1.0/areas", "https://v10.webtris.example.com"),
+        ("/v1/areas", "https://v1.webtris.example.com"),
+    ]
 
     coerced = [e for e in logs if e["event"] == "spec_operation_id_coerced"]
     assert {(e["path"], tuple(e["reasons"])) for e in coerced} == {
