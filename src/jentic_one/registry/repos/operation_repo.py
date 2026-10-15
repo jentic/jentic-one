@@ -55,20 +55,35 @@ def _assign_spec_operation_ids(
     the first holder of an id keeps it and each later duplicate becomes
     ``<id>_<n>`` (``n`` from 2, skipping any id the spec itself declares) so
     every operation stays addressable by a deterministic operationId.
+
+    Blank (empty or whitespace-only) and non-string operationIds are stored as
+    NULL: the unique constraint ignores NULLs but not repeated ``""`` values,
+    and malformed specs routinely emit ``"operationId": ""`` or a number.
     """
+    raw_ids: list[object] = [op.operation_id for op in operations]
     truncated = [
-        op.operation_id[:_SPEC_OPERATION_ID_MAX_LEN] if op.operation_id else op.operation_id
-        for op in operations
+        op_id[:_SPEC_OPERATION_ID_MAX_LEN] if isinstance(op_id, str) and op_id.strip() else None
+        for op_id in raw_ids
     ]
-    declared = {op_id for op_id in truncated if op_id}
+    declared = {op_id for op_id in truncated if op_id is not None}
     used: set[str] = set()
     assigned: list[str | None] = []
-    for op_input, candidate in zip(operations, truncated, strict=True):
-        if not candidate:
-            assigned.append(candidate)
+    for op_input, raw_id, candidate in zip(operations, raw_ids, truncated, strict=True):
+        if candidate is None:
+            assigned.append(None)
+            if raw_id is not None:
+                logger.warning(
+                    "spec_operation_id_coerced",
+                    revision_id=str(revision_id),
+                    path=op_input.path,
+                    method=op_input.method,
+                    reasons=["blank" if isinstance(raw_id, str) else "not_string"],
+                    original_type=type(raw_id).__name__,
+                    stored_operation_id=None,
+                )
             continue
         reasons: list[str] = []
-        if candidate != op_input.operation_id:
+        if candidate != raw_id:
             reasons.append("too_long")
         if candidate in used:
             reasons.append("duplicate")
@@ -89,8 +104,8 @@ def _assign_spec_operation_ids(
                 path=op_input.path,
                 method=op_input.method,
                 reasons=reasons,
-                original_operation_id=(op_input.operation_id or "")[:_SPEC_OPERATION_ID_MAX_LEN],
-                original_length=len(op_input.operation_id or ""),
+                original_operation_id=cast(str, raw_id)[:_SPEC_OPERATION_ID_MAX_LEN],
+                original_length=len(cast(str, raw_id)),
                 stored_operation_id=candidate,
             )
     return assigned
