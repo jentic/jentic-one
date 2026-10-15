@@ -87,6 +87,60 @@ class UrlSource(BaseModel):
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 
 
+#: Upper bound on the fully alias-expanded node count of a YAML spec. Stripe's
+#: OpenAPI spec (~6.6 MB YAML) composes to ~280k nodes (~24 bytes/node), so a
+#: spec at the default 25 MB ``max_spec_bytes`` cap is on the order of 1.1M
+#: nodes. 2.5M leaves ~2x headroom over that for legitimate anchor reuse while
+#: keeping the expanded document — what every downstream stage materializes —
+#: within the same order of magnitude as the largest alias-free spec accepted.
+#: Only enforced when the document actually contains an alias.
+MAX_YAML_EXPANDED_NODES = 2_500_000
+
+
+class YamlAliasExpansionError(yaml.YAMLError):
+    """Raised when a YAML document's alias expansion exceeds the node budget."""
+
+
+def _node_children(node: yaml.Node) -> list[yaml.Node]:
+    if isinstance(node, yaml.SequenceNode):
+        return list(node.value)
+    if isinstance(node, yaml.MappingNode):
+        return [child for pair in node.value for child in pair]
+    return []
+
+
+def _check_alias_expansion(root: yaml.Node, limit: int) -> None:
+    """Raise ``YamlAliasExpansionError`` if ``root`` expands past ``limit`` nodes.
+
+    Iterative post-order walk over the composed node graph, memoizing each
+    shared (anchored) node's expanded size so the cost is linear in the number
+    of distinct nodes, not in the expanded size — a bomb is rejected as soon as
+    any subtree's running total crosses ``limit``.
+    """
+    sizes: dict[int, int] = {}
+    in_progress: set[int] = set()
+    stack: list[tuple[yaml.Node, bool]] = [(root, False)]
+    while stack:
+        node, children_done = stack.pop()
+        key = id(node)
+        if children_done:
+            in_progress.discard(key)
+            total = 1 + sum(sizes[id(child)] for child in _node_children(node))
+            if total > limit:
+                raise YamlAliasExpansionError(
+                    f"YAML alias expansion exceeds the limit of {limit} nodes"
+                )
+            sizes[key] = total
+            continue
+        if key in sizes:
+            continue
+        if key in in_progress:
+            raise YamlAliasExpansionError("YAML document contains a recursive alias")
+        in_progress.add(key)
+        stack.append((node, True))
+        stack.extend((child, False) for child in _node_children(node) if id(child) not in sizes)
+
+
 class _JsonSafeLoader(yaml.SafeLoader):
     """SafeLoader whose output contains only JSON-serializable values.
 
@@ -105,7 +159,32 @@ class _JsonSafeLoader(yaml.SafeLoader):
     JSONB reject — while finite floats keep parsing as numbers. The remaining
     exotic tags (``!!omap``/``!!pairs``) yield lists of tuples, which
     JSON-serialize as arrays already.
+
+    Anchors and aliases are allowed, but their expansion is bounded (#1436).
+    PyYAML shares one node per anchor, so loading itself stays small; every
+    downstream consumer (``json.dumps``, validation, operation extraction)
+    walks the *expanded* tree, so a few hundred bytes of nested aliases (a
+    "billion laughs" document) slips under the byte-size cap and still
+    exhausts worker memory. When a document uses aliases, the composed node
+    graph's fully expanded size is counted before construction and the load
+    fails with ``YamlAliasExpansionError`` past ``MAX_YAML_EXPANDED_NODES``.
+    Recursive aliases are rejected outright: they cannot be JSON-serialized.
     """
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._saw_alias = False
+
+    def compose_node(self, parent: yaml.Node | None, index: Any) -> yaml.Node | None:
+        if self.check_event(yaml.AliasEvent):
+            self._saw_alias = True
+        return super().compose_node(parent, index)
+
+    def get_single_node(self) -> yaml.Node | None:
+        node = super().get_single_node()
+        if node is not None and self._saw_alias:
+            _check_alias_expansion(node, MAX_YAML_EXPANDED_NODES)
+        return node
 
 
 def _construct_scalar_as_str(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> str:
@@ -201,11 +280,16 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
         except (json.JSONDecodeError, ValueError):
             try:
                 parsed = _load_yaml(raw)
+            except YamlAliasExpansionError as exc:
+                raise IngestStageError(str(exc)) from exc
             except yaml.YAMLError as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
     else:
         try:
             parsed = _load_yaml(raw)
+        except YamlAliasExpansionError as exc:
+            # Aliases are YAML-only syntax, so a JSON fallback cannot succeed.
+            raise IngestStageError(str(exc)) from exc
         except yaml.YAMLError:
             try:
                 parsed = _load_json(raw)
