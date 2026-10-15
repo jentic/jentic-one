@@ -122,6 +122,7 @@ async def test_login_lockout_logs_warning(
                 user_id,
                 lockout_threshold=threshold,
                 locked_until=datetime.now(UTC) + timedelta(minutes=15),
+                now=datetime.now(UTC),
             )
 
     service = AuthService(ctx)

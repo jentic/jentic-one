@@ -62,16 +62,22 @@ def _get_backend(request: Request) -> SharedStateBackend:
     if isinstance(backend, SharedStateBackend):
         return backend
     logger.warning("login_rate_limit_backend_missing — using a per-process in-memory backend")
-    return MemoryStateBackend()
+    # Persist the fallback so every later request (and limiter rebuild) shares it.
+    fallback = MemoryStateBackend()
+    setattr(request.app.state, _STATE_BACKEND_ATTR, fallback)
+    return fallback
 
 
 def _get_limiters(request: Request, ctx: Context) -> tuple[RateLimiter, RateLimiter]:
-    limiters: tuple[RateLimiter, RateLimiter] | None = getattr(
+    cfg = ctx.config.admin.auth.login_rate_limit
+    # Cached per effective config: a changed limit (reload, test override)
+    # rebuilds the wrappers; the buckets themselves live in the backend.
+    params = (cfg.ip_rpm, cfg.ip_burst, cfg.email_rpm, cfg.email_burst)
+    cached: tuple[tuple[int, int, int, int], tuple[RateLimiter, RateLimiter]] | None = getattr(
         request.app.state, "_admin_login_limiters", None
     )
-    if limiters is not None:
-        return limiters
-    cfg = ctx.config.admin.auth.login_rate_limit
+    if cached is not None and cached[0] == params:
+        return cached[1]
     backend = _get_backend(request)
     # Own namespaces: the auth surface's bare-IP limiters share this store, and
     # a login burst must not drain the /authorize quota (or vice versa).
@@ -86,7 +92,7 @@ def _get_limiters(request: Request, ctx: Context) -> tuple[RateLimiter, RateLimi
             namespace="admin-login-email",
         ),
     )
-    request.app.state._admin_login_limiters = limiters
+    request.app.state._admin_login_limiters = (params, limiters)
     return limiters
 
 

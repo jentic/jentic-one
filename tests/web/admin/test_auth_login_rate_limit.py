@@ -136,3 +136,21 @@ async def test_login_rate_limit_disabled_never_throttles(
             "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
         )
         assert resp.status_code == 200
+
+
+async def test_login_rate_limit_config_change_applies_after_first_request(
+    web_context: Context,
+    unauthed_client: TestClient,
+    admin_user_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limiters are cached per effective config, so a tightened limit takes effect at once."""
+    _set_limits(monkeypatch, web_context)
+    resp = unauthed_client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": _WRONG})
+    assert resp.status_code == 401
+
+    _set_limits(monkeypatch, web_context, email_rpm=_SLOW_RPM, email_burst=1)
+    resp = unauthed_client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": _WRONG})
+    assert resp.status_code == 401
+    resp = unauthed_client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": _WRONG})
+    _assert_rate_limited(resp)

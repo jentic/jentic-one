@@ -78,7 +78,11 @@ async def test_record_failed_login_concurrent_increments_are_not_lost(
     async def _fail_once() -> int | None:
         async with ctx.admin_db.transaction() as session:
             return await UserSecretRepository.record_failed_login(
-                session, race_user, lockout_threshold=threshold, locked_until=locked_until
+                session,
+                race_user,
+                lockout_threshold=threshold,
+                locked_until=locked_until,
+                now=datetime.now(UTC),
             )
 
     counts = await asyncio.gather(*(_fail_once() for _ in range(attempts)))
@@ -138,13 +142,14 @@ async def test_authenticate_burst_beyond_threshold_keeps_account_locked(
     threshold = ctx.config.admin.auth.failed_login_lockout_threshold
     service = AuthService(ctx)
 
-    results = await asyncio.gather(
-        *(
-            service.authenticate(LoginPayload(email=_EMAIL, password=_WRONG))
-            for _ in range(threshold * 2)
-        ),
-        return_exceptions=True,
-    )
+    with structlog.testing.capture_logs() as logs:
+        results = await asyncio.gather(
+            *(
+                service.authenticate(LoginPayload(email=_EMAIL, password=_WRONG))
+                for _ in range(threshold * 2)
+            ),
+            return_exceptions=True,
+        )
 
     assert all(isinstance(r, InvalidCredentialsError | AccountLockedError) for r in results)
     failures = sum(isinstance(r, InvalidCredentialsError) for r in results)
@@ -153,3 +158,35 @@ async def test_authenticate_burst_beyond_threshold_keeps_account_locked(
     assert secret.failed_login_count == failures
     assert secret.locked_until is not None
     assert secret.locked_until > datetime.now(UTC)
+    # Stragglers past the threshold are plain failures: one lockout, reported once.
+    assert sum(1 for log in logs if log["event"] == "account_locked") == 1
+
+
+async def test_authenticate_after_lockout_expiry_grants_fresh_threshold(
+    integration_context: Context, race_user: str
+) -> None:
+    """Once a lockout has been waited out, one typo does not re-lock the account."""
+    ctx = integration_context
+    threshold = ctx.config.admin.auth.failed_login_lockout_threshold
+    service = AuthService(ctx)
+    # A lockout that has already expired, with the counter left at the threshold.
+    async with ctx.admin_db.transaction() as session:
+        for _ in range(threshold):
+            await UserSecretRepository.record_failed_login(
+                session,
+                race_user,
+                lockout_threshold=threshold,
+                locked_until=datetime.now(UTC) - timedelta(minutes=1),
+                now=datetime.now(UTC) - timedelta(minutes=16),
+            )
+
+    with pytest.raises(InvalidCredentialsError):
+        await service.authenticate(LoginPayload(email=_EMAIL, password=_WRONG))
+
+    secret = await _load_secret(ctx, race_user)
+    assert secret.failed_login_count == 1
+    assert secret.locked_until is None
+    # Not locked: the correct password is accepted and clears the counter.
+    assert await service.authenticate(LoginPayload(email=_EMAIL, password=_PASSWORD)) == race_user
+    secret = await _load_secret(ctx, race_user)
+    assert secret.failed_login_count == 0
