@@ -108,12 +108,9 @@ class UserService:
         """List users, scoped to the caller (``build_access_filters`` on ``User``).
 
         ``org:admin`` sees every user; anyone else sees only themselves.
+        ``invite_state`` filters on the derived state, so ``expired`` matches
+        pending users whose invite has lapsed and ``pending`` excludes them.
         """
-        # NOTE: the `invite_state` filter matches the STORED column, so it can't
-        # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
-        # returns nothing and `PENDING` may return rows that render as expired.
-        # If filtering by expired is ever needed, translate it to
-        # `PENDING AND user_id NOT IN (active)` here.
         cursor_dt = None
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)

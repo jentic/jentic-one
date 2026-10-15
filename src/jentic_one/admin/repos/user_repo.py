@@ -5,15 +5,37 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
+from sqlalchemy import and_, select
 from sqlalchemy import func as sa_func
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.shared.models import AuthProvider, InviteState
+
+
+def _invite_state_clause(invite_state: InviteState) -> ColumnElement[bool]:
+    """Match the invite state as the read path derives it, not the stored column.
+
+    ``expired`` is never persisted: it is a stored ``pending`` user with no
+    unredeemed, unexpired invite token. Splitting ``pending`` on the same
+    active-token predicate as ``InviteTokenRepository.user_ids_with_active_invite``
+    (DB clock via ``now()``) keeps the filter consistent with the rendered
+    state and keeps cursor pages exact.
+    """
+    if invite_state not in (InviteState.PENDING, InviteState.EXPIRED):
+        return User.invite_state == invite_state
+    active_invite_user_ids = select(InviteToken.user_id).where(
+        InviteToken.redeemed_at.is_(None),
+        InviteToken.expires_at > sa_func.now(),
+    )
+    is_pending = User.invite_state == InviteState.PENDING
+    if invite_state == InviteState.PENDING:
+        return and_(is_pending, User.id.in_(active_invite_user_ids))
+    return and_(is_pending, User.id.not_in(active_invite_user_ids))
 
 
 class UserRepository:
@@ -150,7 +172,7 @@ class UserRepository:
         if cursor is not None:
             stmt = stmt.where(User.created_at < cursor)
         if invite_state is not None:
-            stmt = stmt.where(User.invite_state == invite_state)
+            stmt = stmt.where(_invite_state_clause(invite_state))
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
