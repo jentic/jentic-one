@@ -115,6 +115,15 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 			if mode == "" {
 				mode = clictx.ModeHuman
 			}
+			// Closed enum: a typo'd mode saved here would fail closed to agent on
+			// every later command through this context, far from its cause.
+			if mode != clictx.ModeHuman && mode != clictx.ModeAgent {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("invalid --mode %q (allowed: human, agent)", mode),
+					Actionable: "Pass --mode human or --mode agent.",
+				})
+			}
 			if err := config.MutateConfig(func(cfg *config.Config) error {
 				if !config.ValidName(name) {
 					return &ux.CodedError{
@@ -174,7 +183,7 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&env, "env", "", "Environment this context targets")
 	cmd.Flags().StringVar(&ident, "identity", "", "Identity this context acts as")
-	cmd.Flags().StringVar(&mode, "mode", "", "Interaction mode: human|agent (default human)")
+	cmd.Flags().StringVar(&mode, "mode", "", "Interaction mode to save in this context: human|agent (default human)")
 	cmd.Flags().BoolVar(&use, "use", false, "Set this as the active context after creating it")
 	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing context of the same name")
 	mustMarkRequired(cmd, "env")

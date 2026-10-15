@@ -175,10 +175,14 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 }
 
-// flagValue returns the string value of a persistent flag if present and set,
-// else "". Safe to call for flags a given root may not define.
+// flagValue returns the string value of the ROOT's persistent session flag
+// (--context/--mode/--theme) if defined, else "". Safe to call for flags a given
+// root may not define. It deliberately skips cmd.Flags(): a subcommand's local
+// flag of the same name (e.g. `context create --mode`, the mode to SAVE) shadows
+// the root flag there, and reading it would turn a value meant for the new
+// context into the session mode — fencing the command against itself (#1412).
 func flagValue(cmd *cobra.Command, name string) string {
-	if f := cmd.Flags().Lookup(name); f != nil {
+	if f := cmd.Root().PersistentFlags().Lookup(name); f != nil {
 		return f.Value.String()
 	}
 	return ""

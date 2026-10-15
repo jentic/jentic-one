@@ -250,7 +250,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent (default human)"
+                  "usage": "Interaction mode to save in this context: human|agent (default human)"
                 },
                 {
                   "name": "theme",
