@@ -29,7 +29,7 @@ func newApisCmd(app *app) *cobra.Command {
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.apisBrowse(cmd.Context())
+			return app.apisBrowse(cmd.Context(), cmdcore.JSONOrPretty(cmd, false))
 		},
 	}
 
@@ -56,6 +56,7 @@ func newApisListCmd(app *app) *cobra.Command {
 		Short:   "List locally registered APIs",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisList(cmd.Context(), o)
 		},
 	}
@@ -73,6 +74,7 @@ func newApisShowCmd(app *app) *cobra.Command {
 		Short: "Show an API and preview its operations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisShow(cmd.Context(), o, args[0])
 		},
 	}
@@ -89,6 +91,7 @@ func newApisRevisionsCmd(app *app) *cobra.Command {
 		Short:   "List the revisions of an API",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisRevisions(cmd.Context(), o, args[0])
 		},
 	}
@@ -107,6 +110,7 @@ func newApisOperationsCmd(app *app) *cobra.Command {
 		Short:   "List the operations of an API (current revision by default)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisOperations(cmd.Context(), o, args[0])
 		},
 	}
@@ -190,6 +194,10 @@ func newApisSpecCmd(app *app) *cobra.Command {
 }
 
 // ── option structs ───────────────────────────────────────────────────────────
+//
+// Each json field is the resolved output decision, not the raw flag: RunE
+// folds --json through cmdcore.JSONOrPretty so agent mode (and a piped stdout
+// in default mode) emits the JSON envelope without needing --json.
 
 type apisListOptions struct {
 	vendor string
@@ -246,9 +254,9 @@ const (
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
-func (a *app) apisBrowse(ctx context.Context) error {
+func (a *app) apisBrowse(ctx context.Context, asJSON bool) error {
 	if !term.IsTerminal(os.Stdin.Fd()) {
-		return a.apisList(ctx, &apisListOptions{limit: 50})
+		return a.apisList(ctx, &apisListOptions{limit: 50, json: asJSON})
 	}
 	return a.runApisBrowser(ctx)
 }
