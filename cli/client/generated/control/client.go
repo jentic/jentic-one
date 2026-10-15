@@ -2678,11 +2678,11 @@ type CreateAdminRequest struct {
 
 // CredentialAgentListResponse Paginated list of agents directly bound to a credential.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type CredentialAgentListResponse struct {
 	// Data The page of bound agents.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialAgentResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -2698,7 +2698,7 @@ type CredentialAgentListResponse struct {
 
 // CredentialAgentResponse Agent directly bound to a credential (theme 5 phase 1).
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}
 type CredentialAgentResponse struct {
 	// AgentId ID of the bound agent.
 	//
@@ -2729,6 +2729,11 @@ type CredentialAgentResponse struct {
 	//
 	// Examples: false
 	Suspended bool `json:"suspended"`
+
+	// SuspendedReason Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.
+	//
+	// Examples: api_deleted
+	SuspendedReason *string `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindRequest Request body for directly binding a credential to an agent.
@@ -10392,7 +10397,8 @@ type ClientInterface interface {
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
 	// phase 1) — the direct-binding successor of the removed
 	// ``GET /toolkits/{id}/agents``.
-	// Suspended bindings are included with their flag set.
+	// Suspended bindings are included with their flag set and, when known, the
+	// reason (`api_deleted` when the credential's API was deleted).
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
 	ListCredentialAgents(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14116,7 +14122,8 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 // The reverse lookup for the credential-detail "Agents" view (theme 5
 // phase 1) — the direct-binding successor of the removed
 // “GET /toolkits/{id}/agents“.
-// Suspended bindings are included with their flag set.
+// Suspended bindings are included with their flag set and, when known, the
+// reason (`api_deleted` when the credential's API was deleted).
 //
 // Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
 func (c *Client) ListCredentialAgents(ctx context.Context, credentialId string, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -26371,7 +26378,8 @@ type ClientWithResponsesInterface interface {
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
 	// phase 1) — the direct-binding successor of the removed
 	// ``GET /toolkits/{id}/agents``.
-	// Suspended bindings are included with their flag set.
+	// Suspended bindings are included with their flag set and, when known, the
+	// reason (`api_deleted` when the credential's API was deleted).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -44112,7 +44120,8 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 // The reverse lookup for the credential-detail "Agents" view (theme 5
 // phase 1) — the direct-binding successor of the removed
 // “GET /toolkits/{id}/agents“.
-// Suspended bindings are included with their flag set.
+// Suspended bindings are included with their flag set and, when known, the
+// reason (`api_deleted` when the credential's API was deleted).
 //
 // Returns a wrapper object for the known response body format(s).
 //

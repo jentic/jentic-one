@@ -4634,7 +4634,8 @@
                 "bound_at": "2026-01-15T09:30:00Z",
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "status": "active",
-                "suspended": false
+                "suspended": false,
+                "suspended_reason": "api_deleted"
               }
             ],
             "has_more": true,
@@ -4652,7 +4653,8 @@
                   "bound_at": "2026-01-15T09:30:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "status": "active",
-                  "suspended": false
+                  "suspended": false,
+                  "suspended_reason": "api_deleted"
                 }
               ]
             ],
@@ -4702,7 +4704,8 @@
             "bound_at": "2026-01-15T09:30:00Z",
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "status": "active",
-            "suspended": false
+            "suspended": false,
+            "suspended_reason": "api_deleted"
           }
         ],
         "properties": {
@@ -4761,6 +4764,21 @@
             ],
             "title": "Suspended",
             "type": "boolean"
+          },
+          "suspended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.",
+            "examples": [
+              "api_deleted"
+            ],
+            "title": "Suspended Reason"
           }
         },
         "required": [
@@ -35421,7 +35439,7 @@
     "/credentials/{credential_id}/agents": {
       "description": "`GET`: List agents bound to credential.",
       "get": {
-        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view (theme 5\nphase 1) — the direct-binding successor of the removed\n``GET /toolkits/{id}/agents``.\nSuspended bindings are included with their flag set.",
+        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view (theme 5\nphase 1) — the direct-binding successor of the removed\n``GET /toolkits/{id}/agents``.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
         "operationId": "listCredentialAgents",
         "parameters": [
           {
@@ -35510,7 +35528,8 @@
                       "bound_at": "2026-01-15T09:30:00Z",
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "status": "active",
-                      "suspended": false
+                      "suspended": false,
+                      "suspended_reason": "api_deleted"
                     }
                   ],
                   "has_more": true,

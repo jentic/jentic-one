@@ -941,6 +941,15 @@ class CredentialAgentResponse(BaseModel):
             "through this credential until resumed."
         ),
     )
+    suspended_reason: str | None = Field(
+        default=None,
+        examples=["api_deleted"],
+        description=(
+            "Why the binding is suspended: `api_deleted` when the API the "
+            "credential serves was deleted; null for an active binding or a "
+            "manual suspension. Cleared on resume."
+        ),
+    )
     rule_set_id: str | None = Field(
         default=None,
         examples=[ex.RULE_SET_ID],

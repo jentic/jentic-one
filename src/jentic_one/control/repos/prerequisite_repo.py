@@ -27,6 +27,9 @@ class CredentialBoundAgentRow(NamedTuple):
     bound_at: datetime
     suspended: bool
     rule_set_id: str | None
+    # Why the binding is suspended (e.g. ``api_deleted``); None when active or
+    # suspended by hand.
+    suspended_reason: str | None = None
 
 
 class AgentVisibility(NamedTuple):
@@ -149,7 +152,7 @@ class PrerequisiteRepository:
 
         The reverse lookup behind ``GET /credentials/{id}/agents`` (theme 5
         phase 1), reading ``agent_credential_bindings``. Suspended bindings
-        are included (with their flag) so the
+        are included (with their flag and reason) so the
         credential-detail view can show a reversible cut-off, not hide it.
 
         ``visible_to`` narrows the rows to agents the caller may see (see
@@ -172,7 +175,8 @@ class PrerequisiteRepository:
             bind_params.append(bindparam("owner_ids", expanding=True))
 
         stmt = text(
-            "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
+            "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
+            "b.suspended_reason "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "

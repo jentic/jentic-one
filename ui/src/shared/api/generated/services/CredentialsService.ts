@@ -227,7 +227,8 @@ export class CredentialsService {
      * The reverse lookup for the credential-detail "Agents" view (theme 5
      * phase 1) — the direct-binding successor of the removed
      * ``GET /toolkits/{id}/agents``.
-     * Suspended bindings are included with their flag set.
+     * Suspended bindings are included with their flag set and, when known, the
+     * reason (`api_deleted` when the credential's API was deleted).
      * @returns CredentialAgentListResponse Successful Response
      * @throws ApiError
      */

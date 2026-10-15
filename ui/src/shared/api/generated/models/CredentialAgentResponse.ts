@@ -30,5 +30,9 @@ export type CredentialAgentResponse = {
      * True when the binding is soft-suspended (reversible cut-off): the binding and its rules survive, but the agent cannot execute through this credential until resumed.
      */
     suspended: boolean;
+    /**
+     * Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.
+     */
+    suspended_reason?: (string | null);
 };
 

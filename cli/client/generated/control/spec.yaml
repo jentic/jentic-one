@@ -2921,6 +2921,7 @@ components:
           rule_set_id: prs_6968b3987c22b63e87e79f05
           status: active
           suspended: false
+          suspended_reason: api_deleted
         has_more: true
         next_cursor: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
       properties:
@@ -2960,6 +2961,7 @@ components:
         rule_set_id: prs_6968b3987c22b63e87e79f05
         status: active
         suspended: false
+        suspended_reason: api_deleted
       properties:
         agent_id:
           description: ID of the bound agent.
@@ -3000,6 +3002,14 @@ components:
           - false
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.'
+          examples:
+          - api_deleted
+          title: Suspended Reason
       required:
       - agent_id
       - agent_name
@@ -20528,7 +20538,8 @@ paths:
         The reverse lookup for the credential-detail "Agents" view (theme 5
         phase 1) — the direct-binding successor of the removed
         ``GET /toolkits/{id}/agents``.
-        Suspended bindings are included with their flag set.
+        Suspended bindings are included with their flag set and, when known, the
+        reason (`api_deleted` when the credential's API was deleted).
       operationId: listCredentialAgents
       parameters:
       - description: ID of the credential.

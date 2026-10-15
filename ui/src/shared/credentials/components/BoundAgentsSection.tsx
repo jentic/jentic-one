@@ -7,7 +7,8 @@
  *
  * Read-only by design: binding/rule management belongs to each agent's API
  * sidebar on the Agents surface (ApiAccessSidebar), so each row just shows
- * the agent name, suspended state, bound-at time and links to that agent AS
+ * the agent name, suspended state (and why, when its API was deleted), bound-at
+ * time and links to that agent AS
  * SELECTED on the flat surface — the tab whose tiles hold the bindings this
  * list is talking about, not a separate per-agent page.
  *
@@ -112,7 +113,10 @@ export function BoundAgentsSection({
 										icon={PauseCircle}
 										data-testid="bound-agent-suspended"
 									>
-										Suspended
+										{/* Only an API delete records a reason; a manual pause has none. */}
+										{row.suspended_reason === 'api_deleted'
+											? 'Suspended · API deleted'
+											: 'Suspended'}
 									</StatusChip>
 								)}
 							</span>

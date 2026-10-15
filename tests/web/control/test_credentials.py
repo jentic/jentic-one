@@ -418,6 +418,9 @@ async def test_list_credential_agents(
     assert rows[active_id]["agent_name"] == "cred-agents-active"
     assert rows[active_id]["suspended"] is False
     assert rows[suspended_id]["suspended"] is True
+    # Neither binding was suspended by an API delete, so neither has a reason.
+    assert rows[active_id]["suspended_reason"] is None
+    assert rows[suspended_id]["suspended_reason"] is None
     for row in rows.values():
         assert row["status"] == "pending"
         assert row["bound_at"] is not None
