@@ -11,18 +11,22 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestJobError
+from jentic_one.registry.ingest.exc import BaseIngestError, DuplicateRevisionError, IngestJobError
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
-from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.repos.revision_repo import (
+    ApiRevisionRepository,
+    is_duplicate_revision_conflict,
+)
 from jentic_one.registry.services.catalog.flow3_metrics import (
     record_overlay_auto_deprecated,
 )
+from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -40,15 +44,7 @@ logger = structlog.get_logger(__name__)
 
 _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
 
-# The unique constraints whose violation means "this revision already exists".
-# Both surface as a raw IntegrityError; translate either to the readable
-# duplicate message rather than leaking a truncated SQL string.
-#   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
-#   - ix_api_revisions_one_active: a concurrent import raced to become the single
-#     active (published/imported) revision for the API and lost — the digest guard
-#     can't catch this (it's keyed on api_id alone, independent of spec_digest).
-_DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
-_ONE_ACTIVE_CONSTRAINT = "ix_api_revisions_one_active"
+_UNEXPECTED_SOURCE_ERROR = "import failed unexpectedly"
 
 # The job-error wrapper an all-sources-failed import rides (``IngestJobError``):
 # ``ALL_SOURCES_FAILED_PREFIX_TEMPLATE`` heads the whole message and
@@ -66,16 +62,20 @@ ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
 def _readable_source_error(exc: Exception) -> str:
     """Map a source-level ingest failure to a message safe to show a user.
 
-    Raw ``IntegrityError`` strings leak SQL and get truncated mid-word in the
-    job record; translate a duplicate-revision collision (same digest, or a lost
-    race for the one-active slot) to a clear message and keep other failures as
-    their (domain) exception text.
+    The result lands in ``Job.error`` and event summaries, so only deliberate,
+    operator-facing messages pass through: ingest/registry domain errors and
+    source-payload validation errors. A duplicate-revision collision (same
+    digest, or a lost race for the one-active slot) surfacing as a raw
+    integrity error at commit reads as the duplicate message. Anything else —
+    database/driver errors, unexpected internals — maps to a generic message so
+    SQL or driver text never reaches the job record; the detail is logged by
+    the caller (``import_source_failed``).
     """
-    if isinstance(exc, DatabaseIntegrityError) and (
-        _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail
-    ):
+    if isinstance(exc, DatabaseIntegrityError) and is_duplicate_revision_conflict(exc):
         return DuplicateRevisionError().message
-    return str(exc)
+    if isinstance(exc, BaseIngestError | RegistryServiceError | ValidationError):
+        return str(exc)
+    return _UNEXPECTED_SOURCE_ERROR
 
 
 class ImportHandler:

@@ -96,13 +96,16 @@ IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 #: Only enforced when the document actually contains an alias.
 MAX_YAML_EXPANDED_NODES = 2_500_000
 
-#: Upper bound on the alias-expanded nesting depth of a YAML spec. Literal nesting
-#: is already bounded by PyYAML's recursive composer (~325 levels before
-#: ``RecursionError``), but an alias chain (``&a1 [*a0]``, ``&a2 [*a1]``, …) builds
-#: an arbitrarily deep tree from shallow source text, which recursive walkers
-#: downstream (``json.dumps``, validation, ``$ref`` resolution) then overflow on.
-#: Real OpenAPI documents rarely nest beyond a few dozen levels; 256 stays below
-#: the literal ceiling so aliases cannot produce a shape plain YAML cannot.
+#: Upper bound on the alias-expanded nesting depth (levels of the expanded tree,
+#: root and leaf scalars included) of a YAML spec. Literal nesting is already
+#: bounded by PyYAML's recursive composer: at the default recursion limit a
+#: document nested ~326 collections deep raises ``RecursionError``, which
+#: ``parse_spec_content`` reports as a parse failure. An alias chain (``&a1 [*a0]``,
+#: ``&a2 [*a1]``, …) composes iteratively from shallow source text, so without
+#: this cap it builds an arbitrarily deep tree that recursive walkers downstream
+#: (``json.dumps``, validation, ``$ref`` resolution) then overflow on. Real
+#: OpenAPI documents nest a few dozen levels at most; 256 sits below the literal
+#: ceiling, so aliases cannot produce a shape literal YAML would reject.
 MAX_YAML_EXPANDED_DEPTH = 256
 
 

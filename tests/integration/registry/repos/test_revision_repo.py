@@ -5,12 +5,15 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.repos.revision_repo import (
+    ApiRevisionRepository,
+    is_duplicate_revision_conflict,
+)
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 
@@ -69,7 +72,8 @@ async def test_get_by_digest_not_found(registry_db: DatabaseSession, sample_api:
 
 
 async def test_digest_uniqueness_constraint(registry_db: DatabaseSession, sample_api: Api) -> None:
-    """Duplicate (api_id, spec_digest) raises IntegrityError."""
+    """Duplicate (api_id, spec_digest) raises DatabaseIntegrityError, recognised as a
+    duplicate-revision conflict on every backend."""
     async with registry_db.session() as session:
         await ApiRevisionRepository.create_draft(
             session,
@@ -80,7 +84,7 @@ async def test_digest_uniqueness_constraint(registry_db: DatabaseSession, sample
         )
         await session.commit()
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(DatabaseIntegrityError) as exc_info:
         async with registry_db.session() as session:
             await ApiRevisionRepository.create_draft(
                 session,
@@ -90,6 +94,7 @@ async def test_digest_uniqueness_constraint(registry_db: DatabaseSession, sample
                 created_by="usr_test",
             )
             await session.commit()
+    assert is_duplicate_revision_conflict(exc_info.value)
 
 
 async def test_null_digests_do_not_collide(registry_db: DatabaseSession, sample_api: Api) -> None:
