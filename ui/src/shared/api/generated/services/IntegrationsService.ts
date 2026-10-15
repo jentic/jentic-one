@@ -321,10 +321,12 @@ export class IntegrationsService {
      * Agent callers: `agent_id` in the payload is refused (the caller *is*
      * the agent — spoofing another agent's id is a permission-boundary
      * violation). The caller's own identity is injected instead. UI / user
-     * callers: `agent_id` is optional — when named, confirm creates the
-     * direct agent-credential binding + permission rules; when omitted, the
-     * credential connects unbound and an agent can be bound later through
-     * the credentials API.
+     * callers: `agent_id` is optional and must name an agent the caller owns
+     * (`org:admin` may name any agent); any other id is refused with 400
+     * `connect_session_agent_not_found`, the same as an unknown agent. When
+     * named, confirm creates the direct agent-credential binding + permission
+     * rules; when omitted, the credential connects unbound and an agent can
+     * be bound later through the credentials API.
      * @returns any Successful Response
      * @throws ApiError
      */
