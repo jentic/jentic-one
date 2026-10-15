@@ -161,9 +161,8 @@ class AuthService:
             await self._reject_locked(account_locked_user_id)
 
         if not password_valid:
-            locked_until = datetime.now(UTC) + timedelta(
-                seconds=config.failed_login_lockout_seconds
-            )
+            now = datetime.now(UTC)
+            locked_until = now + timedelta(seconds=config.failed_login_lockout_seconds)
             async with self._ctx.admin_db.transaction() as session:
                 # Count and lock in one atomic statement, deciding the outcome
                 # from the database's post-increment count: concurrent wrong
@@ -174,8 +173,11 @@ class AuthService:
                     user.id,
                     lockout_threshold=config.failed_login_lockout_threshold,
                     locked_until=locked_until,
+                    now=now,
                 )
-                if new_count is not None and new_count >= config.failed_login_lockout_threshold:
+                # Exactly one increment per lockout lands on the threshold, so
+                # a burst that overshoots it reports the lockout once.
+                if new_count == config.failed_login_lockout_threshold:
                     logger.warning("account_locked", user_id=user.id, locked_until=locked_until)
                     login_counter.add(1, {"outcome": "lockout"})
                 else:

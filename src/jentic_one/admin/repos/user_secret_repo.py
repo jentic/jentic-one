@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import case, literal, or_, select, update
+from sqlalchemy import case, literal, null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.user_secrets import UserSecret
@@ -73,6 +73,7 @@ class UserSecretRepository:
         *,
         lockout_threshold: int,
         locked_until: datetime,
+        now: datetime,
     ) -> int | None:
         """Atomically count one failed login, locking the account at the threshold.
 
@@ -81,23 +82,42 @@ class UserSecretRepository:
         count reaches ``lockout_threshold`` — concurrent failures each see a
         distinct count, so none is lost and the lock cannot be skipped. (The
         right-hand side of every ``SET`` reads the pre-update row on both
-        Postgres and SQLite, hence ``failed_login_count + 1`` in the ``CASE``.)
+        Postgres and SQLite, so the ``CASE`` expressions all see the same
+        pre-update count and lock.)
+
+        Lock lifecycle, evaluated against ``now``:
+
+        * **expired lock** (``locked_until <= now``) — the counter restarts at
+          1 and the stale lock is cleared, so a lockout that has been waited
+          out grants a fresh ``lockout_threshold`` attempts instead of
+          re-locking on the first typo;
+        * **active lock** — the counter still advances, but ``locked_until``
+          is left as is, so stragglers of a burst that raced past the lock
+          check cannot keep extending the lock;
+        * **no lock** — the counter advances and the lock is set once it
+          reaches ``lockout_threshold``.
 
         Returns the new failed-login count, or ``None`` when the user has no
         secret row.
         """
-        new_count = UserSecret.failed_login_count + 1
+        # A NULL ``locked_until`` makes both comparisons NULL (not true), so a
+        # never-locked row falls through to the ``else`` branches.
+        now_param = literal(now, type_=UserSecret.locked_until.type)
+        lock_expired = UserSecret.locked_until <= now_param
+        lock_active = UserSecret.locked_until > now_param
+        new_count = case((lock_expired, 0), else_=UserSecret.failed_login_count) + 1
         stmt = (
             update(UserSecret)
             .where(UserSecret.user_id == user_id)
             .values(
                 failed_login_count=new_count,
                 locked_until=case(
+                    (lock_active, UserSecret.locked_until),
                     (
                         new_count >= lockout_threshold,
                         literal(locked_until, type_=UserSecret.locked_until.type),
                     ),
-                    else_=UserSecret.locked_until,
+                    else_=null(),
                 ),
             )
             .returning(UserSecret.failed_login_count)
@@ -110,12 +130,14 @@ class UserSecretRepository:
     async def reset_failed_logins_unless_locked(
         session: AsyncSession, user_id: str, *, now: datetime
     ) -> bool:
-        """Atomically clear the failed-login counter unless a lock is active at ``now``.
+        """Atomically clear the failed-login state unless a lock is active at ``now``.
 
         The success-path counterpart of :meth:`record_failed_login`: a correct
         password verified concurrently with a burst of wrong ones must not
-        clear a lockout that burst has just applied. Returns ``False`` when the
-        account is locked (or has no secret row), leaving the row untouched.
+        clear a lockout that burst has just applied. On success both the
+        counter and any expired ``locked_until`` are cleared. Returns ``False``
+        when the account is locked (or has no secret row), leaving the row
+        untouched.
         """
         stmt = (
             update(UserSecret)
@@ -123,7 +145,7 @@ class UserSecretRepository:
                 UserSecret.user_id == user_id,
                 or_(UserSecret.locked_until.is_(None), UserSecret.locked_until <= now),
             )
-            .values(failed_login_count=0)
+            .values(failed_login_count=0, locked_until=None)
             .returning(UserSecret.id)
             .execution_options(synchronize_session=False)
         )
