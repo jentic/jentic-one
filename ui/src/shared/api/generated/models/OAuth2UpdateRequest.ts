@@ -12,7 +12,7 @@ export type OAuth2UpdateRequest = {
      */
     active?: (boolean | null);
     /**
-     * Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.
+     * Replacement client secret; omit to leave unchanged.
      */
     client_secret?: (string | null);
     /**
@@ -24,7 +24,7 @@ export type OAuth2UpdateRequest = {
      */
     runtime_config?: (RuntimeConfig | null);
     /**
-     * Replacement OAuth scopes; applied only when client_secret is sent.
+     * Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them.
      */
     scopes?: (Array<string> | null);
     /**
@@ -32,7 +32,7 @@ export type OAuth2UpdateRequest = {
      */
     server_variables?: (Record<string, string> | null);
     /**
-     * Replacement token endpoint URL; applied only when client_secret is sent.
+     * Replacement token endpoint URL; omit to leave unchanged.
      */
     token_url?: (string | null);
     /**

@@ -123,6 +123,132 @@ def test_patch_key_rotation_moves_updated_at(cred_writer_client: TestClient) -> 
     assert _parse_ts(resp.json()["updated_at"]) > _parse_ts(before["updated_at"])
 
 
+# --- Per-type PATCH coverage (#1425) ---
+
+
+def test_patch_oauth2_token_url_and_scopes_without_secret(
+    cred_writer_client: TestClient,
+) -> None:
+    """Pins #1425: token_url/scopes edits persist without re-sending client_secret."""
+    cred_id = _create_oauth2(cred_writer_client, grant_type="client_credentials", name="o-1425")
+    before = cred_writer_client.get(f"/credentials/{cred_id}").json()
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "oauth2", "token_url": "https://other.example/t", "scopes": ["c", "d"]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert _parse_ts(resp.json()["updated_at"]) > _parse_ts(before["updated_at"])
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["token_url"] == "https://other.example/t"
+    assert got["details"]["scopes"] == ["c", "d"]
+
+    # Scopes alone apply too, and ``[]`` clears them; token_url is untouched.
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}", json={"type": "oauth2", "scopes": []}
+    )
+    assert resp.status_code == 200, resp.text
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["token_url"] == "https://other.example/t"
+    assert got["details"].get("scopes") is None
+    assert "webtest-secret" not in resp.text
+
+
+def test_patch_oauth2_unsafe_token_url_is_rejected(cred_writer_client: TestClient) -> None:
+    """A token_url edit is SSRF-validated even when no client_secret is sent."""
+    cred_id = _create_oauth2(cred_writer_client, grant_type="client_credentials", name="o-ssrf")
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "oauth2", "token_url": "http://169.254.169.254/latest"},
+    )
+    assert resp.status_code == 400, resp.text
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["token_url"] == "https://auth.example/token"
+
+
+def test_patch_no_auth_rename_and_deactivate(cred_writer_client: TestClient) -> None:
+    """Pins #1425: a no_auth credential can be renamed and toggled inactive."""
+    created = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "no_auth",
+            "name": "open-meteo",
+            "api": {"vendor": "open-meteo.com", "name": "", "version": ""},
+        },
+    )
+    assert created.status_code == 201, created.text
+    cred_id = created.json()["credential"]["credential_id"]
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "no_auth", "name": "open-meteo renamed", "active": False},
+    )
+    assert resp.status_code == 200, resp.text
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["name"] == "open-meteo renamed"
+    assert got["active"] is False
+    assert got["type"] == "no_auth"
+
+
+def test_patch_sigv4_region_and_service_without_rotation(
+    cred_writer_client: TestClient,
+) -> None:
+    """Region/service edits apply without rotating the keypair."""
+    created = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "sigv4",
+            "name": "sigv4-1425",
+            "api": {"vendor": "amazonaws.com", "name": "", "version": ""},
+            "access_key_id": "AKIAWEBTEST000000",
+            "secret_access_key": "web-sigv4-secret",  # pragma: allowlist secret
+            "aws_region": "us-east-1",
+            "aws_service": "aoss",
+        },
+    )
+    assert created.status_code == 201, created.text
+    cred_id = created.json()["credential"]["credential_id"]
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "sigv4", "aws_region": "eu-west-1", "aws_service": "execute-api"},
+    )
+    assert resp.status_code == 200, resp.text
+    details = cred_writer_client.get(f"/credentials/{cred_id}").json()["details"]
+    assert details["aws_region"] == "eu-west-1"
+    assert details["aws_service"] == "execute-api"
+    assert details["access_key_id"] == "AKIAWEBTEST000000"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "bearer_token", "token": ""},
+        {"type": "api_key", "key": ""},
+        {"type": "basic", "username": ""},
+        {"type": "basic", "password": ""},
+        {"type": "oauth2", "client_secret": ""},
+        {"type": "oauth2", "token_url": ""},
+        {"type": "sigv4", "access_key_id": "", "secret_access_key": ""},
+        {"type": "sigv4", "session_token": ""},
+        {"type": "sigv4", "aws_region": ""},
+        {"type": "sigv4", "aws_service": ""},
+    ],
+)
+def test_patch_empty_secret_is_rejected(
+    cred_writer_client: TestClient, body: dict[str, object]
+) -> None:
+    """Pins #1425: an empty secret/signing field is a 422, never stored."""
+    # Field validation runs at the request boundary, before the service checks
+    # the stored type, so one api_key credential serves every variant.
+    cred_id = _create_api_key(cred_writer_client)
+
+    resp = cred_writer_client.patch(f"/credentials/{cred_id}", json=body)
+    assert resp.status_code == 422, resp.text
+    assert "sk-web-test-key-123" not in resp.text
+
+
 # --- OAuth connect state on the redacted projection (#890) ---
 
 

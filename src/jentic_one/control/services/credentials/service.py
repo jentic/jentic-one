@@ -104,7 +104,7 @@ from jentic_one.shared.permissions.evaluation import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.url_validation import validate_upstream_url, validate_upstream_url_async
 
 logger = structlog.get_logger()
 
@@ -115,6 +115,20 @@ logger = structlog.get_logger()
 _REGISTRY_PROBE_TIMEOUT_S = 2.0
 # How many of the vendor's imported identities the unmatched-scope hint names.
 _SIBLING_HINT_LIMIT = 5
+# Update fields where "" is never a valid replacement (``None`` = unchanged).
+_NON_EMPTY_UPDATE_FIELDS = (
+    "token",
+    "key",
+    "username",
+    "password",
+    "client_secret",
+    "token_url",
+    "access_key_id",
+    "secret_access_key",
+    "session_token",
+    "aws_region",
+    "aws_service",
+)
 
 
 class _UnmatchedScopeWarning(NamedTuple):
@@ -1209,20 +1223,9 @@ class CredentialService:
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
-        """Update/rotate a credential.
-
-        Not-found and type-mismatch errors take precedence over an invalid
-        ``token_url``.
-        """
+        """Update/rotate a credential."""
+        self._validate_update_fields(payload)
         access_filters = build_access_filters(identity, Credential, for_write=True)
-        # ``token_url`` resolves DNS, so it is validated before the write
-        # transaction opens (as in ``create``), after a read-only existence and
-        # type check. The transaction repeats that check against the row it writes.
-        validated_token_url: str | None = None
-        if payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
-            async with self._ctx.control_db.session() as session:
-                await self._get_updatable(session, credential_id, payload, access_filters)
-            validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
         async with self._ctx.control_db.transaction() as session:
             credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
@@ -1294,7 +1297,9 @@ class CredentialService:
             elif payload.type == CredentialType.BASIC:
                 if payload.username is not None or payload.password is not None:
                     encrypted_pw = (
-                        encryption.encrypt(payload.password) if payload.password else None
+                        encryption.encrypt(payload.password)
+                        if payload.password is not None
+                        else None
                     )
                     await BasicCredentialRepository.update(
                         session,
@@ -1304,15 +1309,13 @@ class CredentialService:
                     )
                     changed = True
 
-            elif payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
-                encrypted_secret = encryption.encrypt(payload.client_secret)
-                scope = " ".join(payload.scopes) if payload.scopes else None
-                await OAuthClientCredentialRepository.update(
-                    session,
-                    credential_id,
-                    encrypted_client_secret=encrypted_secret,
-                    token_url=validated_token_url,
-                    scope=scope,
+            elif payload.type == CredentialType.OAUTH2 and (
+                payload.client_secret is not None
+                or payload.token_url is not None
+                or payload.scopes is not None
+            ):
+                await self._apply_oauth2_update(
+                    session, credential_id, StoredCredentialType(credential.type), payload
                 )
                 changed = True
 
@@ -1325,16 +1328,18 @@ class CredentialService:
                     )
                 encrypted_sig = (
                     encryption.encrypt(payload.secret_access_key)
-                    if payload.secret_access_key
+                    if payload.secret_access_key is not None
                     else None
                 )
                 sig_preview = (
                     encryption.preview(payload.secret_access_key)
-                    if payload.secret_access_key
+                    if payload.secret_access_key is not None
                     else None
                 )
                 encrypted_session = (
-                    encryption.encrypt(payload.session_token) if payload.session_token else None
+                    encryption.encrypt(payload.session_token)
+                    if payload.session_token is not None
+                    else None
                 )
                 if (
                     payload.access_key_id is not None
@@ -1537,6 +1542,79 @@ class CredentialService:
             oauth_app_registration_id=oar_id,
             oauth_app_registration_name=oar_name,
         )
+
+    async def _apply_oauth2_update(
+        self,
+        session: Any,
+        credential_id: str,
+        stored_type: StoredCredentialType,
+        payload: CredentialUpdate,
+    ) -> None:
+        """Apply each provided OAuth2 client field independently.
+
+        A token_url or scopes edit must not depend on the caller re-sending
+        the client secret, and token_url is always SSRF-validated when sent.
+        ``scopes=[]`` clears the stored scopes; omitting it keeps them.
+        """
+        validated_token_url: str | None = None
+        if payload.token_url is not None:
+            try:
+                validated_token_url = validate_upstream_url(payload.token_url)
+            except ValueError as exc:
+                raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
+
+        if stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE:
+            # Device flow (RFC 8628) is a public client: there is no secret to
+            # rotate, and its client config lives on its own table.
+            if payload.client_secret is not None:
+                raise InvalidCredentialInputError(
+                    "client_secret is not used by device_code credentials"
+                )
+            device_fields: dict[str, Any] = {}
+            if validated_token_url is not None:
+                device_fields["token_url"] = validated_token_url
+            if payload.scopes is not None:
+                device_fields["requested_scopes"] = payload.scopes
+            found = (
+                await DeviceAuthorizationCredentialRepository.update_fields(
+                    session, credential_id, **device_fields
+                )
+                is not None
+            )
+        else:
+            encrypted_secret = (
+                self._ctx.encryption.encrypt(payload.client_secret)
+                if payload.client_secret is not None
+                else None
+            )
+            found = (
+                await OAuthClientCredentialRepository.update(
+                    session,
+                    credential_id,
+                    encrypted_client_secret=encrypted_secret,
+                    token_url=validated_token_url,
+                    scope=" ".join(payload.scopes) if payload.scopes else None,
+                    clear_scope=payload.scopes is not None and not payload.scopes,
+                )
+                is not None
+            )
+        if not found:
+            # A managed-provider credential can exist without stored client
+            # config; a 200 that persisted nothing would hide the dropped edit.
+            raise InvalidCredentialInputError(
+                "This oauth2 credential has no client configuration to edit"
+            )
+
+    @staticmethod
+    def _validate_update_fields(payload: CredentialUpdate) -> None:
+        """Reject empty secret/signing fields — "" is never a valid replacement.
+
+        ``None`` means "leave unchanged"; an empty string would otherwise be
+        stored and injected as e.g. ``X-Api-Key: `` or ``Basic :pw``.
+        """
+        for field in _NON_EMPTY_UPDATE_FIELDS:
+            if getattr(payload, field) == "":
+                raise InvalidCredentialInputError(f"Field '{field}' must not be empty")
 
     def _validate_create_fields(self, payload: CredentialCreate, *, managed: bool) -> None:
         """Validate required fields per type before touching encryption/DB."""
