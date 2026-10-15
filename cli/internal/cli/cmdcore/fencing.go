@@ -52,8 +52,8 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge.
-		app.banner(cmd)
+		// The update nudge writes to stderr only, so it is safe in every mode. The
+		// banner (stdout) is drawn below, once the mode is known.
 		app.maybeNudgeUpdate(cmd)
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
@@ -171,6 +171,13 @@ func installInterceptor(app *App, root *cobra.Command) {
 		}
 
 		cmd.SetContext(ctx)
+
+		// The banner is human-only decoration on stdout. A machine mode or --json
+		// commits stdout to one JSON document, and agent harnesses often run on a
+		// PTY, so the TTY check inside banner alone is not enough.
+		if !state.IsMachine() && !boolFlag(cmd, "json") {
+			app.banner(cmd)
+		}
 		return nil
 	}
 }
