@@ -17,6 +17,7 @@ from jentic_one.registry.repos.search.protocol import (
     SearchStrategy,
 )
 from jentic_one.registry.repos.search.registry import (
+    build_strategy,
     register_strategy,
     resolve_strategy,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "SearchHit",
     "SearchStrategy",
     "SearchUnsupportedError",
+    "build_strategy",
     "register_strategy",
     "resolve_strategy",
 ]

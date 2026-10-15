@@ -51,6 +51,8 @@ class SearchStrategy(Protocol):
     serve the search (missing dependency, provider down, misconfiguration).
     The service layer maps it to its unavailable-search error (HTTP 501
     ``search_unsupported``); never raise service-layer errors from a strategy.
+    The error message reaches the client verbatim, so keep it generic and log
+    internal detail server-side.
     """
 
     name: str

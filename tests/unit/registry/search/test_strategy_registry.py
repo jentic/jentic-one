@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.repos.search import (
     SearchUnsupportedError,
+    build_strategy,
     resolve_strategy,
 )
 from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStrategy
@@ -189,3 +190,16 @@ def test_resolve_propagates_from_config_rejection(clean_test_key: None) -> None:
     config = SearchConfig(search_mode=_TEST_KEY[1])
     with pytest.raises(SearchUnsupportedError, match="provider not configured"):
         resolve_strategy(_fake_backend(), config)
+
+
+def test_build_strategy_exported_for_composite_strategies(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A composite strategy builds unregistered children through the public barrel."""
+    config = SearchConfig(search_mode=_TEST_KEY[1])
+    app_config = AppConfig.model_validate(sample_config_dict)
+
+    child = build_strategy(_ConfigurableFakeStrategy, config, app_config=app_config)
+    assert isinstance(child, _ConfigurableFakeStrategy)
+    assert child.app_config is app_config
+    assert type(build_strategy(_FakeStrategy, config)) is _FakeStrategy
