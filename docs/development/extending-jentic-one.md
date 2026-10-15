@@ -20,7 +20,7 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
-| `register_strategy` | `jentic_one.registry.repos.search.registry` | Register a `SearchStrategy` under a new `(dialect, search_mode)` pair. |
+| `register_strategy` | `jentic_one.registry.repos.search.registry` | Register a `SearchStrategy` under a new `(dialect, search_mode)` pair. Declare an optional `from_config(config, *, app_config=None)` classmethod (`ConfigurableSearchStrategy`) to receive the active `SearchConfig` and the booted `AppConfig` at resolve time; raise `SearchUnsupportedError` (resolve or query time) for the 501 `search_unsupported` problem. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
@@ -220,6 +220,8 @@ class TestMyBrokerCompliance(BaseBrokerComplianceTest):
 
 class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
     strategy_cls = MyStrategy
+    # Override strategy_factory() when MyStrategy() is not zero-arg (e.g. it is
+    # built through from_config); a declared from_config is signature-checked.
 
 
 class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):

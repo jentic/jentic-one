@@ -17,7 +17,7 @@ import typing
 from itertools import zip_longest
 from typing import Any
 
-from jentic_one.registry.repos.search.protocol import SearchStrategy
+from jentic_one.registry.repos.search.protocol import ConfigurableSearchStrategy, SearchStrategy
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
@@ -59,21 +59,34 @@ def _describe(fact: _ParamFact | None) -> str:
     return f"{name}: {annotation!r}{suffix} [{kind.description}]{note}"
 
 
-def assert_signature_matches(impl: type, protocol: type, method: str) -> None:
+def _unbound(owner: type, method: str) -> Any:
+    """``owner.method`` as a plain function whose first parameter is self/cls.
+
+    A classmethod fetched with ``getattr`` is already bound (``cls`` dropped),
+    which would make :func:`_parameter_facts` drop the first *real* parameter.
+    """
+    attr = inspect.getattr_static(owner, method)
+    return attr.__func__ if isinstance(attr, classmethod) else getattr(owner, method)
+
+
+def assert_signature_matches(
+    impl: type, protocol: type, method: str, *, compare_return: bool = True
+) -> None:
     """Assert ``impl.method`` has the same signature as ``protocol.method``.
 
     Closes the ``runtime_checkable`` gap (which only checks method presence).
-    Ignores ``self`` and compares parameter names, kinds, defaults, and
-    *resolved* annotations, plus the return annotation — so the check is
-    indifferent to whether either side uses ``from __future__ import
-    annotations`` or spells unions as ``Optional[X]`` vs ``X | None``.
+    Ignores ``self``/``cls`` and compares parameter names, kinds, defaults, and
+    *resolved* annotations, plus the return annotation unless *compare_return*
+    is false — so the check is indifferent to whether either side uses ``from
+    __future__ import annotations`` or spells unions as ``Optional[X]`` vs
+    ``X | None``. Handles instance methods and classmethods.
     """
     fix_hint = (
         f"fix: copy the signature of {protocol.__name__}.{method} verbatim — same "
         "parameter names, same keyword-only markers, same annotations, same return type."
     )
-    proto_params, proto_return = _parameter_facts(getattr(protocol, method))
-    impl_params, impl_return = _parameter_facts(getattr(impl, method))
+    proto_params, proto_return = _parameter_facts(_unbound(protocol, method))
+    impl_params, impl_return = _parameter_facts(_unbound(impl, method))
     divergences = [
         f"  impl {_describe(impl_fact)}  !=  protocol {_describe(proto_fact)}"
         for impl_fact, proto_fact in zip_longest(impl_params, proto_params)
@@ -84,6 +97,8 @@ def assert_signature_matches(impl: type, protocol: type, method: str) -> None:
         + "\n".join(divergences)
         + f"\n{fix_hint}"
     )
+    if not compare_return:
+        return
     assert impl_return == proto_return, (
         f"{impl.__name__}.{method} return type diverges from "
         f"{protocol.__name__}.{method}: {impl_return!r} != {proto_return!r}\n{fix_hint}"
@@ -93,24 +108,32 @@ def assert_signature_matches(impl: type, protocol: type, method: str) -> None:
 class BaseSearchStrategyComplianceTest:
     """Subclass and set ``strategy_cls`` to prove a ``SearchStrategy`` conforms.
 
-    The subclass sets ``strategy_cls`` to the zero-arg-constructible strategy
-    class, e.g.::
+    The subclass sets ``strategy_cls`` to the strategy class, e.g.::
 
         class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
             strategy_cls = MyStrategy
+
+    Instances come from :meth:`strategy_factory`, which constructs zero-arg by
+    default. A strategy built through the ``from_config`` hook
+    (``ConfigurableSearchStrategy``) whose constructor needs arguments
+    overrides it to return a ready instance.
     """
 
     #: The strategy class under test. Subclasses override this.
     strategy_cls: type
 
+    def strategy_factory(self) -> Any:
+        """Return a ready strategy instance; override when ``cls()`` is not valid."""
+        return self.strategy_cls()
+
     def test_is_search_strategy(self) -> None:
-        assert isinstance(self.strategy_cls(), SearchStrategy)
+        assert isinstance(self.strategy_factory(), SearchStrategy)
 
     def test_has_required_attrs(self) -> None:
         # Instantiate first: `name`/`dialect` may be an instance @property (which
         # evaluates to a property object on the class, not a str). Asserting on an
         # instance handles both plain class attrs and properties.
-        instance = self.strategy_cls()
+        instance = self.strategy_factory()
         assert isinstance(instance.name, str)
         assert isinstance(instance.dialect, str)
 
@@ -119,7 +142,7 @@ class BaseSearchStrategyComplianceTest:
         # `dialect_name` or `resolve_strategy((dialect, mode))` never finds this
         # strategy and raises SearchUnsupportedError at runtime. Catch the
         # plausible-but-wrong value (e.g. "postgresql" vs "postgres") here.
-        instance = self.strategy_cls()
+        instance = self.strategy_factory()
         assert instance.dialect in KNOWN_BACKEND_DIALECTS, (
             f"{self.strategy_cls.__name__}.dialect={instance.dialect!r} is not a known "
             f"backend dialect {sorted(KNOWN_BACKEND_DIALECTS)}; resolve_strategy would "
@@ -128,6 +151,20 @@ class BaseSearchStrategyComplianceTest:
 
     def test_search_operations_signature(self) -> None:
         assert_signature_matches(self.strategy_cls, SearchStrategy, "search_operations")
+
+    def test_from_config_signature(self) -> None:
+        # Optional hook: only checked when declared. The return type is not
+        # compared so an implementation may narrow it to its own class/Self.
+        if not hasattr(self.strategy_cls, "from_config"):
+            return
+        attr = inspect.getattr_static(self.strategy_cls, "from_config")
+        assert isinstance(attr, classmethod), (
+            f"{self.strategy_cls.__name__}.from_config must be a classmethod — "
+            "resolve_strategy calls it on the class, before any instance exists."
+        )
+        assert_signature_matches(
+            self.strategy_cls, ConfigurableSearchStrategy, "from_config", compare_return=False
+        )
 
 
 class BaseBrokerComplianceTest:

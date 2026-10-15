@@ -11,6 +11,7 @@ import jentic_one.registry.repos.search.postgres_lexical as _pg_lexical  # noqa:
 import jentic_one.registry.repos.search.sqlite_lexical as _sqlite_lexical  # noqa: F401
 from jentic_one.registry.repos.search.errors import SearchUnsupportedError
 from jentic_one.registry.repos.search.protocol import (
+    ConfigurableSearchStrategy,
     SearchCursor,
     SearchHit,
     SearchStrategy,
@@ -21,6 +22,7 @@ from jentic_one.registry.repos.search.registry import (
 )
 
 __all__ = [
+    "ConfigurableSearchStrategy",
     "SearchCursor",
     "SearchHit",
     "SearchStrategy",

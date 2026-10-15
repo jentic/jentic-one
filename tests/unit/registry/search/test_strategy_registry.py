@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,11 +15,12 @@ from jentic_one.registry.repos.search import (
     resolve_strategy,
 )
 from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStrategy
-from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit
+from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit, SearchStrategy
 from jentic_one.registry.repos.search.registry import _STRATEGIES, register_strategy
 from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrategy
-from jentic_one.shared.config import DatabaseConfig, SearchConfig
+from jentic_one.shared.config import AppConfig, DatabaseConfig, SearchConfig
 from jentic_one.shared.db.backends import get_backend
+from jentic_one.shared.db.backends.base import DatabaseBackend
 
 _TEST_KEY = ("test-dialect", "test-mode")
 
@@ -109,3 +112,80 @@ def test_register_does_not_shadow_builtin_lexical() -> None:
     finally:
         if original is not None:
             _STRATEGIES[builtin_key] = original
+
+
+class _ConfigurableFakeStrategy(_FakeStrategy):
+    """Built through the ``from_config`` hook; records what it was given."""
+
+    def __init__(self, config: SearchConfig, app_config: AppConfig | None) -> None:
+        self.config = config
+        self.app_config = app_config
+
+    @classmethod
+    def from_config(
+        cls,
+        config: SearchConfig,
+        *,
+        app_config: AppConfig | None = None,
+    ) -> SearchStrategy:
+        return cls(config, app_config)
+
+
+class _RejectingConfigStrategy(_FakeStrategy):
+    @classmethod
+    def from_config(
+        cls,
+        config: SearchConfig,
+        *,
+        app_config: AppConfig | None = None,
+    ) -> SearchStrategy:
+        raise SearchUnsupportedError("provider not configured")
+
+
+def _fake_backend() -> DatabaseBackend:
+    return cast(DatabaseBackend, SimpleNamespace(dialect_name=_TEST_KEY[0]))
+
+
+def test_resolve_passes_config_to_configurable_strategy(
+    clean_test_key: None, sample_config_dict: dict[str, Any]
+) -> None:
+    register_strategy(_ConfigurableFakeStrategy)
+    config = SearchConfig(search_mode=_TEST_KEY[1])
+    app_config = AppConfig.model_validate(sample_config_dict)
+
+    strategy = resolve_strategy(_fake_backend(), config, app_config=app_config)
+
+    assert isinstance(strategy, _ConfigurableFakeStrategy)
+    assert strategy.config is config
+    assert strategy.app_config is app_config
+
+
+def test_resolve_without_app_config_passes_none(clean_test_key: None) -> None:
+    register_strategy(_ConfigurableFakeStrategy)
+    config = SearchConfig(search_mode=_TEST_KEY[1])
+
+    strategy = resolve_strategy(_fake_backend(), config)
+
+    assert isinstance(strategy, _ConfigurableFakeStrategy)
+    assert strategy.config is config
+    assert strategy.app_config is None
+
+
+def test_resolve_zero_arg_strategy_ignores_config(
+    clean_test_key: None, sample_config_dict: dict[str, Any]
+) -> None:
+    """Strategies without ``from_config`` keep the zero-arg construction path."""
+    register_strategy(_FakeStrategy)
+    config = SearchConfig(search_mode=_TEST_KEY[1])
+    app_config = AppConfig.model_validate(sample_config_dict)
+
+    strategy = resolve_strategy(_fake_backend(), config, app_config=app_config)
+
+    assert type(strategy) is _FakeStrategy
+
+
+def test_resolve_propagates_from_config_rejection(clean_test_key: None) -> None:
+    register_strategy(_RejectingConfigStrategy)
+    config = SearchConfig(search_mode=_TEST_KEY[1])
+    with pytest.raises(SearchUnsupportedError, match="provider not configured"):
+        resolve_strategy(_fake_backend(), config)
