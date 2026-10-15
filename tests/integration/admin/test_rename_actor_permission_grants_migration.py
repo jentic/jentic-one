@@ -35,8 +35,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.db.session import get_database_url
+from tests.harness.postgres import alembic_config_for
 
-from ..conftest import _alembic_config_for, _test_backend
+from ..conftest import _test_backend
 
 pytestmark = pytest.mark.integration
 
@@ -60,7 +61,7 @@ class _Target:
         self.db_config = db_config
         self.postgres = postgres
         self.schema: str | None = db_config.schema_name if postgres else None
-        self.alembic: AlembicConfig = _alembic_config_for("admin", db_config)
+        self.alembic: AlembicConfig = alembic_config_for("admin", db_config)
 
     def engine(self) -> AsyncEngine:
         return create_async_engine(get_database_url(self.db_config))

@@ -47,7 +47,7 @@ from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
-from tests.integration.conftest import _TEST_ENCRYPTION_KEY, _alembic_config_for
+from tests.harness.postgres import TEST_ENCRYPTION_KEY, alembic_config_for
 from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
@@ -74,7 +74,7 @@ def _digest(plaintext: str) -> str:
 
 
 def _admin_cfg(integration_config: AppConfig) -> AlembicConfig:
-    return _alembic_config_for("admin", integration_config.databases.admin)
+    return alembic_config_for("admin", integration_config.databases.admin)
 
 
 async def _table_names(db: DatabaseSession) -> set[str]:
@@ -156,7 +156,7 @@ def runner_config(
                 "credentials": {
                     "encryption": {
                         "active_id": "v1",
-                        "entries": [{"id": "v1", "material": _TEST_ENCRYPTION_KEY}],
+                        "entries": [{"id": "v1", "material": TEST_ENCRYPTION_KEY}],
                     }
                 },
             }

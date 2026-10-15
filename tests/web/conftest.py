@@ -30,17 +30,14 @@ from contextlib import asynccontextmanager
 
 import pytest
 from alembic import command
-from alembic.config import Config as AlembicConfig
-from pydantic import SecretStr
-from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import jentic_one.shared.db.session as _session_module
-from jentic_one.shared.config import AppConfig, DatabaseConfig
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.session import get_database_url
+from tests.harness.postgres import DB_NAMES, alembic_config_for, ensure_schema, postgres_config
 
 
 @asynccontextmanager
@@ -49,65 +46,10 @@ async def noop_lifespan(_app: object) -> AsyncGenerator[None]:
     yield
 
 
-_DB_NAMES: tuple[str, ...] = ("registry", "admin", "control")
-
-# A deterministic 32-byte AES key (base64). Web tests that create credentials
-# need a non-empty encryption keyset or the Context boot fails with
-# "EncryptionConfig.entries must not be empty".
-_TEST_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-
-
 @pytest.fixture(scope="session")
 def web_config() -> AppConfig:
-    """AppConfig pointing at local Docker PostgreSQL instance."""
-    return AppConfig.model_validate(
-        {
-            "databases": {
-                "registry": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "name": "jentic",
-                    "user": "registry_user",
-                    "password": "registry_pass",
-                    "pool_max": 2,
-                    "schema_name": "registry",
-                },
-                "admin": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "name": "jentic",
-                    "user": "admin_user",
-                    "password": "admin_pass",
-                    "pool_max": 2,
-                    "schema_name": "admin",
-                },
-                "control": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "name": "jentic",
-                    "user": "control_user",
-                    "password": "control_pass",
-                    "pool_max": 2,
-                    "schema_name": "control",
-                },
-            },
-            "credentials": {
-                "encryption": {
-                    "active_id": "v1",
-                    "entries": [{"id": "v1", "material": _TEST_ENCRYPTION_KEY}],
-                },
-            },
-        }
-    )
-
-
-def _alembic_config_for(db_name: str, db_config: DatabaseConfig) -> AlembicConfig:
-    cfg = AlembicConfig("alembic.ini", ini_section=db_name)
-    cfg.set_section_option(
-        db_name, "sqlalchemy.url", get_database_url(db_config).render_as_string(hide_password=False)
-    )
-    cfg.set_section_option(db_name, "schema_name", db_config.schema_name)
-    return cfg
+    """AppConfig pointing at the local Docker Postgres fixture (port from ``JENTIC_PG_PORT``)."""
+    return postgres_config()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -115,23 +57,13 @@ def _apply_migrations(web_config: AppConfig) -> Iterator[None]:
     """Bring every database up to head once per session."""
 
     async def _ensure_all_schemas() -> None:
-        for name in _DB_NAMES:
-            db_cfg = getattr(web_config.databases, name)
-            superuser_cfg = db_cfg.model_copy(
-                update={"user": "postgres", "password": SecretStr("postgres")}
-            )
-            url = get_database_url(superuser_cfg)
-            engine = create_async_engine(url)
-            try:
-                async with engine.begin() as conn:
-                    await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{db_cfg.schema_name}"'))
-            finally:
-                await engine.dispose()
+        for name in DB_NAMES:
+            await ensure_schema(getattr(web_config.databases, name))
 
     asyncio.run(_ensure_all_schemas())
 
-    for name in _DB_NAMES:
-        cfg = _alembic_config_for(name, getattr(web_config.databases, name))
+    for name in DB_NAMES:
+        cfg = alembic_config_for(name, getattr(web_config.databases, name))
         command.upgrade(cfg, "head")
     yield
 

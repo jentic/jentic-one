@@ -13,14 +13,15 @@ import { Client } from 'pg';
  * in the flow — register, :approve, jwt-bearer mint — is real and public.
  *
  * Portability: the DSN is env-driven. Defaults to the superuser the CI fixtures
- * (`make start-fixtures`) expose on :5432; locally point it at the isolated
- * :5433 instance via E2E_DB_* env. Superuser is used so the connection can write
- * the admin-schema `agents` table regardless of per-surface role grants.
+ * (`make start-fixtures`) expose on JENTIC_PG_PORT (default :5432); locally
+ * point it at the isolated :5433 instance via E2E_DB_* env. Superuser is used so
+ * the connection can write the admin-schema `agents` table regardless of
+ * per-surface role grants.
  */
 function dsnFromEnv(): string {
 	if (process.env.E2E_DB_URL) return process.env.E2E_DB_URL;
 	const host = process.env.E2E_DB_HOST ?? 'localhost';
-	const port = process.env.E2E_DB_PORT ?? '5432';
+	const port = process.env.E2E_DB_PORT ?? process.env.JENTIC_PG_PORT ?? '5432';
 	const user = process.env.E2E_DB_USER ?? 'postgres';
 	const password = process.env.E2E_DB_PASSWORD ?? 'postgres';
 	const name = process.env.E2E_DB_NAME ?? 'jentic';

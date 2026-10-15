@@ -49,7 +49,7 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
@@ -60,7 +60,7 @@ _OWNER = "usr_t8m_owner"
 @pytest.fixture(scope="module")
 def service_account_tables(integration_config: AppConfig) -> Iterator[None]:
     """Restore the pre-drop SA tables (the drop's downgrade raises), then re-drop."""
-    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    admin_cfg = alembic_config_for("admin", integration_config.databases.admin)
     restore_pre_sa_drop_admin(integration_config)
     yield
     command.upgrade(admin_cfg, "head")
@@ -1253,7 +1253,7 @@ async def test_retire_without_the_tables_is_a_noop(
 ) -> None:
     """Past the drop there is nothing to retire (the runner never calls it
     there, but the step must stay safe to call)."""
-    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    admin_cfg = alembic_config_for("admin", integration_config.databases.admin)
     await asyncio.to_thread(command.upgrade, admin_cfg, "head")
     try:
         retired = await ServiceAccountMigrationService(integration_context).retire()

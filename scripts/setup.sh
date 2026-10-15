@@ -7,6 +7,16 @@ cd "$PROJECT_ROOT"
 
 PG_PORT="${JENTIC_PG_PORT:-5432}"
 
+# The migration runner below reads its connection settings from
+# JENTIC_CONFIG_FILE (config/local.yaml pins 5432). When JENTIC_PG_PORT moves
+# the published port, point every surface at it unless the caller already set
+# an explicit per-surface override.
+if [ -n "${JENTIC_PG_PORT:-}" ]; then
+    export JENTIC__DATABASES__REGISTRY__PORT="${JENTIC__DATABASES__REGISTRY__PORT:-$PG_PORT}"
+    export JENTIC__DATABASES__CONTROL__PORT="${JENTIC__DATABASES__CONTROL__PORT:-$PG_PORT}"
+    export JENTIC__DATABASES__ADMIN__PORT="${JENTIC__DATABASES__ADMIN__PORT:-$PG_PORT}"
+fi
+
 COMPOSE_FILE="docker/local-setup/docker-compose.yaml"
 
 # Run psql inside the db container against the jentic database.
