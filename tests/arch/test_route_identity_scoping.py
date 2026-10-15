@@ -94,8 +94,8 @@ _ALLOWLIST: dict[str, str] = {
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
     "control/integrations.integrations_connect": (
         "create-only: the session is attributed to identity.sub (initiator) and later reads "
-        "and confirms are identity-scoped. Follow-up to #1439: a user-supplied agent_id is "
-        "not yet checked against the caller's own agents"
+        "and confirms are identity-scoped. Known gap, tracked in #1645: a user-supplied "
+        "agent_id is not yet checked against the caller's own agents"
     ),
     "control/mcp.report_mcp_config_registration": (
         "fire-and-forget telemetry report attributed to identity.sub; reads nothing per-caller"
