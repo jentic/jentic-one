@@ -207,12 +207,12 @@ async def test_success_returns_session_without_poll_token() -> None:
     assert "pt_secret" not in json.dumps(payload)
 
     (call,) = _FakeConnectSessionService.calls
+    assert call.pop("identity").sub == "agnt_1"
     assert call == {
         "vendor_key": "github",
         "api_target": None,
         "auth_type": None,
         "agent_id": "agnt_1",  # the caller IS the agent — identity injected
-        "initiator_actor_id": "agnt_1",
         "requested_scopes": ["repo"],
         "requested_permission_rules": None,
         "preferred_flow": None,
@@ -248,8 +248,8 @@ async def test_explicit_agent_id_argument_is_dropped_never_forwarded() -> None:
 
     (call,) = _FakeConnectSessionService.calls
     assert call["agent_id"] == "agnt_self"
-    assert call["initiator_actor_id"] == "agnt_self"
-    assert "agnt_other" not in json.dumps(call)
+    assert call["identity"].sub == "agnt_self"
+    assert "agnt_other" not in json.dumps({**call, "identity": call["identity"].model_dump()})
 
 
 async def test_non_agent_caller_connects_an_unbound_credential() -> None:
@@ -264,7 +264,7 @@ async def test_non_agent_caller_connects_an_unbound_credential() -> None:
     assert not result.is_error, result.content
     (call,) = _FakeConnectSessionService.calls
     assert call["agent_id"] is None
-    assert call["initiator_actor_id"] == "usr_1"
+    assert call["identity"].sub == "usr_1"
 
 
 # ── service-error mapping (Go: requestConnectionError) ───────────────────────

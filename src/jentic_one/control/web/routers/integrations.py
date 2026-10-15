@@ -180,10 +180,12 @@ async def integrations_connect(
     Agent callers: `agent_id` in the payload is refused (the caller *is*
     the agent — spoofing another agent's id is a permission-boundary
     violation). The caller's own identity is injected instead. UI / user
-    callers: `agent_id` is optional — when named, confirm creates the
-    direct agent-credential binding + permission rules; when omitted, the
-    credential connects unbound and an agent can be bound later through
-    the credentials API.
+    callers: `agent_id` is optional and must name an agent the caller owns
+    (`org:admin` may name any agent); any other id is refused with 400
+    `connect_session_agent_not_found`, the same as an unknown agent. When
+    named, confirm creates the direct agent-credential binding + permission
+    rules; when omitted, the credential connects unbound and an agent can
+    be bound later through the credentials API.
     """
     await _enforce_connect_rate_limit(request, identity)
 
@@ -206,7 +208,7 @@ async def integrations_connect(
         ),
         auth_type=body.auth_type,
         agent_id=agent_id,
-        initiator_actor_id=identity.sub,
+        identity=identity,
         requested_scopes=body.requested_scopes,
         requested_permission_rules=[
             r.model_dump(exclude_none=True) for r in body.requested_permission_rules

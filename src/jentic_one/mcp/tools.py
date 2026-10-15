@@ -1807,7 +1807,7 @@ async def handle_request_connection(
             api_target=api_target,
             auth_type=auth_type,
             agent_id=agent_id,
-            initiator_actor_id=env.identity.sub,
+            identity=env.identity,
             requested_scopes=requested_scopes,
             requested_permission_rules=requested_rules,
             preferred_flow=None,

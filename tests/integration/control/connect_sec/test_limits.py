@@ -30,7 +30,6 @@ from tests.integration.control.connect_sec.support import (
     KEY_SCHEME,
     NAME,
     OWNER,
-    OWNER_ID,
     SIBLING_AGENT_ID,
     TARGET,
     VENDOR,
@@ -89,11 +88,11 @@ async def test_per_owner_cap_of_fifty_counts_the_owners_and_their_agents_session
     await import_spec(env, KEY_SCHEME)
     for _ in range(50):
         await svc(env).create_session(
-            vendor_key="", agent_id=None, initiator_actor_id=OWNER_ID, api_target=_target(0)
+            vendor_key="", agent_id=None, identity=OWNER, api_target=_target(0)
         )
     with pytest.raises(TooManyOpenSessionsError) as owner_full:
         await svc(env).create_session(
-            vendor_key="", agent_id=None, initiator_actor_id=OWNER_ID, api_target=_target(0)
+            vendor_key="", agent_id=None, identity=OWNER, api_target=_target(0)
         )
     assert (owner_full.value.scope, owner_full.value.limit) == ("owner", 50)
     # Their agent's ask counts against the same owner.

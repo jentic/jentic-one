@@ -13,8 +13,12 @@ import json
 from typing import Any
 
 import pytest
+from sqlalchemy import func, select
 
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.services.integrations.errors import (
+    AgentNotFoundError,
     ConfirmationForbiddenError,
     InvalidPollTokenError,
 )
@@ -27,7 +31,9 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from tests.integration.control.connect_sec.support import (
     ADMIN,
+    AGENT,
     AGENT_ID,
+    API_BODY,
     FOREIGN_AGENT_ID,
     KEY_SCHEME,
     OTHER_OWNER,
@@ -220,7 +226,7 @@ async def test_delegation_never_widens_to_sibling_agents(env: Context) -> None:
     own = (await connect(env)).session_id
     sibling = await connect(env, agent_id=SIBLING_AGENT_ID)
     owner_started = await svc(env).create_session(
-        vendor_key="", agent_id=None, initiator_actor_id=OWNER_ID, api_target=TARGET
+        vendor_key="", agent_id=None, identity=OWNER, api_target=TARGET
     )
     delegated = Identity(
         sub=AGENT_ID,
@@ -243,3 +249,70 @@ async def test_delegation_never_widens_to_sibling_agents(env: Context) -> None:
     # The sibling's token is not ours to use either: it only works for the session it names.
     with pytest.raises(InvalidPollTokenError):
         await svc(env).get_status(own, poll_token=sibling.poll_token, identity=delegated)
+
+
+async def _session_and_credential_counts(ctx: Context) -> tuple[int, int]:
+    async with ctx.control_db.session() as session:
+        sessions = await session.scalar(select(func.count()).select_from(ConnectSession))
+        credentials = await session.scalar(select(func.count()).select_from(Credential))
+    return sessions or 0, credentials or 0
+
+
+@pytest.mark.parametrize("agent_id", [FOREIGN_AGENT_ID, "agnt_sec_missing"])
+async def test_user_cannot_start_a_session_for_an_agent_they_do_not_own(
+    env: Context, agent_id: str
+) -> None:
+    """Another owner's agent and a missing agent get the same refusal, and nothing is written.
+
+    Otherwise the session would land in the other owner's console with
+    caller-chosen scopes and rules, and count against their open-session caps.
+    """
+    await import_spec(env, KEY_SCHEME)
+    before = await _session_and_credential_counts(env)
+    async with client(env, OWNER) as owner:
+        refused = await owner.post("/integrations:connect", json={**API_BODY, "agent_id": agent_id})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["type"] == "connect_session_agent_not_found"
+    assert await _session_and_credential_counts(env) == before
+
+
+async def test_foreign_agent_and_missing_agent_refusals_are_identical(env: Context) -> None:
+    """The route is not an agent-ownership oracle."""
+    await import_spec(env, KEY_SCHEME)
+    bodies = []
+    async with client(env, OWNER) as owner:
+        for agent_id in (FOREIGN_AGENT_ID, "agnt_sec_missing"):
+            r = await owner.post("/integrations:connect", json={**API_BODY, "agent_id": agent_id})
+            body = r.json()
+            body.pop("detail", None)
+            body.pop("instance", None)
+            bodies.append((r.status_code, body))
+    assert bodies[0] == bodies[1]
+
+
+async def test_user_may_start_a_session_for_their_own_agent(env: Context) -> None:
+    await import_spec(env, KEY_SCHEME)
+    async with client(env, OWNER) as owner:
+        created = await owner.post("/integrations:connect", json={**API_BODY, "agent_id": AGENT_ID})
+    assert created.status_code == 201, created.text
+    row = await session_row(env, created.json()["session_id"])
+    assert row is not None
+    assert (row.agent_id, row.initiator_actor_id) == (AGENT_ID, OWNER_ID)
+
+
+async def test_org_admin_may_start_a_session_for_any_agent(env: Context) -> None:
+    await import_spec(env, KEY_SCHEME)
+    async with client(env, ADMIN) as admin:
+        created = await admin.post(
+            "/integrations:connect", json={**API_BODY, "agent_id": FOREIGN_AGENT_ID}
+        )
+    assert created.status_code == 201, created.text
+
+
+async def test_agent_naming_another_agent_is_refused_in_the_service(env: Context) -> None:
+    """The router already refuses an agent's ``agent_id``; the service refuses it too."""
+    await import_spec(env, KEY_SCHEME)
+    with pytest.raises(AgentNotFoundError):
+        await svc(env).create_session(
+            vendor_key="", agent_id=SIBLING_AGENT_ID, identity=AGENT, api_target=TARGET
+        )

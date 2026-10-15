@@ -8283,7 +8283,7 @@
                 "type": "null"
               }
             ],
-            "description": "ID of the agent to bind the credential to on confirm; agent callers must omit it, and when omitted by a user the credential connects unbound.",
+            "description": "ID of the agent to bind the credential to on confirm; it must be an agent the caller owns (any agent for `org:admin`). Agent callers must omit it, and when omitted by a user the credential connects unbound.",
             "examples": [
               "agnt_6968b3984d1c238dbe7e2e29"
             ],
@@ -41743,7 +41743,7 @@
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional — when named, confirm creates the\ndirect agent-credential binding + permission rules; when omitted, the\ncredential connects unbound and an agent can be bound later through\nthe credentials API.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {

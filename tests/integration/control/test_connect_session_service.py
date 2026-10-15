@@ -253,6 +253,7 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     # After create, the DB is in the exact shape the scanner + confirm
     # step both rely on: credential in ``pending``, session in
@@ -264,7 +265,7 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["repo"],
     )
 
@@ -303,6 +304,7 @@ async def test_create_session_persists_requested_permission_rules(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     # Rules the initiator (typically an agent) asks the human owner to
     # approve on the review page: captured verbatim on the session row
@@ -319,7 +321,7 @@ async def test_create_session_persists_requested_permission_rules(
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["repo"],
         requested_permission_rules=requested,
     )
@@ -457,7 +459,7 @@ async def _connect_and_bind(ctx: Context) -> Credential:
     """
     created = await ConnectSessionService(
         ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx)
-    ).create_session(vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID)
+    ).create_session(vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY)
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
         assert row is not None
@@ -559,7 +561,7 @@ async def test_confirm_device_authorization_transitions_to_polling_and_seeds_aux
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["repo"],
     )
 
@@ -613,7 +615,7 @@ async def test_confirm_auth_code_returns_authorize_url(
     created = await svc.create_session(
         vendor_key="testauth",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
     )
 
@@ -646,7 +648,7 @@ async def test_confirm_rejects_self_confirm_by_initiating_agent(
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_AGENT_ID,  # agent initiated
+        identity=_AGENT_IDENTITY,  # agent initiated
     )
     with pytest.raises(ConfirmationForbiddenError):
         await svc.confirm(
@@ -667,11 +669,12 @@ async def test_get_status_returns_pending_before_confirm(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     status = await svc.get_status(
         created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
@@ -683,6 +686,7 @@ async def test_get_status_rejects_wrong_poll_token(
     integration_context: Context,
     seed_test_vendors: None,
     clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     # The poll token is the only gate on GET status — it's how the human
     # owner is authenticated on the poller endpoint (no cookie / bearer
@@ -691,7 +695,7 @@ async def test_get_status_rejects_wrong_poll_token(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     with pytest.raises(InvalidPollTokenError):
         await svc.get_status(
@@ -721,7 +725,7 @@ async def test_mark_terminal_from_callback_deletes_credential_and_cascades_sessi
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     confirmed = await svc.confirm(
         created.session_id,
@@ -778,7 +782,7 @@ async def test_advance_polling_target_dispatches_to_session_when_live_session_ex
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     begin_result = df.BeginResult(
         device_code="dev-code-xyz",
@@ -928,7 +932,7 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     confirmed = await svc.confirm(
         created.session_id,
@@ -1013,7 +1017,7 @@ async def test_complete_from_callback_refuses_state_replay(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     confirmed = await svc.confirm(
         created.session_id,
@@ -1101,7 +1105,7 @@ async def test_confirm_rejects_wrong_poll_token(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY
     )
     with pytest.raises(InvalidPollTokenError):
         await svc.confirm(
@@ -1123,7 +1127,7 @@ async def test_confirm_rejects_unknown_agent(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY
     )
     with pytest.raises(AgentNotFoundError):
         await svc.confirm(
@@ -1153,7 +1157,7 @@ async def test_confirm_rejects_agent_not_owned_by_caller(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_OTHER_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_OTHER_USER_IDENTITY
     )
     with pytest.raises(ConfirmationForbiddenError):
         await svc.confirm(
@@ -1178,7 +1182,7 @@ async def test_second_confirm_loses_the_cas_and_conflicts(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     first = await svc.confirm(
         created.session_id,
@@ -1212,7 +1216,7 @@ async def test_confirm_vendor_begin_failure_leaves_session_retryable(
     created = await svc.create_session(
         vendor_key="testdev",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["repo"],
     )
     with (
@@ -1276,7 +1280,7 @@ async def test_error_callback_replay_after_connect_cannot_delete_live_credential
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     confirmed = await svc.confirm(
         created.session_id,
@@ -1345,12 +1349,8 @@ async def test_expire_stale_sessions_sweeps_abandoned_sessions_and_credentials(
     # ``pending`` credential with it while leaving fresh sessions alone.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
-    stale = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
-    )
-    fresh = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
-    )
+    stale = await svc.create_session(vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY)
+    fresh = await svc.create_session(vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY)
     async with ctx.control_db.session() as session:
         stale_row = await ConnectSessionRepository.get_by_id(session, stale.session_id)
         assert stale_row is not None
@@ -1405,14 +1405,12 @@ def _list_identity(
 
 async def _seed_sessions(svc: ConnectSessionService) -> dict[str, str]:
     """Create three sessions across two initiators; return initiator→session_id."""
-    alice = await svc.create_session(
-        vendor_key="testdev", agent_id=None, initiator_actor_id=_USER_ID
-    )
+    alice = await svc.create_session(vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY)
     mallory = await svc.create_session(
-        vendor_key="testdev", agent_id=None, initiator_actor_id=_OTHER_USER_ID
+        vendor_key="testdev", agent_id=None, identity=_OTHER_USER_IDENTITY
     )
     agent = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     return {
         _USER_ID: alice.session_id,
@@ -1597,7 +1595,7 @@ async def test_session_routes_accept_token_or_owner_or_admin(
     created = await ConnectSessionService(ctx).create_session(
         vendor_key="testauth",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
         requested_scopes=["scope-a"],
     )
     resp = await _call_route(
@@ -1622,7 +1620,7 @@ async def test_session_routes_refuse_uniformly_without_token(
     # get byte-identical 403 bodies: no session-id enumeration oracle.
     ctx = integration_context
     created = await ConnectSessionService(ctx).create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     stranger = await _call_route(ctx, _OTHER_USER_IDENTITY, route, created.session_id, None)
     missing = await _call_route(ctx, _USER_IDENTITY, route, "cs_does_not_exist", None)
@@ -1647,7 +1645,7 @@ async def test_owner_without_token_cannot_act_on_ownerless_agent_session(
         )
         await session.commit()
     created = await ConnectSessionService(ctx).create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     owner = await _call_route(ctx, _USER_IDENTITY, "review", created.session_id, None)
     admin = await _call_route(ctx, _ADMIN_IDENTITY, "review", created.session_id, None)
@@ -1725,7 +1723,7 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
         await _grant_agent(ctx, permission)
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     assert await _credential_created_by(ctx, created.session_id) == _AGENT_ID
 
@@ -1748,7 +1746,7 @@ async def test_confirm_attributes_user_started_credential_to_the_approver(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     await svc.confirm(
         created.session_id,
@@ -1771,7 +1769,7 @@ async def test_confirm_refuses_an_unusable_agent(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     async with ctx.admin_db.session() as session:
         await session.execute(
@@ -1808,7 +1806,7 @@ async def test_confirm_with_token_requires_agents_write_for_the_owner(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     with pytest.raises(ConfirmationForbiddenError):
         await svc.confirm(
@@ -1851,7 +1849,7 @@ async def test_owner_reads_but_cannot_write_pending_credential_of_owned_agent(
 ) -> None:
     ctx = integration_context
     created = await ConnectSessionService(ctx).create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
@@ -1916,7 +1914,7 @@ async def test_agent_started_session_emits_an_informational_event_for_the_owner(
 ) -> None:
     ctx = integration_context
     created = await ConnectSessionService(ctx).create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
 
     events = await _session_created_events(ctx)
@@ -1960,7 +1958,7 @@ async def test_user_started_session_emits_no_rail_event(
 ) -> None:
     # A human connecting in the SPA is already looking at the result.
     await ConnectSessionService(integration_context).create_session(
-        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     assert await _session_created_events(integration_context) == []
 
@@ -2025,7 +2023,7 @@ async def test_existing_sessions_default_to_vendor_targets(
 ) -> None:
     ctx = integration_context
     created = await ConnectSessionService(ctx).create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY
     )
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
@@ -2052,7 +2050,7 @@ async def test_create_session_refuses_api_target_while_gate_is_off(
         await svc.create_session(
             vendor_key="example-com",
             agent_id=_AGENT_ID,
-            initiator_actor_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
             api_target=target,
         )
     # With the gate on, a process that cannot read the registry refuses too.
@@ -2061,7 +2059,7 @@ async def test_create_session_refuses_api_target_while_gate_is_off(
         await svc.create_session(
             vendor_key="example-com",
             agent_id=_AGENT_ID,
-            initiator_actor_id=_AGENT_ID,
+            identity=_AGENT_IDENTITY,
             api_target=target,
         )
     async with ctx.control_db.session() as session:
@@ -2131,7 +2129,7 @@ async def test_cancel_records_one_cancelled_outcome(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY
     )
     await svc.cancel_session(
         created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
@@ -2163,7 +2161,7 @@ async def test_app_change_records_a_failed_outcome(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY
     )
     # The config entry the session was created against goes away.
     del ctx.config.vendors.entries["testauth"]
@@ -2186,9 +2184,7 @@ async def test_sweep_uses_the_manual_ttl_for_non_oauth_flows(
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
-    oauth = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
-    )
+    oauth = await svc.create_session(vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY)
     manual_young = await _seed_api_session(ctx, api_version="1.0.0")
     manual_old = await _seed_api_session(ctx, api_version="2.0.0")
     ttl_hours = ctx.config.control.connect.manual_flows_ttl_hours
@@ -2219,12 +2215,8 @@ async def test_sweep_drops_outcomes_past_retention(
 ) -> None:
     ctx = integration_context
     svc = ConnectSessionService(ctx)
-    old = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
-    )
-    recent = await svc.create_session(
-        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
-    )
+    old = await svc.create_session(vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY)
+    recent = await svc.create_session(vendor_key="testauth", agent_id=None, identity=_USER_IDENTITY)
     for created in (old, recent):
         await svc.cancel_session(
             created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
@@ -2264,7 +2256,10 @@ async def test_open_api_target_dedupe_index(
 
 
 async def test_repeat_agent_vendor_ask_reuses_the_open_session(
-    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+    seed_agent: None,
 ) -> None:
     # An agent asking again for the same vendor, app and scopes gets its open
     # session back with a fresh poll token; the old token stops working.
@@ -2273,13 +2268,13 @@ async def test_repeat_agent_vendor_ask_reuses_the_open_session(
     first = await svc.create_session(
         vendor_key="testauth",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
         requested_scopes=["repo", "read:user"],
     )
     second = await svc.create_session(
         vendor_key="testauth",
         agent_id=_AGENT_ID,
-        initiator_actor_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
         requested_scopes=["read:user", "repo", "repo"],
     )
     assert second.session_id == first.session_id
@@ -2295,13 +2290,13 @@ async def test_repeat_agent_vendor_ask_reuses_the_open_session(
     assert status.status == "pending"
 
     other_scopes = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
     )
     assert other_scopes.session_id != first.session_id
     user_started = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     user_again = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_USER_IDENTITY
     )
     assert user_started.session_id != user_again.session_id

@@ -116,7 +116,7 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
     call = svc.create_session.await_args
     assert call is not None
     assert call.kwargs["agent_id"] == "agnt_scout"
-    assert call.kwargs["initiator_actor_id"] == "agnt_scout"
+    assert call.kwargs["identity"].sub == "agnt_scout"
 
 
 def test_connect_refuses_agent_caller_passing_agent_id() -> None:
@@ -157,7 +157,7 @@ def test_connect_allows_user_caller_without_agent_id() -> None:
     call = svc.create_session.await_args
     assert call is not None
     assert call.kwargs["agent_id"] is None
-    assert call.kwargs["initiator_actor_id"] == "usr_alice"
+    assert call.kwargs["identity"].sub == "usr_alice"
 
 
 def test_connect_maps_unknown_vendor_to_404() -> None:

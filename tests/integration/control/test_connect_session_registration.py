@@ -228,7 +228,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -341,7 +341,7 @@ async def test_legacy_embedded_path_still_writes_oauth_client_credentials(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
     )
     confirmed = await svc.confirm(
@@ -387,7 +387,7 @@ async def test_complete_from_callback_through_registration_end_to_end(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -471,7 +471,7 @@ async def test_finalise_fails_session_when_registration_disabled_mid_flow(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -538,7 +538,7 @@ async def test_config_session_ignores_registration_added_after_connect(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
     )
 
@@ -574,7 +574,7 @@ async def test_confirm_cancels_when_config_entry_removed_after_connect(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
     )
     async with ctx.control_db.session() as session:
@@ -610,7 +610,7 @@ async def test_confirm_cancels_when_pinned_registration_disabled(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -799,7 +799,7 @@ async def _pinned_session_awaiting_callback(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -856,7 +856,7 @@ async def test_review_ends_session_when_pinned_registration_disabled(
     created = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=registration.id,
     )
@@ -891,14 +891,14 @@ async def test_session_list_names_the_app_each_session_runs_through(
     pinned = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
         oauth_app_registration_id=second.id,
     )
     config = await svc.create_session(
         vendor_key=_VENDOR_KEY,
         agent_id=_AGENT_ID,
-        initiator_actor_id=_USER_ID,
+        identity=_USER_IDENTITY,
         requested_scopes=["scope-a"],
     )
 

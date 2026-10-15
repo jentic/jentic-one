@@ -132,10 +132,16 @@ _STRANGER = Identity(sub=_STRANGER_ID, permissions=["credentials:write", "agents
 _ADMIN = Identity(sub="usr_apitgt_root", permissions=["org:admin"])
 _AGENT = Identity(sub=_AGENT_ID, permissions=["credentials:write"], actor_type=ActorType.AGENT)
 
+
+def _agent(agent_id: str) -> Identity:
+    """The identity of an agent asking to connect for itself."""
+    return Identity(sub=agent_id, permissions=["credentials:write"], actor_type=ActorType.AGENT)
+
+
 _RULES: list[dict[str, object]] = [
     {"effect": "allow", "methods": ["GET"], "path": "/widgets", "match_mode": "exact"}
 ]
-_SECRET = "sk_live_" + "Z" * 24
+_SECRET = "sk_live_" + "Z" * 24  # pragma: allowlist secret
 _KEY_SCHEME = {"key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}}
 _OAUTH_SCHEME = {
     "oauth": {
@@ -285,7 +291,7 @@ async def _connect(
     return await _svc(ctx).create_session(
         vendor_key="",
         agent_id=agent_id,
-        initiator_actor_id=agent_id,
+        identity=_agent(agent_id),
         api_target=_TARGET,
         auth_type=auth_type,
         requested_permission_rules=_RULES,
@@ -604,7 +610,7 @@ async def _register_app(ctx: Context, name: str = "Widgets app") -> str:
         catalog_api_id=_CATALOG_ID,
         display_name="Widgets",
         client_id=f"client-{name}",
-        client_secret="registration-secret",
+        client_secret="registration-secret",  # pragma: allowlist secret
         authorize_url="https://auth.widgets.example/authorize",
         token_url="https://auth.widgets.example/token",
         default_scopes=["read"],
@@ -1190,7 +1196,7 @@ async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> No
 async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env, requested_scopes=["read"])
-    client_secret = "own-client-secret-" + "Q" * 16
+    client_secret = "own-client-secret-" + "Q" * 16  # pragma: allowlist secret
     result = await _svc(env).confirm_variant(
         created.session_id,
         poll_token=None,
@@ -1259,7 +1265,7 @@ async def test_open_session_caps(env: Context, monkeypatch: pytest.MonkeyPatch) 
         await _svc(env).create_session(
             vendor_key="",
             agent_id=_AGENT_ID,
-            initiator_actor_id=_AGENT_ID,
+            identity=_AGENT,
             api_target=ApiTarget(vendor=_VENDOR, name="other", version=_VERSION),
         )
     assert (per_agent.value.scope, per_agent.value.limit) == ("agent", 1)

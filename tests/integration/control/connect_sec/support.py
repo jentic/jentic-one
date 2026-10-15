@@ -64,6 +64,14 @@ AGENT = Identity(
     sub=AGENT_ID, permissions=list(DEFAULT_AGENT_PERMISSIONS), actor_type=ActorType.AGENT
 )
 
+
+def _agent(agent_id: str) -> Identity:
+    """The identity of an agent asking to connect for itself."""
+    return Identity(
+        sub=agent_id, permissions=list(DEFAULT_AGENT_PERMISSIONS), actor_type=ActorType.AGENT
+    )
+
+
 RULES: list[dict[str, object]] = [
     {"effect": "allow", "methods": ["GET"], "path": "/items", "match_mode": "exact"}
 ]
@@ -144,7 +152,7 @@ async def connect(
     return await svc(ctx).create_session(
         vendor_key="",
         agent_id=agent_id,
-        initiator_actor_id=agent_id,
+        identity=_agent(agent_id),
         api_target=target,
         auth_type=auth_type,
         requested_permission_rules=RULES if rules is None else rules,

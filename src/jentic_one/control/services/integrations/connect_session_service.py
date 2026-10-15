@@ -832,7 +832,7 @@ class ConnectSessionService:
         *,
         vendor_key: str,
         agent_id: str | None,
-        initiator_actor_id: str,
+        identity: Identity,
         requested_scopes: list[str] | None = None,
         preferred_flow: str | None = None,
         reason: str | None = None,
@@ -859,9 +859,12 @@ class ConnectSessionService:
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
-        Actor-type checks live in the router (agent callers have
-        ``agent_id`` forced to their own identity and refuse a payload
-        override; user callers may omit it). When ``agent_id`` is None no
+        ``identity`` is the initiator. An agent caller may name only itself
+        (the router forces that); a user may name only an agent they own,
+        and ``org:admin`` any agent. Any other ``agent_id`` is refused as
+        :class:`AgentNotFoundError` before anything is counted or written,
+        so a session can never land in another owner's console or count
+        against their open-session caps. When ``agent_id`` is None no
         agent-credential binding is created at confirm time — the user is
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
@@ -872,6 +875,8 @@ class ConnectSessionService:
         whose ask for the same target a human rejected within the cooldown
         gets :class:`RecentlyRejectedError`.
         """
+        await self._require_session_agent_allowed(agent_id, identity)
+        initiator_actor_id = identity.sub
         if api_target is not None:
             if not self._manual_flows_enabled:
                 raise ManualFlowsDisabledError()
@@ -2610,6 +2615,35 @@ class ConnectSessionService:
                     created_by=identity.sub,
                 )
         return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
+
+    async def _require_session_agent_allowed(
+        self, agent_id: str | None, identity: Identity
+    ) -> None:
+        """The agent a new session names must be one the caller may act for.
+
+        An agent may name only itself. A user may name an agent they own;
+        ``org:admin`` may name any existing agent. A missing agent and one
+        owned by someone else raise the same :class:`AgentNotFoundError`, so
+        the route is not an agent-ownership oracle. Naming an archived,
+        disabled or rejected agent is refused up front, since its session
+        could never be confirmed.
+        """
+        if agent_id is None:
+            return
+        if identity.actor_type != ActorType.USER:
+            if agent_id != identity.sub:
+                raise AgentNotFoundError(agent_id)
+            return
+        async with self._ctx.admin_db.session() as admin_session:
+            agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
+        if agent is None:
+            raise AgentNotFoundError(agent_id)
+        if ORG_ADMIN not in identity.permissions and (
+            agent.owner_id is None or agent.owner_id != identity.sub
+        ):
+            raise AgentNotFoundError(agent_id)
+        if agent.status in _UNUSABLE_AGENT_STATUSES:
+            raise AgentInactiveError(agent_id, agent.status)
 
     async def _require_agent_binding_allowed(self, agent_id: str, identity: Identity) -> None:
         """The target agent must exist, be governable by the caller, and be usable.
