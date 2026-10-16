@@ -135,15 +135,6 @@ class CredentialRepository:
         return credential
 
     @staticmethod
-    async def get_names_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str]:
-        """Batch-resolve credential IDs to their human-readable names."""
-        if not ids:
-            return {}
-        stmt = select(Credential.id, Credential.name).where(Credential.id.in_(ids))
-        result = await session.execute(stmt)
-        return {row.id: row.name for row in result}
-
-    @staticmethod
     async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
         """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
         if not ids:

@@ -9,11 +9,11 @@ instance and a **real** AWS SigV4 endpoint (OpenSearch Serverless by default):
   2. Admin login → register + approve a throwaway agent → token exchange.
   3. Inline-import a minimal OpenAPI spec whose server URL is the endpoint.
   4. Create a ``sigv4`` credential via the control plane (secret encrypted at
-     rest), create a toolkit, bind agent↔toolkit and credential↔toolkit.
+     rest), bind it to the agent, and allow GET on the binding.
   5. Execute the operation **through the broker** as the agent — the broker
      resolves + decrypts the credential and the SigV4SigningRunner signs the
      final wire request.
-  6. Clean up the agent, toolkit, and credential (keep with ``--keep``).
+  6. Clean up the agent, binding, and credential (keep with ``--keep``).
 
 Usage (AWS credentials come from the standard env vars, never argv):
 
@@ -225,20 +225,9 @@ def step_provision(
     agent_id: str,
     api: dict[str, str],
     material: SigV4Material,
-) -> tuple[str, str]:
-    print("[5/6] create sigv4 credential + toolkit, bind agent")
+) -> str:
+    print("[5/6] create sigv4 credential, bind it to the agent")
     auth = {"Authorization": f"Bearer {admin_token}"}
-    tk = _expect(
-        "toolkit create",
-        client.post("/toolkits", headers=auth, json={"name": f"sigv4-e2e-{uuid.uuid4().hex[:8]}"}),
-        201,
-    )
-    toolkit_id = tk["toolkit"]["toolkit_id"]
-    _expect(
-        "agent↔toolkit bind",
-        client.post(f"/agents/{agent_id}/toolkits", headers=auth, json={"toolkit_id": toolkit_id}),
-        201,
-    )
     cred = _expect(
         "credential create",
         client.post(
@@ -258,11 +247,11 @@ def step_provision(
         ),
         201,
     )
-    credential_id = cred["credential"]["credential_id"]
+    credential_id = str(cred["credential"]["credential_id"])
     _expect(
-        "credential↔toolkit bind",
+        "agent↔credential bind",
         client.post(
-            f"/toolkits/{toolkit_id}/credentials",
+            f"/agents/{agent_id}/credentials",
             headers=auth,
             json={"credential_id": credential_id},
         ),
@@ -273,14 +262,14 @@ def step_provision(
     _expect(
         "binding permission rules",
         client.put(
-            f"/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
+            f"/credentials/{credential_id}/agents/{agent_id}/permissions",
             headers=auth,
             json=[{"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"}],
         ),
         200,
     )
-    print(f"      toolkit {toolkit_id}, credential {credential_id}")
-    return toolkit_id, credential_id
+    print(f"      credential {credential_id} bound to agent {agent_id}")
+    return credential_id
 
 
 def step_broker_execute(broker_url: str, agent_token: str, url: str) -> None:
@@ -300,19 +289,20 @@ def cleanup(
     admin_token: str,
     *,
     agent_id: str | None,
-    toolkit_id: str | None,
     credential_id: str | None,
 ) -> None:
     auth = {"Authorization": f"Bearer {admin_token}"}
-    if toolkit_id and agent_id:
-        client.delete(f"/agents/{agent_id}/toolkits/{toolkit_id}", headers=auth)
+    if credential_id and agent_id:
+        client.delete(
+            f"/agents/{agent_id}/credentials/{credential_id}",
+            headers=auth,
+            params={"purge": "true"},
+        )
     if credential_id:
         client.delete(f"/credentials/{credential_id}", headers=auth)
-    if toolkit_id:
-        client.delete(f"/toolkits/{toolkit_id}", headers=auth)
     if agent_id:
         client.delete(f"/agents/{agent_id}", headers=auth)
-    print("      cleaned up agent / toolkit / credential (imported API left in place)")
+    print("      cleaned up agent / binding / credential (imported API left in place)")
 
 
 def main() -> None:
@@ -339,7 +329,7 @@ def main() -> None:
 
     step_direct_probe(args, material, target)
 
-    agent_id = toolkit_id = credential_id = None
+    agent_id = credential_id = None
     with httpx.Client(base_url=args.base_url, timeout=30) as client:
         print("[2/6] admin login")
         login = _expect(
@@ -353,7 +343,7 @@ def main() -> None:
         try:
             agent_id, agent_token = step_agent(client, admin_token)
             api = step_import(client, admin_token, args.endpoint, args.path)
-            toolkit_id, credential_id = step_provision(client, admin_token, agent_id, api, material)
+            credential_id = step_provision(client, admin_token, agent_id, api, material)
             step_broker_execute(args.broker_url, agent_token, target)
         finally:
             if args.keep:
@@ -363,7 +353,6 @@ def main() -> None:
                     client,
                     admin_token,
                     agent_id=agent_id,
-                    toolkit_id=toolkit_id,
                     credential_id=credential_id,
                 )
 
