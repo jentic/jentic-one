@@ -144,7 +144,28 @@ its record was silently dropped — the only signal that happened),
 Request-latency histograms — `http.server.duration` (ms; or
 `http.server.request.duration` in seconds under
 `OTEL_SEMCONV_STABILITY_OPT_IN=http`) and `broker.execution.duration_ms` —
-are exported with explicit bucket boundaries of 1, 2, 5, 10, 15, 20, 25, 50,
-100, 250, 500, 1000, 2500, 5000, 10000 and 30000 ms, so `histogram_quantile`
-p50/p99 resolve sub-25 ms latencies and the tail reaches the default 30 s
-upstream timeout. Other histograms keep the OpenTelemetry default buckets.
+are exported with explicit bucket boundaries, by default 1, 2, 5, 10, 15, 20,
+25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 and 30000 ms, so
+`histogram_quantile` p50/p99 resolve sub-25 ms latencies and the tail reaches
+the default 30 s upstream timeout. Other histograms keep the OpenTelemetry
+default buckets.
+
+Tune the boundaries with
+[`observability.metrics.latency_buckets_ms`](../reference/config.md#observability)
+(milliseconds, strictly increasing, all > 0, at most 64), or as a
+comma-separated env var:
+
+```yaml
+observability:
+  metrics:
+    latency_buckets_ms: [1, 2, 5, 10, 25, 50, 100, 500, 1000, 5000, 30000]
+```
+
+```bash
+JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS=1,2,5,10,25,50,100,500,1000,5000,30000
+```
+
+The one list drives every latency histogram; the seconds-unit
+`http.server.request.duration` uses it divided by 1000. Changing it changes
+the `le` label set, so quantiles over a window spanning the change are
+briefly inaccurate.

@@ -159,6 +159,7 @@ Observability settings (metrics, tracing knobs).
 | --- | ---- | ------- | ------- | ----------- |
 | `observability.metrics.exporter` | "otlp" \| "prometheus" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__METRICS__EXPORTER` |  |
 | `observability.metrics.export_interval_seconds` | integer | `15` | `JENTIC__OBSERVABILITY__METRICS__EXPORT_INTERVAL_SECONDS` |  |
+| `observability.metrics.latency_buckets_ms` | list of number (> 0) | `[1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 50.0, 100.0, 250.…` | `JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS` | Explicit histogram bucket boundaries (milliseconds, strictly increasing, all > 0) for the request-latency histograms: http.server.duration and broker.execution.duration_ms in ms, and http.server.request.duration (stable HTTP semconv) in seconds, derived by dividing by 1000. As an env var, a comma-separated list. |
 | `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` |  |
 
 ## `admin`

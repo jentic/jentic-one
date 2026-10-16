@@ -10,10 +10,8 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 
-from jentic_one.shared.config import MetricsConfig
+from jentic_one.shared.config import DEFAULT_LATENCY_BUCKETS_MS, MetricsConfig
 from jentic_one.shared.metrics import (
-    LOW_LATENCY_BUCKETS_MS,
-    LOW_LATENCY_BUCKETS_S,
     configure_metrics,
     make_metrics_asgi_app,
     metric_views,
@@ -122,48 +120,73 @@ def _bucket_boundaries(reader: InMemoryMetricReader, name: str) -> tuple[float, 
     raise AssertionError(f"metric {name!r} not exported")
 
 
+_DEFAULT_MS = DEFAULT_LATENCY_BUCKETS_MS
+_DEFAULT_S = tuple(b / 1000 for b in DEFAULT_LATENCY_BUCKETS_MS)
+
+
+def _provider(config: MetricsConfig) -> tuple[MeterProvider, InMemoryMetricReader]:
+    reader = InMemoryMetricReader()
+    return MeterProvider(metric_readers=[reader], views=metric_views(config)), reader
+
+
 @pytest.mark.parametrize(
     ("name", "unit", "expected"),
     [
-        ("http.server.duration", "ms", LOW_LATENCY_BUCKETS_MS),
-        ("broker.execution.duration_ms", "ms", LOW_LATENCY_BUCKETS_MS),
-        ("http.server.request.duration", "s", LOW_LATENCY_BUCKETS_S),
+        ("http.server.duration", "ms", _DEFAULT_MS),
+        ("broker.execution.duration_ms", "ms", _DEFAULT_MS),
+        ("http.server.request.duration", "s", _DEFAULT_S),
     ],
 )
-def test_latency_histograms_use_low_latency_buckets(
+def test_latency_histograms_use_default_buckets(
     name: str, unit: str, expected: tuple[float, ...]
 ) -> None:
-    """The Views give each latency histogram explicit sub-25 ms buckets in its unit."""
-    reader = InMemoryMetricReader()
-    provider = MeterProvider(metric_readers=[reader], views=metric_views())
+    """With no config, each latency histogram gets the default sub-25 ms buckets in its unit."""
+    provider, reader = _provider(MetricsConfig())
     provider.get_meter("test").create_histogram(name, unit=unit).record(12)
 
     assert _bucket_boundaries(reader, name) == expected
     provider.shutdown()
 
 
-def test_unlisted_histogram_keeps_default_buckets() -> None:
-    """Instruments outside the View list keep the SDK default aggregation."""
-    reader = InMemoryMetricReader()
-    provider = MeterProvider(metric_readers=[reader], views=metric_views())
-    provider.get_meter("test").create_histogram("ingest.duration_ms", unit="ms").record(12)
+@pytest.mark.parametrize(
+    ("name", "unit", "expected"),
+    [
+        ("http.server.duration", "ms", (3.0, 7.0, 40.0)),
+        ("broker.execution.duration_ms", "ms", (3.0, 7.0, 40.0)),
+        ("http.server.request.duration", "s", (0.003, 0.007, 0.04)),
+    ],
+)
+def test_configured_buckets_drive_all_latency_histograms(
+    name: str, unit: str, expected: tuple[float, ...]
+) -> None:
+    """One setting drives all three; the seconds view is derived by dividing by 1000."""
+    provider, reader = _provider(MetricsConfig(latency_buckets_ms=[3, 7, 40]))
+    provider.get_meter("test").create_histogram(name, unit=unit).record(5)
 
-    assert _bucket_boundaries(reader, "ingest.duration_ms") != LOW_LATENCY_BUCKETS_MS
+    assert _bucket_boundaries(reader, name) == pytest.approx(expected)
     provider.shutdown()
 
 
-def test_low_latency_buckets_resolve_sub_25ms_and_reach_upstream_timeout() -> None:
-    assert {1, 2, 5, 10, 15, 20, 25} <= set(LOW_LATENCY_BUCKETS_MS)
-    assert max(LOW_LATENCY_BUCKETS_MS) == 30000
-    assert list(LOW_LATENCY_BUCKETS_MS) == sorted(LOW_LATENCY_BUCKETS_MS)
-    assert LOW_LATENCY_BUCKETS_S[0] == 0.001
-    assert LOW_LATENCY_BUCKETS_S[-1] == 30.0
+def test_unlisted_histogram_keeps_default_buckets() -> None:
+    """Instruments outside the View list keep the SDK default aggregation."""
+    provider, reader = _provider(MetricsConfig())
+    provider.get_meter("test").create_histogram("ingest.duration_ms", unit="ms").record(12)
+
+    assert _bucket_boundaries(reader, "ingest.duration_ms") != _DEFAULT_MS
+    provider.shutdown()
+
+
+def test_default_buckets_resolve_sub_25ms_and_reach_upstream_timeout() -> None:
+    assert MetricsConfig().latency_buckets_ms == list(DEFAULT_LATENCY_BUCKETS_MS)
+    assert DEFAULT_LATENCY_BUCKETS_MS == (
+        1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 50.0, 100.0, 250.0, 500.0,
+        1000.0, 2500.0, 5000.0, 10000.0, 30000.0,
+    )  # fmt: skip
 
 
 async def test_inbound_http_duration_uses_low_latency_buckets() -> None:
     """The instrumented FastAPI app's server-duration histogram gets the explicit buckets."""
-    reader = InMemoryMetricReader()
-    provider = MeterProvider(metric_readers=[reader], views=metric_views())
+    provider, reader = _provider(MetricsConfig())
 
     app = FastAPI()
 
@@ -177,7 +200,7 @@ async def test_inbound_http_duration_uses_low_latency_buckets() -> None:
         await client.get("/ping")
     FastAPIInstrumentor.uninstrument_app(app)
 
-    assert _bucket_boundaries(reader, "http.server.duration") == LOW_LATENCY_BUCKETS_MS
+    assert _bucket_boundaries(reader, "http.server.duration") == _DEFAULT_MS
     provider.shutdown()
 
 
@@ -207,3 +230,29 @@ async def test_configure_metrics_applies_views_to_exported_histograms() -> None:
     # The 12 ms sample lands in the (10, 15] bucket, not the default (10, 25].
     assert buckets["10.0"] == "0.0"
     assert buckets["15.0"] == "1.0"
+
+
+async def test_configure_metrics_exports_configured_buckets() -> None:
+    """configure_metrics threads latency_buckets_ms from config into the global provider."""
+    configure_metrics("test-svc", MetricsConfig(exporter="prometheus", latency_buckets_ms=[4, 8]))
+    metrics.get_meter("broker").create_histogram("broker.execution.duration_ms", unit="ms").record(
+        6
+    )
+
+    app = FastAPI()
+    metrics_app = make_metrics_asgi_app()
+    assert metrics_app is not None
+    app.mount("/metrics", metrics_app)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        body = (await client.get("/metrics/")).text
+
+    les = {
+        line.split('le="', 1)[1].split('"', 1)[0]
+        for line in body.splitlines()
+        if line.startswith("broker_execution_duration_ms_milliseconds_bucket")
+    }
+    # The prometheus_client registry is process-global, so an earlier test's
+    # reader may also be scraped here; 4 and 8 are not default boundaries.
+    assert {"4.0", "8.0"} <= les
