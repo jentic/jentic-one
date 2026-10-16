@@ -4036,7 +4036,7 @@ type InstanceIdentityResponseBackend string
 //
 // Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
-	// AgentId ID of the agent to bind the credential to on confirm; it must be an agent the caller owns (any agent for `org:admin`). Agent callers must omit it, and when omitted by a user the credential connects unbound.
+	// AgentId ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
 	//
 	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
@@ -11198,7 +11198,10 @@ type ClientInterface interface {
 	// violation). The caller's own identity is injected instead. UI / user
 	// callers: `agent_id` is optional and must name an agent the caller owns
 	// (`org:admin` may name any agent); any other id is refused with 400
-	// `connect_session_agent_not_found`, the same as an unknown agent. When
+	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+	// an owned agent also takes `agents:write`, which confirming for it needs
+	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+	// agent (409 `connect_session_agent_inactive` otherwise). When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -11217,7 +11220,10 @@ type ClientInterface interface {
 	// violation). The caller's own identity is injected instead. UI / user
 	// callers: `agent_id` is optional and must name an agent the caller owns
 	// (`org:admin` may name any agent); any other id is refused with 400
-	// `connect_session_agent_not_found`, the same as an unknown agent. When
+	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+	// an owned agent also takes `agents:write`, which confirming for it needs
+	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+	// agent (409 `connect_session_agent_inactive` otherwise). When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -15301,7 +15307,10 @@ func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn)
 // violation). The caller's own identity is injected instead. UI / user
 // callers: `agent_id` is optional and must name an agent the caller owns
 // (`org:admin` may name any agent); any other id is refused with 400
-// `connect_session_agent_not_found`, the same as an unknown agent. When
+// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+// an owned agent also takes `agents:write`, which confirming for it needs
+// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+// agent (409 `connect_session_agent_inactive` otherwise). When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -15330,7 +15339,10 @@ func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType st
 // violation). The caller's own identity is injected instead. UI / user
 // callers: `agent_id` is optional and must name an agent the caller owns
 // (`org:admin` may name any agent); any other id is refused with 400
-// `connect_session_agent_not_found`, the same as an unknown agent. When
+// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+// an owned agent also takes `agents:write`, which confirming for it needs
+// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+// agent (409 `connect_session_agent_inactive` otherwise). When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -27688,7 +27700,10 @@ type ClientWithResponsesInterface interface {
 	// violation). The caller's own identity is injected instead. UI / user
 	// callers: `agent_id` is optional and must name an agent the caller owns
 	// (`org:admin` may name any agent); any other id is refused with 400
-	// `connect_session_agent_not_found`, the same as an unknown agent. When
+	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+	// an owned agent also takes `agents:write`, which confirming for it needs
+	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+	// agent (409 `connect_session_agent_inactive` otherwise). When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -27707,7 +27722,10 @@ type ClientWithResponsesInterface interface {
 	// violation). The caller's own identity is injected instead. UI / user
 	// callers: `agent_id` is optional and must name an agent the caller owns
 	// (`org:admin` may name any agent); any other id is refused with 400
-	// `connect_session_agent_not_found`, the same as an unknown agent. When
+	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+	// an owned agent also takes `agents:write`, which confirming for it needs
+	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+	// agent (409 `connect_session_agent_inactive` otherwise). When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -46227,7 +46245,10 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 // violation). The caller's own identity is injected instead. UI / user
 // callers: `agent_id` is optional and must name an agent the caller owns
 // (`org:admin` may name any agent); any other id is refused with 400
-// `connect_session_agent_not_found`, the same as an unknown agent. When
+// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+// an owned agent also takes `agents:write`, which confirming for it needs
+// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+// agent (409 `connect_session_agent_inactive` otherwise). When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -46252,7 +46273,10 @@ func (c *ClientWithResponses) IntegrationsConnectWithBodyWithResponse(ctx contex
 // violation). The caller's own identity is injected instead. UI / user
 // callers: `agent_id` is optional and must name an agent the caller owns
 // (`org:admin` may name any agent); any other id is refused with 400
-// `connect_session_agent_not_found`, the same as an unknown agent. When
+// `connect_session_agent_not_found`, the same as an unknown agent. Naming
+// an owned agent also takes `agents:write`, which confirming for it needs
+// (403 `connect_session_confirmation_forbidden` otherwise), and an active
+// agent (409 `connect_session_agent_inactive` otherwise). When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.

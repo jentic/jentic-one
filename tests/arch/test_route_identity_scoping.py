@@ -96,11 +96,6 @@ _ALLOWLIST: dict[str, str] = {
     "auth/registration.delete_registration_endpoint": "always 403: client deletion unsupported",
     # --- control ---
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
-    "control/integrations.integrations_connect": (
-        "create-only: the session is attributed to identity.sub (initiator) and later reads "
-        "and confirms are identity-scoped. Known gap, tracked in #1645: a user-supplied "
-        "agent_id is not yet checked against the caller's own agents"
-    ),
     "control/mcp.report_mcp_config_registration": (
         "fire-and-forget telemetry report attributed to identity.sub; reads nothing per-caller"
     ),

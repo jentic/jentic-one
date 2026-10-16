@@ -9,7 +9,7 @@ import type { PermissionRuleSchema } from './PermissionRuleSchema';
  */
 export type IntegrationsConnectRequest = {
     /**
-     * ID of the agent to bind the credential to on confirm; it must be an agent the caller owns (any agent for `org:admin`). Agent callers must omit it, and when omitted by a user the credential connects unbound.
+     * ID of the agent to bind the credential to on confirm; it must be an active agent the caller owns and may approve for (`agents:write`), or any agent for `org:admin`. Agent callers must omit it, and when omitted by a user the credential connects unbound.
      */
     agent_id?: (string | null);
     /**

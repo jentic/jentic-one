@@ -323,7 +323,10 @@ export class IntegrationsService {
      * violation). The caller's own identity is injected instead. UI / user
      * callers: `agent_id` is optional and must name an agent the caller owns
      * (`org:admin` may name any agent); any other id is refused with 400
-     * `connect_session_agent_not_found`, the same as an unknown agent. When
+     * `connect_session_agent_not_found`, the same as an unknown agent. Naming
+     * an owned agent also takes `agents:write`, which confirming for it needs
+     * (403 `connect_session_confirmation_forbidden` otherwise), and an active
+     * agent (409 `connect_session_agent_inactive` otherwise). When
      * named, confirm creates the direct agent-credential binding + permission
      * rules; when omitted, the credential connects unbound and an agent can
      * be bound later through the credentials API.
