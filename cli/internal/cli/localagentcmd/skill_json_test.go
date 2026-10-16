@@ -37,6 +37,7 @@ type skillJSONResult struct {
 type skillJSONMCPResult struct {
 	Runtime string `json:"runtime"`
 	Path    string `json:"path"`
+	Via     string `json:"via"`
 	Action  string `json:"action"`
 	DryRun  bool   `json:"dry_run"`
 	Error   string `json:"error"`

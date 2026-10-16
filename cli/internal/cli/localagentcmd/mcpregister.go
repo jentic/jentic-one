@@ -101,14 +101,27 @@ const (
 )
 
 // mcpResult is one runtime's MCP registration outcome. Path is the config file
-// written; for claude-code, which registers through the claude CLI, it
-// describes that route instead.
+// this CLI writes. A runtime registered through its own CLI (claude-code) has
+// no such file: Path is empty and Via names the command used instead.
 type mcpResult struct {
 	Runtime string `json:"runtime"`
-	Path    string `json:"path"`
+	Path    string `json:"path,omitempty"`
+	Via     string `json:"via,omitempty"`
 	Action  string `json:"action"`
 	DryRun  bool   `json:"dry_run"`
 	Error   string `json:"error,omitempty"`
+}
+
+// newMCPResult starts the envelope row for rt with its config path or, for a
+// CLI-registered runtime, the command it registers through.
+func newMCPResult(rt mcpcfg.Runtime, env mcpcfg.Env, action string) mcpResult {
+	r := mcpResult{Runtime: string(rt), Action: action}
+	if rt == mcpcfg.RuntimeClaudeCode {
+		r.Via = claudeCodeVia
+	} else {
+		r.Path = mcpTargetPath(rt, env)
+	}
+	return r
 }
 
 // mcpReport is the `mcp` member of the `skill init` envelope: every runtime
@@ -192,9 +205,9 @@ func (a *Cmd) registerMCPEntries(ctx context.Context, targets []skillTarget, dry
 	if dryRun {
 		for _, rt := range runtimes {
 			fmt.Fprintln(a.Out, "  "+theme.Infof("%-16s would write %s", rt, a.mcpTargetLabel(rt, env)))
-			reg.results = append(reg.results, mcpResult{
-				Runtime: string(rt), Path: mcpTargetPath(rt, env), Action: mcpActionPlanned, DryRun: true,
-			})
+			row := newMCPResult(rt, env, mcpActionPlanned)
+			row.DryRun = true
+			reg.results = append(reg.results, row)
 		}
 		return reg
 	}
@@ -203,14 +216,14 @@ func (a *Cmd) registerMCPEntries(ctx context.Context, targets []skillTarget, dry
 		out, werr := a.applyMCPEntry(ctx, rt, env, entry)
 		if werr != nil {
 			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-16s %v", rt, werr))
-			reg.results = append(reg.results, mcpResult{
-				Runtime: string(rt), Path: mcpTargetPath(rt, env), Action: mcpActionError, Error: werr.Error(),
-			})
+			row := newMCPResult(rt, env, mcpActionError)
+			row.Error = werr.Error()
+			reg.results = append(reg.results, row)
 			continue
 		}
 		a.reportMCPOutcome(out)
 		reg.outcomes = append(reg.outcomes, out)
-		reg.results = append(reg.results, mcpResult{Runtime: string(rt), Path: out.Path, Action: mcpOutcomeAction(out)})
+		reg.results = append(reg.results, newMCPResult(rt, env, mcpOutcomeAction(out)))
 		if out.Changed || out.Created {
 			a.reportConfigRegistered(ctx, rt)
 		}
@@ -249,8 +262,12 @@ func mcpTargetPath(rt mcpcfg.Runtime, env mcpcfg.Env) string {
 }
 
 // claudeCodeRoute describes how the claude-code entry is registered: through
-// the claude CLI at user scope, not a config file this CLI writes.
+// the claude CLI at user scope, not a config file this CLI writes. It is the
+// human-facing label; claudeCodeVia is the envelope's `via` value.
 const claudeCodeRoute = "claude mcp add (user scope)"
+
+// claudeCodeVia is the command claude-code's MCP entry is registered through.
+const claudeCodeVia = "claude mcp add --scope user"
 
 // applyMCPEntry writes entry for one runtime via its native mechanism.
 func (a *Cmd) applyMCPEntry(ctx context.Context, rt mcpcfg.Runtime, env mcpcfg.Env, entry mcpcfg.Entry) (mcpcfg.Outcome, error) {

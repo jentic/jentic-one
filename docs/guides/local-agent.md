@@ -421,8 +421,10 @@ detected operators.
   removed once per run; the second operator's row repeats the outcome with
   `applied_via` naming the operator that acted.
 - `mcp` appears on `skill init` only. Each row's `action` is `created`,
-  `updated`, `unchanged`, `planned` (dry run) or `error`; for `claude-code`
-  the `path` describes the `claude mcp add` route. `skipped_reason` says why
+  `updated`, `unchanged`, `planned` (dry run) or `error`. `path` is the config
+  file written; `claude-code` registers through its own CLI, so its row has no
+  `path` and instead carries `via: "claude mcp add --scope user"`.
+  `skipped_reason` says why
   nothing was registered: `no_mcp_runtime`, `no_active_context`,
   `binary_path_unresolved` or `env_unresolved`.
 - Per-target failures keep exit 0 and appear as `error` rows. Command-level

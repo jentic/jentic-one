@@ -2,8 +2,10 @@ package localagentcmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -169,6 +171,66 @@ func TestSkillInitJSONReportsMCPRegistration(t *testing.T) {
 	env = run("init", "--operator", "cursor", "--skill", "jentic")
 	if env.MCP == nil || len(env.MCP.Results) != 1 || env.MCP.Results[0].Action != "unchanged" {
 		t.Errorf("re-run mcp = %+v, want unchanged", env.MCP)
+	}
+}
+
+// TestSkillInitJSONClaudeCodeRowNamesCommandNotPath: claude-code registers
+// through `claude mcp add`, not a file this CLI writes, so its row carries
+// `via` and no `path` key.
+func TestSkillInitJSONClaudeCodeRowNamesCommandNotPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	home, cwd, bin := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+	// `mcp get` exits 1 (no entry yet); every other subcommand succeeds.
+	script := "#!/bin/sh\n[ \"$1 $2\" = \"mcp get\" ] && exit 1\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	for _, tc := range []struct {
+		args   []string
+		action string
+		dryRun bool
+	}{
+		{[]string{"init", "--operator", "claude", "--skill", "jentic", "--dry-run"}, "planned", true},
+		{[]string{"init", "--operator", "claude", "--skill", "jentic"}, "updated", false},
+	} {
+		app := testApp(t)
+		writeActiveContext(t)
+		stubDetect(t, app, home, cwd, "claude")
+		out, errOut := new(bytes.Buffer), new(bytes.Buffer)
+		app.Out, app.Err = out, errOut
+		cmd := newMachineSkillCmd(t, app)
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+		cmd.SetArgs(tc.args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("skill %v: %v\nstderr: %s", tc.args, err, errOut)
+		}
+		var raw struct {
+			MCP struct {
+				Results []map[string]any `json:"results"`
+			} `json:"mcp"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if len(raw.MCP.Results) != 1 {
+			t.Fatalf("skill %v: mcp rows = %v, want one", tc.args, raw.MCP.Results)
+		}
+		if _, ok := raw.MCP.Results[0]["path"]; ok {
+			t.Errorf("skill %v: claude-code row must omit path, got %v", tc.args, raw.MCP.Results[0])
+		}
+		env := decodeSkillEnvelope(t, out.String())
+		want := skillJSONMCPResult{Runtime: "claude-code", Via: "claude mcp add --scope user", Action: tc.action, DryRun: tc.dryRun}
+		if env.MCP == nil || len(env.MCP.Results) != 1 || env.MCP.Results[0] != want {
+			t.Fatalf("skill %v mcp = %+v, want [%+v]", tc.args, env.MCP, want)
+		}
 	}
 }
 
