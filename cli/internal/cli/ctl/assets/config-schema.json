@@ -1984,8 +1984,16 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.\n\nEach claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on\nPostgres, a serialised write transaction on SQLite), so any number of worker\nloops — across processes or replicas, each running up to ``concurrency``\njobs — can poll the same queue without double-claiming a job.",
       "properties": {
+        "concurrency": {
+          "default": 1,
+          "description": "Maximum jobs one worker process runs at once (1 = serial). Each in-flight job holds admin-DB connections, so keep ``databases.admin.pool_max`` comfortably above this. SQLite serialises writers, so values above 1 bring little benefit there.",
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
         "drain_timeout_s": {
           "default": 25.0,
           "title": "Drain Timeout S",
@@ -1995,6 +2003,14 @@
           "default": 5,
           "title": "Max Attempts",
           "type": "integer"
+        },
+        "poll_interval_s": {
+          "default": 2.0,
+          "description": "Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed.",
+          "maximum": 60.0,
+          "minimum": 0.05,
+          "title": "Poll Interval S",
+          "type": "number"
         },
         "reconnect_backoff_base_s": {
           "default": 2.0,

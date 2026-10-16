@@ -139,6 +139,29 @@ reachable: the broker is granted the registry DB for its synchronous resolve
 path, but it is not the registry surface, so it must not race the control
 plane for import jobs.
 
+### Job worker scheduling
+
+The `WorkerLoop` runs up to `worker.concurrency` jobs at once (default `1`,
+serial) and polls the jobs table every `worker.poll_interval_s` (default
+`2.0`, bounded `0.05`–`60`) while idle. It re-polls as soon as a running job
+frees a slot, and a job enqueued in the **same process** — the broker's
+`Prefer: respond-async` path, a registry import — wakes it the moment the
+enqueuing transaction commits, so in-process pickup does not wait out the
+interval. Jobs enqueued by another process are picked up on the next poll.
+
+Every claim is one atomic `UPDATE … RETURNING` over a `FOR UPDATE SKIP LOCKED`
+subquery on Postgres (a `BEGIN IMMEDIATE` write transaction on SQLite), so any
+number of loops — several slots in one process, several uvicorn workers, or
+several replicas — can poll the same queue without double-claiming a job.
+Visibility-timeout reclaim and the retry/dead-letter budget apply per job
+unchanged. Size `databases.admin.pool_max` above the total concurrency a
+process runs: each in-flight job holds admin-DB connections. On SQLite,
+writers are serialised, so `concurrency > 1` brings little benefit there.
+
+On shutdown the worker drains: it stops claiming and waits up to
+`worker.drain_timeout_s` for every in-flight job; jobs still running at the
+deadline are cancelled and left `RUNNING` for visibility-timeout reclaim.
+
 ## Related
 
 - [Broker execution](broker-execution.md) — what the broker process does

@@ -3088,12 +3088,29 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 // crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
 // job with capped exponential backoff up to “max_attempts“ claims; beyond that
 // it is dead-lettered (poison-message handling) rather than looped forever.
+//
+// Each claim is a single atomic “UPDATE“ (“FOR UPDATE SKIP LOCKED“ on
+// Postgres, a serialised write transaction on SQLite), so any number of worker
+// loops — across processes or replicas, each running up to “concurrency“
+// jobs — can poll the same queue without double-claiming a job.
 type WorkerConfig struct {
+	// Maximum jobs one worker process runs at once (1 = serial). Each in-flight job
+	// holds admin-DB connections, so keep ``databases.admin.pool_max`` comfortably
+	// above this. SQLite serialises writers, so values above 1 bring little benefit
+	// there.
+	Concurrency int `json:"concurrency,omitempty,omitzero" yaml:"concurrency,omitempty" mapstructure:"concurrency,omitempty"`
+
 	// DrainTimeoutS corresponds to the JSON schema field "drain_timeout_s".
 	DrainTimeoutS float64 `json:"drain_timeout_s,omitempty,omitzero" yaml:"drain_timeout_s,omitempty" mapstructure:"drain_timeout_s,omitempty"`
 
 	// MaxAttempts corresponds to the JSON schema field "max_attempts".
 	MaxAttempts int `json:"max_attempts,omitempty,omitzero" yaml:"max_attempts,omitempty" mapstructure:"max_attempts,omitempty"`
+
+	// Idle wait (seconds) between job-queue polls when nothing is claimable. A job
+	// enqueued in the same process wakes the worker immediately, so this mainly
+	// bounds pickup latency for jobs enqueued by another process and how quickly
+	// visibility-expired jobs are reclaimed.
+	PollIntervalS float64 `json:"poll_interval_s,omitempty,omitzero" yaml:"poll_interval_s,omitempty" mapstructure:"poll_interval_s,omitempty"`
 
 	// First delay, in seconds, before the worker retries after losing its database
 	// connection. Doubles on each further failed attempt up to
@@ -3126,11 +3143,29 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["concurrency"]; !ok || v == nil {
+		plain.Concurrency = 1
+	}
+	if 64 < plain.Concurrency {
+		return fmt.Errorf("field %s: must be <= %v", "concurrency", 64)
+	}
+	if 1 > plain.Concurrency {
+		return fmt.Errorf("field %s: must be >= %v", "concurrency", 1)
+	}
 	if v, ok := raw["drain_timeout_s"]; !ok || v == nil {
 		plain.DrainTimeoutS = 25.0
 	}
 	if v, ok := raw["max_attempts"]; !ok || v == nil {
 		plain.MaxAttempts = 5
+	}
+	if v, ok := raw["poll_interval_s"]; !ok || v == nil {
+		plain.PollIntervalS = 2.0
+	}
+	if 60 < plain.PollIntervalS {
+		return fmt.Errorf("field %s: must be <= %v", "poll_interval_s", 60)
+	}
+	if 0.05 > plain.PollIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "poll_interval_s", 0.05)
 	}
 	if v, ok := raw["reconnect_backoff_base_s"]; !ok || v == nil {
 		plain.ReconnectBackoffBaseS = 2.0

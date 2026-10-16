@@ -368,6 +368,11 @@ class WorkerConfig(BaseModel):
     crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
     job with capped exponential backoff up to ``max_attempts`` claims; beyond that
     it is dead-lettered (poison-message handling) rather than looped forever.
+
+    Each claim is a single atomic ``UPDATE`` (``FOR UPDATE SKIP LOCKED`` on
+    Postgres, a serialised write transaction on SQLite), so any number of worker
+    loops — across processes or replicas, each running up to ``concurrency``
+    jobs — can poll the same queue without double-claiming a job.
     """
 
     # How long a claimed (RUNNING) job stays invisible to other workers. Size it
@@ -402,6 +407,28 @@ class WorkerConfig(BaseModel):
         description=(
             "Cap, in seconds, on the worker's reconnect delay while the database "
             "is unreachable — a recovered database is picked up within this long."
+        ),
+    )
+    poll_interval_s: float = Field(
+        default=2.0,
+        ge=0.05,
+        le=60.0,
+        description=(
+            "Idle wait (seconds) between job-queue polls when nothing is claimable. "
+            "A job enqueued in the same process wakes the worker immediately, so "
+            "this mainly bounds pickup latency for jobs enqueued by another process "
+            "and how quickly visibility-expired jobs are reclaimed."
+        ),
+    )
+    concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=64,
+        description=(
+            "Maximum jobs one worker process runs at once (1 = serial). Each "
+            "in-flight job holds admin-DB connections, so keep "
+            "``databases.admin.pool_max`` comfortably above this. SQLite serialises "
+            "writers, so values above 1 bring little benefit there."
         ),
     )
 

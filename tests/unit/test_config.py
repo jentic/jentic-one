@@ -37,6 +37,7 @@ from jentic_one.shared.config import (
     SigningKeyConfig,
     TelemetryConfig,
     TrustedIssuerConfig,
+    WorkerConfig,
     _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
@@ -2021,3 +2022,40 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+def test_worker_poll_and_concurrency_defaults_keep_serial_2s_poll():
+    cfg = WorkerConfig()
+    assert cfg.poll_interval_s == 2.0
+    assert cfg.concurrency == 1
+
+
+def test_worker_poll_and_concurrency_from_yaml(tmp_path: Path):
+    config = _load(tmp_path, {"worker": {"poll_interval_s": 0.25, "concurrency": 8}})
+    assert config.worker.poll_interval_s == 0.25
+    assert config.worker.concurrency == 8
+
+
+def test_worker_poll_and_concurrency_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("JENTIC__WORKER__POLL_INTERVAL_S", "0.5")
+    monkeypatch.setenv("JENTIC__WORKER__CONCURRENCY", "4")
+    config = _load(tmp_path, {})
+    assert config.worker.poll_interval_s == 0.5
+    assert config.worker.concurrency == 4
+
+
+@pytest.mark.parametrize("value", [0.05, 60.0])
+def test_worker_poll_interval_accepts_bounds(value: float):
+    assert WorkerConfig(poll_interval_s=value).poll_interval_s == value
+
+
+@pytest.mark.parametrize("value", [0.0, 0.049, 60.01, -1.0])
+def test_worker_poll_interval_rejects_out_of_bounds(value: float):
+    with pytest.raises(ValidationError):
+        WorkerConfig(poll_interval_s=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, 65])
+def test_worker_concurrency_rejects_out_of_bounds(value: int):
+    with pytest.raises(ValidationError):
+        WorkerConfig(concurrency=value)
