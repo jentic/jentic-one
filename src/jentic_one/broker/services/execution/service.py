@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import structlog
 from opentelemetry import trace
 
-from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
+from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
@@ -30,6 +30,7 @@ from jentic_one.broker.services.execution.pipeline import (
 from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -122,7 +123,7 @@ async def run_execution(
     *,
     body: bytes | None,
     headers: dict[str, str] | None,
-    admin_db: Any,
+    admin_db: TransactionalDatabase,
     timeout: float = 30.0,
     broker: Broker,
     execution_id: str | None = None,
@@ -311,35 +312,6 @@ async def run_execution(
         )
 
     return outcome
-
-
-async def execute_upstream(
-    ctx_req: ExecuteRequestContext,
-    *,
-    body: bytes | None = None,
-    headers: dict[str, str] | None = None,
-    admin_db: Any,
-    timeout: float = 30.0,
-    broker: Broker,
-    actor_id: str,
-    actor_type: str,
-    origin: str | None = None,
-    security_config: SecurityConfig | None = None,
-) -> RunnerResult:
-    """Run the broker and return only the upstream result (status/headers/body)."""
-    outcome = await run_execution(
-        ctx_req,
-        body=body,
-        headers=headers,
-        admin_db=admin_db,
-        timeout=timeout,
-        broker=broker,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        security_config=security_config,
-    )
-    return outcome.result
 
 
 async def persist_streaming_execution(

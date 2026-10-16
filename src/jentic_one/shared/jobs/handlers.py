@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.models.jobs import JobKind
 
 
@@ -22,7 +23,7 @@ class JobHandler(Protocol):
     async def execute(
         self,
         job_id: str,
-        db: Any,
+        db: TransactionalDatabase,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
