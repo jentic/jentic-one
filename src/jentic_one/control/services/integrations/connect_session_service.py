@@ -2536,11 +2536,13 @@ class ConnectSessionService:
             for url in (variant.authorize_url, variant.token_url)
         ):
             raise OwnClientInvalidError("authorize_url and token_url must be https URLs")
-        # Strict policy on purpose: the approver's client secret never goes to a
-        # private address, whatever ``broker.egress`` / ``control.egress`` allow.
+        # Same policy as ``POST /credentials`` (same permission): the
+        # control-plane egress allowlist, so the endpoints confirmed here match
+        # the ones the token exchange, refresh and later edits accept.
+        egress = resolved_control_egress(self._ctx.config)
         try:
-            authorize_url = validate_upstream_url(variant.authorize_url)
-            token_url = validate_upstream_url(variant.token_url)
+            authorize_url = validate_upstream_url(variant.authorize_url, egress)
+            token_url = validate_upstream_url(variant.token_url, egress)
         except ValueError as exc:
             raise OwnClientInvalidError(str(exc)) from exc
 
