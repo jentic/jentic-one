@@ -21,14 +21,15 @@ import (
 // untouched stdout.
 
 type skillJSONResult struct {
-	Operator  string `json:"operator"`
-	Skill     string `json:"skill"`
-	Scope     string `json:"scope"`
-	Path      string `json:"path"`
-	Action    string `json:"action"`
-	DryRun    bool   `json:"dry_run"`
-	UserEdits bool   `json:"user_edits"`
-	Error     string `json:"error"`
+	Operator   string `json:"operator"`
+	Skill      string `json:"skill"`
+	Scope      string `json:"scope"`
+	Path       string `json:"path"`
+	Action     string `json:"action"`
+	DryRun     bool   `json:"dry_run"`
+	UserEdits  bool   `json:"user_edits"`
+	Error      string `json:"error"`
+	AppliedVia string `json:"applied_via"`
 }
 
 type skillJSONEnvelope struct {
@@ -460,4 +461,172 @@ func skillgenBundledVersion(t *testing.T) string {
 		t.Fatal("bundled jentic skill has no version")
 	}
 	return v
+}
+
+// stampSharedBlockVersion rewrites the version token on the jentic managed
+// block's BEGIN line in path, simulating an install from older content.
+func stampSharedBlockVersion(t *testing.T, path, v string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	var stamped bool
+	for i, l := range lines {
+		if strings.HasPrefix(l, "<!-- BEGIN JENTIC MANAGED SKILL: jentic ") {
+			fields := strings.Fields(l)
+			for j, f := range fields {
+				if strings.HasPrefix(f, "version=") {
+					fields[j] = "version=" + v
+					stamped = true
+				}
+			}
+			lines[i] = strings.Join(fields, " ")
+		}
+	}
+	if !stamped {
+		t.Fatalf("no version token on the jentic BEGIN line in %s", path)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSkillListSharedAgentsMDCountedOnce pins the review fix on PR #1670: a
+// stale block in the project AGENTS.md that codex and generic both load is
+// listed under each operator (marked shared) but counted once, matching
+// `jentic doctor`.
+func TestSkillListSharedAgentsMDCountedOnce(t *testing.T) {
+	h := newSkillJSONHarness(t)
+	h.mustJSON(newHumanSkillCmd, "init", "--operator", "generic", "--skill", "jentic", "--json")
+	agents := filepath.Join(h.cwd, "AGENTS.md")
+	stampSharedBlockVersion(t, agents, "1")
+
+	pretty, _, err := h.exec(newHumanSkillCmd, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pretty, "1 installed skill(s) are older than the bundled copy") {
+		t.Errorf("shared stale block must be counted once:\n%s", pretty)
+	}
+	if !strings.Contains(pretty, "(shared with generic)") || !strings.Contains(pretty, "(shared with codex)") {
+		t.Errorf("each operator's row should name the other sharer:\n%s", pretty)
+	}
+
+	stdout, _, err := h.exec(newHumanSkillCmd, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Operators []struct {
+			Operator string `json:"operator"`
+			Installs []struct {
+				Skill      string   `json:"skill"`
+				Path       string   `json:"path"`
+				Installed  bool     `json:"installed"`
+				Stale      bool     `json:"stale"`
+				SharedWith []string `json:"shared_with"`
+			} `json:"installs"`
+		} `json:"operators"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"codex": "generic", "generic": "codex"}
+	for _, op := range payload.Operators {
+		for _, r := range op.Installs {
+			if !r.Installed || r.Skill != "jentic" || r.Path != agents {
+				continue
+			}
+			if !r.Stale || len(r.SharedWith) != 1 || r.SharedWith[0] != want[op.Operator] {
+				t.Errorf("%s shared row = %+v, want stale + shared_with [%s]", op.Operator, r, want[op.Operator])
+			}
+			delete(want, op.Operator)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing shared AGENTS.md rows for %v", want)
+	}
+}
+
+// TestSkillUpdateSharedAgentsMDActsOnce: `skill update` across codex and
+// generic rewrites the shared AGENTS.md once and mirrors that outcome onto
+// the second operator, instead of reporting "updated" then "unchanged".
+func TestSkillUpdateSharedAgentsMDActsOnce(t *testing.T) {
+	h := newSkillJSONHarness(t)
+	h.mustJSON(newHumanSkillCmd, "init", "--operator", "generic", "--skill", "jentic", "--json")
+	stampSharedBlockVersion(t, filepath.Join(h.cwd, "AGENTS.md"), "1")
+
+	env, stdout := h.mustJSON(newHumanSkillCmd, "update", "--operator", "codex,generic", "--skill", "jentic", "--json")
+	var project []skillJSONResult
+	for _, r := range env.Results {
+		if r.Scope == "project" {
+			project = append(project, r)
+		}
+	}
+	if len(project) != 2 {
+		t.Fatalf("want one project row per sharer, got:\n%s", stdout)
+	}
+	if project[0].Operator != "codex" || project[0].Action != "updated" || project[0].AppliedVia != "" {
+		t.Errorf("acting row = %+v, want codex updated", project[0])
+	}
+	if project[1].Operator != "generic" || project[1].Action != "updated" || project[1].AppliedVia != "codex" {
+		t.Errorf("mirrored row = %+v, want generic updated applied_via codex", project[1])
+	}
+
+	pretty, _, err := h.exec(newHumanSkillCmd, "update", "--operator", "codex,generic", "--skill", "jentic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pretty, "same file as codex/jentic") {
+		t.Errorf("human update should say the generic row shares codex's file:\n%s", pretty)
+	}
+}
+
+// TestSkillRemoveSharedAgentsMDActsOnce: `skill remove --all` strips the
+// shared block once and reports it for both sharers (no silent skip).
+func TestSkillRemoveSharedAgentsMDActsOnce(t *testing.T) {
+	for _, args := range [][]string{
+		{"remove", "--operator", "codex,generic", "--skill", "jentic", "--json"},
+		{"remove", "--operator", "codex,generic", "--skill", "jentic", "--scope", "project", "--json"},
+	} {
+		h := newSkillJSONHarness(t)
+		h.mustJSON(newHumanSkillCmd, "init", "--operator", "generic", "--skill", "jentic", "--json")
+		env, stdout := h.mustJSON(newHumanSkillCmd, args...)
+		if len(env.Results) != 2 {
+			t.Fatalf("%v: want a row per sharer, got:\n%s", args, stdout)
+		}
+		if r := env.Results[0]; r.Operator != "codex" || r.Action != "removed" || r.AppliedVia != "" {
+			t.Errorf("%v: acting row = %+v", args, r)
+		}
+		if r := env.Results[1]; r.Operator != "generic" || r.Action != "removed" || r.AppliedVia != "codex" {
+			t.Errorf("%v: mirrored row = %+v, want removed applied_via codex", args, r)
+		}
+	}
+}
+
+// TestSkillListJSONEnvelope pins the list document's schema_version and that
+// installs is always an array.
+func TestSkillListJSONEnvelope(t *testing.T) {
+	h := newSkillJSONHarness(t)
+	stdout, _, err := h.exec(newHumanSkillCmd, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		SchemaVersion string                       `json:"schema_version"`
+		Operators     []map[string]json.RawMessage `json:"operators"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SchemaVersion != "1" {
+		t.Errorf("schema_version = %q, want \"1\"", payload.SchemaVersion)
+	}
+	for _, op := range payload.Operators {
+		if raw := string(op["installs"]); raw == "" || raw == "null" || raw[0] != '[' {
+			t.Errorf("installs must be an array, got %s", raw)
+		}
+	}
 }

@@ -42,6 +42,11 @@ type skillResult struct {
 	DryRun    bool   `json:"dry_run"`
 	UserEdits bool   `json:"user_edits"`
 	Error     string `json:"error,omitempty"`
+	// AppliedVia names the operator whose row performed the write when this
+	// operator shares the same artifact (codex and generic both load the
+	// project AGENTS.md): the file is touched once and its outcome mirrored
+	// here, so no shared target reports "updated" and "unchanged" in one run.
+	AppliedVia string `json:"applied_via,omitempty"`
 
 	// err is the per-target failure behind Action == "error", kept for the
 	// human renderer's wording.
@@ -50,6 +55,32 @@ type skillResult struct {
 	// its exact wording (e.g. a dry run reports "would update" even when the
 	// content is current).
 	applied skillgen.Outcome
+}
+
+// sharedArtifacts remembers, within one verb invocation, the first result
+// recorded for each (skill, path) artifact, so an operator that shares that
+// artifact mirrors it instead of touching the file a second time.
+type sharedArtifacts map[string]skillResult
+
+// mirror returns the earlier result for (skill, path) re-attributed to
+// operator, or false when this artifact has not been acted on yet.
+func (s sharedArtifacts) mirror(operator, skill, path string) (skillResult, bool) {
+	prev, ok := s[skillgen.ArtifactKey(skill, path)]
+	if !ok {
+		return skillResult{}, false
+	}
+	prev.AppliedVia = prev.Operator
+	prev.Operator = operator
+	return prev, true
+}
+
+// record stores r as the acting result for its artifact. Only results that
+// actually touched the file are recorded, so the first one wins.
+func (s sharedArtifacts) record(r skillResult) {
+	key := skillgen.ArtifactKey(r.Skill, r.Path)
+	if _, ok := s[key]; !ok {
+		s[key] = r
+	}
 }
 
 // skillResultsEnvelope is the JSON document init/update/remove write to stdout.

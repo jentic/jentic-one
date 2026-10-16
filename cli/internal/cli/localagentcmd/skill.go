@@ -606,15 +606,21 @@ func (a *Cmd) applySkills(targets []skillTarget, env skillgen.DetectEnv, opts *s
 		return nil, err
 	}
 	results := make([]skillResult, 0, len(targets)*len(set))
+	shared := sharedArtifacts{}
 	for _, t := range targets {
 		for _, c := range set {
+			op := string(t.adapter.Operator())
+			if r, ok := shared.mirror(op, c.Name, t.adapter.Target(t.scope, c.Name, env)); ok {
+				results = append(results, r)
+				continue
+			}
 			out, aerr := skillgen.Apply(t.adapter, c, env, skillgen.ApplyOptions{
 				Scope:  t.scope,
 				Force:  opts.force,
 				DryRun: opts.dryRun,
 			})
-			results = append(results, skillResult{
-				Operator:  string(t.adapter.Operator()),
+			r := skillResult{
+				Operator:  op,
 				Skill:     c.Name,
 				Scope:     string(t.scope),
 				Path:      out.Path,
@@ -624,7 +630,9 @@ func (a *Cmd) applySkills(targets []skillTarget, env skillgen.DetectEnv, opts *s
 				Error:     errString(aerr),
 				err:       aerr,
 				applied:   out,
-			})
+			}
+			shared.record(r)
+			results = append(results, r)
 		}
 	}
 	return results, nil
@@ -643,6 +651,10 @@ func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 
 	var wrote int
 	for _, r := range results {
+		if r.AppliedVia != "" {
+			a.reportShared(r)
+			continue
+		}
 		if r.err != nil {
 			fmt.Fprintln(a.Out, "  "+theme.Warnf("%s/%s: %v", r.Operator, r.Skill, r.err))
 			continue
@@ -662,6 +674,13 @@ func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 		fmt.Fprintln(a.Out, theme.Dim.Render("Your agent picks the skills up on its next start. Re-run after a Jentic update to refresh."))
 	}
 	return nil
+}
+
+// reportShared prints the line for an operator whose artifact was already
+// handled by another operator's row in this run (a shared AGENTS.md).
+func (a *Cmd) reportShared(r skillResult) {
+	label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
+	fmt.Fprintln(a.Out, "  "+theme.Dimf("%-24s %s — same file as %s/%s (%s)", label, prettyPath(r.Path), r.AppliedVia, r.Skill, r.Action))
 }
 
 // reportOutcome prints a single (operator, skill) result line, tagged with the
@@ -723,9 +742,16 @@ func (a *Cmd) SkillUpdate(cmd *cobra.Command, opts *skillOptions) error {
 	}
 
 	results := make([]skillResult, 0)
+	shared := sharedArtifacts{}
 	for _, ad := range adapters {
 		for _, c := range set {
 			for _, st := range skillgen.InstallStates(ad, c.Name, env) {
+				// Check the shared set before the install probe: an earlier
+				// operator in this run may have just rewritten this file.
+				if r, ok := shared.mirror(string(ad.Operator()), c.Name, st.Path); ok {
+					results = append(results, r)
+					continue
+				}
 				if !st.Installed {
 					continue
 				}
@@ -737,7 +763,7 @@ func (a *Cmd) SkillUpdate(cmd *cobra.Command, opts *skillOptions) error {
 				// update only touches existing installs, so a write is always
 				// an update (never a create) and a no-op is "unchanged".
 				action := updateAction(out, uerr)
-				results = append(results, skillResult{
+				r := skillResult{
 					Operator:  string(ad.Operator()),
 					Skill:     c.Name,
 					Scope:     string(st.Scope),
@@ -748,7 +774,9 @@ func (a *Cmd) SkillUpdate(cmd *cobra.Command, opts *skillOptions) error {
 					Error:     errString(uerr),
 					err:       uerr,
 					applied:   out,
-				})
+				}
+				shared.record(r)
+				results = append(results, r)
 			}
 		}
 	}
@@ -762,6 +790,8 @@ func (a *Cmd) SkillUpdate(cmd *cobra.Command, opts *skillOptions) error {
 		label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
 		out := r.applied
 		switch {
+		case r.AppliedVia != "":
+			a.reportShared(r)
 		case r.err != nil:
 			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, r.err))
 		case out.UserEdits:
@@ -822,6 +852,7 @@ func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 	}
 
 	results := make([]skillResult, 0)
+	shared := sharedArtifacts{}
 	for _, ad := range adapters {
 		for _, name := range skills {
 			c := skillgen.Canonical{Name: name}
@@ -829,11 +860,14 @@ func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 			// placement": probe both scopes and strip every install found, so
 			// an install made with --scope project (or via the interactive
 			// scope prompt) is removable without the user re-deriving its scope.
+			// A scope whose artifact an earlier operator in this run already
+			// removed (a shared AGENTS.md) is kept so its outcome is mirrored.
+			op := string(ad.Operator())
 			scopes := []skillgen.Scope{scope}
 			if scope == "" {
 				scopes = scopes[:0]
 				for _, st := range skillgen.InstallStates(ad, name, env) {
-					if st.Installed {
+					if _, done := shared.mirror(op, name, st.Path); st.Installed || done {
 						scopes = append(scopes, st.Scope)
 					}
 				}
@@ -842,13 +876,17 @@ func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 				}
 			}
 			for _, sc := range scopes {
+				if r, ok := shared.mirror(op, name, ad.Target(sc, name, env)); ok {
+					results = append(results, r)
+					continue
+				}
 				out, rerr := skillgen.Remove(ad, c, env, skillgen.RemoveOptions{
 					Scope:  sc,
 					Force:  opts.force,
 					DryRun: opts.dryRun,
 				})
-				results = append(results, skillResult{
-					Operator:  string(ad.Operator()),
+				r := skillResult{
+					Operator:  op,
 					Skill:     name,
 					Scope:     string(sc),
 					Path:      out.Path,
@@ -857,7 +895,13 @@ func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 					UserEdits: out.UserEdits,
 					Error:     errString(rerr),
 					err:       rerr,
-				})
+				}
+				// Only a result that touched the file is shared; a miss
+				// leaves the artifact for a later operator to act on.
+				if r.Action != skillActionNotInstalled {
+					shared.record(r)
+				}
+				results = append(results, r)
 			}
 		}
 	}
@@ -869,6 +913,10 @@ func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 	var blocked int
 	for _, r := range results {
 		label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
+		if r.AppliedVia != "" {
+			a.reportShared(r)
+			continue
+		}
 		switch r.Action {
 		case skillActionError:
 			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, r.err))
