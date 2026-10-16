@@ -148,6 +148,9 @@ frees a slot, and a job enqueued in the **same process** — the broker's
 `Prefer: respond-async` path, a registry import — wakes it the moment the
 enqueuing transaction commits, so in-process pickup does not wait out the
 interval. Jobs enqueued by another process are picked up on the next poll.
+Between polls the loop also runs a retention sweep (lapsed approvals, expired
+job results, long-expired token rows) every `worker.sweep_interval_s` of wall
+time (default `120`).
 
 Every claim is one atomic `UPDATE … RETURNING` over a `FOR UPDATE SKIP LOCKED`
 subquery on Postgres (a `BEGIN IMMEDIATE` write transaction on SQLite), so any

@@ -42,8 +42,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Seconds between retention sweeps (expired approvals, job results, tokens).
-_RETENTION_SWEEP_INTERVAL_S = 120.0
 # Fallback approved-execution result retention when no config is supplied.
 _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS = 86_400
 # Post-expiry grace before an access/refresh token row is deleted by the sweep.
@@ -281,9 +279,9 @@ class WorkerLoop:
                 await self._wake.wait()
 
     async def _maybe_sweep(self) -> None:
-        """Run the retention sweep when its interval has elapsed."""
+        """Run the retention sweep once ``worker.sweep_interval_s`` has elapsed."""
         now = time.monotonic()
-        if now - self._last_sweep < _RETENTION_SWEEP_INTERVAL_S:
+        if now - self._last_sweep < self._config.sweep_interval_s:
             return
         self._last_sweep = now
         await self._sweep_expired()

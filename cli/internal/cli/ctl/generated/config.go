@@ -3128,6 +3128,11 @@ type WorkerConfig struct {
 	// RetryBackoffMaxS corresponds to the JSON schema field "retry_backoff_max_s".
 	RetryBackoffMaxS float64 `json:"retry_backoff_max_s,omitempty,omitzero" yaml:"retry_backoff_max_s,omitempty" mapstructure:"retry_backoff_max_s,omitempty"`
 
+	// Seconds between the worker's retention sweeps, which expire lapsed execution
+	// approvals and delete expired job results and long-expired access/refresh token
+	// rows. Measured in wall time, independent of ``poll_interval_s`` and wake-ups.
+	SweepIntervalS float64 `json:"sweep_interval_s,omitempty,omitzero" yaml:"sweep_interval_s,omitempty" mapstructure:"sweep_interval_s,omitempty"`
+
 	// VisibilityTimeoutS corresponds to the JSON schema field "visibility_timeout_s".
 	VisibilityTimeoutS float64 `json:"visibility_timeout_s,omitempty,omitzero" yaml:"visibility_timeout_s,omitempty" mapstructure:"visibility_timeout_s,omitempty"`
 }
@@ -3190,6 +3195,15 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["retry_backoff_max_s"]; !ok || v == nil {
 		plain.RetryBackoffMaxS = 60.0
+	}
+	if v, ok := raw["sweep_interval_s"]; !ok || v == nil {
+		plain.SweepIntervalS = 120.0
+	}
+	if 86400 < plain.SweepIntervalS {
+		return fmt.Errorf("field %s: must be <= %v", "sweep_interval_s", 86400)
+	}
+	if 1 > plain.SweepIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "sweep_interval_s", 1)
 	}
 	if v, ok := raw["visibility_timeout_s"]; !ok || v == nil {
 		plain.VisibilityTimeoutS = 120.0

@@ -2038,6 +2038,14 @@
           "title": "Retry Backoff Max S",
           "type": "number"
         },
+        "sweep_interval_s": {
+          "default": 120.0,
+          "description": "Seconds between the worker's retention sweeps, which expire lapsed execution approvals and delete expired job results and long-expired access/refresh token rows. Measured in wall time, independent of ``poll_interval_s`` and wake-ups.",
+          "maximum": 86400.0,
+          "minimum": 1.0,
+          "title": "Sweep Interval S",
+          "type": "number"
+        },
         "visibility_timeout_s": {
           "default": 120.0,
           "title": "Visibility Timeout S",

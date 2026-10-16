@@ -431,6 +431,17 @@ class WorkerConfig(BaseModel):
             "writers, so values above 1 bring little benefit there."
         ),
     )
+    sweep_interval_s: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=86_400.0,
+        description=(
+            "Seconds between the worker's retention sweeps, which expire lapsed "
+            "execution approvals and delete expired job results and long-expired "
+            "access/refresh token rows. Measured in wall time, independent of "
+            "``poll_interval_s`` and wake-ups."
+        ),
+    )
 
 
 class RuntimeConfig(BaseModel):

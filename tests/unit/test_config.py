@@ -2059,3 +2059,23 @@ def test_worker_poll_interval_rejects_out_of_bounds(value: float):
 def test_worker_concurrency_rejects_out_of_bounds(value: int):
     with pytest.raises(ValidationError):
         WorkerConfig(concurrency=value)
+
+
+def test_worker_sweep_interval_default_yaml_and_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    assert WorkerConfig().sweep_interval_s == 120.0
+    assert _load(tmp_path, {"worker": {"sweep_interval_s": 30}}).worker.sweep_interval_s == 30.0
+    monkeypatch.setenv("JENTIC__WORKER__SWEEP_INTERVAL_S", "600")
+    assert _load(tmp_path, {}).worker.sweep_interval_s == 600.0
+
+
+@pytest.mark.parametrize("value", [1.0, 86_400.0])
+def test_worker_sweep_interval_accepts_bounds(value: float):
+    assert WorkerConfig(sweep_interval_s=value).sweep_interval_s == value
+
+
+@pytest.mark.parametrize("value", [0.0, 0.99, 86_400.1, -5.0])
+def test_worker_sweep_interval_rejects_out_of_bounds(value: float):
+    with pytest.raises(ValidationError):
+        WorkerConfig(sweep_interval_s=value)

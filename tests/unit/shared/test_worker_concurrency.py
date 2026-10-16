@@ -311,3 +311,49 @@ async def test_idle_is_set_after_jobs_finish(concurrency: int) -> None:
     assert worker._in_flight == set()
     worker.stop()
     await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+
+class _SweepCountingWorker(_ScriptedWorker):
+    def __init__(self, config: WorkerConfig) -> None:
+        super().__init__(_Tracker().body, config=config)
+        self.sweeps = 0
+
+    async def _sweep_expired(self) -> None:
+        self.sweeps += 1
+
+
+async def test_retention_sweep_follows_configured_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sweep runs once ``worker.sweep_interval_s`` of wall time has elapsed."""
+    clock = [1000.0]
+    monkeypatch.setattr("jentic_one.shared.jobs.worker.time.monotonic", lambda: clock[0])
+    worker = _SweepCountingWorker(WorkerConfig(sweep_interval_s=30.0))
+
+    clock[0] += 29.9
+    await worker._maybe_sweep()
+    assert worker.sweeps == 0
+
+    clock[0] += 0.1
+    await worker._maybe_sweep()
+    assert worker.sweeps == 1
+
+    # The next sweep is a full interval after the last one, not the boot time.
+    clock[0] += 29.0
+    await worker._maybe_sweep()
+    assert worker.sweeps == 1
+    clock[0] += 1.0
+    await worker._maybe_sweep()
+    assert worker.sweeps == 2
+
+
+async def test_retention_sweep_default_interval_is_120s(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("jentic_one.shared.jobs.worker.time.monotonic", lambda: clock[0])
+    worker = _SweepCountingWorker(WorkerConfig())
+    clock[0] = 119.0
+    await worker._maybe_sweep()
+    assert worker.sweeps == 0
+    clock[0] = 120.0
+    await worker._maybe_sweep()
+    assert worker.sweeps == 1

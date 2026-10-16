@@ -112,6 +112,7 @@ Background job-worker durability knobs. The worker claims a job, sets a **visibi
 | `worker.reconnect_backoff_max_s` | number (> 0, <= 3600) | `30.0` | `JENTIC__WORKER__RECONNECT_BACKOFF_MAX_S` | Cap, in seconds, on the worker's reconnect delay while the database is unreachable — a recovered database is picked up within this long. |
 | `worker.poll_interval_s` | number (>= 0.05, <= 60.0) | `2.0` | `JENTIC__WORKER__POLL_INTERVAL_S` | Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed. |
 | `worker.concurrency` | integer (>= 1, <= 64) | `1` | `JENTIC__WORKER__CONCURRENCY` | Maximum jobs one worker process runs at once (1 = serial). Each in-flight job holds admin-DB connections, so keep `databases.admin.pool_max` comfortably above this. SQLite serialises writers, so values above 1 bring little benefit there. |
+| `worker.sweep_interval_s` | number (>= 1.0, <= 86400.0) | `120.0` | `JENTIC__WORKER__SWEEP_INTERVAL_S` | Seconds between the worker's retention sweeps, which expire lapsed execution approvals and delete expired job results and long-expired access/refresh token rows. Measured in wall time, independent of `poll_interval_s` and wake-ups. |
 
 ## `runtime`
 
