@@ -228,37 +228,13 @@ async def test_time_buckets_aggregates_by_window(
     assert all((b.ts - since_epoch) % 3600 == 0 for b in buckets)
 
 
-async def test_grouped_top_and_trend_by_toolkit(
-    admin_db: DatabaseSession, clean_execution_records: None
-) -> None:
-    now = datetime.now(UTC)
-    for _ in range(3):
-        await _seed(admin_db, now, "completed")
-
-    async with admin_db.session() as session:
-        top = await MonitoringRepository.grouped_top(
-            session, now - timedelta(days=7), now + timedelta(minutes=1), "toolkit", 10
-        )
-        keys = [r.key for r in top]
-        trends = await MonitoringRepository.grouped_trend(
-            session, now - timedelta(days=7), now + timedelta(minutes=1), "toolkit", keys
-        )
-
-    assert top[0].total == 3
-    assert top[0].key == "tk_test000000000000000000"
-    # grouped_trend distributes the 3 executions across its segments (exercises
-    # the dialect-aware epoch expression + `||` string concat on SQLite).
-    assert sum(trends["tk_test000000000000000000"]) == 3
-
-
 async def test_grouped_top_and_trend_by_credential(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:
-    """Credential grouping (theme-5 Phase 5b) mirrors the toolkit axis.
+    """Credential grouping (theme-5 Phase 5b) keys on ``credential_id``.
 
     Executions key on ``credential_id`` (the direct-binding attribution
-    column, Phase 2); rows without one pool under "unknown" exactly like the
-    toolkit branch does for direct-binding rows without a ``toolkit_id``.
+    column, Phase 2); rows without one pool under "unknown".
     """
     now = datetime.now(UTC)
     for _ in range(3):

@@ -135,25 +135,6 @@ async def test_grouped_top_returns_rows_for_api_grouping() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grouped_top_returns_rows_for_toolkit_grouping() -> None:
-    row = MagicMock()
-    row.key = "tk_abc123"
-    row.label = "tk_abc123"
-    row.total = 20
-    row.success = 18
-    row.failed = 2
-    row.avg_ms = 300.0
-
-    session = _mock_session_with_result([row])
-    cutoff = datetime(2026, 6, 1, tzinfo=UTC)
-    until = datetime(2026, 6, 2, tzinfo=UTC)
-
-    result = await MonitoringRepository.grouped_top(session, cutoff, until, "toolkit", 5)
-    assert len(result) == 1
-    assert result[0].key == "tk_abc123"
-
-
-@pytest.mark.asyncio
 async def test_grouped_top_returns_rows_for_credential_grouping() -> None:
     row = MagicMock()
     row.key = "cred_abc123"

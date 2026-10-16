@@ -7156,10 +7156,9 @@
         "type": "object"
       },
       "GroupBy": {
-        "description": "Grouping dimension for usage statistics.\n\n``TOOLKIT`` is a legacy axis: it groups over the surviving\n``execution_records.toolkit_id`` attribution column, which nothing writes\nsince the toolkit path was deleted (theme-5 Phase 6b). It stays so\nhistorical dashboards keep working; ``CREDENTIAL`` is the live\nconsumer axis (execution records carry ``credential_id`` since Phase 2).",
+        "description": "Grouping dimension for usage statistics.\n\n``CREDENTIAL`` groups by the credential an execution ran with\n(``execution_records.credential_id``).",
         "enum": [
           "api",
-          "toolkit",
           "credential",
           "agent"
         ],
@@ -18046,7 +18045,7 @@
             "type": "integer"
           },
           "key": {
-            "description": "Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.",
+            "description": "Grouping key for the row: `vendor/name` for `api`, the credential ID for `credential`, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.",
             "examples": [
               "stripe.com/stripe"
             ],

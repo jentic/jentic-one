@@ -66,16 +66,11 @@ def _group_key(
             func.coalesce(ExecutionRecord.api_name, "unknown"),
         )
         return key_expr, [ExecutionRecord.api_vendor, ExecutionRecord.api_name]
-    if group_by == "toolkit":
-        # toolkit_id is nullable-legacy (theme-5 Phase 2): direct-binding
-        # executions have none, so pool them under "unknown" like the api
-        # branch does for missing identity axes.
-        return func.coalesce(ExecutionRecord.toolkit_id, "unknown"), [ExecutionRecord.toolkit_id]
     if group_by == "credential":
         # credential_id is the direct-binding attribution axis (theme-5
         # Phase 2); rows without one (legacy toolkit-path executions,
-        # credential-less calls) pool under "unknown" like the toolkit
-        # branch above.
+        # credential-less calls) pool under "unknown" like the api branch
+        # does for missing identity axes.
         return (
             func.coalesce(ExecutionRecord.credential_id, "unknown"),
             [ExecutionRecord.credential_id],

@@ -479,7 +479,6 @@ const (
 	GroupByAgent      GroupBy = "agent"
 	GroupByApi        GroupBy = "api"
 	GroupByCredential GroupBy = "credential"
-	GroupByToolkit    GroupBy = "toolkit"
 )
 
 // Valid indicates whether the value is a known member of the GroupBy enum.
@@ -490,8 +489,6 @@ func (e GroupBy) Valid() bool {
 	case GroupByApi:
 		return true
 	case GroupByCredential:
-		return true
-	case GroupByToolkit:
 		return true
 	default:
 		return false
@@ -3632,11 +3629,8 @@ type GovernedHostsResponse struct {
 
 // GroupBy Grouping dimension for usage statistics.
 //
-// “TOOLKIT“ is a legacy axis: it groups over the surviving
-// “execution_records.toolkit_id“ attribution column, which nothing writes
-// since the toolkit path was deleted (theme-5 Phase 6b). It stays so
-// historical dashboards keep working; “CREDENTIAL“ is the live
-// consumer axis (execution records carry “credential_id“ since Phase 2).
+// “CREDENTIAL“ groups by the credential an execution ran with
+// (“execution_records.credential_id“).
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
@@ -7377,7 +7371,7 @@ type UsageTopRow struct {
 	// Examples: 12
 	Failed int `json:"failed"`
 
-	// Key Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
+	// Key Grouping key for the row: `vendor/name` for `api`, the credential ID for `credential`, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
 	//
 	// Examples: stripe.com/stripe
 	Key string `json:"key"`

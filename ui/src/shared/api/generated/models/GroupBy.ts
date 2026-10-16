@@ -5,15 +5,11 @@
 /**
  * Grouping dimension for usage statistics.
  *
- * ``TOOLKIT`` is a legacy axis: it groups over the surviving
- * ``execution_records.toolkit_id`` attribution column, which nothing writes
- * since the toolkit path was deleted (theme-5 Phase 6b). It stays so
- * historical dashboards keep working; ``CREDENTIAL`` is the live
- * consumer axis (execution records carry ``credential_id`` since Phase 2).
+ * ``CREDENTIAL`` groups by the credential an execution ran with
+ * (``execution_records.credential_id``).
  */
 export enum GroupBy {
     API = 'api',
-    TOOLKIT = 'toolkit',
     CREDENTIAL = 'credential',
     AGENT = 'agent',
 }

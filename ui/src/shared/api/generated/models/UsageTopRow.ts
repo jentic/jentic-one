@@ -15,7 +15,7 @@ export type UsageTopRow = {
      */
     failed: number;
     /**
-     * Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
+     * Grouping key for the row: `vendor/name` for `api`, the credential ID for `credential`, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
      */
     key: string;
     /**

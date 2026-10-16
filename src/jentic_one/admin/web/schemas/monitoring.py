@@ -23,15 +23,11 @@ __all__ = [
 class GroupBy(StrEnum):
     """Grouping dimension for usage statistics.
 
-    ``TOOLKIT`` is a legacy axis: it groups over the surviving
-    ``execution_records.toolkit_id`` attribution column, which nothing writes
-    since the toolkit path was deleted (theme-5 Phase 6b). It stays so
-    historical dashboards keep working; ``CREDENTIAL`` is the live
-    consumer axis (execution records carry ``credential_id`` since Phase 2).
+    ``CREDENTIAL`` groups by the credential an execution ran with
+    (``execution_records.credential_id``).
     """
 
     API = "api"
-    TOOLKIT = "toolkit"
     CREDENTIAL = "credential"
     AGENT = "agent"
 
@@ -143,8 +139,9 @@ class UsageTopRow(BaseModel):
 
     key: str = Field(
         description=(
-            "Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, "
-            "or `actor_type/actor_id` for `agent`; `unknown` when the value is missing."
+            "Grouping key for the row: `vendor/name` for `api`, the credential ID for "
+            "`credential`, or `actor_type/actor_id` for `agent`; `unknown` when the value is "
+            "missing."
         ),
         examples=[ex.API_VENDOR_NAME],
     )
