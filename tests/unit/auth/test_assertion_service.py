@@ -10,12 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI
 from jwt.algorithms import OKPAlgorithm
+from starlette.requests import Request
 
 from jentic_one.auth.services import assertion_service
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.errors import InvalidGrantError
-from jentic_one.shared.state.backend import MemoryStateBackend
+from jentic_one.auth.web.routers.oauth import get_assertion_service
+from jentic_one.shared.state.backend import MemoryStateBackend, RateLimitDecision
 
 
 def _make_ctx() -> MagicMock:
@@ -262,6 +265,87 @@ async def test_replay_store_refuses_a_jti_first_seen_by_another_process(
         await second_worker.verify_and_exchange(
             _make_assertion(private_key, jti="cross-worker-jti")
         )
+
+
+class _RecordingStore:
+    """A non-memory ``SharedStateBackend`` (a stand-in for redis) that records claims."""
+
+    def __init__(self) -> None:
+        self.claims: list[str] = []
+        self._keys: set[str] = set()
+
+    async def get(self, key: str) -> bytes | None:
+        return None
+
+    async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
+        self._keys.add(key)
+
+    async def token_bucket(
+        self, key: str, *, rate: float, burst: int, cost: int = 1
+    ) -> RateLimitDecision:
+        return RateLimitDecision(allowed=True, remaining=burst, retry_after_s=0.0, limit=burst)
+
+    async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
+        return amount
+
+    async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
+        self.claims.append(key)
+        if key in self._keys:
+            return False
+        self._keys.add(key)
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _request_with_backend(backend: object) -> Request:
+    app = FastAPI()
+    app.state.auth_state_backend = backend
+    return Request({"type": "http", "app": app})
+
+
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_router_claims_jti_through_the_apps_shared_state_backend(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``get_assertion_service`` must hand ``app.state.auth_state_backend`` to the service.
+
+    Without it every process falls back to its own cache and a replay sent to a
+    second worker or replica is accepted.
+    """
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
+    token_svc_instance = MagicMock()
+    token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))
+    mock_token_svc_cls.return_value = token_svc_instance
+    store = _RecordingStore()
+    request = _request_with_backend(store)
+
+    await get_assertion_service(request, ctx).verify_and_exchange(
+        _make_assertion(private_key, jti="routed-jti")
+    )
+    assert store.claims == ["auth:jwt_bearer_jti:routed-jti"]
+
+    # A second process: empty in-process cache, same shared store.
+    monkeypatch.setattr(assertion_service, "_jti_cache", None)
+    with pytest.raises(InvalidGrantError, match="invalid"):
+        await get_assertion_service(request, ctx).verify_and_exchange(
+            _make_assertion(private_key, jti="routed-jti")
+        )
+    assert len(store.claims) == 2
+
+
+def test_router_without_a_shared_state_backend_keeps_the_process_cache() -> None:
+    svc = get_assertion_service(_request_with_backend(None), _make_ctx())
+    assert svc._replay_store is None
 
 
 async def test_verify_rejects_non_eddsa_algorithm() -> None:

@@ -90,13 +90,15 @@ def install_on_app(app: FastAPI, ctx: Context) -> None:
     backend = build_state_backend(backend_cfg)
     app.state.auth_state_backend = backend
     if backend_cfg.backend is BackendKind.MEMORY:
-        # Rate limiters and consent-handle state live per-process on this
-        # backend, so a multi-worker deployment gets independent buckets and
-        # loses the anti-replay guarantee across workers. Warn loudly so an
-        # operator running >1 worker knows to configure Redis.
+        # Rate limiters, login state and consent handles live per-process on
+        # this backend. server.workers > 1 on memory is refused at config load,
+        # but separate replicas of the auth surface still each get their own
+        # buckets and cannot see one another's login/consent state, so a flow
+        # that lands on a second replica fails.
         logger.warning(
-            "auth_state_backend_memory_selected — rate limits and consent "
-            "handles are per-process; configure redis for multi-worker deployments",
+            "auth_state_backend_memory_selected — rate limits, login state and "
+            "consent handles are per-process; configure redis before running "
+            "more than one auth replica",
         )
 
     async def _close_auth_backend() -> None:

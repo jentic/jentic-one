@@ -174,6 +174,11 @@ class AssertionService:
             if agent.status != ActorStatus.ACTIVE:
                 raise InvalidGrantError(_INVALID)
 
+            # Claimed inside the transaction so a refused replay rolls back with
+            # it and never leaves a LOGIN audit row. On the redis backend this
+            # is a network round-trip made while the agent row lock is held, so
+            # a slow redis holds that lock (and an admin-DB connection) for as
+            # long as the call takes (client timeouts: #1798).
             jti = payload.get("jti")
             if not jti or not await self._claim_jti(jti):
                 raise InvalidGrantError(_INVALID)
