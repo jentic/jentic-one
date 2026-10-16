@@ -24,8 +24,8 @@ from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import (
     _persist_streaming_outcome,
-    _streaming_persist_backlog,
     _streaming_persist_failures,
+    _streaming_persist_pending,
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.config import AppConfig
@@ -37,11 +37,13 @@ pytestmark = pytest.mark.integration
 _ID_PREFIX = "integ-stream-bound-"
 _LIMIT = 3
 _BURST = 8
+_POOL_MAX = _BURST + 4
 
 _BLOCKED_INSERTS = text(
     "SELECT count(*) FROM pg_stat_activity "
     "WHERE wait_event_type = 'Lock' "
     "AND pid <> pg_backend_pid() "
+    "AND datname = current_database() "
     "AND query ILIKE '%execution_records%'"
 )
 
@@ -50,18 +52,23 @@ _BLOCKED_INSERTS = text(
 async def bounded_ctx(integration_config: AppConfig) -> AsyncGenerator[Context, None]:
     """Admin-only Context with a roomy pool and a persist limit of ``_LIMIT``.
 
-    The pool is sized well above ``_BURST`` so an unbounded burst could hold
-    one connection per persist — the semaphore, not pool starvation, is what
-    the assertions observe.
+    The base pool (``_POOL_MAX``) has room for all ``_BURST`` persists plus the
+    lock and observer sessions, so an unbounded burst could hold one
+    connection per persist — the semaphore, not pool starvation, is what the
+    assertions observe. The slot wait is given far longer than the lock is
+    held, so no persist is abandoned at its acquire timeout.
     """
     if integration_config.databases.admin.backend != "postgres":
         pytest.skip("lock-wait observation needs Postgres pg_stat_activity")
-    admin = integration_config.databases.admin.model_copy(update={"pool_max": 10})
+    admin = integration_config.databases.admin.model_copy(update={"pool_max": _POOL_MAX})
     config = integration_config.model_copy(
         update={
             "databases": integration_config.databases.model_copy(update={"admin": admin}),
             "broker": integration_config.broker.model_copy(
-                update={"streaming_persist_max_concurrency": _LIMIT}
+                update={
+                    "streaming_persist_max_concurrency": _LIMIT,
+                    "streaming_persist_acquire_timeout_s": 60.0,
+                }
             ),
         }
     )
@@ -79,13 +86,13 @@ async def bounded_ctx(integration_config: AppConfig) -> AsyncGenerator[Context, 
 
 
 @pytest.fixture()
-def backlog_spy() -> Iterator[dict[str, Any]]:
-    """Track the running value (and peak) of the persist-backlog up-down counter.
+def pending_spy() -> Iterator[dict[str, Any]]:
+    """Track the running value (and peak) of the persist-pending up-down counter.
 
     Wraps ``add`` so the real OTel instrument still records every delta.
     """
     state: dict[str, Any] = {"waiting": 0, "in_flight": 0, "peak": 0}
-    real_add: Callable[..., None] = _streaming_persist_backlog.add
+    real_add: Callable[..., None] = _streaming_persist_pending.add
 
     def _add(amount: int, attributes: dict[str, str] | None = None, **kw: Any) -> None:
         real_add(amount, attributes, **kw)
@@ -93,7 +100,7 @@ def backlog_spy() -> Iterator[dict[str, Any]]:
         state[attributes["state"]] += amount
         state["peak"] = max(state["peak"], state["waiting"] + state["in_flight"])
 
-    with patch.object(_streaming_persist_backlog, "add", side_effect=_add):
+    with patch.object(_streaming_persist_pending, "add", side_effect=_add):
         yield state
 
 
@@ -153,7 +160,7 @@ async def _stored_ids(ctx: Context) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_streaming_persist_burst_is_bounded_and_lossless(
-    bounded_ctx: Context, backlog_spy: dict[str, Any]
+    bounded_ctx: Context, pending_spy: dict[str, Any]
 ) -> None:
     """A burst of M > N persists holds at most N admin writes; all M land once."""
     ids = [f"{_ID_PREFIX}{i:03d}" for i in range(_BURST)]
@@ -163,16 +170,16 @@ async def test_streaming_persist_burst_is_bounded_and_lossless(
         for execution_id in ids:
             tg.create_task(_persist(bounded_ctx, execution_id))
         peak_blocked = await _observe_peak_blocked(bounded_ctx)
-        queued = dict(backlog_spy)
+        queued = dict(pending_spy)
     # The lock session exits first (rollback releases the table lock), then the
     # TaskGroup waits for every queued persist to finish.
 
     assert peak_blocked == _LIMIT
     assert queued["in_flight"] == _LIMIT
     assert queued["waiting"] == _BURST - _LIMIT
-    assert backlog_spy["peak"] == _BURST
-    assert backlog_spy["waiting"] == 0
-    assert backlog_spy["in_flight"] == 0
+    assert pending_spy["peak"] == _BURST
+    assert pending_spy["waiting"] == 0
+    assert pending_spy["in_flight"] == 0
 
     stored = await _stored_ids(bounded_ctx)
     assert sorted(stored) == ids
@@ -180,7 +187,7 @@ async def test_streaming_persist_burst_is_bounded_and_lossless(
 
 @pytest.mark.asyncio
 async def test_streaming_persist_failure_is_counted_and_releases_slot(
-    bounded_ctx: Context, backlog_spy: dict[str, Any]
+    bounded_ctx: Context, pending_spy: dict[str, Any]
 ) -> None:
     """A real write failure is counted and swallowed, and frees its slot."""
     execution_id = f"{_ID_PREFIX}dup"
@@ -191,10 +198,10 @@ async def test_streaming_persist_failure_is_counted_and_releases_slot(
     ) as failures:
         # Same primary key → IntegrityError inside the admin transaction.
         await _persist(bounded_ctx, execution_id)
-        failures.assert_called_once_with(1)
+        failures.assert_called_once_with(1, {"reason": "write_error"})
 
-    assert backlog_spy["waiting"] == 0
-    assert backlog_spy["in_flight"] == 0
+    assert pending_spy["waiting"] == 0
+    assert pending_spy["in_flight"] == 0
 
     # Every slot is free again: a full burst of N still proceeds concurrently.
     follow_up = [f"{_ID_PREFIX}after-{i}" for i in range(_LIMIT)]

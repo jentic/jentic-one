@@ -21,7 +21,6 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
-    _streaming_persist_semaphore,
 )
 from jentic_one.broker.web.streaming import (
     StreamingOutcome,
@@ -46,9 +45,10 @@ def _ctx_req() -> ExecuteRequestContext:
 
 
 def _mock_ctx() -> MagicMock:
-    """A stand-in Context whose persist-concurrency knobs are real ints."""
+    """A stand-in Context whose persist-gate knobs are real numbers."""
     ctx = MagicMock()
     ctx.config.broker.streaming_persist_max_concurrency = 5
+    ctx.config.broker.streaming_persist_acquire_timeout_s = 5.0
     ctx.config.databases.admin.pool_max = 10
     return ctx
 
@@ -369,23 +369,4 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
-        mock_counter.assert_called_once_with(1)
-
-
-@pytest.mark.parametrize(
-    ("configured", "pool_max", "expected"),
-    [(5, 10, 5), (20, 10, 9), (4, 1, 1), (1, 10, 1)],
-)
-@pytest.mark.asyncio
-async def test_persist_semaphore_limit_is_clamped_below_admin_pool(
-    configured: int, pool_max: int, expected: int
-) -> None:
-    """The effective limit never exceeds ``admin.pool_max - 1`` (floor 1)."""
-    ctx = _mock_ctx()
-    ctx.config.broker.streaming_persist_max_concurrency = configured
-    ctx.config.databases.admin.pool_max = pool_max
-
-    sem = _streaming_persist_semaphore(ctx.config)
-
-    assert sem._value == expected
-    assert _streaming_persist_semaphore(ctx.config) is sem
+        mock_counter.assert_called_once_with(1, {"reason": "write_error"})
