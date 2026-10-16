@@ -9696,7 +9696,7 @@ components:
     RedeemInviteRequest:
       description: Payload for redeeming an invite token.
       examples:
-      - &id294
+      - &id295
         invite_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         password: example-password
       properties:
@@ -11531,7 +11531,7 @@ components:
     VendorListResponse:
       description: The vendors the caller can connect a credential for.
       examples:
-      - &id295
+      - &id296
         data: &id167
         - catalog_api_id: github.com/api.github.com
           display_name: GitHub
@@ -11849,9 +11849,12 @@ info:
       response belongs to the upstream API. Standard headers
       (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
       `traceparent`, `tracestate`) keep their RFC names.
-    - **Append-only audit.** Admin / Audit records are never mutated
-      after the fact. They are kept until the operator removes them;
-      there is no automatic retention window to configure yet.
+    - **Append-only audit.** Audit entries, execution records and events
+      are never mutated after the fact. They — and finished jobs and their
+      results — are kept indefinitely: there is no API or setting to prune
+      them yet, so trim them at the database level. Approved-execution
+      results are the exception: they expire after
+      `held_executions.result_retention_seconds`.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
       from it. To walk the executions you can see under one logical request, use
@@ -24263,6 +24266,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id184
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
         '422':
           content:
             application/problem+json:
@@ -24301,7 +24311,12 @@ paths:
   /jobs/{job_id}/result:
     description: '`GET`: Get Job Result.'
     get:
-      description: Get the result of a completed job — polymorphic by kind.
+      description: |-
+        Get the result of a completed job — polymorphic by kind.
+
+        Answers ``409`` while the job has not completed, and ``410`` once an
+        approved execution's result is past
+        ``held_executions.result_retention_seconds``.
       operationId: getJobResult
       parameters:
       - description: ID of the job.
@@ -24345,6 +24360,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id184
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id222
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Conflict
+        '410':
+          content:
+            application/problem+json:
+              example: &id294
+                detail: The resource is no longer available and the operation has self-closed.
+                instance: /example/path
+                status: 410
+                title: Gone
+                type: gone
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Gone
         '422':
           content:
             application/problem+json:
@@ -29201,12 +29242,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example:
-                detail: The resource is no longer available and the operation has self-closed.
-                instance: /example/path
-                status: 410
-                title: Gone
-                type: gone
+              example: *id294
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Setup already complete — the first admin exists and this endpoint is closed.
@@ -29251,7 +29287,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id294
+            example: *id295
             schema:
               $ref: '#/components/schemas/RedeemInviteRequest'
         description: Payload for redeeming an invite token.
@@ -29320,7 +29356,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id295
+              example: *id296
               schema:
                 $ref: '#/components/schemas/VendorListResponse'
           description: Successful Response
@@ -29579,7 +29615,7 @@ tags:
   name: Overlays
 - description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
-- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
+- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Results stay readable until removed; only an approved execution's result expires (after `held_executions.result_retention_seconds`), after which `/jobs/{job_id}/result` answers `410 job_result_expired` while the job itself remains. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs
 - description: |-
     Executions held for human approval. When a call matches a permission rule with `effect: require-approval`, the broker does not run it: it answers `202` with a held execution (`held_…`) and a review link. A reviewer, the agent's owner or any `org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.
