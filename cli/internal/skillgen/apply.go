@@ -76,7 +76,13 @@ func applySharedFile(a Adapter, c Canonical, target string, norm []byte, out Out
 	if !changed || opts.DryRun {
 		return out, nil
 	}
-	if err := writeTarget(target, newBytes); err != nil {
+	// A symlinked AGENTS.md is updated at the file it points to, keeping the
+	// link (see resolveSharedTarget).
+	resolved, err := resolveSharedTarget(target)
+	if err != nil {
+		return out, err
+	}
+	if err := writeTarget(resolved, newBytes); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -170,7 +176,8 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 	if len(refs) == 0 && len(recorded) == 0 {
 		return false, nil
 	}
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
+	refDir := filepath.Join(skillDir, "references")
 	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		current[ref] = true
@@ -178,8 +185,13 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 		if err != nil {
 			return changed, err
 		}
-		path := filepath.Join(refDir, ref)
-		if existing, rerr := os.ReadFile(path); rerr == nil && //nolint:gosec // path derives from adapter rules + embed names.
+		// Embed names are trusted, but the references dir on disk is not: a
+		// planted references/ symlink must not redirect this write.
+		path, err := referencePath(skillDir, ref)
+		if err != nil {
+			return changed, err
+		}
+		if existing, rerr := os.ReadFile(path); rerr == nil && //nolint:gosec // path is validated by referencePath.
 			normalizeNewlines(string(existing)) == normalizeNewlines(string(data)) {
 			continue
 		}
@@ -192,7 +204,9 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 		if current[ref] {
 			continue
 		}
-		if rmErr := os.Remove(filepath.Join(refDir, ref)); rmErr == nil {
+		// The recorded set comes from the on-disk sidecar; an unsafe entry is
+		// skipped rather than failing the whole apply.
+		if removed, _ := removeManagedReference(skillDir, ref); removed {
 			changed = true
 		}
 	}
@@ -225,7 +239,11 @@ func pendingReferenceChanges(target, name string, recorded []string) bool {
 		if current[ref] {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(refDir, ref)); err == nil {
+		path, err := referencePath(filepath.Dir(target), ref)
+		if err != nil {
+			continue // removeManagedReference skips the same entry.
+		}
+		if fi, err := os.Lstat(path); err == nil && !fi.IsDir() {
 			return true
 		}
 	}
@@ -364,15 +382,31 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 	}
 
 	remainder := trimSurrounding(string(norm[:blk.start]) + string(norm[blk.endPos:]))
+	// A symlinked AGENTS.md is edited at the file it points to; the link
+	// itself is never replaced or deleted.
+	linked := isSymlink(target)
+	resolved, err := resolveSharedTarget(target)
+	if err != nil {
+		return out, err
+	}
 	if remainder == "" {
+		if linked {
+			// Deleting the link would leave the block in the real file, and
+			// deleting the real file would dangle the link: empty it instead.
+			if err := writeFileAtomic(resolved, nil); err != nil {
+				return out, fmt.Errorf("write %s: %w", resolved, err)
+			}
+			out.Removed = true
+			return out, nil
+		}
 		if err := os.Remove(target); err != nil {
 			return out, fmt.Errorf("remove %s: %w", target, err)
 		}
 		out.Removed = true
 		return out, nil
 	}
-	if err := writeFileAtomic(target, []byte(remainder+"\n")); err != nil {
-		return out, fmt.Errorf("write %s: %w", target, err)
+	if err := writeFileAtomic(resolved, []byte(remainder+"\n")); err != nil {
+		return out, fmt.Errorf("write %s: %w", resolved, err)
 	}
 	out.Removed = true
 	return out, nil
@@ -403,14 +437,18 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 		return out, fmt.Errorf("remove %s: %w", target, err)
 	}
 	_ = os.Remove(sidecarPath(target))
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
+	refDir := filepath.Join(skillDir, "references")
 	seen := map[string]bool{}
 	for _, ref := range append(recorded.References, renderedReferences(name)...) {
 		if seen[ref] {
 			continue
 		}
 		seen[ref] = true
-		_ = os.Remove(filepath.Join(refDir, ref))
+		// Best-effort and confined to the skill dir: an unsafe recorded
+		// name (absolute, "..", separators, or a references/ symlink out)
+		// is skipped, never resolved.
+		_, _ = removeManagedReference(skillDir, ref)
 	}
 	pruneEmptyDirs(refDir)
 	pruneEmptyDirs(filepath.Dir(target))
@@ -425,6 +463,11 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 // our managed block with user-owned content. The target's existing mode is
 // preserved; new files default to 0o644 (skill files are meant to be read by
 // other tools).
+//
+// The rename replaces a symlinked target with a regular file and never writes
+// through the link. That is the safe default for generator-owned files
+// (SKILL.md, sidecar, references); shared files a user may symlink (AGENTS.md)
+// resolve the link first via resolveSharedTarget.
 func writeFileAtomic(target string, data []byte) error {
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(target); err == nil {
@@ -465,6 +508,29 @@ func writeFileAtomic(target string, data []byte) error {
 	}
 	renamed = true
 	return nil
+}
+
+// isSymlink reports whether path itself (not what it points to) is a symlink.
+func isSymlink(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
+}
+
+// resolveSharedTarget returns the file a shared target (AGENTS.md) really
+// lives at. A symlinked AGENTS.md — commonly a link into a dotfiles repo — is
+// edited in place at its resolved path, so the link survives and the linked
+// copy is the one updated; renaming over the link would replace it with a
+// regular file and leave the real file holding the stale block. A link that
+// cannot be resolved (dangling, loop) is refused with a message naming it.
+func resolveSharedTarget(target string) (string, error) {
+	if !isSymlink(target) {
+		return target, nil
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("%s is a symlink that cannot be resolved; edit the file it points to by hand: %w", target, err)
+	}
+	return resolved, nil
 }
 
 // trimSurrounding collapses the blank lines left behind when a block is spliced
