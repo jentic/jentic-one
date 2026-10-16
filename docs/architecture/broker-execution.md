@@ -138,11 +138,16 @@ suffix in `broker.egress.allowed_internal_domains` (an IP literal needs only
 the subnet). A name that passes the subnet check but matches no suffix is
 `private_name_not_in_allowed_domains`; every other refusal is
 `invalid_upstream_url`. The distinct type is only for a caller that has passed
-authorization for the registered operation: the pre-flight check holds the
-refusal back until discovery and authorization have run (neither makes an
-outbound call), and anyone else gets `invalid_upstream_url`. So the type never
-tells an unprivileged caller which names resolve into the operator's trusted
-subnet. Its `prompt_human` directive names the config key for the operator to
+authorization for the registered operation, and every refusal of a target is
+evaluated the same way: the pre-flight check holds back any egress-policy
+refusal — a blocked name, a blocked resolved address, or a missing suffix —
+until discovery and authorization have run (neither makes an outbound call),
+then raises it. Whatever the reason, a refused request does the same registry
+and authorization work and leaves the same events and counters, and anyone not
+authorized gets `invalid_upstream_url`. So neither the type, the body, nor the
+work done tells an unprivileged caller which names resolve into the
+operator's trusted subnet. Only a malformed URL is refused before discovery.
+Its `prompt_human` directive names the config key for the operator to
 review but not the host, and it never advises widening the suffix list, which
 is what keeps a public name from being pointed into the subnet. No refusal
 carries the resolved address.
