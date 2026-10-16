@@ -61,6 +61,18 @@ func TestMCPSkillResource_HostedPointerGate(t *testing.T) {
 			wantLog: "references/a2a.md",
 		},
 		{
+			name:    "nested relative reference falls back",
+			status:  http.StatusOK,
+			body:    hostedRouter("jentic", "Read `references/v2/mcp.md` for the MCP lane."),
+			wantLog: "references/v2/mcp.md",
+		},
+		{
+			name:    "non-markdown relative reference falls back",
+			status:  http.StatusOK,
+			body:    hostedRouter("jentic", "Schemas live in references/tools.json."),
+			wantLog: "references/tools.json",
+		},
+		{
 			name:    "unknown skill:// skill falls back",
 			status:  http.StatusOK,
 			body:    hostedRouter("jentic", "See skill://brand-new-skill for more."),
@@ -145,6 +157,21 @@ func TestUnservablePointer_Parsing(t *testing.T) {
 		{"read references/nope.md.", "references/nope.md"},
 		{"read skill://jentic/references/nope.md.", "skill://jentic/references/nope.md"},
 		{"read skill://jentic/nope", "skill://jentic/nope"},
+		// The full relative grammar: nested, non-markdown, extensionless and
+		// traversal targets are all matched (so they are checked, never
+		// skipped), each without its trailing punctuation.
+		{"read `references/v2/mcp.md`.", "references/v2/mcp.md"},
+		{"read references/mcp.md/extra.", "references/mcp.md/extra"},
+		{"read references/schema.json.", "references/schema.json"},
+		{"read references/mcp-tools.", "references/mcp-tools"},
+		{"read references/../jentic.md", "references/../jentic.md"},
+		{"read references/./mcp.md", "references/./mcp.md"},
+		{"see references/v2/ for more", "references/v2"},
+		// False-positive guards: a bare directory mention or trailing
+		// punctuation is not a pointer.
+		{"the `references/` files next to it", ""},
+		{"see references/.", ""},
+		{"see references/mcp.md, references/cli.md and references/recovery.md.", ""},
 	} {
 		if got := unservablePointer("jentic", []byte(tc.body)); got != tc.want {
 			t.Errorf("unservablePointer(%q) = %q, want %q", tc.body, got, tc.want)

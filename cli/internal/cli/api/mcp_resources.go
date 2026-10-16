@@ -169,11 +169,21 @@ var servableSkillURIs = sync.OnceValue(func() map[string]struct{} {
 var skillPointerRE = regexp.MustCompile(`skill://[a-z0-9][a-z0-9-]*(?:/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*`)
 
 // relativeReferenceRE matches one document-relative reference pointer
-// ("references/<file>.md", the form a SKILL.md router uses). The leading
-// group refuses a path character before "references/", so the tail of an
-// absolute skill:// pointer or an unrelated "docs/references/x.md" path is
-// never read as a relative pointer.
-var relativeReferenceRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.:-])references/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.md)`)
+// ("references/<path>", the form a SKILL.md router uses). The target grammar
+// is the full reference-path shape — "/"-separated segments, each a
+// dot-separated word run with any (or no) extension, optionally preceded by
+// "./" or "../" traversal segments — so a nested ("references/v2/mcp.md"),
+// non-markdown ("references/schema.json"), or traversal pointer is matched
+// and checked, never skipped: a pointer the gate cannot see is a pointer it
+// cannot refuse. Shipped references are flat *.md files, so any such pointer
+// fails the shipped-set lookup and the bundled copy serves. The final segment
+// ends on a word character, so trailing sentence punctuation ("…/mcp.md.",
+// "see references/.") is never part of the match. The leading group refuses
+// a path character before "references/", so the tail of an absolute skill://
+// pointer or an unrelated "docs/references/x.md" path is never read as a
+// relative pointer.
+var relativeReferenceRE = regexp.MustCompile(
+	`(?:^|[^A-Za-z0-9_/.:-])references/((?:(?:\.\.?|[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)/)*[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)`)
 
 // unservablePointer returns the first pointer in skill name's raw document
 // that this binary cannot serve, or "" when every pointer resolves. This is
@@ -184,7 +194,7 @@ var relativeReferenceRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.:-])references/
 //
 //   - absolute skill:// pointers must be a URI this server registers
 //     (servableSkillURIs);
-//   - relative references/<file>.md pointers must be a reference this binary
+//   - relative references/<path> pointers must be a reference this binary
 //     ships for name. Any lane counts: the router names the CLI-lane file for
 //     CLI sessions, and the binary ships it, so it is coherent even though
 //     this MCP server deliberately never lists it.
