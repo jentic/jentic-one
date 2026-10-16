@@ -266,8 +266,10 @@ func mcpTargetPath(rt mcpcfg.Runtime, env mcpcfg.Env) string {
 // human-facing label; claudeCodeVia is the envelope's `via` value.
 const claudeCodeRoute = "claude mcp add (user scope)"
 
-// claudeCodeVia is the command claude-code's MCP entry is registered through.
-const claudeCodeVia = "claude mcp add --scope user"
+// claudeCodeVia is the command claude-code's MCP entry is registered through,
+// built from the same argv mcpcfg.ClaudeCodeSteps executes so the envelope
+// cannot report a route the CLI no longer runs.
+var claudeCodeVia = strings.Join(mcpcfg.ClaudeCodeAddCommand("claude"), " ")
 
 // applyMCPEntry writes entry for one runtime via its native mechanism.
 func (a *Cmd) applyMCPEntry(ctx context.Context, rt mcpcfg.Runtime, env mcpcfg.Env, entry mcpcfg.Entry) (mcpcfg.Outcome, error) {
