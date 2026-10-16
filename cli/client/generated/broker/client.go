@@ -668,7 +668,10 @@ type ExecuteDeleteParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -737,7 +740,10 @@ type ExecuteGetParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -806,7 +812,10 @@ type ExecuteHeadParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -875,7 +884,10 @@ type ExecuteOptionsParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -944,7 +956,10 @@ type ExecutePatchParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -1013,7 +1028,10 @@ type ExecutePostParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
@@ -1082,7 +1100,10 @@ type ExecutePutParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
 	// (`pinned_revisions` field on the control plane).
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
