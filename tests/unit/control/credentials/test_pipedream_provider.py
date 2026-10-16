@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import os
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -271,6 +271,10 @@ async def test_refresh_fetches_access_token_for_account() -> None:
 
     assert result.access_token == "vendor-at-live"
     assert result.expires_at is not None
+    # True vendor expiry: the skew is applied by the broker's refresher, not here.
+    assert abs(result.expires_at - (datetime.now(UTC) + timedelta(seconds=3600))) < timedelta(
+        seconds=5
+    )
 
 
 @pytest.mark.asyncio()

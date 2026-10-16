@@ -53,6 +53,8 @@ class OAuthToken(AuditableMixin, ControlBase):
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # The access token's true vendor-reported expiry; never pre-skewed. The
+    # broker's refresher applies the provider's expiry skew at comparison time.
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_refreshed: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -6,7 +6,7 @@ import base64
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -190,6 +190,10 @@ async def test_complete_connect_exchanges_code() -> None:
     assert result.refresh_token == "rt_fresh"
     assert result.scope == "read write"
     assert result.expires_at is not None
+    # True vendor expiry: the skew is applied by the broker's refresher, not here.
+    assert abs(result.expires_at - (datetime.now(UTC) + timedelta(seconds=3600))) < timedelta(
+        seconds=5
+    )
     assert result.provider_account_ref is None
 
 
@@ -278,6 +282,10 @@ async def test_refresh_exchanges_refresh_token() -> None:
     assert result.access_token == "at_rotated"
     assert result.refresh_token == "rt_rotated"
     assert result.expires_at is not None
+    # True vendor expiry: the skew is applied by the broker's refresher, not here.
+    assert abs(result.expires_at - (datetime.now(UTC) + timedelta(seconds=7200))) < timedelta(
+        seconds=5
+    )
 
 
 @pytest.mark.asyncio()

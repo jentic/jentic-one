@@ -942,6 +942,8 @@ class DirectOAuth2ProviderConfig(BaseModel):
     # can't see, and only if it differs from ``server.public_base_url``.
     redirect_uri: str | None = None
     default_scopes: list[str] = Field(default_factory=list)
+    # How long before an access token's true expiry the broker refreshes it.
+    # Applied once, at comparison time; stored ``expires_at`` is never skewed.
     expiry_skew_seconds: int = 60
     # Extra query params appended to every authorize URL.
     #
@@ -984,6 +986,8 @@ class PipedreamProviderConfig(BaseModel):
     client_id: str
     client_secret: SecretStr
     connect_base_url: str = "https://api.pipedream.com/v1"
+    # How long before an access token's true expiry the broker refreshes it.
+    # Applied once, at comparison time; stored ``expires_at`` is never skewed.
     expiry_skew_seconds: int = 60
 
 

@@ -145,9 +145,9 @@ class PipedreamProvider:
         if "expires_at" in token_data:
             expires_at = datetime.fromtimestamp(int(token_data["expires_at"]), tz=UTC)
         elif "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"]) - self._expiry_skew_seconds
-            )
+            # True expiry, like the ``expires_at`` branch; the broker's
+            # refresher applies ``expiry_skew_seconds`` at comparison time.
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
 
         return RefreshResult(
             access_token=token_data["access_token"],

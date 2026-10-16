@@ -46,6 +46,17 @@ __all__ = [
 ]
 
 
+def _true_expiry(token_data: dict[str, str]) -> datetime | None:
+    """The access token's true expiry from an RFC 6749 ``expires_in`` response.
+
+    No safety margin is subtracted: the broker's refresher applies
+    ``expiry_skew_seconds`` once, at comparison time.
+    """
+    if "expires_in" not in token_data:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
+
+
 class DirectOAuth2Provider(OAuth2Provider):
     """Provider for direct OAuth2 credentials (platform is the OAuth2 client)."""
 
@@ -208,11 +219,7 @@ class DirectOAuth2Provider(OAuth2Provider):
             redirect_uri=redirect_uri,
         )
 
-        expires_at = None
-        if "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"]) - self._expiry_skew_seconds
-            )
+        expires_at = _true_expiry(token_data)
 
         return ProvisionResult(
             access_token=token_data.get("access_token"),
@@ -240,11 +247,7 @@ class DirectOAuth2Provider(OAuth2Provider):
             refresh_token=refresh_token_value,
         )
 
-        expires_at = None
-        if "expires_in" in token_data:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(token_data["expires_in"]) - self._expiry_skew_seconds
-            )
+        expires_at = _true_expiry(token_data)
 
         return RefreshResult(
             access_token=token_data["access_token"],
