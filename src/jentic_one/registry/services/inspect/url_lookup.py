@@ -138,10 +138,11 @@ class URLLookupService:
         row first, newest draft first within each — so a caller can pick the
         first one it may act on.
 
-        One statement reads at most ``MAX_CANDIDATES`` rows. When more match,
-        the set is truncated and its order no longer says which draft is
-        best, so the answer is the empty list rather than a guess. It never
-        raises the lookup errors (ambiguity, too many candidates).
+        One statement returns at most ``MAX_CANDIDATES`` rows (the cap bounds
+        the result, not the rows the database reads). When more match, the
+        set is truncated and its order no longer says which draft is best,
+        so the answer is the empty list rather than a guess. It never raises
+        the lookup errors (ambiguity, too many candidates).
         """
         request = _parse_request(url, method)
         rows = await UrlIndexRepository.lookup_draft_candidates(
