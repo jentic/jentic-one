@@ -23,7 +23,12 @@ service:
 # Extra environment variables injected into the broker container as name/value
 # pairs. Used (e.g.) to point the HuggingFace / sentence-transformers cache at a
 # writable path, since the container runs as a non-root user whose $HOME does
-# not exist.
+# not exist. To serve from several uvicorn worker processes per pod, set
+# JENTIC__SERVER__WORKERS (and raise resources.limits.cpu to match); see the
+# "Scaling and HA" section of docs/installation/helm.md for the per-process
+# caveats.
+#   extraEnv:
+#     JENTIC__SERVER__WORKERS: "4"
 extraEnv: {}
 
 # Hardened by default, per docs/security/README.md. Both blocks are values so a

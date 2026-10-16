@@ -2021,3 +2021,109 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+# --- server.workers -----------------------------------------------------------
+
+_SHARED_SECRETS_ENV = {
+    key: f"workers-test-{key.lower()}-0123456789abcdef"
+    for key in (
+        "JENTIC__ADMIN__AUTH__JWT_SECRET",
+        "JENTIC__ADMIN__INVITE__PEPPER",
+        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET",
+    )
+}
+
+
+def test_server_workers_defaults_to_one(config_file: Path):
+    assert load_config(config_file).server.workers == 1
+
+
+def test_server_workers_yaml_and_env_override(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["server"] = {"workers": 3}
+    path = tmp_path / "jentic-one.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with patch.dict(os.environ, _SHARED_SECRETS_ENV, clear=False):
+        assert load_config(path).server.workers == 3
+        with patch.dict(os.environ, {"JENTIC__SERVER__WORKERS": "4"}, clear=False):
+            assert load_config(path).server.workers == 4
+
+
+@pytest.mark.parametrize("workers", ["0", "-1"])
+def test_server_workers_below_one_rejected(config_file: Path, workers: str):
+    with (
+        patch.dict(os.environ, {"JENTIC__SERVER__WORKERS": workers}, clear=False),
+        pytest.raises(ConfigError, match=r"server\.workers|workers"),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_with_reload_rejected(config_file: Path):
+    env = {**_SHARED_SECRETS_ENV, "JENTIC__SERVER__WORKERS": "2", "JENTIC__SERVER__RELOAD": "true"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="mutually exclusive"),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_one_with_reload_allowed(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__SERVER__RELOAD": "true"}, clear=False):
+        config = load_config(config_file)
+    assert config.server.reload is True
+    assert config.server.workers == 1
+
+
+@pytest.mark.parametrize("sqlite_db", ["registry", "admin", "control"])
+def test_server_workers_with_sqlite_rejected(
+    tmp_path: Path, sample_config_dict: dict[str, Any], sqlite_db: str
+):
+    sample_config_dict["databases"][sqlite_db] = {
+        "backend": "sqlite",
+        "path": str(tmp_path / f"{sqlite_db}.db"),
+    }
+    sample_config_dict["server"] = {"workers": 2}
+    path = tmp_path / "jentic-one.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with (
+        patch.dict(os.environ, _SHARED_SECRETS_ENV, clear=False),
+        pytest.raises(ConfigError, match=rf"requires PostgreSQL.*configured for: {sqlite_db}\."),
+    ):
+        load_config(path)
+
+
+def test_server_workers_one_with_sqlite_allowed(sqlite_stack: Path):
+    config = load_config()
+    assert config.databases.admin.backend == "sqlite"
+    assert config.server.workers == 1
+
+
+def test_server_workers_with_generated_secret_rejected(config_file: Path):
+    """Each worker would mint its own secret, so tokens would not verify across workers."""
+    env = {
+        "JENTIC__ADMIN__INVITE__PEPPER": _SHARED_SECRETS_ENV["JENTIC__ADMIN__INVITE__PEPPER"],
+        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": _SHARED_SECRETS_ENV[
+            "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET"
+        ],
+        "JENTIC__SERVER__WORKERS": "2",
+    }
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"requires admin\.auth\.jwt_secret to be configured"),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_ignores_secrets_the_surface_never_reads(config_file: Path):
+    """A broker reads none of the guarded secrets, so their per-process values are harmless."""
+    env = {"JENTIC__APPS": "broker", "JENTIC__SERVER__WORKERS": "4"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.workers == 4
+
+
+def test_server_workers_with_configured_secrets_allowed(config_file: Path):
+    env = {**_SHARED_SECRETS_ENV, "JENTIC__SERVER__WORKERS": "2"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.workers == 2

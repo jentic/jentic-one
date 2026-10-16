@@ -143,6 +143,7 @@ HTTP server settings.
 | `server.host` | string | `"0.0.0.0"` | `JENTIC__SERVER__HOST` |  |
 | `server.port` | integer | `8000` | `JENTIC__SERVER__PORT` |  |
 | `server.reload` | boolean | `false` | `JENTIC__SERVER__RELOAD` |  |
+| `server.workers` | integer (>= 1) | `1` | `JENTIC__SERVER__WORKERS` | Number of uvicorn worker processes `python -m jentic_one` serves with. Each worker is a separate process that re-loads config from the config file and environment and runs its own lifespan: DB pools, admission limits, caches, in-memory rate limits and Prometheus metrics are per process. Values above 1 require PostgreSQL for every database and are incompatible with `server.reload`. |
 | `server.backend` | "local" \| "remote" | `"local"` | `JENTIC__SERVER__BACKEND` |  |
 | `server.mcp.enabled` | boolean | `false` | `JENTIC__SERVER__MCP__ENABLED` |  |
 | `server.mcp.broker_url` | string | `"http://127.0.0.1:8100"` | `JENTIC__SERVER__MCP__BROKER_URL` |  |

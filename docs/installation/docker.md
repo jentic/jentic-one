@@ -97,7 +97,9 @@ databases:
 server:
   host: "0.0.0.0"
   port: 8000
-
+  # uvicorn worker processes per container (default 1 = one CPU core).
+  # PostgreSQL only; see docs/architecture/composition-and-processes.md.
+  # workers: 4
 # The app's public base URL — issued OAuth/OIDC token iss/aud and connect
 # redirect URIs are derived from it.
 auth:

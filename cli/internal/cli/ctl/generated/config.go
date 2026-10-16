@@ -2287,6 +2287,14 @@ type ServerConfig struct {
 
 	// Reload corresponds to the JSON schema field "reload".
 	Reload bool `json:"reload,omitempty,omitzero" yaml:"reload,omitempty" mapstructure:"reload,omitempty"`
+
+	// Number of uvicorn worker processes ``python -m jentic_one`` serves with. Each
+	// worker is a separate process that re-loads config from the config file and
+	// environment and runs its own lifespan: DB pools, admission limits, caches,
+	// in-memory rate limits and Prometheus metrics are per process. Values above 1
+	// require PostgreSQL for every database and are incompatible with
+	// ``server.reload``.
+	Workers int `json:"workers,omitempty,omitzero" yaml:"workers,omitempty" mapstructure:"workers,omitempty"`
 }
 
 type ServerConfigBackend string
@@ -2344,6 +2352,12 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["reload"]; !ok || v == nil {
 		plain.Reload = false
+	}
+	if v, ok := raw["workers"]; !ok || v == nil {
+		plain.Workers = 1
+	}
+	if 1 > plain.Workers {
+		return fmt.Errorf("field %s: must be >= %v", "workers", 1)
 	}
 	*j = ServerConfig(plain)
 	return nil

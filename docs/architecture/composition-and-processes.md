@@ -12,13 +12,14 @@ python -m jentic_one
        └─ Context(config, allowed_dbs=…)      # DB gate computed from JENTIC__APPS
             └─ wiring.build_default_container(ctx)   # cross-surface seams
                  └─ app factory                       # per-surface or combined
-                      └─ uvicorn.run(app)
+                      └─ uvicorn.run(app)             # server.workers: 1 (default)
 ```
 
 - **`__main__.py`** owns process concerns: config loading, observability
-  setup, the `create-admin` first-run subcommand, and the guard that disables
+  setup, the `create-admin` first-run subcommand, the guard that disables
   `server.reload` on a SQLite admin DB (a single-file DB cannot take multiple
-  writer processes).
+  writer processes), and the multi-worker launch (see
+  [Multiple worker processes](#multiple-worker-processes-serverworkers)).
 - **`Context`** ([`shared/context.py`](../../src/jentic_one/shared/context.py)) carries config plus lazily-opened
   database handles, gated by `allowed_dbs` (below).
 - **`wiring.py`** is the composition root (see
@@ -105,6 +106,87 @@ flowchart TB
   replicas. The redis client is an optional extra
   (`pip install jentic-one[redis]`), not part of the published container
   image — scaling out on that image means building your own with the extra.
+
+## Multiple worker processes (`server.workers`)
+
+By default `python -m jentic_one` serves from one process, so a broker (or
+app) container uses at most one CPU core. Set `server.workers`
+(`JENTIC__SERVER__WORKERS`) above 1 to have uvicorn run that many worker
+processes behind one listening socket:
+
+```
+python -m jentic_one          # supervisor: load_config() + validation only
+  └─ uvicorn.run("jentic_one.__main__:create_app", factory=True, workers=N)
+       ├─ worker 1: create_app() → load_config() → Context → app → lifespan
+       ├─ worker 2: …
+       └─ worker N: …
+```
+
+The supervisor builds no app. Each worker is a spawned process that re-imports
+`jentic_one.__main__` and builds its own app through `create_app`, re-loading
+config from the config file (`JENTIC_CONFIG_FILE`) and `JENTIC__*` environment
+it inherits. Config therefore has to be re-readable: nothing set in the
+supervisor's memory reaches a worker. The bind (`server.host` /
+`server.port`) is the same in both modes; no other uvicorn option is set.
+
+What `server.workers > 1` refuses, and why:
+
+| Refused | Where | Why |
+| ------- | ----- | --- |
+| Any database on the `sqlite` backend | config validation | One SQLite file serialises writers behind a single lock; N processes of request handlers and job pollers contend into `database is locked`, and an in-memory SQLite DB is not shared at all. Use PostgreSQL. |
+| `server.reload: true` | config validation | uvicorn's reloader supervises exactly one worker. |
+| An unset `admin.auth.jwt_secret`, `admin.invite.pepper` or `credentials.connect.state_secret` that a surface of the process reads | config validation | Outside production an unset secret is generated per process, so each worker would mint its own: a session JWT, invite token or connect `state` signed by one worker would fail on the next. A broker reads none of the three, so it is not affected. |
+| A one-shot config source (`JENTIC_CONFIG_FILE` on a pipe or `/dev/fd`) | `_serve`, before workers start | The supervisor drained it; the workers cannot re-read it. |
+
+Each worker runs the full lifespan, so everything a process owns is
+multiplied by N. That is the same model as running N replicas with one
+worker each, and these are its consequences:
+
+- **Background loops run in every worker.** Each worker's `WorkerLoop`
+  polls for jobs. Claiming is safe under concurrent pollers on PostgreSQL:
+  the claim is a single `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP
+  LOCKED LIMIT 1) RETURNING`, so two pollers never claim the same job
+  and a job left `RUNNING` by a dead worker is reclaimed after its
+  visibility deadline. The scanners are already replica-safe: the
+  credential-expiry scanner dedupes on persistent markers, the connect-poll
+  scanner leases rows with `SKIP LOCKED`, and the catalog update scanner
+  de-phases its sweeps (a rare duplicate `catalog.update_available` event is
+  tolerated, as it is across replicas). With telemetry on, every worker
+  emits its own `instance_booted` event, so one start reports N boots.
+- **Metrics are per process.** There is no multiprocess aggregation. With
+  `observability.metrics.exporter: prometheus`, a `/metrics/` scrape is
+  answered by whichever worker accepts the connection and shows only that
+  worker's series, so counters appear to jump between scrapes (the
+  supervisor logs `prometheus_metrics_per_worker` at start). Use the `otlp`
+  exporter (the OpenTelemetry SDK gives each process its own
+  `service.instance.id`, so worker series stay distinct at the collector),
+  or run one worker per container and scale replicas.
+- **Limits and pools are per process.** `broker.resilience.max_in_flight`,
+  the readiness saturation threshold, the outbound HTTP pool and each
+  database's `pool_max` apply per worker: a broker with
+  `server.workers: 4` admits 4× `max_in_flight` and opens up to
+  4× `pool_max` connections to each database. Size PostgreSQL's
+  `max_connections` (or a pooler) for it.
+- **In-memory state is per process.** On the default `memory` shared-state
+  backend, broker rate limits, circuit breakers and `Idempotency-Key`
+  replay, and the auth surface's OAuth rate limits and consent anti-replay,
+  are held per worker (the supervisor logs
+  `shared_state_backend_memory_per_worker`): limits multiply by N and a
+  replayed key can reach a worker that has not seen it. Set
+  `broker.resilience.backend.backend: redis` to share them. A few limiters
+  are memory-only by design and stay per worker even on Redis: the
+  connect-flow per-actor limit (route and MCP tool), the MCP registration
+  throttle, and the JWT-bearer assertion `jti` replay cache.
+- **Caches are per process.** The broker's token/API-key resolve cache,
+  its credential-derivation and rule caches, and their single-flight
+  coalescing are per worker, so a cold miss costs up to one lookup per
+  worker and a revocation is bounded by each worker's cache TTL — the
+  same as across replicas. The DB-backed provider registry is refreshed
+  only in the worker that served the admin write (see `Context.refresh_providers`);
+  other workers pick up a changed provider config on their next restart.
+- **What is shared.** Anything in the database: job claims, login lockout
+  (`failed_login_count` / `locked_until`), tokens, sessions and audit.
+  MCP's `/mcp` endpoint is stateless, so it needs no session affinity.
 
 ## Lifespan ordering
 

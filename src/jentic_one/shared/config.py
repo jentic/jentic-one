@@ -91,10 +91,21 @@ def _secret_required_by_enabled_apps(field_path: str) -> bool:
     apps = _ENABLED_APPS.get()
     if apps is None:
         return True
+    return _secret_read_by(field_path, apps)
+
+
+def _secret_read_by(field_path: str, apps: frozenset[str]) -> bool:
+    """True unless the surfaces ``apps`` provably never read ``field_path``."""
     consumers = GUARDED_FIELD_SURFACES.get(field_path)
     if consumers is None or not apps <= _KNOWN_SURFACES:
         return True
     return bool(apps & consumers)
+
+
+def _is_generated_secret(field_path: str, value: SecretStr) -> bool:
+    """True when ``value`` is the per-process secret this process minted for ``field_path``."""
+    generated = _EPHEMERAL_DEV_SECRETS.get(field_path)
+    return generated is not None and generated.get_secret_value() == value.get_secret_value()
 
 
 def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
@@ -112,9 +123,11 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
       boots with zero configuration. Cached per ``field_path`` so repeated
       loads in one process agree; deliberately NOT persisted, so restarts
       rotate it (dev sessions ending on restart beats shipping a known key).
-      Per-process means multi-process dev setups (standalone surfaces,
-      ``--workers > 1``) each mint their own value; each secret is consumed
-      only by its own surface, so a shared value is never assumed.
+      Per-process means multi-process dev setups (standalone surfaces) each
+      mint their own value; each secret is consumed only by its own surface,
+      so a shared value is never assumed. Several workers of one surface do
+      share every secret, so ``server.workers > 1`` refuses a generated value
+      for any secret its surfaces read (``AppConfig``).
 
     Production requires a value only when a surface this process runs reads
     the secret (``GUARDED_FIELD_SURFACES``, keyed off the ``apps`` being loaded): a
@@ -1945,6 +1958,18 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False
+    workers: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of uvicorn worker processes ``python -m jentic_one`` serves "
+            "with. Each worker is a separate process that re-loads config from "
+            "the config file and environment and runs its own lifespan: DB pools, "
+            "admission limits, caches, in-memory rate limits and Prometheus "
+            "metrics are per process. Values above 1 require PostgreSQL for every "
+            "database and are incompatible with ``server.reload``."
+        ),
+    )
     backend: Literal["local", "remote"] = "local"
     """Self-declared backend locality surfaced by ``GET /instance``: ``local`` for
     a self-hosted install on the operator's own machine/network, ``remote`` for a
@@ -1971,6 +1996,17 @@ class ServerConfig(BaseModel):
     see (reverse proxy, ingress, port mapping)."""
 
     _normalize_public_base_url = field_validator("public_base_url")(_normalize_optional_base_url)
+
+    @model_validator(mode="after")
+    def _reload_is_single_worker(self) -> ServerConfig:
+        """uvicorn's reloader supervises exactly one worker; it cannot run several."""
+        if self.reload and self.workers > 1:
+            raise ValueError(
+                "server.reload and server.workers > 1 are mutually exclusive: the "
+                "reloader runs a single worker process. Disable reload or set "
+                "server.workers to 1."
+            )
+        return self
 
 
 class TelemetryConfig(BaseModel):
@@ -2181,6 +2217,31 @@ class AppConfig(BaseModel):
     extensions: dict[str, BaseModel] = Field(default_factory=dict)
 
     @model_validator(mode="after")
+    def _multi_worker_requires_postgres(self) -> AppConfig:
+        """Reject ``server.workers > 1`` when any database is SQLite.
+
+        A SQLite database is one file that serialises writers behind a single
+        lock; several worker processes writing to it (request handlers plus each
+        worker's job poller) contend into ``database is locked`` errors, and an
+        in-memory SQLite database is not shared between processes at all.
+        """
+        if self.server.workers <= 1:
+            return self
+        sqlite_dbs = [
+            name
+            for name in ("registry", "admin", "control")
+            if getattr(self.databases, name).backend == "sqlite"
+        ]
+        if sqlite_dbs:
+            raise ValueError(
+                f"server.workers={self.server.workers} requires PostgreSQL, but the "
+                f"sqlite backend is configured for: {', '.join(sqlite_dbs)}. SQLite "
+                "does not support concurrent writer processes. Set server.workers "
+                "to 1 or move these databases to PostgreSQL."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _ensure_spa_platform_client(self) -> AppConfig:
         """Register the operator SPA as a platform client when config omits it.
 
@@ -2214,6 +2275,37 @@ class AppConfig(BaseModel):
                 # public_base_url; ``_serve`` warns via has_spa_platform_client.
                 return self
             self.auth.platform_clients.append(spa_client)
+        return self
+
+    @model_validator(mode="after")
+    def _multi_worker_requires_shared_secrets(self) -> AppConfig:
+        """Reject ``server.workers > 1`` with a generated per-process dev secret.
+
+        Each worker process loads config itself, so a secret minted at load time
+        differs between workers: a session JWT, invite token or connect
+        ``state`` signed by one worker fails verification on the next. Only
+        secrets a surface of this process reads are checked.
+        """
+        if self.server.workers <= 1:
+            return self
+        resolved = {
+            "admin.auth.jwt_secret": self.admin.auth.jwt_secret,
+            "admin.invite.pepper": self.admin.invite.pepper,
+            "credentials.connect.state_secret": self.credentials.connect.state_secret,
+        }
+        apps = frozenset(self.apps)
+        generated = [
+            field_path
+            for field_path, value in resolved.items()
+            if _is_generated_secret(field_path, value) and _secret_read_by(field_path, apps)
+        ]
+        if generated:
+            raise ValueError(
+                f"server.workers={self.server.workers} requires {', '.join(generated)} "
+                "to be configured explicitly: an unset secret is generated per process, "
+                "so the workers would not share it and tokens signed by one worker "
+                "would fail on another."
+            )
         return self
 
     def extension(self, name: str) -> BaseModel | None:

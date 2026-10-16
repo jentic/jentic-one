@@ -114,7 +114,11 @@ exporter itself is not Helm-specific: setting
 `observability.metrics.exporter: prometheus` mounts `/metrics` on every
 surface on any install shape — scrape it as **`/metrics/`** (with the
 trailing slash; the bare path answers with a 307 redirect some scrapers
-won't follow). Anonymous product telemetry is gated by `telemetry.enabled`:
+won't follow). With `server.workers` above 1 each worker process keeps its
+own registry and there is no multiprocess aggregation, so a scrape reports
+only the worker that answered it — use the `otlp` exporter there
+([composition-and-processes.md](../architecture/composition-and-processes.md#multiple-worker-processes-serverworkers)).
+Anonymous product telemetry is gated by `telemetry.enabled`:
 off when the block is omitted, on in the shipped install examples — set it to
 `false` to opt out. The OTel exporters default
 to `otlp` targeting a local collector; without one, nothing is delivered

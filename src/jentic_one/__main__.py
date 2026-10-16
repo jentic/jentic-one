@@ -28,6 +28,7 @@ from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatt
 from jentic_one.registry.services.api_path_shapes import RegistryApiPathShapeReader
 from jentic_one.shared.config import (
     AppConfig,
+    ConfigError,
     broker_links_root_on_broker,
     check_public_url_consistency,
     has_spa_platform_client,
@@ -38,6 +39,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
+from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
@@ -83,6 +85,10 @@ SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}
 # surface that is not handed the credential keyset (standalone registry) it
 # cannot decrypt the stored client secrets at all.
 PROVIDER_REGISTRY_SURFACES: frozenset[str] = frozenset({"control", "broker"})
+
+# uvicorn import string for ``create_app``; reload and multi-worker processes
+# build their app from it.
+_FACTORY_IMPORT_STRING = "jentic_one.__main__:create_app"
 
 
 def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
@@ -153,10 +159,11 @@ def _service_name() -> str:
 
 
 def create_app() -> FastAPI:
-    """Factory entry point for uvicorn (used with `factory=True` for reload mode).
+    """Factory entry point for uvicorn (``factory=True``: reload and multi-worker modes).
 
-    Loads configuration from the environment on each invocation so reload
-    workers pick up the same settings as the parent process.
+    Loads configuration from the config file and environment on each
+    invocation, so every reload or ``server.workers`` process picks up the same
+    settings as the parent process.
     """
     config = load_config()
     configure_logging(config)
@@ -172,8 +179,9 @@ def _serve() -> None:
     config = load_config()
     # Configure logging up front so any startup warnings below (URL-consistency,
     # SQLite-reload) are emitted in the standard structured format. The reload
-    # branch re-execs into uvicorn factory workers that configure their own
-    # logging; the single-process path skips re-configuring since it's done here.
+    # and multi-worker branches spawn uvicorn factory workers that configure
+    # their own logging; the single-process path skips re-configuring since it's
+    # done here.
     configure_logging(config)
     logger = structlog.get_logger(__name__)
 
@@ -277,11 +285,63 @@ def _serve() -> None:
 
     if reload_enabled:
         uvicorn.run(
-            "jentic_one.__main__:create_app",
+            _FACTORY_IMPORT_STRING,
             host=config.server.host,
             port=config.server.port,
             reload=True,
             factory=True,
+        )
+        return
+
+    workers = config.server.workers
+    if workers > 1:
+        # Each uvicorn worker is a spawned process that re-imports this module
+        # and builds its own app through ``create_app``, re-loading config from
+        # the config file and environment it inherits. A one-shot source was
+        # drained here and cannot be re-read by the workers, so refuse rather
+        # than hang every worker's boot. (SQLite databases, generated
+        # per-process secrets and ``server.reload`` are rejected when the
+        # config loads.)
+        if oneshot_config_source_active():
+            raise ConfigError(
+                f"server.workers={workers} needs a config source each worker process "
+                "can re-read, but the config came from a one-shot source (pipe / "
+                "/dev/fd). Point JENTIC_CONFIG_FILE at a regular file, or set "
+                "server.workers to 1."
+            )
+        logger.info("uvicorn_multi_worker_start", workers=workers)
+        if config.observability.metrics.exporter == "prometheus":
+            logger.warning(
+                "prometheus_metrics_per_worker",
+                workers=workers,
+                detail=(
+                    "each worker process keeps its own Prometheus registry and there "
+                    "is no multiprocess aggregation, so a /metrics/ scrape reports "
+                    "only the worker that answered it. Use the otlp exporter (the "
+                    "OpenTelemetry SDK stamps each worker with its own "
+                    "service.instance.id), or run one worker per container and "
+                    "scale replicas."
+                ),
+            )
+        if config.broker.resilience.backend.backend is BackendKind.MEMORY:
+            logger.warning(
+                "shared_state_backend_memory_per_worker",
+                workers=workers,
+                detail=(
+                    "broker.resilience.backend.backend is 'memory', so rate limits, "
+                    "circuit breakers, Idempotency-Key replay and the auth surface's "
+                    "OAuth rate limits and consent anti-replay are per worker process: "
+                    "limits multiply by the worker count and a replayed key can reach "
+                    "a worker that has not seen it. Configure the redis backend to "
+                    "share them."
+                ),
+            )
+        uvicorn.run(
+            _FACTORY_IMPORT_STRING,
+            host=config.server.host,
+            port=config.server.port,
+            factory=True,
+            workers=workers,
         )
         return
 

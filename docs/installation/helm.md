@@ -471,6 +471,15 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   the redis backend on that image crash-loops every replica at startup. On
   the published image today, keep `broker.replicas: 1`; scaling out means
   building your own image with the `[redis]` extra.
+- **Worker processes** — a pod serves from one uvicorn process (one CPU
+  core) by default. To use more cores per pod, set `server.workers` through
+  the subchart's `extraEnv` (`JENTIC__SERVER__WORKERS: "4"`) and raise its
+  CPU limit to match. Each worker is a separate process with its own
+  admission limit, database pools, caches and in-memory state, so the
+  Redis and `postgresql.maxConnections` rules above apply per worker as
+  they do per replica, and Prometheus metrics are per worker (prefer the
+  `otlp` exporter). Requires PostgreSQL. Details:
+  [composition-and-processes.md](../architecture/composition-and-processes.md#multiple-worker-processes-serverworkers).
 - **App** — the same shared-state backend also carries the auth surface's
   OAuth rate limiters and consent-nonce anti-replay, so the same rule
   applies: keep `app.replicas: 1` on the `memory` backend; configure Redis

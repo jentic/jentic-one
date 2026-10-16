@@ -1519,6 +1519,13 @@
           "default": false,
           "title": "Reload",
           "type": "boolean"
+        },
+        "workers": {
+          "default": 1,
+          "description": "Number of uvicorn worker processes ``python -m jentic_one`` serves with. Each worker is a separate process that re-loads config from the config file and environment and runs its own lifespan: DB pools, admission limits, caches, in-memory rate limits and Prometheus metrics are per process. Values above 1 require PostgreSQL for every database and are incompatible with ``server.reload``.",
+          "minimum": 1,
+          "title": "Workers",
+          "type": "integer"
         }
       },
       "title": "ServerConfig",

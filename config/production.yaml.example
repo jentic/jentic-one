@@ -46,6 +46,12 @@ server:
   host: 0.0.0.0
   port: 8000
   reload: false
+  # uvicorn worker processes for this container (default 1, i.e. one CPU core).
+  # Above 1 requires PostgreSQL, reload off, and the admin/invite/connect
+  # secrets set explicitly; limits, caches, in-memory rate limits and
+  # Prometheus metrics become per process (use the redis state backend and
+  # the otlp exporter). See docs/architecture/composition-and-processes.md.
+  # workers: 4
   # THE public origin of this deployment (scheme + host [+ port] as clients
   # reach it, e.g. behind your load balancer / ingress). This one knob drives
   # the control/auth surfaces' externally-visible URLs: OAuth connect

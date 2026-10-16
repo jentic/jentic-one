@@ -72,6 +72,10 @@ services:
     environment:
       JENTIC_CONFIG_FILE: /etc/jentic/production.yaml
       JENTIC__APPS: broker
+      # One uvicorn worker uses one CPU core. Raise this to serve from several
+      # worker processes (PostgreSQL only; limits, caches and pools are per
+      # worker — see docs/architecture/composition-and-processes.md).
+      # JENTIC__SERVER__WORKERS: "4"
     ports: ["127.0.0.1:8100:8000"]
     restart: unless-stopped
     healthcheck: *healthcheck
