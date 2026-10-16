@@ -716,6 +716,66 @@ async def test_broker_resolve_failure_is_a_coded_soft_error(
     assert payload["next_tool"] == want_tool
 
 
+_DRAFT_PIN = "acme:widgets:1.0.0=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+_PROMOTE = "jentic apis promote acme/widgets/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+
+
+def _draft_only_problem(pin: str) -> dict[str, Any]:
+    """The broker's draft-only 404 (#1721); ``pin`` is the offered pin or ``""``."""
+    directive: dict[str, Any] = {
+        "strategy": "prompt_human",
+        "parameters": {"suggested_command": _PROMOTE},
+        "human_readable_instruction": "Ask your operator to promote it.",
+    }
+    if pin:
+        directive = {
+            "strategy": "modify_headers",
+            "parameters": {"headers": {"Jentic-Revision": pin}},
+            "human_readable_instruction": "Resend with the pin.",
+        }
+    return {
+        "type": "operation_not_found",
+        "title": "Operation not found — only a draft serves this URL",
+        "draft_revision": {
+            "api": {"vendor": "acme", "name": "widgets", "version": "1.0.0"},
+            "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+            "state": "draft",
+            "promoted": False,
+        },
+        "agent_directive": directive,
+    }
+
+
+@pytest.mark.parametrize(
+    ("pin", "want_tool", "want_actionable"),
+    [
+        (_DRAFT_PIN, "execute", f"(Jentic-Revision: {_DRAFT_PIN})"),
+        # get_started is not served on this mount, so the lane filter drops it.
+        ("", None, f"Ask an operator to promote it (`{_PROMOTE}`)"),
+    ],
+)
+async def test_draft_only_404_relays_the_directive(
+    broker, pin: str, want_tool: str | None, want_actionable: str
+) -> None:
+    """#1721 (Go: TestMCPExecute_DraftOnly404RelaysTheDirective): a 404 naming a
+    draft relays the verbatim agent_directive and details.draft_revision, and
+    its recovery is the pin or a promotion — never search_apis."""
+    body = _draft_only_problem(pin)
+    broker(lambda request: _broker_problem(404, body))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload.get("next_tool") == want_tool
+    assert want_actionable in payload["actionable_step"]
+    assert "search_apis" not in payload["actionable_step"]
+    assert payload["agent_directive"] == body["agent_directive"]
+    assert payload["details"]["draft_revision"] == body["draft_revision"]
+    assert "agent_directive" not in payload["details"]
+
+
 async def test_broker_resolve_failure_surfaces_validation_errors(broker) -> None:
     """The broker's validation 422 (broker/web/errors.handle_validation) carries
     its field errors in ``errors`` under a generic title; the reason must name

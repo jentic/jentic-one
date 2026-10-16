@@ -1259,6 +1259,71 @@ func TestMCPExecute_BrokerResolveFailureIsError(t *testing.T) {
 	}
 }
 
+// draftOnlyBrokerBody is the broker's draft-only 404 (#1721); pin is the offered
+// Jentic-Revision value, or "" for the prompt_human (promote) variant.
+func draftOnlyBrokerBody(pin string) string {
+	directive := `{"strategy":"prompt_human","parameters":{"suggested_command":"jentic apis promote acme/widgets/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"human_readable_instruction":"Ask your operator to promote it."}`
+	if pin != "" {
+		directive = `{"strategy":"modify_headers","parameters":{"headers":{"Jentic-Revision":"` + pin + `"}},"human_readable_instruction":"Resend with the pin."}`
+	}
+	return `{"type":"operation_not_found","title":"Operation not found — only a draft serves this URL","status":404,` +
+		`"draft_revision":{"api":{"vendor":"acme","name":"widgets","version":"1.0.0"},"revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","state":"draft","promoted":false},` +
+		`"agent_directive":` + directive + `}`
+}
+
+// TestMCPExecute_DraftOnly404RelaysTheDirective pins #1721 on the MCP twin: a
+// 404 naming a draft relays the verbatim agent_directive as a top-level sibling
+// and details.draft_revision, and points at execute (resend with the pin) or
+// get_started (a human must promote) — never search_apis.
+func TestMCPExecute_DraftOnly404RelaysTheDirective(t *testing.T) {
+	pin := "acme:widgets:1.0.0=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+	cases := []struct {
+		name, body, wantNext, wantActionable string
+	}{
+		{"pin offered", draftOnlyBrokerBody(pin), "execute", "(Jentic-Revision: " + pin + ")"},
+		{"promotion needed", draftOnlyBrokerBody(""), "get_started", "Ask an operator to promote it (`jentic apis promote"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("handleExecute: %v", err)
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != ux.CodeResolveFailed {
+				t.Fatalf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
+			}
+			if payload["next_tool"] != tc.wantNext {
+				t.Errorf("next_tool = %v, want %q", payload["next_tool"], tc.wantNext)
+			}
+			actionable, _ := payload["actionable_step"].(string)
+			if !strings.Contains(actionable, tc.wantActionable) || strings.Contains(actionable, "search_apis") {
+				t.Errorf("actionable_step = %q, want %q and no search_apis", actionable, tc.wantActionable)
+			}
+			if _, ok := payload["agent_directive"].(map[string]any); !ok {
+				t.Errorf("agent_directive = %v, want the broker's directive as a sibling", payload["agent_directive"])
+			}
+			details, _ := payload["details"].(map[string]any)
+			if _, ok := details["draft_revision"].(map[string]any); !ok {
+				t.Errorf("details.draft_revision = %v, want the broker's member", details["draft_revision"])
+			}
+			if _, dup := details["agent_directive"]; dup {
+				t.Errorf("agent_directive must ride as a sibling only, not also in details: %v", details)
+			}
+		})
+	}
+}
+
 // TestMCPExecute_BrokerRateLimitIsNotAResolveFailure pins that a broker 429 is
 // not a RESOLVE_FAILED: it is retryable after Retry-After, so it must not carry
 // retryable=false / "do not retry" advice.

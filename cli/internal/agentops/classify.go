@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -136,11 +137,13 @@ func BrokerError(r *ExecuteResult) *ux.CodedError {
 	// its field errors in `errors` ([{loc, msg}]). `detail` is still read first so
 	// a conformant RFC 9457 body that does set it is honoured.
 	var problem struct {
-		Type       string          `json:"type"`
-		Title      string          `json:"title"`
-		Detail     json.RawMessage `json:"detail"`
-		Errors     json.RawMessage `json:"errors"`
-		Candidates json.RawMessage `json:"candidates"`
+		Type          string          `json:"type"`
+		Title         string          `json:"title"`
+		Detail        json.RawMessage `json:"detail"`
+		Errors        json.RawMessage `json:"errors"`
+		Candidates    json.RawMessage `json:"candidates"`
+		DraftRevision json.RawMessage `json:"draft_revision"`
+		Directive     json.RawMessage `json:"agent_directive"`
 	}
 	_ = json.Unmarshal(r.Body, &problem) // best effort: a non-JSON body falls back to the status text
 	reason := problemReason(problem.Detail, problem.Title, problem.Errors, r.Status)
@@ -156,13 +159,131 @@ func BrokerError(r *ExecuteResult) *ux.CodedError {
 	if candidates != nil {
 		details["candidates"] = candidates
 	}
+	// The draft-only 404 (#1721) names the draft and carries the broker's
+	// pin-or-promote agent_directive: relay both verbatim so the agent can
+	// resend with the pin instead of rediscovering an operation that exists.
+	draft := parseDraftRecovery(problem.Type, problem.DraftRevision, problem.Directive)
+	if draft != nil {
+		details["draft_revision"] = draft.DraftRevision
+		details["agent_directive"] = draft.Directive
+	}
+	rec := BrokerErrorRecoveryFor(r.Status, problem.Type, draft != nil)
+	actionable := brokerErrorActionable(rec, candidates)
+	if rec == RecoverDraft {
+		actionable = draft.CLIActionable()
+	}
 	return &ux.CodedError{
 		Code: ux.CodeResolveFailed,
 		Msg: fmt.Sprintf("the broker could not resolve this call, so it never reached the upstream API (HTTP %d): %s",
 			r.Status, reason),
-		Actionable: brokerErrorActionable(BrokerErrorRecoveryFor(r.Status, problem.Type), candidates),
+		Actionable: actionable,
 		Details:    details,
 	}
+}
+
+// DraftRecovery is the recovery a draft-only 404 carries (Python twin:
+// jentic_one.mcp.execute.DraftRecovery): the broker's draft_revision and
+// agent_directive members verbatim, plus the directive's pin headers when it
+// offered a modify_headers pin.
+type DraftRecovery struct {
+	DraftRevision map[string]any
+	Directive     map[string]any
+	PinHeaders    map[string]string
+}
+
+// parseDraftRecovery reads the draft recovery off an operation_not_found body
+// that names a draft revision, or nil (Python twin: parse_draft_recovery).
+func parseDraftRecovery(problemType string, rawDraft, rawDirective json.RawMessage) *DraftRecovery {
+	if problemType != "operation_not_found" || len(rawDraft) == 0 {
+		return nil
+	}
+	var draft map[string]any
+	if json.Unmarshal(rawDraft, &draft) != nil || draft == nil {
+		return nil
+	}
+	var directive map[string]any
+	if len(rawDirective) == 0 || json.Unmarshal(rawDirective, &directive) != nil || directive == nil {
+		directive = map[string]any{}
+	}
+	return newDraftRecovery(draft, directive)
+}
+
+// DraftRecoveryOf is the draft recovery BrokerError relayed in coded's details,
+// or nil when the resolve failure named no draft revision.
+func DraftRecoveryOf(coded *ux.CodedError) *DraftRecovery {
+	if coded == nil {
+		return nil
+	}
+	draft, _ := coded.Details["draft_revision"].(map[string]any)
+	if draft == nil {
+		return nil
+	}
+	directive, _ := coded.Details["agent_directive"].(map[string]any)
+	if directive == nil {
+		directive = map[string]any{}
+	}
+	return newDraftRecovery(draft, directive)
+}
+
+func newDraftRecovery(draft, directive map[string]any) *DraftRecovery {
+	pins := map[string]string{}
+	if strategy, _ := directive["strategy"].(string); strategy == "modify_headers" {
+		params, _ := directive["parameters"].(map[string]any)
+		headers, _ := params["headers"].(map[string]any)
+		for k, v := range headers {
+			if s, ok := v.(string); ok && s != "" {
+				pins[k] = s
+			}
+		}
+	}
+	return &DraftRecovery{DraftRevision: draft, Directive: directive, PinHeaders: pins}
+}
+
+const draftRecoveryLead = "Only an unpromoted draft revision serves this URL, so the operation is already " +
+	"registered — do not search for another operation or re-import the spec."
+
+// sortedPins renders the pin headers as "Name: value" pairs in key order.
+func (d *DraftRecovery) sortedPins(format string) []string {
+	keys := make([]string, 0, len(d.PinHeaders))
+	for k := range d.PinHeaders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf(format, k, d.PinHeaders[k]))
+	}
+	return out
+}
+
+func (d *DraftRecovery) promoteAsk() string {
+	params, _ := d.Directive["parameters"].(map[string]any)
+	if cmd, _ := params["suggested_command"].(string); cmd != "" {
+		return fmt.Sprintf(" (`%s`)", cmd)
+	}
+	return ""
+}
+
+// ToolActionable is the MCP-lane recovery prose for a draft-only 404, word for
+// word the Python twin's draft_recovery_actionable.
+func (d *DraftRecovery) ToolActionable() string {
+	if len(d.PinHeaders) > 0 {
+		return draftRecoveryLead + " Resend this call once with the header from " +
+			"agent_directive.parameters.headers (" + strings.Join(d.sortedPins("%s: %s"), ", ") +
+			") to call the draft."
+	}
+	return draftRecoveryLead + " Ask an operator to promote it" + d.promoteAsk() + ", then retry this call."
+}
+
+// CLIActionable is the `jentic execute` recovery prose for a draft-only 404:
+// the MCP prose with the pin spelled as the --header flag that sends it.
+func (d *DraftRecovery) CLIActionable() string {
+	if len(d.PinHeaders) > 0 {
+		flags := d.sortedPins("--header '%s=%s'")
+		return draftRecoveryLead + " Re-run this command once adding " + strings.Join(flags, " ") +
+			" (agent_directive.parameters.headers in details) to call the draft."
+	}
+	return draftRecoveryLead + " Ask an operator to promote it" + d.promoteAsk() + ", then retry this call."
 }
 
 // BrokerErrorRecovery names what a broker resolve failure needs fixed. The CLI
@@ -173,6 +294,10 @@ type BrokerErrorRecovery string
 const (
 	// RecoverOperation means no registered operation serves the call — rediscover it.
 	RecoverOperation BrokerErrorRecovery = "operation"
+	// RecoverDraft means only an unpromoted draft revision serves the call — the
+	// operation exists, so resend with the broker's pin or have it promoted;
+	// never rediscover it.
+	RecoverDraft BrokerErrorRecovery = "draft"
 	// RecoverCredential means a Jentic-Credential-Id/Name header named a credential
 	// the broker could not resolve — pick a valid one.
 	RecoverCredential BrokerErrorRecovery = "credential"
@@ -193,12 +318,15 @@ var brokerCredentialProblemTypes = map[string]bool{
 }
 
 // BrokerErrorRecoveryFor routes a broker resolve failure by status and exact
-// problem type: a 404 or operation_not_found is a discovery problem, a known
+// problem type: a 404 that names a draft revision (draft) is a pin-or-promote
+// problem, any other 404 or operation_not_found is a discovery problem, a known
 // credential-resolution type is a header problem, and everything else is a
 // contract problem (never a bare identity check, which cannot fix a malformed
 // request).
-func BrokerErrorRecoveryFor(status int, problemType string) BrokerErrorRecovery {
+func BrokerErrorRecoveryFor(status int, problemType string, draft bool) BrokerErrorRecovery {
 	switch {
+	case draft:
+		return RecoverDraft
 	case status == http.StatusNotFound || problemType == "operation_not_found":
 		return RecoverOperation
 	case brokerCredentialProblemTypes[problemType]:
