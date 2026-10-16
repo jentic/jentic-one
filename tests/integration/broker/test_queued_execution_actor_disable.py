@@ -1,17 +1,18 @@
-"""Integration tests: a queued execution never runs for an actor that is no longer active.
+"""Integration tests: a queued execution never runs for an actor that may no longer execute.
 
 Pins #1138. Each test enqueues an execution job the way the async execute
 route does (``enqueue_job``), changes the enqueuing actor through the real
-``AgentService`` / ``UserService``, then lets the real ``WorkerLoop`` claim
+``AgentService`` / ``UserService`` / ``PermissionService`` (disable, delete,
+or revoke the execute permission), then lets the real ``WorkerLoop`` claim
 the job and run it through ``ExecutionHandler`` wired as the broker lifespan
 wires it: the uncached ``QueuedExecutionAuthorizer``, the live
 ``ActorStatusResolver`` read. The credential-injection and upstream seams are
 recording stand-ins: what is under test is whether the worker reaches them.
 
-The race tests disable the actor *after* the authorizer has allowed the job
+The race tests make the change *after* the authorizer has allowed the job
 and before credentials are resolved — the window the live actor read right
 before injection closes. They call the handler on a session that has not
-written yet (as the worker's does at that point) so the disable can commit on
+written yet (as the worker's does at that point) so the change can commit on
 SQLite too, whose single writer lock the worker's claim transaction would
 otherwise hold.
 """
@@ -22,6 +23,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 import pytest
+import structlog
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
@@ -33,6 +35,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentRepository, UserPermissionGrantRepository, UserRepository
+from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
@@ -41,7 +44,11 @@ from jentic_one.control.core.schema.agent_permission_rules import AgentPermissio
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION, ORG_ADMIN
+from jentic_one.shared.auth.permission_catalog import (
+    APIS_READ,
+    BROKER_EXECUTE_PERMISSION,
+    ORG_ADMIN,
+)
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -101,17 +108,17 @@ class _SpyInjector:
         return InjectedAuth(headers={"X-Api-Key": _SECRET}, query_params={}, cookies={})
 
 
-class _DisablesAfterAuthorizing:
-    """The real authorizer, then a disable that commits before injection runs."""
+class _ChangesAfterAuthorizing:
+    """The real authorizer, then an actor change that commits before injection runs."""
 
-    def __init__(self, inner: ExecutionAuthorizer, disable: Callable[[], Awaitable[None]]) -> None:
+    def __init__(self, inner: ExecutionAuthorizer, change: Callable[[], Awaitable[None]]) -> None:
         self._inner = inner
-        self._disable = disable
+        self._change = change
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         verdict = await self._inner.authorize(request)
         assert verdict.allowed, verdict.problem
-        await self._disable()
+        await self._change()
         return verdict
 
 
@@ -216,24 +223,57 @@ async def _bind_credential(ctx: Context, actor_id: str) -> str:
     return credential_id
 
 
-async def _seed_actor(ctx: Context, actor_type: ActorType) -> str:
-    """An active, credential-bound actor of ``actor_type`` that may execute GET."""
+async def _seed_actor(
+    ctx: Context, actor_type: ActorType, *, user_permissions: set[str] | None = None
+) -> str:
+    """An active, credential-bound actor of ``actor_type`` that may execute GET.
+
+    A user holds ``user_permissions`` (default: just the execute permission).
+    """
     if actor_type is ActorType.AGENT:
         actor_id = await _seed_agent(ctx)
     else:
-        actor_id = await _seed_user(ctx, "member")
+        actor_id = await _seed_user(
+            ctx, "member", permissions=user_permissions or {BROKER_EXECUTE_PERMISSION}
+        )
     await _bind_credential(ctx, actor_id)
     return actor_id
 
 
+async def _admin(ctx: Context) -> Identity:
+    admin_id = await _seed_user(ctx, f"admin-{generate_ksuid('x')}", permissions={ORG_ADMIN})
+    return Identity(sub=admin_id, permissions=[ORG_ADMIN])
+
+
 async def _disable(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
     """Disable through the real lifecycle service, as an ``org:admin``."""
-    admin_id = await _seed_user(ctx, f"admin-{generate_ksuid('x')}", permissions={ORG_ADMIN})
-    admin = Identity(sub=admin_id, permissions=[ORG_ADMIN])
+    admin = await _admin(ctx)
     if actor_type is ActorType.AGENT:
         await AgentService(ctx).disable(actor_id, identity=admin)
     else:
         await UserService(ctx).disable(actor_id, identity=admin)
+
+
+async def _revoke_execute(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
+    """Revoke the execute permission through the real grant service, as an ``org:admin``.
+
+    The actor stays active; a user keeps an unrelated permission so the
+    revocation is a narrowing, not an emptied grant set.
+    """
+    admin = await _admin(ctx)
+    if actor_type is ActorType.AGENT:
+        await AgentService(ctx).replace_permissions(actor_id, [APIS_READ], identity=admin)
+    else:
+        await PermissionService(ctx).set_assigned(actor_id, [APIS_READ], identity=admin)
+
+
+_Change = Callable[[Context, ActorType, str], Awaitable[None]]
+
+#: Each change and the sync-edge denial it must produce: (problem type, HTTP status).
+_CHANGES: list[Any] = [
+    pytest.param(_disable, ("unauthorized", 401), id="disabled"),
+    pytest.param(_revoke_execute, ("insufficient_scope", 403), id="execute_revoked"),
+]
 
 
 async def _enqueue(ctx: Context, actor_id: str, actor_type: ActorType) -> str:
@@ -286,31 +326,45 @@ async def _job_outcome(ctx: Context, job_id: str) -> tuple[Job, JobResult, list[
     return job, result, events
 
 
-def _assert_denied_inactive(
+def _assert_denied(
     job: Job,
     result: JobResult,
     events: list[Event],
     executor: _RecordingExecutor,
     injector: _SpyInjector,
+    denial: tuple[str, int] = ("unauthorized", 401),
 ) -> None:
-    """Failed as the sync edge's 401, recorded like any failed execution, never run."""
+    """Failed with the sync edge's problem, recorded like any failed execution, never run."""
+    problem_type, status = denial
     assert executor.requests == []
     assert injector.calls == 0
     assert job.status == JobStatus.COMPLETED
     assert result.body["status"] == "failed"
-    assert result.body["http_status"] == 401
-    assert result.body["problem"]["type"] == "unauthorized"
+    assert result.body["http_status"] == status
+    assert result.body["problem"]["type"] == problem_type
     assert result.body["problem"]["instance"] == "/api.acme.com/v1/pets"
     assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
     assert _SECRET not in str(result.body)
 
 
-@pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
-async def test_queued_job_runs_for_an_active_actor(
-    integration_context: Context, clean: None, actor_type: ActorType
+@pytest.mark.parametrize(
+    ("actor_type", "user_permissions"),
+    [
+        (ActorType.AGENT, None),
+        (ActorType.USER, None),
+        # ``org:admin`` implies the execute permission (``compute_effective``).
+        (ActorType.USER, {ORG_ADMIN}),
+    ],
+    ids=["agent", "user", "user_org_admin"],
+)
+async def test_queued_job_runs_for_an_actor_that_may_execute(
+    integration_context: Context,
+    clean: None,
+    actor_type: ActorType,
+    user_permissions: set[str] | None,
 ) -> None:
     ctx = integration_context
-    actor_id = await _seed_actor(ctx, actor_type)
+    actor_id = await _seed_actor(ctx, actor_type, user_permissions=user_permissions)
     job_id = await _enqueue(ctx, actor_id, actor_type)
     executor, injector = _RecordingExecutor(), _SpyInjector()
 
@@ -328,40 +382,51 @@ async def test_queued_job_runs_for_an_active_actor(
     assert EventType.EXECUTION_COMPLETED in [e.type for e in events]
 
 
+@pytest.mark.parametrize(("change", "denial"), _CHANGES)
 @pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
-async def test_queued_job_denied_when_actor_disabled_before_it_runs(
-    integration_context: Context, clean: None, actor_type: ActorType
+async def test_queued_job_denied_when_actor_changed_before_it_runs(
+    integration_context: Context,
+    clean: None,
+    actor_type: ActorType,
+    change: _Change,
+    denial: tuple[str, int],
 ) -> None:
     ctx = integration_context
     actor_id = await _seed_actor(ctx, actor_type)
     job_id = await _enqueue(ctx, actor_id, actor_type)
-    await _disable(ctx, actor_type, actor_id)
+    await change(ctx, actor_type, actor_id)
     executor, injector = _RecordingExecutor(), _SpyInjector()
 
     await _run_worker(ctx, executor, injector)
 
-    _assert_denied_inactive(*await _job_outcome(ctx, job_id), executor, injector)
+    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector, denial)
 
 
+@pytest.mark.parametrize(("change", "denial"), _CHANGES)
 @pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
-async def test_queued_job_denied_when_actor_disabled_after_authorization(
-    integration_context: Context, clean: None, actor_type: ActorType
+async def test_queued_job_denied_when_actor_changed_after_authorization(
+    integration_context: Context,
+    clean: None,
+    actor_type: ActorType,
+    change: _Change,
+    denial: tuple[str, int],
 ) -> None:
-    """The disable commits after the authorizer allowed the job: the live actor
-    read right before injection still stops it — no decrypt, no upstream call."""
+    """The change commits after the authorizer allowed the job: the live read
+    right before injection still stops it — no decrypt, no upstream call — and
+    logs the pre-injection denial without any credential material."""
     ctx = integration_context
     actor_id = await _seed_actor(ctx, actor_type)
     job_id = await _enqueue(ctx, actor_id, actor_type)
     executor, injector = _RecordingExecutor(), _SpyInjector()
 
-    async def disable() -> None:
-        await _disable(ctx, actor_type, actor_id)
+    async def change_now() -> None:
+        await change(ctx, actor_type, actor_id)
 
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,
-        execution_authorizer=_DisablesAfterAuthorizing(
-            build_queued_execution_authorizer(ctx), disable
+        execution_authorizer=_ChangesAfterAuthorizing(
+            build_queued_execution_authorizer(ctx), change_now
         ),
         actor_status=ActorStatusResolver(ctx.admin_db),
     )
@@ -369,20 +434,31 @@ async def test_queued_job_denied_when_actor_disabled_after_authorization(
         job = await session.get(Job, job_id)
         assert job is not None
         payload, created_by, job_actor_type = job.payload, job.created_by, job.actor_type
-    async with ctx.admin_db.session() as session:
-        result = await handler.execute(
-            job_id, session, payload=payload, created_by=created_by, actor_type=job_actor_type
-        )
-        await session.commit()
+    with structlog.testing.capture_logs() as logs:
+        async with ctx.admin_db.session() as session:
+            result = await handler.execute(
+                job_id, session, payload=payload, created_by=created_by, actor_type=job_actor_type
+            )
+            await session.commit()
 
+    problem_type, status = denial
     assert executor.requests == []
     assert injector.calls == 0
     assert result.body["status"] == "failed"
-    assert result.body["http_status"] == 401
-    assert result.body["problem"]["type"] == "unauthorized"
+    assert result.body["http_status"] == status
+    assert result.body["problem"]["type"] == problem_type
     async with ctx.admin_db.session() as session:
         events = (await session.execute(select(Event).where(Event.job_id == job_id))).scalars()
         assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    [denied] = [
+        e
+        for e in logs
+        if e["event"] == "queued_execution_denied" and e.get("stage") == "pre_injection"
+    ]
+    assert denied["job_id"] == job_id
+    assert denied["actor_id"] == actor_id
+    assert denied["reason"] == ("actor_inactive" if status == 401 else "insufficient_scope")
+    assert _SECRET not in str(logs)
 
 
 async def _delete_agent(ctx: Context, actor_id: str) -> None:
@@ -417,7 +493,7 @@ async def test_queued_job_denied_when_actor_deleted(
 
     await _run_worker(ctx, executor, injector)
 
-    _assert_denied_inactive(*await _job_outcome(ctx, job_id), executor, injector)
+    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector)
 
 
 async def test_queued_job_denied_for_an_actor_that_never_existed(
@@ -429,4 +505,4 @@ async def test_queued_job_denied_for_an_actor_that_never_existed(
 
     await _run_worker(ctx, executor, injector)
 
-    _assert_denied_inactive(*await _job_outcome(ctx, job_id), executor, injector)
+    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector)

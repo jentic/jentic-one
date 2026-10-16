@@ -24,6 +24,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
     InjectedAuth,
     QueuedExecutionRequest,
     QueuedExecutionVerdict,
@@ -80,10 +81,10 @@ class _StaticAuthorizer:
 
 
 class _ActiveActor:
-    """Stands in for the broker's live actor-status read: the actor is active."""
+    """Stands in for the broker's live actor read: active, holding the execute permission."""
 
-    async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
-        return True
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        return ActorAuthority(active=True, holds_permission=True)
 
 
 def _registry(handler: Any) -> JobHandlerRegistry:
