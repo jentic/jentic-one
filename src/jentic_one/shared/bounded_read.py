@@ -12,10 +12,13 @@ the running total crosses the cap.
 Compressed bodies are decoded here rather than by ``httpx``: its decoders
 inflate each network chunk in one unbounded call, so a few KB of gzip can
 expand to tens of MB in a single step (a decompression bomb). Requests ask for
-``Accept-Encoding: identity``; when an upstream compresses anyway (gzip or
-deflate), the raw stream is inflated incrementally with an output bound, so
+``Accept-Encoding: identity``; when an upstream compresses anyway (a single
+gzip or deflate coding, optionally listed alongside no-op ``identity``
+tokens), the raw stream is inflated incrementally with an output bound, so
 the memory held is at most ``max_bytes`` plus one :data:`DECODE_STEP_BYTES`
-step and one raw network chunk. Any other ``Content-Encoding`` is refused.
+step and one raw network chunk. Bytes after the end of the compressed stream
+are refused rather than buffered. Any other ``Content-Encoding`` — including
+stacked real codings such as ``deflate, gzip`` — is refused.
 """
 
 from __future__ import annotations
@@ -138,6 +141,10 @@ class _Inflater:
 
     def feed(self, data: bytes, out: _CappedBuffer) -> None:
         while data:
+            # Input past the end of the compressed stream would only pile up in
+            # ``unused_data`` (uncounted and unbounded), so it is refused.
+            if self._decoder.eof:
+                raise UndecodableBodyError("trailing data after compressed body")
             step = min(DECODE_STEP_BYTES, out.remaining + 1)
             try:
                 piece = self._decoder.decompress(data, step)
@@ -149,6 +156,8 @@ class _Inflater:
                 continue
             self._raw_fallback = False
             out.add(piece)
+            if self._decoder.eof and self._decoder.unused_data:
+                raise UndecodableBodyError("trailing data after compressed body")
             data = self._decoder.unconsumed_tail
             if not piece and data:
                 raise UndecodableBodyError("compressed body makes no progress")
@@ -167,12 +176,19 @@ class _Inflater:
 
 
 def _inflater_for(resp: httpx.Response) -> _Inflater | None:
-    encoding = resp.headers.get("content-encoding", "").strip().lower()
-    if encoding in ("", "identity"):
+    # ``identity`` tokens in a list are no-ops and are dropped; one remaining
+    # gzip/deflate coding is decoded. Stacked real codings (``gzip, gzip``,
+    # ``deflate, gzip``) are refused: they are vanishingly rare once
+    # ``identity`` is requested, and each layer would need its own bound.
+    header = resp.headers.get("content-encoding", "")
+    codings = [
+        c for c in (t.strip().lower() for t in header.split(",")) if c not in ("", "identity")
+    ]
+    if not codings:
         return None
-    if encoding in ("gzip", "x-gzip", "deflate"):
-        return _Inflater(encoding)
-    raise UndecodableBodyError(f"unsupported content-encoding {encoding!r}")
+    if len(codings) == 1 and codings[0] in ("gzip", "x-gzip", "deflate"):
+        return _Inflater(codings[0])
+    raise UndecodableBodyError(f"unsupported content-encoding {header.strip().lower()!r}")
 
 
 async def read_capped_body(resp: httpx.Response, max_bytes: int) -> bytes:
@@ -183,8 +199,9 @@ async def read_capped_body(resp: httpx.Response, max_bytes: int) -> bytes:
     count. The cap applies to the decoded body: a gzip/deflate body is inflated
     in steps of at most :data:`DECODE_STEP_BYTES`, each counted before the next
     is produced, so peak memory stays within ``max_bytes`` plus one step and
-    one raw chunk however far the body would expand. Any other
-    ``Content-Encoding`` (or a corrupt compressed stream) raises
+    one raw chunk however far the body would expand. Any data after the end of
+    the compressed stream, any other ``Content-Encoding`` (stacked real
+    codings included), or a corrupt compressed stream raises
     ``UndecodableBodyError``.
     """
     content_length = resp.headers.get("content-length")

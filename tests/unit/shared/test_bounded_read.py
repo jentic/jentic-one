@@ -1,8 +1,10 @@
 """Tests for the streamed, byte-capped upstream body read (``shared.bounded_read``)."""
 
 import gzip
+import itertools
+import tracemalloc
 import zlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 
 import httpx
 import pytest
@@ -180,5 +182,82 @@ async def test_undecodable_body_rejected(encoding: str, data: bytes) -> None:
     async with _encoded_client(data, encoding) as client:
         resp = await open_stream(client, _URL)
         with pytest.raises(UndecodableBodyError):
+            await read_capped_body(resp, max_bytes=CHUNK_SIZE)
+        await resp.aclose()
+
+
+class _CountingRawChunks(httpx.AsyncByteStream):
+    """Serve pre-encoded raw ``chunks`` in order, counting how many were pulled."""
+
+    def __init__(self, chunks: Iterable[bytes]) -> None:
+        self.chunks = chunks
+        self.served = 0
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.chunks:
+            self.served += 1
+            yield chunk
+
+
+def _stream_client(stream: httpx.AsyncByteStream, encoding: str) -> httpx.AsyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream, headers={"content-encoding": encoding})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.asyncio
+async def test_trailing_data_after_gzip_end_refused_with_bounded_memory() -> None:
+    """A tiny gzip followed by 80 MiB of junk (no Content-Length) is refused
+    under a 1 MiB cap as soon as the junk arrives: bytes after end-of-stream are
+    never buffered, so the stream stops being pulled and memory stays small."""
+    junk = b"j" * (64 * 1024)
+    stream = _CountingRawChunks(
+        itertools.chain([gzip.compress(b"{}")], itertools.repeat(junk, 1280))
+    )
+    tracemalloc.start()
+    try:
+        async with _stream_client(stream, "gzip") as client:
+            resp = await open_stream(client, _URL)
+            with pytest.raises(UndecodableBodyError, match="trailing data"):
+                await read_capped_body(resp, max_bytes=1024 * 1024)
+            await resp.aclose()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert stream.served == 2
+    assert peak < 4 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_trailing_data_in_same_chunk_as_gzip_end_refused() -> None:
+    """End-of-stream and trailing bytes arriving in one raw chunk are refused too."""
+    stream = _CountingRawChunks([gzip.compress(b"{}") + b"junk", b"more"])
+    async with _stream_client(stream, "gzip") as client:
+        resp = await open_stream(client, _URL)
+        with pytest.raises(UndecodableBodyError, match="trailing data"):
+            await read_capped_body(resp, max_bytes=CHUNK_SIZE)
+        await resp.aclose()
+    assert stream.served == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["gzip, identity", "identity, gzip", "identity,  GZIP "])
+async def test_identity_alongside_one_coding_is_decoded(encoding: str) -> None:
+    payload = b'{"openapi": "3.1.0"}'
+    async with _encoded_client(gzip.compress(payload), encoding) as client:
+        resp = await open_stream(client, _URL)
+        body = await read_capped_body(resp, max_bytes=CHUNK_SIZE)
+        await resp.aclose()
+    assert body == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["gzip, gzip", "deflate, gzip", "gzip, br"])
+async def test_stacked_codings_refused(encoding: str) -> None:
+    data = gzip.compress(gzip.compress(b"{}"))
+    async with _encoded_client(data, encoding) as client:
+        resp = await open_stream(client, _URL)
+        with pytest.raises(UndecodableBodyError, match="unsupported content-encoding"):
             await read_capped_body(resp, max_bytes=CHUNK_SIZE)
         await resp.aclose()
