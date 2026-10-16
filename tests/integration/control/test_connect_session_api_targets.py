@@ -38,7 +38,7 @@ from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
-from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
@@ -46,6 +46,8 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
+from jentic_one.control.services.credentials.schemas.credentials import CredentialUpdate
+from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
@@ -62,6 +64,7 @@ from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
     ConfirmKindMismatchError,
+    ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
@@ -107,6 +110,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.shared.web.errors import request_validation_error_handler
@@ -1159,6 +1163,36 @@ async def test_granted_scope_check_for_an_existing_oauth_credential(env: Context
     assert not await _bound(env, _AGENT_ID, narrow)
     result = await _confirm_existing(env, created.session_id, wide)
     assert isinstance(result, ConnectedConfirmResult)
+
+
+async def test_oauth_credential_without_a_live_grant_is_not_offered(env: Context) -> None:
+    """Pins #1425: a credential whose grant was dropped (a cross-origin
+    token_url move) or revoked needs a reconnect, so the review does not
+    offer it for reuse even when the session requests no scopes, and a
+    confirm naming it is refused."""
+    await _import(env, _OAUTH_SCHEME)
+    created = await _connect(env)
+    live = await _existing_credential(env, oauth_scope="read", name="live")
+    dropped = await _existing_credential(env, oauth_scope="read", name="dropped")
+    revoked = await _existing_credential(env, oauth_scope="read", name="revoked")
+    await CredentialService(env).update(
+        dropped,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2,
+            token_url="https://login.other.example.org/token",
+            client_secret="moved-secret",  # pragma: allowlist secret
+        ),
+        identity=_OWNER,
+    )
+    async with env.control_db.transaction() as session:
+        await OAuthTokenRepository.mark_revoked(session, revoked)
+
+    review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert [c.credential_id for c in review.existing_credentials] == [live]
+
+    with pytest.raises(ExistingCredentialNotFoundError):
+        await _confirm_existing(env, created.session_id, dropped)
+    assert not await _bound(env, _AGENT_ID, dropped)
 
 
 async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> None:
