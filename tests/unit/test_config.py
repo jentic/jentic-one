@@ -1128,6 +1128,11 @@ def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
         _ONESHOT_CONFIG_CACHE.clear()
 
 
+_THREAD_HANDSHAKE_TIMEOUT_S = 10.0
+# Longer than a Linux timestamp tick (one jiffy, at most 10 ms).
+_CTIME_TICK_S = 0.05
+
+
 def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
     """Every pipe write bumps its ctime, so a supervisor still streaming the
     document after the loaders opened the fd must not leave any of them keyed
@@ -1136,42 +1141,74 @@ def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, 
     hitting EOF on the drained pipe."""
     doc = yaml.dump(sample_config_dict).encode()
     read_fd, write_fd = os.pipe()
+    pipe_path = f"/dev/fd/{read_fd}"
+    # Both loaders meet inside open(): each has stat'ed the pre-write identity
+    # and holds the fd, and neither has reached the drain yet. Only then does
+    # the supervisor start streaming.
+    both_opened = threading.Event()
+    rendezvous = threading.Barrier(2, action=both_opened.set, timeout=_THREAD_HANDSHAKE_TIMEOUT_S)
+    opened = [threading.Event(), threading.Event()]
+
+    def rendezvous_path(signal: threading.Event) -> Path:
+        class _RendezvousPath(Path):
+            def open(self, *args: Any, **kwargs: Any) -> Any:
+                f = super().open(*args, **kwargs)
+                signal.set()
+                try:
+                    rendezvous.wait()
+                except threading.BrokenBarrierError:
+                    f.close()
+                    raise
+                return f
+
+        return _RendezvousPath(pipe_path)
 
     def stream() -> None:
-        # The first delay lets both loaders open and stat the fd before any
-        # data arrives; each delay outlasts a Linux timestamp tick, so every
-        # write moves the ctime.
-        for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
-            time.sleep(0.1)
-            os.write(write_fd, chunk)
-        os.close(write_fd)
+        try:
+            if not both_opened.wait(_THREAD_HANDSHAKE_TIMEOUT_S):
+                return
+            for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
+                # Move the ctime with every write.
+                time.sleep(_CTIME_TICK_S)
+                os.write(write_fd, chunk)
+        finally:
+            # Closing even on a failed handshake lets a blocked loader see EOF.
+            os.close(write_fd)
 
-    pipe_path = Path(f"/dev/fd/{read_fd}")
     loaded: list[AppConfig] = []
     errors: list[BaseException] = []
 
-    def load() -> None:
+    def load(path: Path) -> None:
         try:
-            loaded.append(load_config(pipe_path))
+            loaded.append(load_config(path))
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
 
-    threads = [threading.Thread(target=stream)] + [threading.Thread(target=load) for _ in range(2)]
+    writer = threading.Thread(target=stream)
+    loaders = [threading.Thread(target=load, args=(rendezvous_path(e),)) for e in opened]
+    threads = [writer, *loaders]
     try:
+        writer.start()
+        # Start the second loader only once the first holds the fd: on macOS,
+        # stat() of /dev/fd/N can fail with EBADF while another thread is
+        # opening the same /dev/fd/N, a platform race and not the one under test.
+        for loader, signal in zip(loaders, opened, strict=True):
+            loader.start()
+            assert signal.wait(_THREAD_HANDSHAKE_TIMEOUT_S), errors
         for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+            t.join(_THREAD_HANDSHAKE_TIMEOUT_S)
+            assert not t.is_alive()
         assert errors == []
-        loaded.append(load_config(pipe_path))
+        loaded.append(load_config(Path(pipe_path)))
         assert {c.databases.registry.name for c in loaded} == {
             sample_config_dict["databases"]["registry"]["name"]
         }
         assert len(loaded) == 3
     finally:
+        rendezvous.abort()
         for t in threads:
             if t.is_alive():
-                t.join()
+                t.join(_THREAD_HANDSHAKE_TIMEOUT_S)
         os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
