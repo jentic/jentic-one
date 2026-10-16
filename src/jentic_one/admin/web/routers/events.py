@@ -33,7 +33,11 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
-from jentic_one.shared.web.deps import CredentialRecheck, get_credential_recheck
+from jentic_one.shared.web.deps import (
+    CredentialRecheck,
+    CredentialRecheckResult,
+    get_credential_recheck,
+)
 from jentic_one.shared.web.links import build_link
 
 _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
@@ -169,7 +173,7 @@ async def stream_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
     stream_svc: EventStreamService = Depends(get_event_stream_service),
-    credential_still_valid: CredentialRecheck = Depends(get_credential_recheck),
+    recheck_credential: CredentialRecheck = Depends(get_credential_recheck),
     since: datetime | None = Query(
         default=None,
         description=(
@@ -255,11 +259,17 @@ async def stream_events(
                 # the credential at most once per interval, so a token that
                 # expires, or whose user is disabled or deleted, stops receiving
                 # events within one interval (#1139). The client's reconnect
-                # then meets the auth gate's 401.
+                # then meets the auth gate's 401 (or a 503 while the database
+                # cannot answer).
                 now = time.monotonic()
                 if now - last_verified >= _STREAM_RECHECK_SECONDS:
-                    if not await credential_still_valid():
-                        log.info("sse_stream_credential_revoked", sub=identity.sub)
+                    outcome = await recheck_credential()
+                    if outcome is not CredentialRecheckResult.VALID:
+                        log.info(
+                            "sse_stream_credential_unverified",
+                            sub=identity.sub,
+                            reason=outcome.value,
+                        )
                         break
                     last_verified = now
                 if isinstance(item, Heartbeat):
