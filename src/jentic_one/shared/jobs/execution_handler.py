@@ -37,6 +37,7 @@ import structlog
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
+from jentic_one.shared.db.connectivity import redact_sql
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -61,7 +62,7 @@ from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger(__name__)
 
@@ -165,7 +166,7 @@ class ExecutionHandler:
         if body_b64:
             body = base64.b64decode(body_b64)
 
-        upstream_url = validate_upstream_url(upstream_url, self._egress)
+        upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
 
         # Run-time re-authorization (before any credential is touched). The
         # enqueue-time selection rides along only as the disambiguation input;
@@ -233,7 +234,7 @@ class ExecutionHandler:
             credential_name = injection.credential_name
             signing = injection.signing
             if injection.server_variables or server_variable_defaults:
-                upstream_url = validate_upstream_url(upstream_url, self._egress)
+                upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
 
         status = ExecutionStatus.COMPLETED
         http_status: int | None = None
@@ -291,14 +292,17 @@ class ExecutionHandler:
             # Re-raise programming errors; treat domain errors as pipeline failures.
             if isinstance(exc, (TypeError, AttributeError, KeyError, IndexError)):
                 raise
+            # redact_sql: a DB error's str() carries the statement and bound
+            # parameters, which must not reach the persisted event summary.
+            safe_error = redact_sql(str(exc)) or type(exc).__name__
             logger.warning(
                 "pipeline_error",
                 job_id=job_id,
                 error_type=type(exc).__name__,
-                error=str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN],
+                error=safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN],
             )
             status = ExecutionStatus.FAILED
-            error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
         await self._emit_lifecycle(
             session,

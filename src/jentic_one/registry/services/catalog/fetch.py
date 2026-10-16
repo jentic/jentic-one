@@ -1,7 +1,7 @@
 """HTTP fetch helper for the catalog slice — SSRF-guarded GET of JSON documents.
 
 A thin, redirect-safe wrapper around ``httpx.AsyncClient`` that reuses the same
-``validate_upstream_url`` SSRF guard and ingest-config knobs (timeout, size cap,
+``validate_upstream_url_async`` SSRF guard and ingest-config knobs (timeout, size cap,
 redirect budget) as the import fetch layer. It exists so the catalog service can
 pull the upstream manifest + individual specs without duplicating the redirect/size
 hardening and without coupling to the ingest pipeline's spec-shaped return type.
@@ -19,7 +19,7 @@ import httpx
 
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
 class CatalogFetchError(Exception):
@@ -59,7 +59,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
     caps) but returns a plain decoded JSON object instead of an IngestSpecification.
     """
     try:
-        validated_url = validate_upstream_url(url, config.egress)
+        validated_url = await validate_upstream_url_async(url, config.egress)
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
@@ -78,7 +78,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
                 if not location:
                     break
                 try:
-                    validated_url = validate_upstream_url(
+                    validated_url = await validate_upstream_url_async(
                         urljoin(validated_url, location), config.egress
                     )
                 except ValueError as exc:
@@ -129,7 +129,7 @@ async def fetch_bytes_conditional(
     stable digest) means the upstream spec is byte-identical to what we last saw.
     """
     try:
-        validated_url = validate_upstream_url(url, config.egress)
+        validated_url = await validate_upstream_url_async(url, config.egress)
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
@@ -152,7 +152,7 @@ async def fetch_bytes_conditional(
                 if not location:
                     break
                 try:
-                    validated_url = validate_upstream_url(
+                    validated_url = await validate_upstream_url_async(
                         urljoin(validated_url, location), config.egress
                     )
                 except ValueError as exc:

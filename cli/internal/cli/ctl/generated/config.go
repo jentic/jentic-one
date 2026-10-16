@@ -770,6 +770,13 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max,omitempty,omitzero" yaml:"pool_max,omitempty" mapstructure:"pool_max,omitempty"`
 
+	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
+	// its next checkout, so a connection silently dropped by a middlebox or left
+	// behind by a server restart is retired before use. Keep it below any server,
+	// proxy, or NAT idle timeout on the path. ``0`` disables recycling. Ignored for
+	// SQLite.
+	PoolRecycleS int `json:"pool_recycle_s,omitempty,omitzero" yaml:"pool_recycle_s,omitempty" mapstructure:"pool_recycle_s,omitempty"`
+
 	// PostgreSQL server port.
 	Port int `json:"port,omitempty,omitzero" yaml:"port,omitempty" mapstructure:"port,omitempty"`
 
@@ -777,6 +784,28 @@ type DatabaseConfig struct {
 	// runner (``CREATE SCHEMA IF NOT EXISTS``) and put first on ``search_path``, so
 	// several connections can share one database.
 	SchemaName string `json:"schema_name,omitempty,omitzero" yaml:"schema_name,omitempty" mapstructure:"schema_name,omitempty"`
+
+	// PostgreSQL: enable TCP keepalive on each pooled connection's client socket so a
+	// peer that vanished while the connection sat idle is detected in about
+	// ``tcp_keepalive_idle_s + tcp_keepalive_count * tcp_keepalive_interval_s``
+	// seconds instead of the OS default of hours. ``false`` leaves the socket at the
+	// OS defaults. Ignored for SQLite.
+	TcpKeepalive bool `json:"tcp_keepalive,omitempty,omitzero" yaml:"tcp_keepalive,omitempty" mapstructure:"tcp_keepalive,omitempty"`
+
+	// PostgreSQL: unanswered TCP keepalive probes before the connection is declared
+	// dead (``TCP_KEEPCNT``). Only applies when ``tcp_keepalive`` is ``true``.
+	// Ignored for SQLite.
+	TcpKeepaliveCount int `json:"tcp_keepalive_count,omitempty,omitzero" yaml:"tcp_keepalive_count,omitempty" mapstructure:"tcp_keepalive_count,omitempty"`
+
+	// PostgreSQL: seconds a connection may sit idle before the first TCP keepalive
+	// probe is sent (``TCP_KEEPIDLE``; ``TCP_KEEPALIVE`` on macOS). Only applies when
+	// ``tcp_keepalive`` is ``true``. Ignored for SQLite.
+	TcpKeepaliveIdleS int `json:"tcp_keepalive_idle_s,omitempty,omitzero" yaml:"tcp_keepalive_idle_s,omitempty" mapstructure:"tcp_keepalive_idle_s,omitempty"`
+
+	// PostgreSQL: seconds between unanswered TCP keepalive probes
+	// (``TCP_KEEPINTVL``). Only applies when ``tcp_keepalive`` is ``true``. Ignored
+	// for SQLite.
+	TcpKeepaliveIntervalS int `json:"tcp_keepalive_interval_s,omitempty,omitzero" yaml:"tcp_keepalive_interval_s,omitempty" mapstructure:"tcp_keepalive_interval_s,omitempty"`
 
 	// PostgreSQL role to connect as.
 	User string `json:"user,omitempty,omitzero" yaml:"user,omitempty" mapstructure:"user,omitempty"`
@@ -846,6 +875,12 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["pool_max"]; !ok || v == nil {
 		plain.PoolMax = 10
 	}
+	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
+		plain.PoolRecycleS = 1800
+	}
+	if 0 > plain.PoolRecycleS {
+		return fmt.Errorf("field %s: must be >= %v", "pool_recycle_s", 0)
+	}
 	if v, ok := raw["port"]; !ok || v == nil {
 		plain.Port = 5432
 	}
@@ -854,6 +889,36 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if matched, _ := regexp.MatchString(`^[A-Za-z_][A-Za-z0-9_]*$`, string(plain.SchemaName)); !matched {
 		return fmt.Errorf("field %s pattern match: must match %s", "SchemaName", `^[A-Za-z_][A-Za-z0-9_]*$`)
+	}
+	if v, ok := raw["tcp_keepalive"]; !ok || v == nil {
+		plain.TcpKeepalive = true
+	}
+	if v, ok := raw["tcp_keepalive_count"]; !ok || v == nil {
+		plain.TcpKeepaliveCount = 5
+	}
+	if 127 < plain.TcpKeepaliveCount {
+		return fmt.Errorf("field %s: must be <= %v", "tcp_keepalive_count", 127)
+	}
+	if 1 > plain.TcpKeepaliveCount {
+		return fmt.Errorf("field %s: must be >= %v", "tcp_keepalive_count", 1)
+	}
+	if v, ok := raw["tcp_keepalive_idle_s"]; !ok || v == nil {
+		plain.TcpKeepaliveIdleS = 60
+	}
+	if 32767 < plain.TcpKeepaliveIdleS {
+		return fmt.Errorf("field %s: must be <= %v", "tcp_keepalive_idle_s", 32767)
+	}
+	if 1 > plain.TcpKeepaliveIdleS {
+		return fmt.Errorf("field %s: must be >= %v", "tcp_keepalive_idle_s", 1)
+	}
+	if v, ok := raw["tcp_keepalive_interval_s"]; !ok || v == nil {
+		plain.TcpKeepaliveIntervalS = 10
+	}
+	if 32767 < plain.TcpKeepaliveIntervalS {
+		return fmt.Errorf("field %s: must be <= %v", "tcp_keepalive_interval_s", 32767)
+	}
+	if 1 > plain.TcpKeepaliveIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "tcp_keepalive_interval_s", 1)
 	}
 	if v, ok := raw["user"]; !ok || v == nil {
 		plain.User = "postgres"
@@ -3030,6 +3095,16 @@ type WorkerConfig struct {
 	// MaxAttempts corresponds to the JSON schema field "max_attempts".
 	MaxAttempts int `json:"max_attempts,omitempty,omitzero" yaml:"max_attempts,omitempty" mapstructure:"max_attempts,omitempty"`
 
+	// First delay, in seconds, before the worker retries after losing its database
+	// connection. Doubles on each further failed attempt up to
+	// ``reconnect_backoff_max_s``; each delay is then jittered into the upper half of
+	// its value so workers sharing a database do not retry in lockstep.
+	ReconnectBackoffBaseS float64 `json:"reconnect_backoff_base_s,omitempty,omitzero" yaml:"reconnect_backoff_base_s,omitempty" mapstructure:"reconnect_backoff_base_s,omitempty"`
+
+	// Cap, in seconds, on the worker's reconnect delay while the database is
+	// unreachable — a recovered database is picked up within this long.
+	ReconnectBackoffMaxS float64 `json:"reconnect_backoff_max_s,omitempty,omitzero" yaml:"reconnect_backoff_max_s,omitempty" mapstructure:"reconnect_backoff_max_s,omitempty"`
+
 	// RetryBackoffBaseS corresponds to the JSON schema field "retry_backoff_base_s".
 	RetryBackoffBaseS float64 `json:"retry_backoff_base_s,omitempty,omitzero" yaml:"retry_backoff_base_s,omitempty" mapstructure:"retry_backoff_base_s,omitempty"`
 
@@ -3056,6 +3131,24 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["max_attempts"]; !ok || v == nil {
 		plain.MaxAttempts = 5
+	}
+	if v, ok := raw["reconnect_backoff_base_s"]; !ok || v == nil {
+		plain.ReconnectBackoffBaseS = 2.0
+	}
+	if 300 < plain.ReconnectBackoffBaseS {
+		return fmt.Errorf("field %s: must be <= %v", "reconnect_backoff_base_s", 300)
+	}
+	if 0 >= plain.ReconnectBackoffBaseS {
+		return fmt.Errorf("field %s: must be > %v", "reconnect_backoff_base_s", 0)
+	}
+	if v, ok := raw["reconnect_backoff_max_s"]; !ok || v == nil {
+		plain.ReconnectBackoffMaxS = 30.0
+	}
+	if 3600 < plain.ReconnectBackoffMaxS {
+		return fmt.Errorf("field %s: must be <= %v", "reconnect_backoff_max_s", 3600)
+	}
+	if 0 >= plain.ReconnectBackoffMaxS {
+		return fmt.Errorf("field %s: must be > %v", "reconnect_backoff_max_s", 0)
 	}
 	if v, ok := raw["retry_backoff_base_s"]; !ok || v == nil {
 		plain.RetryBackoffBaseS = 2.0

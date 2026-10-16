@@ -131,7 +131,7 @@ from jentic_one.shared.tracing import (
     pack_jentic_tracestate,
 )
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -458,7 +458,7 @@ async def _handle_unregistered_url(
     """Run the container-injected unregistered-URL hook, if any (None → 404).
 
     Only ``_handle``'s *unregistered-URL* miss calls this — it runs after
-    ``validate_upstream_url``, so the handler only ever sees an egress-approved
+    ``validate_upstream_url_async``, so the handler only ever sees an egress-approved
     URL (see ``UnregisteredUrlHandler``'s contract). The pinned-revision miss
     never invokes it: the API is registered there, so that miss is a caller pin
     error, not an unregistered flow.
@@ -516,7 +516,7 @@ async def _handle(
 
     raw_url = reconstruct_upstream_url(request.scope)
     try:
-        upstream_url = validate_upstream_url(raw_url, ctx.config.broker.egress)
+        upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
     except ValueError as exc:
         raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
 
@@ -700,7 +700,7 @@ async def _handle(
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
         try:
-            validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
+            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
@@ -775,7 +775,7 @@ async def _handle_streaming(
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
         try:
-            validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
+            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)

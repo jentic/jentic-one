@@ -195,7 +195,7 @@ async def test_conditional_oversized_content_length_raises() -> None:
 async def test_conditional_revalidates_redirect_target_against_ssrf() -> None:
     """A redirect to a private/link-local address is rejected mid-hop (SSRF-via-redirect).
 
-    This pins the per-hop ``validate_upstream_url`` in the redirect loop: dropping
+    This pins the per-hop ``validate_upstream_url_async`` in the redirect loop: dropping
     it would turn an innocuous first URL into an SSRF against cloud metadata.
     """
 
@@ -290,7 +290,7 @@ async def test_conditional_304_propagates_refreshed_etag() -> None:
 async def test_fetch_wires_dns_pinning_transport_by_default() -> None:
     """L5: the catalog fetchers pin DNS at connect time, closing the rebind window.
 
-    ``validate_upstream_url`` resolves+checks before the request, but httpx re-resolves
+    ``validate_upstream_url_async`` resolves+checks before the request, but httpx re-resolves
     at connect time — a rebind window. The fetchers must build the client with a
     :class:`DnsPinningTransport` so the connection is pinned to a validated IP. Assert
     on the ``transport`` kwarg passed to ``httpx.AsyncClient`` (the constructor is

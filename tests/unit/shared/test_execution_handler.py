@@ -17,6 +17,8 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import structlog
+from sqlalchemy.exc import OperationalError
 
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
@@ -170,6 +172,35 @@ async def test_handler_pipeline_error_is_recorded_not_raised() -> None:
     assert executor.called is True
     assert result.body["status"] == "failed"
     assert result.body["http_status"] is None
+
+
+@pytest.mark.asyncio
+async def test_handler_pipeline_db_error_redacts_sql_from_log_and_event_summary() -> None:
+    """A DB error from the pipeline never puts its SQL text in logs or the event summary."""
+    exc = OperationalError(
+        "SELECT secret FROM credentials WHERE id = $1", ("cred-123",), Exception("lock timeout")
+    )
+    handler = ExecutionHandler(executor=_RaisingExecutor(exc))
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+    ):
+        result = await handler.execute(
+            "job-sql", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        )
+
+    assert result.body["status"] == "failed"
+    pipeline = [e for e in logs if e["event"] == "pipeline_error"]
+    assert len(pipeline) == 1
+    assert "lock timeout" in pipeline[0]["error"]
+    summary = mock_emit.call_args.kwargs["summary"]
+    assert "lock timeout" in summary
+    for rendered in (str(logs), summary):
+        assert "SELECT secret" not in rendered
+        assert "cred-123" not in rendered
 
 
 @pytest.mark.asyncio
