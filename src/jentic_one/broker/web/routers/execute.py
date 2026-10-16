@@ -651,9 +651,9 @@ async def _handle(
     except BrokerError:
         if withheld_refusal is None:
             raise
-        # The caller is not authorized for a registered operation, so a
-        # domain-suffix gap is reported like any other blocked address: the
-        # distinct type would tell it which names resolve into the subnet.
+        # The caller is not authorized for a registered operation, so any
+        # withheld refusal gets the generic body: its reason (e.g. a
+        # domain-suffix gap) would tell it which names resolve into the subnet.
         raise _refuse_upstream_url(
             withheld_refusal, url=upstream_url, stage="preflight", authorized=False
         ) from withheld_refusal

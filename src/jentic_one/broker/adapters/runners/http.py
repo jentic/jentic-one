@@ -248,7 +248,9 @@ class HttpRunner(UpstreamRunner):
                 # was sent: a connect failure, safe to retry for any method.
                 span.set_status(StatusCode.ERROR, "upstream host did not resolve")
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
-                raise _unresolved_host_error() from exc
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
+                raise _unresolved_host_error() from None
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 # Connect-phase failure: no request bytes reached the upstream, so
                 # a retry is safe for ANY method. ConnectTimeout
@@ -359,7 +361,9 @@ class HttpRunner(UpstreamRunner):
                 raise _egress_refusal(exc, host, None) from exc
             except UpstreamHostUnresolvedError as exc:
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
-                raise _unresolved_host_error() from exc
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
+                raise _unresolved_host_error() from None
             except httpx.TimeoutException as exc:
                 raise UpstreamTimeoutError(
                     detail="The upstream did not respond within the deadline.",

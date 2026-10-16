@@ -674,6 +674,9 @@ async def test_connect_time_unresolvable_host_is_a_connect_failure(
     assert exc_info.value.type == "upstream_connect_failed"
     assert exc_info.value.pre_send is True
     assert broker_error_problem(exc_info.value)["status"] == 502
+    # Not chained: the host and resolver message stay out of span tracebacks.
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True
     assert seen == []
 
 
@@ -689,6 +692,8 @@ async def test_connect_time_stream_unresolvable_host_is_a_connect_failure(
     assert exc_info.value.type == "upstream_connect_failed"
     assert exc_info.value.pre_send is True
     assert broker_error_problem(exc_info.value)["status"] == 502
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True
     assert seen == []
 
 
