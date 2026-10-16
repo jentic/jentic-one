@@ -4711,7 +4711,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
-	// ClientSecret Replacement client secret; omit to leave unchanged.
+	// ClientSecret Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.
 	//
 	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
@@ -4726,7 +4726,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
-	// Scopes Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them.
+	// Scopes Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
 	//
 	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
@@ -4736,7 +4736,7 @@ type OAuth2UpdateRequest struct {
 	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
-	// TokenUrl Replacement token endpoint URL; omit to leave unchanged.
+	// TokenUrl Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
 	//
 	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
