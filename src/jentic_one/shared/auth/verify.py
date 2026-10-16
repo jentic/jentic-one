@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import structlog
+from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt
@@ -12,6 +13,24 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
+
+# Raw SQL against the admin ``users`` table: ``shared`` may not import the admin
+# ORM. A primary-key lookup — the same per-verdict cost the opaque ``at_`` path
+# pays to re-check its actor row (#1136).
+_USER_ACTIVE = text("SELECT active FROM users WHERE id = :user_id").columns(active=Boolean)
+
+
+async def _user_is_active(ctx: Context, user_id: str) -> bool:
+    """Whether the user row exists and is active — fails closed on a missing row.
+
+    Deliberately uncached: a login JWT stays valid for ``jwt_ttl_seconds``, so
+    the users row is the only thing that can end it early, and a disable (or a
+    delete, which also clears ``active``) must take effect on the very next
+    request.
+    """
+    async with ctx.admin_db.session() as session:
+        active = (await session.execute(_USER_ACTIVE, {"user_id": user_id})).scalar_one_or_none()
+    return bool(active)
 
 
 def scopes_to_permissions(scopes: Sequence[object]) -> list[str]:
@@ -85,9 +104,14 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     be a USER (the most-privileged interpretation). Raises the same
     ``InvalidTokenError`` as a bad signature; the web layer maps it to 401.
 
+    User tokens re-check the ``users`` row on every verification (#1139): a
+    disabled, deleted or missing user is refused with ``InvalidTokenError``
+    (uniform 401), so disabling a user ends their outstanding login JWTs
+    immediately rather than at ``jwt_ttl_seconds``.
+
     When the JWT already embeds ``permissions`` in its claims (e.g. login
-    JWTs), those are trusted directly — no DB lookup. Otherwise falls back
-    to the database-resolved permission path for backwards compatibility.
+    JWTs), those are trusted directly — no permission lookup. Otherwise falls
+    back to the database-resolved permission path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
     actor_type_claim = claims.get("actor_type")
@@ -108,6 +132,12 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
         raise InvalidTokenError("Token declares an unknown actor_type") from exc
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")
+
+    if actor_type == ActorType.USER and not await _user_is_active(ctx, str(sub)):
+        # Same uniform 401 as any other refused token; the cause is logged
+        # server-side so an operator can tell a disabled user from a bad token.
+        logger.warning("jwt_user_inactive", sub=sub)
+        raise InvalidTokenError("Token subject is not an active user")
 
     embedded_permissions = claims.get("permissions")
     if embedded_permissions is not None and isinstance(embedded_permissions, list):

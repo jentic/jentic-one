@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserPermissionGrantRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
+from tests.web.conftest import seeded_jwt_user
 
 from .conftest import ADMIN_EMAIL
 
@@ -285,6 +287,13 @@ def test_users_read_cannot_create(
     assert resp.status_code == 403
 
 
+@pytest.fixture()
+async def _expired_pw_user(web_context: Context) -> AsyncGenerator[str, None]:
+    async with seeded_jwt_user(web_context, "expired-pw-user") as user_id:
+        yield user_id
+
+
+@pytest.mark.usefixtures("_expired_pw_user")
 def test_password_expired_blocks_access(unauthed_client: TestClient, web_context: Context) -> None:
     """A token with must_change_password=True gets a 403 on protected endpoints."""
     config = web_context.config.admin.auth
