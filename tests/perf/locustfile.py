@@ -5,7 +5,15 @@ Runs in the ``locustio/locust`` image (see docker-compose.perf.yaml, profile
 ``results/.perf-env.json`` written by ``provision.py``. Stdlib + locust only.
 
 Pick user classes on the command line (``locust ... BrokerEchoUser``) or in the
-web UI's class picker (``--class-picker``). Knobs (env):
+web UI's class picker (``--class-picker``).
+
+Latency caveat: these users are closed loop (``constant_throughput`` pacing), so
+once the broker slows down the offered load drops with it and queueing time is
+never recorded (coordinated omission). Locust latencies above the knee are a
+lower bound: take the throughput ceiling from ``bench_capacity`` and latency vs
+load from an oha open-loop rate sweep (``bench_overhead --rates``).
+
+Knobs (env):
 
 * ``PERF_SHAPE`` — ``step`` | ``spike`` | ``soak`` (unset = manual users/rate)
 * ``PERF_USER_RPS`` — per-user pacing via ``constant_throughput`` (default 1)
@@ -16,6 +24,9 @@ web UI's class picker (``--class-picker``). Knobs (env):
 * ``PERF_IMPORT_SPEC`` — path (in-container) to a spec for ``ImportUser``
 * ``PERF_STREAMING`` — must match the broker's ``stream_passthrough_enabled``
   (compose passes the same value to both); ``DisconnectUser`` asserts on it
+* ``PERF_LOCUST_WORKERS`` — number of worker processes (``PoolAgentUser`` strides
+  the agent pool by it so workers don't hand out the same agents)
+* ``PERF_RUN_S`` — planned run length; tokens must outlive it (default 600)
 
 Idempotency: any ``Idempotency-Key`` forces the broker onto the *buffered*
 path, so compare ``IdempotentFirstCallUser`` / ``IdempotentReplayUser`` against a
@@ -39,6 +50,16 @@ from tests.perf.common import ECHO_PATH, VENDORS, PerfEnv, upstream_base
 ENV = PerfEnv.load()
 USER_RPS = float(os.environ.get("PERF_USER_RPS", "1"))
 CALLER = os.environ.get("PERF_CALLER", "jak")
+_SOAK_S = float(os.environ.get("PERF_SOAK_S", "1800"))
+_RUN_S = float(os.environ.get("PERF_RUN_S", "600"))
+# Refuse to start on tokens that would expire mid-run (every call would 401).
+# The admin token drives ImportUser / ControlReadUser.
+ENV.check_fresh(
+    callers=[CALLER],
+    admin=True,
+    run_s=max(_RUN_S, _SOAK_S if os.environ.get("PERF_SHAPE") == "soak" else 0.0),
+)
+LOCUST_WORKERS = max(1, int(os.environ.get("PERF_LOCUST_WORKERS", "1")))
 VENDOR = os.environ.get("PERF_VENDOR", "perf-noauth")
 UPSTREAM_DELAY = os.environ.get("PERF_UPSTREAM_DELAY", "")
 STATUS_SEQUENCE = os.environ.get("PERF_STATUS_SEQUENCE", "") or "503,503,200"
@@ -110,14 +131,23 @@ class MultiHostUser(_BrokerUser):
 
 
 class PoolAgentUser(_BrokerUser):
-    """Each user is a different agent (rate-limit fairness / per-actor caches)."""
+    """Each user is a different agent (rate-limit fairness / per-actor caches).
 
-    _next = 0
+    Users on worker ``w`` of ``PERF_LOCUST_WORKERS`` take pool slots
+    ``w, w + W, w + 2W, …``, so workers never hand out the same agent until the
+    pool wraps.
+    """
+
+    _spawned = 0
 
     def on_start(self) -> None:
         pool = ENV.pool_agents or [ENV.caller("jak")]
-        PoolAgentUser._next += 1
-        self.token = pool[PoolAgentUser._next % len(pool)].token
+        # A local (single-process) runner has no worker index: stride 1.
+        index = getattr(self.environment.runner, "worker_index", None)
+        worker, workers = (index, LOCUST_WORKERS) if index is not None and index >= 0 else (0, 1)
+        slot = worker + workers * PoolAgentUser._spawned
+        PoolAgentUser._spawned += 1
+        self.token = pool[slot % len(pool)].token
 
     @task
     def echo(self) -> None:
@@ -154,14 +184,16 @@ class FailingUpstreamUser(_BrokerUser):
             # 503 relayed or breaker fast-fail are both expected; label them.
             if resp.status_code in (502, 503, 504):
                 resp.success()
+            else:
+                resp.failure(f"expected 502/503/504, got {resp.status_code}")
 
 
 class DisconnectUser(_BrokerUser):
     """Upstream drops mid-body: streaming truncates, buffered returns an envelope.
 
     Buffered (``PERF_STREAMING=false``) must answer a problem+json 5xx carrying
-    ``error_origin``: today the runner maps the transport error to 500 (502 would
-    be the more accurate gateway status), and 503 once the breaker opens.
+    ``error_origin``: 500 or 502 for the transport error (depending on the
+    broker version's mapping), and 503 once the breaker opens.
     Streaming has already sent a 200 status line, so the client sees 200 or a
     mid-stream protocol abort (status 0). Anything else is a regression.
     """
@@ -377,7 +409,7 @@ elif _SHAPE == "soak":
     class SoakShape(LoadTestShape):
         """Constant load for PERF_SOAK_S (default 30 min): leaks, pool drift, growth."""
 
-        duration = float(os.environ.get("PERF_SOAK_S", "1800"))
+        duration = _SOAK_S
 
         def tick(self) -> tuple[int, float] | None:
             if self.get_run_time() > self.duration:

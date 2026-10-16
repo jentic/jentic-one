@@ -85,15 +85,16 @@ def _first_list(body: Any) -> list[dict[str, Any]]:
     return []
 
 
-def admin_token(client: httpx.Client) -> str:
+def admin_token(client: httpx.Client) -> tuple[str, float]:
+    """Log in (creating the admin on first run); returns (token, expires_at unix time)."""
+    issued = time.time()
     resp = client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-    if resp.status_code == 200:
-        return str(resp.json()["access_token"])
-    resp = client.post(
-        "/users:create-admin", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
-    )
+    if resp.status_code != 200:
+        resp = client.post(
+            "/users:create-admin", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+        )
     body = _check(resp, 200)
-    return str(body["access_token"])
+    return str(body["access_token"]), issued + float(body["expires_in"])
 
 
 def wait_job(client: httpx.Client, job_id: str, timeout_s: float = 120.0) -> dict[str, Any]:
@@ -168,7 +169,8 @@ def credential_body(vendor: Vendor, api: dict[str, str]) -> dict[str, Any]:
     if vendor.credential_type == "bearer_token":
         base["token"] = f"perf-bearer-{uuid.uuid4().hex[:12]}"
     elif vendor.credential_type == "api_key":
-        assert vendor.location is not None
+        if vendor.location is None:
+            raise ProvisionError(f"{vendor.slug}: api_key vendor needs a location")
         base["key"] = f"perf-key-{uuid.uuid4().hex[:12]}"
         base["location"] = vendor.location
         base["field_name"] = API_KEY_FIELD[vendor.location]
@@ -290,8 +292,29 @@ def hs256_caller(agent_id: str) -> Caller:
     return Caller(kind="jwt", token=token, agent_id=agent_id, expires_at=float(exp))
 
 
+def injection_error(vendor: Vendor, echo: dict[str, Any]) -> str | None:
+    """Why the harness echo shows ``vendor``'s credential was *not* injected, else None."""
+    headers = {k.lower(): str(v) for k, v in (echo.get("headers") or {}).items()}
+    query = {k: str(v) for k, v in (echo.get("query_params") or {}).items()}
+    if vendor.credential_type == "bearer_token":
+        ok = headers.get("authorization", "").startswith("Bearer perf-bearer-")
+        seen: Any = headers
+    elif vendor.credential_type == "api_key" and vendor.location == "header":
+        ok, seen = headers.get("x-api-key", "").startswith("perf-key-"), headers
+    elif vendor.credential_type == "api_key" and vendor.location == "query":
+        ok, seen = query.get("api_key", "").startswith("perf-key-"), query
+    elif vendor.credential_type == "api_key" and vendor.location == "cookie":
+        ok, seen = "api_key=perf-key-" in headers.get("cookie", ""), headers
+    elif vendor.credential_type == "sigv4":
+        ok = headers.get("authorization", "").startswith("AWS4-HMAC-SHA256")
+        seen = headers
+    else:
+        return None
+    return None if ok else f"{vendor.credential_type} credential not injected: {seen}"
+
+
 def verify(broker_url: str, env: PerfEnv) -> None:
-    """One echo per vendor through the broker; assert the credential was injected."""
+    """One echo per vendor x caller through the broker; each must carry the credential."""
     for vendor in VENDORS:
         info = env.vendors[vendor.slug]
         url = f"{broker_url}/{upstream_base(vendor.alias)}{ECHO_PATH}"
@@ -306,18 +329,8 @@ def verify(broker_url: str, env: PerfEnv) -> None:
                 raise ProvisionError(
                     f"verify {vendor.slug} via {kind}: {resp.status_code} {resp.text[:300]}"
                 )
-        echo = resp.json()
-        headers = {k.lower(): v for k, v in echo.get("headers", {}).items()}
-        if vendor.credential_type == "bearer_token":
-            assert headers.get("authorization", "").startswith("Bearer perf-bearer-"), headers
-        elif vendor.credential_type == "api_key" and vendor.location == "header":
-            assert headers.get("x-api-key", "").startswith("perf-key-"), headers
-        elif vendor.credential_type == "api_key" and vendor.location == "query":
-            assert echo.get("query_params", {}).get("api_key", "").startswith("perf-key-"), echo
-        elif vendor.credential_type == "api_key" and vendor.location == "cookie":
-            assert "api_key=perf-key-" in headers.get("cookie", ""), headers
-        elif vendor.credential_type == "sigv4":
-            assert headers.get("authorization", "").startswith("AWS4-HMAC-SHA256"), headers
+            if why := injection_error(vendor, resp.json()):
+                raise ProvisionError(f"verify {vendor.slug} via {kind}: {why}")
         print(f"  ok  {vendor.slug:<20} {vendor.credential_type:<12} ({info['credential_id']})")
 
 
@@ -332,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
 
     live_spec = httpx.get(f"{args.upstream}/specs/live.json", timeout=10).json()
     with httpx.Client(base_url=args.app, timeout=60) as anon:
-        token = admin_token(anon)
+        token, token_expires_at = admin_token(anon)
     with httpx.Client(
         base_url=args.app, timeout=60, headers={"Authorization": f"Bearer {token}"}
     ) as client:
@@ -346,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
             upstream_url=upstream_base("smoke-noauth"),
             agent_id=agent_id,
             admin_token=token,
+            admin_expires_at=token_expires_at,
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         env.callers["jak"] = Caller(kind="jak", token=key, agent_id=agent_id)
