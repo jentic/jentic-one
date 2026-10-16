@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import structlog
@@ -117,6 +117,23 @@ def _api_reference(ctx_req: ExecuteRequestContext) -> APIReference | None:
     )
 
 
+class UpstreamCallObserver(Protocol):
+    """Told how the upstream leg ended, before the execution record is persisted.
+
+    Lets a caller act on the upstream outcome (e.g. settle an Idempotency-Key
+    claim) independently of whether persisting the record, or committing it,
+    succeeds afterwards.
+    """
+
+    def upstream_returned(self, outcome: ExecutionOutcome) -> None:
+        """The upstream answered; ``outcome`` is the result about to be persisted."""
+        ...
+
+    def upstream_failed(self, error: BrokerError) -> None:
+        """The envelope raised ``error`` instead of returning an upstream answer."""
+        ...
+
+
 async def run_execution(
     ctx_req: ExecuteRequestContext,
     *,
@@ -132,6 +149,7 @@ async def run_execution(
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
+    observer: UpstreamCallObserver | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -147,6 +165,9 @@ async def run_execution(
 
     ``has_idempotency_key`` tells the retry gate the caller sent an
     ``Idempotency-Key``; ``headers`` never carries it (it is broker-consumed).
+
+    ``observer`` is told the upstream outcome (or the envelope's error) the
+    moment ``broker.execute`` ends, before anything is persisted.
     """
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
@@ -195,6 +216,8 @@ async def run_execution(
             with jentic_tracestate(tracestate_member):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
+        if observer is not None:
+            observer.upstream_failed(exc)
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         await _persist(
             ctx_req,
@@ -245,6 +268,8 @@ async def run_execution(
         await session.commit()  # arch-allow: manual-commit
         raise
 
+    if observer is not None:
+        observer.upstream_returned(outcome)
     result = outcome.result
     status = ExecutionStatus.FAILED if result.status_code >= 400 else ExecutionStatus.COMPLETED
     error_msg = (

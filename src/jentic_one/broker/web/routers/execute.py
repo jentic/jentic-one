@@ -14,6 +14,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 from __future__ import annotations
 
 import base64
+import functools
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -86,6 +87,7 @@ from jentic_one.broker.services.idempotency import (
     SharedStateIdempotencyStore,
     StoredResponse,
 )
+from jentic_one.broker.web.claim_lease import ClaimLease
 from jentic_one.broker.web.deps import (
     AgentRuleEvaluatorDep,
     CredentialDeriver,
@@ -507,7 +509,44 @@ async def _handle(
     runner: UpstreamRunner,
     idempotency: SharedStateIdempotencyStore | None,
 ) -> Response:
-    """Thin web-edge adapter — see module docstring."""
+    """Thin web-edge adapter — see module docstring.
+
+    Owns the request's Idempotency-Key claim (#1710): a request that ends
+    without storing its upstream response hands the claim to
+    :meth:`ClaimLease.abandon`, which releases it only when nothing reached the
+    upstream and otherwise stores the failure for replay or holds the claim
+    (see ``broker/web/claim_lease.py``).
+    """
+    lease = ClaimLease()
+    try:
+        return await _handle_request(
+            request,
+            method,
+            ctx,
+            identity,
+            credential_deriver,
+            agent_rule_evaluator,
+            runner,
+            idempotency,
+            lease,
+        )
+    except BaseException as exc:
+        await lease.abandon(exc)
+        raise
+
+
+async def _handle_request(
+    request: Request,
+    method: str,
+    ctx: Context,
+    identity: Identity,
+    credential_deriver: CredentialDeriverProtocol,
+    agent_rule_evaluator: AgentRuleEvaluatorProtocol,
+    runner: UpstreamRunner,
+    idempotency: SharedStateIdempotencyStore | None,
+    lease: ClaimLease,
+) -> Response:
+    """The request flow :func:`_handle` runs under its claim lease."""
     if request.headers.get("upgrade"):
         raise UpgradeNotSupportedError(
             detail="Protocol upgrade not supported by the broker.",
@@ -682,6 +721,8 @@ async def _handle(
             )
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
+        if outcome_idem.claim is not None:
+            lease.hold(idempotency, outcome_idem.claim, fp)
 
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(
@@ -705,6 +746,7 @@ async def _handle(
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
+    lease.dispatching(functools.partial(_assemble_response, ctx_req=ctx_req))
     async with ctx.admin_db.transaction() as session:
         broker = _resolve_broker(request, runner)
         outcome = await run_execution(
@@ -720,9 +762,13 @@ async def _handle(
             security_config=ctx.config.security,
             signing=injection.signing,
             has_idempotency_key=bool(idem_key),
+            observer=lease,
         )
 
     response = _assemble_response(outcome, ctx_req)
+    # Storing the response is this path's own job; a failure of it keeps the
+    # claim until its pending TTL rather than re-storing from the lease.
+    lease.settle()
     if idempotency is not None and idem_key and fp is not None:
         await idempotency.complete(
             identity.sub,

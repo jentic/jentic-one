@@ -77,6 +77,15 @@ end
 return value
 """
 
+# Compare-and-delete: drop the key only while it still holds the caller's value,
+# so a holder whose claim expired can never delete a newer claim on the same key.
+_DELETE_IF_EQUALS_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
 
 class RedisStateBackend:
     """Redis implementation of all three shared-state roles.
@@ -91,6 +100,7 @@ class RedisStateBackend:
         self._redis: redis.Redis = redis.from_url(url)
         self._token_bucket_script = self._redis.register_script(_TOKEN_BUCKET_LUA)
         self._incr_script = self._redis.register_script(_INCR_WITH_TTL_LUA)
+        self._delete_if_equals_script = self._redis.register_script(_DELETE_IF_EQUALS_LUA)
 
     def _k(self, key: str) -> str:
         """Prepend the configured prefix. The ONLY way keys reach Redis."""
@@ -106,6 +116,10 @@ class RedisStateBackend:
 
     async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
         result = await self._redis.set(self._k(key), value, px=_ms(ttl_s), nx=True)
+        return bool(result)
+
+    async def delete_if_equals(self, key: str, expected: bytes) -> bool:
+        result = await self._delete_if_equals_script(keys=[self._k(key)], args=[expected])
         return bool(result)
 
     async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:

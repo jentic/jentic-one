@@ -35,6 +35,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     UpstreamRunner,
 )
+from jentic_one.broker.adapters.runners.dispatch import DispatchProbe, current_dispatch_probe
 from jentic_one.broker.core.exceptions import (
     BrokerError,
     UpstreamResponseTooLargeError,
@@ -179,10 +180,17 @@ class HttpRunner(UpstreamRunner):
 
     async def run(self, request: RunnerRequest) -> RunnerResult:
         host = httpx.URL(request.url).host
+        # Report this call's sends so a deadline that fires while the call waits
+        # for a permit, or between retry attempts, knows nothing was sent.
+        probe = current_dispatch_probe()
+        if probe is not None:
+            probe.reporting = True
         async with self._bulkhead.guard(host):
-            return await self._run(request, host)
+            return await self._run(request, host, probe)
 
-    async def _run(self, request: RunnerRequest, host: str) -> RunnerResult:
+    async def _run(
+        self, request: RunnerRequest, host: str, probe: DispatchProbe | None
+    ) -> RunnerResult:
         start = time.perf_counter()
         with _tracer.start_as_current_span("broker.upstream_request") as span:
             span.set_attribute("http.url_host", host)
@@ -194,23 +202,33 @@ class HttpRunner(UpstreamRunner):
                     headers=self._outbound_headers(request.headers),
                     timeout=request.timeout_s,
                 )
-                resp = await self._client.send(req, stream=True)
+                if probe is not None:
+                    probe.begin_send()
+                try:
+                    resp = await self._client.send(req, stream=True)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    # Connect-phase failure: no request bytes reached the upstream,
+                    # so a retry is safe for ANY method. Only ``client.send`` is
+                    # covered: once a response exists the request was sent, so a
+                    # connect-class error while reading the body falls through to
+                    # the post-send branches below. ConnectTimeout subclasses both
+                    # ConnectError and TimeoutException — it is handled here,
+                    # before the generic timeout branch.
+                    if probe is not None:
+                        probe.send_ruled_out()
+                    _record_transport_error(span, exc)
+                    logger.error(
+                        "upstream_network_failure", host=host, error_type=type(exc).__name__
+                    )
+                    raise UpstreamTimeoutError(
+                        detail="The upstream connection could not be established in time.",
+                        type="upstream_connect_failed",
+                        pre_send=True,
+                    ) from exc
                 try:
                     body = await self._read_capped(resp)
                 finally:
                     await resp.aclose()
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                # Connect-phase failure: no request bytes reached the upstream, so
-                # a retry is safe for ANY method. ConnectTimeout
-                # subclasses both ConnectError and TimeoutException — handle it
-                # here, before the generic timeout branch.
-                _record_transport_error(span, exc)
-                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
-                raise UpstreamTimeoutError(
-                    detail="The upstream connection could not be established in time.",
-                    type="upstream_connect_failed",
-                    pre_send=True,
-                ) from exc
             except httpx.TimeoutException as exc:
                 _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
