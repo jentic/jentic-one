@@ -326,7 +326,9 @@ func multipartTooLargeError(totalBytes, limit int64) error {
 
 // notRegularFileError refuses a --form-file path that is not a regular file. A
 // FIFO blocks in open until a writer appears, and /dev/stdin, /dev/fd/0 and
-// friends read the inherited stdin that may never send EOF (#1354); the body is
+// friends resolve to the inherited stdin, which (when it is a pipe or terminal)
+// may never send EOF (#1354). Those aliases pass only when stdin is redirected
+// from a regular file, where the stat sees that file and the read ends. The body is
 // assembled before any request context exists, so neither --timeout nor
 // cancellation could interrupt either hang.
 func notRegularFileError(path, key string) error {

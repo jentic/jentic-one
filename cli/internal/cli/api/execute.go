@@ -88,7 +88,9 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"key=@\"path\" (a leading \" counts as quoting only when a closing \" is\n" +
 			"followed by the end or a ';'). Option values cannot contain ';'. Field\n" +
 			"names and file names must not contain CR/LF. A file part must be a\n" +
-			"regular file: stdin (@-, /dev/stdin), pipes and devices are refused.\n" +
+			"regular file: @- is refused, and so are non-regular files such as\n" +
+			"pipes, FIFOs and devices (including /dev/stdin or /dev/fd/N when stdin\n" +
+			"is a pipe or terminal; stdin redirected from a regular file is accepted).\n" +
 			"The assembled body is checked against the broker's default 50 MiB\n" +
 			"multipart/form-data limit before anything is sent (a broker cap raised\n" +
 			"above 50 MiB is not usable from the CLI); an oversize body is refused\n" +

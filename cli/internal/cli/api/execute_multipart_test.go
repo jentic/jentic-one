@@ -290,9 +290,11 @@ func TestBuildMultipartBodySizeGuard(t *testing.T) {
 }
 
 // TestBuildMultipartBodyRefusesNonRegularFiles pins the regular-file-only
-// contract: a device (/dev/zero) or an stdin alias (/dev/stdin, /dev/fd/0) is
-// refused at the pre-flight stat with a coded error, before any open or read —
-// /dev/stdin reads the inherited stdin that may never send EOF (#1354). The
+// contract: a device (/dev/zero) or an stdin alias (/dev/stdin, /dev/fd/0)
+// backed by a pipe or terminal is refused at the pre-flight stat with a coded
+// error, before any open or read — such a stdin may never send EOF (#1354). An
+// alias that resolves to a regular file (stdin redirected from a file) is
+// accepted, so those cases skip. The
 // FIFO case is in execute_multipart_unix_test.go.
 func TestBuildMultipartBodyRefusesNonRegularFiles(t *testing.T) {
 	for _, p := range []string{"/dev/zero", "/dev/stdin", "/dev/fd/0"} {
