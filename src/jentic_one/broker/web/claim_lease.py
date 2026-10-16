@@ -10,18 +10,23 @@ on whether the upstream may have acted:
   resolution or injection errors, post-injection URL validation, cancellation),
   or the envelope proved the call never left the broker
   (:func:`~jentic_one.broker.core.exceptions.upstream_contact_ruled_out`:
-  connect-phase failures, an open circuit, an unavailable runner, with no
-  earlier retry attempt that may have been sent).
+  connect-phase failures, an open circuit, an unavailable runner, a deadline
+  that ran out before any send, with no earlier retry attempt that may have
+  been sent).
 - **Store and replay** when the upstream may have acted and there is a response
   to record: a ``BrokerError`` after send (read timeout, dropped connection,
-  oversized response, blown deadline) stores its problem+json, and an upstream
-  answer whose persistence or commit failed stores that answer. The same-key
-  retry replays it (``Idempotent-Replayed: true``) instead of re-running the
-  call; a new key is the explicit way to run it again.
+  oversized response, a deadline that cut off a send) stores its problem+json,
+  and an upstream answer whose persistence or commit failed stores that answer.
+  The same-key retry replays it (``Idempotent-Replayed: true``) instead of
+  re-running the call; a new key is the explicit way to run it again.
 - **Hold** to ``pending_ttl_s`` when the upstream may have acted but there is
   nothing to record: cancellation or a non-``BrokerError`` once the upstream
   call started. The retry gets ``409 idempotency_in_progress`` until the claim
   lapses.
+
+Once the caller has the upstream response and calls :meth:`ClaimLease.settle`,
+storing it is the caller's job: a later failure (including of that store
+write) leaves the claim to its pending TTL and the lease records nothing.
 
 Every store operation here is shielded so a cancelled request still finishes it,
 runs as a task the module keeps a strong reference to until it is done, and
@@ -108,7 +113,7 @@ class ClaimLease:
     def hold(
         self, store: SharedStateIdempotencyStore, claim: IdempotencyClaim, fingerprint: str
     ) -> None:
-        """Own a ``FRESH`` claim; a failure from here on releases it."""
+        """Own a ``FRESH`` claim; a failure before :meth:`dispatching` releases it."""
         self._store, self._claim, self._fingerprint = store, claim, fingerprint
         self._phase = _Phase.HELD
 
@@ -133,14 +138,14 @@ class ClaimLease:
             )
 
     def settle(self) -> None:
-        """The caller stores the response itself; the lease does nothing more."""
+        """The caller stores the response itself; a later :meth:`abandon` is a no-op."""
         self._phase = _Phase.SETTLED
 
     async def abandon(self, exc: BaseException) -> None:
         """Settle the claim of a request that is ending with ``exc``; never raises over it."""
         phase, store, claim = self._phase, self._store, self._claim
         self._phase = _Phase.SETTLED
-        if store is None or claim is None:
+        if store is None or claim is None or phase is _Phase.SETTLED:
             return
         error_type = type(exc).__name__
         if phase in (_Phase.HELD, _Phase.FAILED_BEFORE_SEND):
