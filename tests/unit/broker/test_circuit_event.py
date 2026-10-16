@@ -16,6 +16,7 @@ from jentic_one.broker.services.execution.service import (
 )
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _CircuitOpenRunner(UpstreamRunner):
@@ -71,7 +72,7 @@ async def test_circuit_open_emits_event() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -113,7 +114,7 @@ async def test_circuit_open_dedup_suppresses_second_emit() -> None:
                     _ctx_req(),
                     body=None,
                     headers=None,
-                    session=session,
+                    admin_db=SessionScope(session),
                     broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",
@@ -147,7 +148,7 @@ async def test_circuit_open_different_hosts_emit_independently() -> None:
                     _ctx_req(host=host),
                     body=None,
                     headers=None,
-                    session=session,
+                    admin_db=SessionScope(session),
                     broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",

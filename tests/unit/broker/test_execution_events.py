@@ -19,6 +19,7 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _StatusRunner(UpstreamRunner):
@@ -88,7 +89,7 @@ async def test_run_execution_emits_completed_event() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -123,7 +124,7 @@ async def test_run_execution_emits_failed_event_on_broker_error() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -271,7 +272,7 @@ async def test_run_execution_tags_failed_event_with_thirdparty_auth(
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -308,7 +309,7 @@ async def test_run_execution_no_auth_tag_on_success() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -478,7 +479,7 @@ async def test_run_execution_no_auth_tag_without_vendor() -> None:
             ctx_req,
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -514,7 +515,7 @@ async def test_run_execution_tags_completed_event_with_origin() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -547,7 +548,7 @@ async def test_run_execution_failed_carries_origin_and_error_source_tags() -> No
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
@@ -584,7 +585,7 @@ async def test_run_execution_unknown_origin_is_not_tagged() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc",
             actor_type="agent",

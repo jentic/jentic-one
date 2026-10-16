@@ -114,13 +114,18 @@ class ExecutionHandler:
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: Any,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        """Resolve creds, dispatch through the pipeline, persist the result."""
+        """Resolve creds, dispatch through the pipeline, persist the result.
+
+        ``db`` is the worker's database. Each write opens its own short
+        transaction on it, after the upstream call, so the call is never awaited
+        while an admin connection (or, on SQLite, the write lock) is held.
+        """
         if not created_by or not actor_type:
             raise ValueError("created_by and actor_type are required for execution jobs")
         if payload is None:
@@ -193,7 +198,7 @@ class ExecutionHandler:
             )
             if not verdict.allowed:
                 return await self._deny(
-                    session,
+                    db,
                     job_id=job_id,
                     execution_id=execution_id,
                     trace_id=trace_id,
@@ -274,7 +279,7 @@ class ExecutionHandler:
                         "credential_name": credential_name,
                     },
                 ),
-                session=session,
+                db=db,
             )
             http_status = exec_result.status_code
             response_body = exec_result.body
@@ -304,20 +309,21 @@ class ExecutionHandler:
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
-        await self._emit_lifecycle(
-            session,
-            job_id=job_id,
-            execution_id=execution_id,
-            trace_id=trace_id,
-            status=status,
-            error_msg=error_msg,
-            created_by=created_by,
-            actor_type=actor_type,
-            toolkit_id=payload.get("toolkit_id"),
-            credential_id=credential_id,
-            operation=operation,
-            origin=origin,
-        )
+        async with db.transaction() as session:
+            await self._emit_lifecycle(
+                session,
+                job_id=job_id,
+                execution_id=execution_id,
+                trace_id=trace_id,
+                status=status,
+                error_msg=error_msg,
+                created_by=created_by,
+                actor_type=actor_type,
+                toolkit_id=payload.get("toolkit_id"),
+                credential_id=credential_id,
+                operation=operation,
+                origin=origin,
+            )
 
         result_body: dict[str, Any] = {
             "execution_id": execution_id,
@@ -332,7 +338,7 @@ class ExecutionHandler:
 
     async def _deny(
         self,
-        session: Any,
+        db: Any,
         *,
         job_id: str,
         execution_id: str,
@@ -351,20 +357,21 @@ class ExecutionHandler:
         """
         problem_type = str(problem.get("type") or "about:blank")
         logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
-        await self._emit_lifecycle(
-            session,
-            job_id=job_id,
-            execution_id=execution_id,
-            trace_id=trace_id,
-            status=ExecutionStatus.FAILED,
-            error_msg=f"Authorization denied ({problem_type})",
-            created_by=created_by,
-            actor_type=actor_type,
-            toolkit_id=payload.get("toolkit_id"),
-            credential_id=payload.get("credential_id"),
-            operation=operation_from_job_payload(payload),
-            origin=payload.get("origin"),
-        )
+        async with db.transaction() as session:
+            await self._emit_lifecycle(
+                session,
+                job_id=job_id,
+                execution_id=execution_id,
+                trace_id=trace_id,
+                status=ExecutionStatus.FAILED,
+                error_msg=f"Authorization denied ({problem_type})",
+                created_by=created_by,
+                actor_type=actor_type,
+                toolkit_id=payload.get("toolkit_id"),
+                credential_id=payload.get("credential_id"),
+                operation=operation_from_job_payload(payload),
+                origin=payload.get("origin"),
+            )
         status = problem.get("status")
         return JobResultPayload(
             body={

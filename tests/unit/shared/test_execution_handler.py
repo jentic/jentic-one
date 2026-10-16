@@ -31,6 +31,7 @@ from jentic_one.shared.jobs.protocols import (
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _FakeSession:
@@ -46,7 +47,7 @@ class _RecordingExecutor:
         self._result = result
         self.last_request: UpstreamExecRequest | None = None
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.last_request = request
         return self._result
 
@@ -56,7 +57,7 @@ class _RaisingExecutor:
         self._exc = exc
         self.called = False
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.called = True
         raise self._exc
 
@@ -127,7 +128,11 @@ async def test_handler_delegates_to_executor_no_raw_http() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job1", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job1",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert executor.last_request is not None
@@ -147,7 +152,11 @@ async def test_handler_marks_4xx_5xx_failed() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job2", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job2",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert result.body["status"] == "failed"
@@ -166,7 +175,11 @@ async def test_handler_pipeline_error_is_recorded_not_raised() -> None:
     handler = ExecutionHandler(executor=executor)
 
     result = await handler.execute(
-        "job3", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job3",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     assert executor.called is True
@@ -223,7 +236,11 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     )
 
     await handler.execute(
-        "job4", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job4",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -241,7 +258,11 @@ async def test_handler_no_injector_sends_no_auth() -> None:
     handler = ExecutionHandler(executor=executor)
 
     await handler.execute(
-        "job5", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job5",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -283,7 +304,7 @@ async def test_handler_bounds_injection_to_the_run_time_boundary(
 
     await handler.execute(
         "job_bound",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(allowed_credential_ids=["cred_stale"], credential_id="cred_stale"),
         created_by="usr_test",
         actor_type="user",
@@ -308,7 +329,7 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
 
     await handler.execute(
         "job_req",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             operation={"id": "listThings", "path": "/v1/things", "method": "GET"},
             credential_id="cred_a",
@@ -367,7 +388,7 @@ async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> No
     ):
         result = await handler.execute(
             "job_denied",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(credential_id="cred_a", allowed_credential_ids=["cred_a"]),
             created_by="agt_abc123",
             actor_type="agent",
@@ -413,7 +434,7 @@ async def test_handler_denied_job_keys_repeated_failure_on_the_folded_operation(
     ):
         await handler.execute(
             "job_denied_op",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(operation=operation, credential_id="cred_a"),
             created_by="agt_abc123",
             actor_type="agent",
@@ -436,7 +457,7 @@ async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
 
     await handler.execute(
         "job_dict_only",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(operation={"id": "op_dict", "path": "/v1/things", "method": "GET"}),
         created_by="agt_abc123",
         actor_type="agent",
@@ -463,7 +484,7 @@ async def test_handler_reauthorizes_on_the_operation_relative_path() -> None:
 
     await handler.execute(
         "job_relative",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             operation={
                 "id": "op_w",
@@ -504,7 +525,7 @@ async def test_handler_passes_actor_fields_in_metadata() -> None:
 
     await handler.execute(
         "job6",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(),
         created_by="agt_abc123",
         actor_type="agent",
@@ -541,7 +562,7 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
 
     await handler.execute(
         "job8",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(trace_id="ab" * 16),
         created_by="agt_abc123",
         actor_type="agent",
@@ -579,7 +600,7 @@ async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
 
     await handler.execute(
         "job9",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=payload,
         created_by="agt_abc123",
         actor_type="agent",
@@ -606,7 +627,11 @@ async def test_handler_no_credential_leaves_attribution_none() -> None:
     )
 
     await handler.execute(
-        "job9", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+        "job9",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
     )
 
     req = executor.last_request
@@ -624,7 +649,7 @@ async def test_handler_rejects_missing_actor_fields() -> None:
     handler = ExecutionHandler(executor=executor)
 
     with pytest.raises(ValueError, match="created_by and actor_type are required"):
-        await handler.execute("job7", _FakeSession(), payload=_payload())
+        await handler.execute("job7", SessionScope(_FakeSession()), payload=_payload())
 
 
 @pytest.mark.asyncio
@@ -648,7 +673,7 @@ async def test_handler_tags_lifecycle_events_with_payload_origin(
     ) as mock_emit:
         await handler.execute(
             "job10",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(origin="mcp"),
             created_by="agt_abc123",
             actor_type="agent",
@@ -673,7 +698,7 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
     ) as mock_emit:
         await handler.execute(
             "job11",
-            _FakeSession(),
+            SessionScope(_FakeSession()),
             payload=_payload(),
             created_by="agt_abc123",
             actor_type="agent",
@@ -696,7 +721,7 @@ async def test_handler_forwards_operation_dict_in_metadata() -> None:
 
     await handler.execute(
         "job_op",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(operation=operation),
         created_by="agt_abc123",
         actor_type="agent",
@@ -722,7 +747,7 @@ async def test_handler_scopes_credentials_on_payload_server_variables() -> None:
 
     await handler.execute(
         "job11",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/eu/things",
             server_variables={"region": "eu"},
@@ -752,7 +777,7 @@ async def test_handler_propagates_unresolved_server_variables() -> None:
 
     await handler.execute(
         "job13",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/us/things", server_variables_unresolved=True
         ),
@@ -779,7 +804,7 @@ async def test_handler_substitutes_server_variable_defaults() -> None:
 
     await handler.execute(
         "job12",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             upstream_url="https://api.example.com/{region}/things",
             server_variable_defaults={"region": "us"},
@@ -810,7 +835,7 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
 
     await handler.execute(
         "job_hdr",
-        _FakeSession(),
+        SessionScope(_FakeSession()),
         payload=_payload(
             method="POST",
             body_b64="eyJhIjoxfQ==",

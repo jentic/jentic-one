@@ -22,13 +22,18 @@ class JobHandler(Protocol):
     async def execute(
         self,
         job_id: str,
-        session: Any,
+        db: Any,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
         """Run the job.
+
+        ``db`` is the worker's ``DatabaseSession``. The worker opens no
+        transaction around the handler: a handler opens its own short
+        transactions on ``db``, so no connection (and, on SQLite, no write lock)
+        is held across slow work such as an upstream call or a spec fetch.
 
         ``created_by``/``actor_type`` carry the enqueuing actor's id and kind.
         Handlers that write audit entries (which require a real actor) must

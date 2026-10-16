@@ -55,6 +55,7 @@ from jentic_one.shared.jobs.protocols import UpstreamExecRequest
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
+from tests.unit.fake_tx import SessionScope
 
 
 class _SpyBroker:
@@ -214,7 +215,7 @@ async def test_async_path_invokes_injected_broker() -> None:
         },
     )
 
-    result = await executor.execute(request, session=session)
+    result = await executor.execute(request, db=SessionScope(session))
 
     assert len(spy.calls) == 1, "injected broker must be invoked on the async path"
     assert result.status_code == 200
