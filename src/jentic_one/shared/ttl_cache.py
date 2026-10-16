@@ -11,9 +11,12 @@ the same exception. Cancelling one waiter never cancels the load for the
 others; the load is cancelled only once its last waiter has gone.
 
 A loader exception propagates to every waiter of that load. With
-``failure_ttl_seconds > 0`` it is also remembered for that long, so a
+``failure_ttl_seconds > 0`` the failure is also remembered for that long, so a
 persistently failing key is not reloaded on every call; with the default ``0``
-the next call after a failure runs the loader again. ``clear()`` drops every
+the next call after a failure runs the loader again. Only the failure's type
+and scalar args are remembered (never the exception object, whose traceback
+and cause chain would keep the loader's locals alive), and each hit raises a
+fresh instance with no ``__cause__``. ``clear()`` drops every
 entry and detaches loads already in flight: their waiters still get the
 result, but it is not stored and later callers start a fresh load.
 ``ttl_seconds <= 0`` or ``max_entries <= 0`` disables caching entirely (every
@@ -29,11 +32,47 @@ from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from typing import cast
 
+#: Exception ``args`` of these types are kept verbatim in a remembered failure;
+#: anything else is replaced by the exception's message (at most
+#: :data:`_MAX_FALLBACK_MESSAGE` characters) so a remembered failure never
+#: references objects the loader built (bodies, responses, buffers).
+_SCALAR_ARG_TYPES = (str, int, float, bool, type(None))
+_MAX_FALLBACK_MESSAGE = 1024
+
+
+@dataclass(frozen=True, slots=True)
+class _Failure:
+    """A loader failure reduced to its type and scalar args.
+
+    The live exception carries ``__traceback__``/``__cause__``/``__context__``,
+    whose frames keep every loader local (e.g. a capped response body) alive;
+    storing it would pin that memory for the whole failure TTL. Only the type
+    and plain-value args are kept, and each hit raises a fresh instance.
+    """
+
+    exc_type: type[Exception]
+    args: tuple[object, ...]
+
+    @classmethod
+    def detach(cls, exc: Exception) -> _Failure:
+        if all(isinstance(arg, _SCALAR_ARG_TYPES) for arg in exc.args):
+            return cls(type(exc), tuple(exc.args))
+        return cls(type(exc), (str(exc)[:_MAX_FALLBACK_MESSAGE],))
+
+    def rebuild(self) -> Exception:
+        """A fresh, unchained instance of the remembered failure."""
+        try:
+            return self.exc_type(*self.args)
+        except Exception:
+            # A type whose constructor rejects its own args still reports as a
+            # failure, just not as its original type.
+            return RuntimeError(*self.args)
+
 
 @dataclass(slots=True)
 class _Entry[V]:
     value: V | None
-    error: Exception | None
+    error: _Failure | None
     expires_at: float
 
 
@@ -86,9 +125,7 @@ class AsyncTTLCache[K: Hashable, V]:
         hit = self._lookup(key)
         if hit is not None:
             if hit.error is not None:
-                # The remembered exception is re-raised on every hit; dropping
-                # its traceback keeps repeated raises from growing it.
-                raise hit.error.with_traceback(None)
+                raise hit.error.rebuild()
             return cast("V", hit.value)
 
         flight = self._inflight.get(key)
@@ -114,7 +151,8 @@ class AsyncTTLCache[K: Hashable, V]:
             value = await loader()
         except Exception as exc:
             if generation == self._generation and self._failure_ttl_seconds > 0:
-                self._store(key, _Entry(None, exc, self._clock() + self._failure_ttl_seconds))
+                failure = _Failure.detach(exc)
+                self._store(key, _Entry(None, failure, self._clock() + self._failure_ttl_seconds))
             raise
         else:
             if generation == self._generation:
