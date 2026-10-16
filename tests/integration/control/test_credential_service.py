@@ -7,6 +7,7 @@ import socket
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -1686,6 +1687,65 @@ async def test_update_device_code_frozen_while_flow_pending(
         identity=_ADMIN_IDENTITY,
     )
     assert renamed.name == "Device renamed"
+
+
+async def test_update_device_code_expired_pending_flow_does_not_block(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A flow past its device-code expiry can no longer complete, so it does
+    not block a scopes or token_url edit even before the poll scanner
+    retires it."""
+    created = await svc.create(_device_code_create("Device expired"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    async with control_db.transaction() as session:
+        await DeviceAuthorizationCredentialRepository.update_fields(
+            session,
+            cid,
+            encrypted_device_code="enc-device-code",
+            user_code="ABCD-1234",
+            device_code_expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+
+    updated = await svc.update(
+        cid,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2,
+            token_url="https://auth.example.com/v2/token",
+            scopes=["read", "write"],
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(updated.details, OAuth2Redacted)
+    assert updated.details.token_url == "https://auth.example.com/v2/token"
+    assert updated.details.scopes == ["read", "write"]
+
+    # A flow still inside its expiry keeps the edit blocked.
+    async with control_db.transaction() as session:
+        await DeviceAuthorizationCredentialRepository.update_fields(
+            session, cid, device_code_expires_at=datetime.now(UTC) + timedelta(minutes=5)
+        )
+    with pytest.raises(InvalidCredentialInputError, match="in progress"):
+        await svc.update(
+            cid,
+            CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read"]),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+@pytest.mark.parametrize(
+    "token_url", ["http://169.254.169.254/latest/meta-data", "https://auth.example.com/v2/token"]
+)
+async def test_update_token_url_on_unknown_credential_is_not_found(
+    svc: CredentialService, clean_credentials: None, token_url: str
+) -> None:
+    """A token_url edit on a credential the caller cannot see answers 404,
+    whether or not the URL would pass validation."""
+    with pytest.raises(CredentialNotFoundError):
+        await svc.update(
+            "cred_does_not_exist",
+            CredentialUpdate(type=CredentialType.OAUTH2, token_url=token_url),
+            identity=_ADMIN_IDENTITY,
+        )
 
 
 async def test_update_oauth2_without_client_config_rejected(

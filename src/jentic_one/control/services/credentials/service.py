@@ -1284,13 +1284,20 @@ class CredentialService:
     ) -> CredentialRedactedView:
         """Update/rotate a credential.
 
-        Payload-only checks, including the DNS-resolving ``token_url``
-        validation, run before the write transaction opens so no resolver
-        call holds a DB write lock.
+        Payload-only checks run first. The DNS-resolving ``token_url``
+        validation runs before the write transaction opens, so no resolver
+        call holds a DB write lock, and after a read-only existence and type
+        check, so not-found and type-mismatch errors take precedence over an
+        invalid ``token_url``. The transaction repeats that check against the
+        row it writes.
         """
         self._validate_update_fields(payload)
-        validated_token_url = await self._validate_update_token_url(payload)
         access_filters = build_access_filters(identity, Credential, for_write=True)
+        validated_token_url: str | None = None
+        if payload.type == CredentialType.OAUTH2 and payload.token_url is not None:
+            async with self._ctx.control_db.session() as session:
+                await self._get_updatable(session, credential_id, payload, access_filters)
+            validated_token_url = await self._validate_update_token_url(payload)
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
             credential = await self._get_updatable(session, credential_id, payload, access_filters)
@@ -1673,6 +1680,13 @@ class CredentialService:
                 "Changing the token_url origin (scheme, host or port) requires "
                 "re-entering client_secret in the same request"
             )
+        if cross_origin:
+            # Serialise with the broker's single-flight refresh before any
+            # write: a refresh already holding the lock finishes against the
+            # stored origin, and the next one finds the token row gone (and
+            # fails as needs-reconnect) rather than presenting the old refresh
+            # token to the new origin.
+            await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
         await OAuthClientCredentialRepository.update(
             session,
             credential_id,
@@ -1719,7 +1733,11 @@ class CredentialService:
         )
         if dfc is None:
             raise _no_client_config_error()
-        if dfc.encrypted_device_code is not None:
+        # A flow past its expiry can no longer complete; it only lingers until
+        # the poll scanner retires it, so it must not keep the edit blocked.
+        if dfc.encrypted_device_code is not None and (
+            dfc.device_code_expires_at is None or dfc.device_code_expires_at > datetime.now(UTC)
+        ):
             raise InvalidCredentialInputError(
                 "A device authorization flow is in progress for this credential; "
                 "retry once it completes or expires"
