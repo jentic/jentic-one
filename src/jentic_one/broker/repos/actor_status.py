@@ -10,7 +10,8 @@ same questions directly from the actor rows, with the same semantics:
 - ``agent`` → ``agents.status = 'active'`` (suspended/archived/missing → inactive)
   and, for an owned agent, the owner's ``users.active`` (an owned agent follows
   its owner's account status; ownerless agents depend on their own status);
-- ``user`` → ``users.active`` (disabled/missing → inactive), read through the
+- ``user`` → ``users.active`` and ``users.deleted_at IS NULL``
+  (disabled/deleted/missing → inactive), read through the
   shared ``read_user_status`` the login-JWT verifier uses;
 - anything else → inactive. That covers the retired ``toolkit`` and
   ``service_account`` identities (theme 8 Phase 4 dropped the
@@ -74,7 +75,7 @@ class ActorStatusResolver:
             return bool(row.status == "active")
         if actor_type == ActorType.USER.value:
             status = await read_user_status(self._admin_db, actor_id)
-            return status is not None and status.active
+            return status is not None and status.accepts_credentials
         return False
 
     async def holds_permission(self, *, actor_id: str, actor_type: str, permission: str) -> bool:

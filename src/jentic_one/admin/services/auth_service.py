@@ -125,7 +125,9 @@ class AuthService:
                 dummy_verify_password()
                 raise InvalidCredentialsError()
 
-            if not user.active:
+            # A deleted row is refused even if it reads active: delete is
+            # terminal, and its retained password hash must never sign in.
+            if not user.active or user.deleted_at is not None:
                 dummy_verify_password()
                 raise InvalidCredentialsError()
 
@@ -227,9 +229,9 @@ class AuthService:
         # from token minting.
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            # The account vanished between credential verification and minting
-            # (concurrent deletion) — treat it like any other bad credential.
+        if user is None or not user.active or user.deleted_at is not None:
+            # The account was disabled or deleted between credential
+            # verification and minting — treat it like any other bad credential.
             raise InvalidCredentialsError()
 
         return await self._mint_session_bundle(
@@ -284,7 +286,7 @@ class AuthService:
 
         async with self._ctx.admin_db.transaction() as session:
             user = await UserRepository.get_by_id(session, claims["sub"])
-            if user is None or not user.active:
+            if user is None or not user.active or user.deleted_at is not None:
                 raise InvalidCredentialsError("Token is not refreshable")
             # Defence in depth behind the auth gate: a revoked session (the
             # generation moved on) never re-mints into a live one.
