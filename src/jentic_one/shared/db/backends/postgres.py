@@ -76,8 +76,8 @@ class KeepaliveConnection(asyncpg.Connection):  # type: ignore[misc]
     reachable, and only accepts a class there — so per-database tuning is a
     class attribute on a subclass built by :func:`keepalive_connection_class`.
     Setting the options is best-effort: a failure is logged and the
-    connection is still usable (``pool_pre_ping`` and ``pool_recycle`` keep
-    covering stale connections).
+    connection is still usable (``pool_pre_ping``, when enabled, and
+    ``pool_recycle`` cover stale connections).
     """
 
     keepalive: ClassVar[TcpKeepalive] = TcpKeepalive()

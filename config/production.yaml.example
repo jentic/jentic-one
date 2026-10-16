@@ -15,10 +15,12 @@ databases:
     password: CHANGE_ME
     pool_max: 20
     schema_name: registry
-    # Connection health checks (defaults shown). Disabling pre-ping saves one
-    # round trip per pool checkout; if you do, keep pool_recycle_s below the
-    # server/proxy idle timeout (0 disables recycling). Applies to each
-    # database section.
+    # Connection health checks (defaults shown). On asyncpg pre-ping costs three
+    # round trips (BEGIN, `;`, ROLLBACK) per pool checkout. If you disable it,
+    # keep pool_recycle_s below the server/proxy idle timeout (0 disables
+    # recycling) — and note recycling does not cover a Postgres restart,
+    # failover or pooler restart: the first request per pool per process after
+    # one can fail with a 503. Applies to each database section.
     # pool_pre_ping: true
     # pool_recycle_s: 1800
   control:

@@ -144,15 +144,23 @@ front Postgres with a pooler like pgbouncer.
 connection (`pool_pre_ping: true`) and transparently replaces one that died
 while idle, pooled connections are recycled once they are 30 minutes old
 (`pool_recycle_s: 1800`), and TCP keepalive is enabled on every connection.
-On asyncpg the ping is a full `BEGIN`/`ROLLBACK` round trip per checkout.
-Latency-sensitive deployments on a stable network can set
-`pool_pre_ping: false` per database to save that round trip; keep
-`pool_recycle_s` below the shortest idle timeout on the path (Postgres
-`idle_session_timeout`, pgbouncer/proxy, cloud NAT or load balancer) so
-connections are retired before anything in between drops them, lowering it
-from the default if any of those cut off sooner. Without pre-ping, a
-connection dropped anyway fails its first query instead of being replaced.
-`pool_recycle_s: 0` disables recycling. Both are ignored for SQLite. See
+On asyncpg the ping costs three round trips (`BEGIN`, `;`, `ROLLBACK`) per
+checkout. Latency-sensitive deployments can set `pool_pre_ping: false` per
+database to save them; keep `pool_recycle_s` below the shortest idle timeout
+on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud NAT or
+load balancer) so connections are retired before anything in between drops
+them, lowering it from the default if any of those cut off sooner.
+
+Recycling and keepalive do **not** cover a Postgres restart or failover
+(including managed-Postgres maintenance), a pgbouncer/proxy restart, or a
+backend terminated with `pg_terminate_backend`: every pooled connection is
+dead until it is next used. Without pre-ping, the first request on each pool
+in each process after such an event can fail with an HTTP `503`
+(`database_unavailable`); work that runs through the retrying transaction
+helper is re-run on a fresh connection instead. Each server process holds its
+own pools, so the count scales with the number of processes. Only disable
+pre-ping where those events are rare and that error is acceptable. `pool_recycle_s: 0` disables recycling. Both are
+ignored for SQLite. See
 [`databases.*.pool_pre_ping`](../reference/config.md#databases).
 
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values

@@ -218,11 +218,14 @@ class DatabaseConfig(BaseModel):
         default=True,
         description=(
             "PostgreSQL: test each pooled connection on checkout and transparently "
-            "replace a dead one. On asyncpg the ping is a full ``BEGIN``/``ROLLBACK`` "
-            "round trip per checkout; disabling it saves that round trip but a "
-            "connection dropped while idle then fails its first query — keep "
-            "``pool_recycle_s`` enabled and below the server/proxy idle timeout "
-            "when setting ``false``. Ignored for SQLite."
+            "replace a dead one. On asyncpg the ping costs three round trips "
+            "(``BEGIN``, ``;``, ``ROLLBACK``) per checkout. With ``false``, "
+            "``pool_recycle_s`` and TCP keepalive do not cover a Postgres restart or "
+            "failover, a pooler/proxy restart, or a terminated backend: after such an "
+            "event the first request on each pool per process can fail with an HTTP "
+            "503 (work run through the retrying transaction helper is re-run on a "
+            "fresh connection instead). Only disable it where those events are rare "
+            "and that error is acceptable. Ignored for SQLite."
         ),
     )
     pool_recycle_s: int = Field(
