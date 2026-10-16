@@ -208,10 +208,13 @@ helm upgrade jentic ./deploy/helm/jentic-one … \
 ```
 
 That last `extraEnv` is **required**, and the install fails without it. The
-pre-auth OAuth rate limiter keys on the client IP, so behind an ingress every
-request arrives from the controller's address and all clients share one bucket —
-a single noisy caller then rate-limits your whole fleet out of `/authorize`. Set
-it to the ingress controller's pod CIDR or IPs (or
+pre-auth rate limiters — the OAuth endpoints and the password logins
+(`POST /auth/login` and the `/authorize` login form, see
+`admin.auth.login_rate_limit`) — key on the client IP, so behind an ingress
+every request arrives from the controller's address and all clients share one
+bucket: a single noisy caller then rate-limits your whole fleet out of
+`/authorize` and out of login. Set it to the ingress controller's pod CIDR or
+IPs, comma-separated (or
 `ingress.skipTrustedProxiesCheck=true` if you enforce rate limits upstream of
 the cluster). Bringing your own Ingress manifest instead works the same way:
 point it at the `<release>-app` and `<release>-broker` Services on port 8000,

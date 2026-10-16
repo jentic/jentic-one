@@ -28,6 +28,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
+from jentic_one.auth.web.ratelimit import get_auth_backend
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -38,8 +39,8 @@ from jentic_one.auth.web.schemas.oauth import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.client_ip import client_ip
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
 from jentic_one.shared.web.openapi_responses import oauth_error, route_not_found
@@ -49,35 +50,12 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-def _get_auth_backend(request: Request) -> SharedStateBackend:
-    backend: object = getattr(request.app.state, "auth_state_backend", None)
-    if isinstance(backend, SharedStateBackend):
-        return backend
-    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
-    return MemoryStateBackend()
-
-
-def _client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
-    """Extract the real client IP, honoring XFF only from trusted reverse proxies."""
-    socket_ip = request.client.host if request.client else "unknown"
-    if not trusted_proxies or socket_ip not in trusted_proxies:
-        return socket_ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if not forwarded:
-        return socket_ip
-    hops = [h.strip() for h in forwarded.split(",")]
-    for hop in reversed(hops):
-        if hop not in trusted_proxies:
-            return hop
-    return socket_ip
-
-
 def _get_token_limiter(request: Request, ctx: Context) -> RateLimiter:
     limiter: RateLimiter | None = getattr(request.app.state, "_token_limiter", None)
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     limiter = RateLimiter(backend, default_rpm=cfg.exchange_rpm, burst=cfg.exchange_burst)
     request.app.state._token_limiter = limiter
     return limiter
@@ -103,7 +81,7 @@ async def _extract_client_id(request: Request) -> str | None:
 async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
     """Per-client+IP rate limiter for the token endpoint."""
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = _client_ip(request, trusted)
+    ip = client_ip(request, trusted)
     client_id = await _extract_client_id(request)
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_token_limiter(request, ctx)
@@ -155,7 +133,7 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     # Own bucket namespace (the fix-wave pattern, see the DCR door's
     # `oauth-registration` limiter): this limiter keys on the bare IP, and the
     # shared store would otherwise hand it the same bucket as another
@@ -177,7 +155,7 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
 async def _check_revocation_rate_limit(request: Request, ctx: Context) -> None:
     """Per-IP rate limiter for the RFC 7009 form arm (called after the gate)."""
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = _client_ip(request, trusted)
+    ip = client_ip(request, trusted)
     limiter = _get_revocation_limiter(request, ctx)
     outcome = await limiter.acquire(ip)
     if not outcome.allowed:

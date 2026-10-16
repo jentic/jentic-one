@@ -13,6 +13,9 @@ from jentic_one.auth.web.app import create_app as create_auth_app
 from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.state import MemoryStateBackend
+from jentic_one.shared.web import app_factory as app_factory_module
+from jentic_one.shared.web import auth_state as auth_state_module
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 
 
@@ -248,3 +251,49 @@ def test_html_get_401_without_spa_keeps_problem_details(ctx: Context) -> None:
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
     resp = client.get("/users", headers=_html_headers())
     assert resp.status_code == 401
+
+
+def test_combined_app_builds_one_pre_auth_state_backend(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admin and auth share one pre-auth backend whatever the surface order (#1441).
+
+    The default ``apps`` order installs admin before auth; both installers must
+    land on the same backend (one Redis client), not build one each.
+    """
+    built: list[MemoryStateBackend] = []
+
+    def _build(_cfg: object) -> MemoryStateBackend:
+        backend = MemoryStateBackend()
+        built.append(backend)
+        return backend
+
+    monkeypatch.setattr(auth_state_module, "build_state_backend", _build)
+    for order in (["registry", "admin", "control", "auth"], ["auth", "admin"]):
+        built.clear()
+        app = create_combined_app(ctx, order)
+        assert len(built) == 1
+        assert app.state.auth_state_backend is built[0]
+
+
+def test_combined_app_lifespan_closes_pre_auth_state_backend(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The backend is closed by the app lifespan (custom-lifespan apps never run on_shutdown)."""
+    closed: list[bool] = []
+
+    class _Tracked(MemoryStateBackend):
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    async def _noop() -> None:
+        return None
+
+    monkeypatch.setattr(auth_state_module, "build_state_backend", lambda _cfg: _Tracked())
+    monkeypatch.setattr(ctx, "startup", _noop)
+    monkeypatch.setattr(ctx, "shutdown", _noop)
+    monkeypatch.setattr(app_factory_module, "instrument_databases", lambda _ctx: None)
+    app = create_combined_app(ctx, ["auth"])
+    with TestClient(app, raise_server_exceptions=False):
+        assert closed == []
+    assert closed == [True]

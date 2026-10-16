@@ -147,6 +147,28 @@ def test_admin_login_rate_limit_rejects_non_positive(field: str):
         AdminLoginRateLimitConfig.model_validate({field: 0})
 
 
+def test_trusted_proxies_accepts_cidrs_from_env_csv(config_file: Path):
+    """The documented Helm form (``…TRUSTED_PROXIES=10.0.0.0/8``) loads as a list."""
+    env = {"JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES": "10.0.0.0/8, 192.168.1.5"}
+    with patch.dict(os.environ, env, clear=False):
+        proxies = load_config(config_file).auth.oauth_rate_limit.trusted_proxies
+    assert proxies == ["10.0.0.0/8", "192.168.1.5"]
+
+
+@pytest.mark.parametrize("entry", ["10.0.0.0/33", "proxy.internal", "10.0.0"])
+def test_trusted_proxies_rejects_non_ip_entries(config_file: Path, entry: str):
+    env = {"JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES": entry}
+    with patch.dict(os.environ, env, clear=False), pytest.raises(ConfigError):
+        load_config(config_file)
+
+
+@pytest.mark.parametrize("threshold", [0, -1])
+def test_failed_login_lockout_threshold_must_be_positive(config_file: Path, threshold: int):
+    env = {"JENTIC__ADMIN__AUTH__FAILED_LOGIN_LOCKOUT_THRESHOLD": str(threshold)}
+    with patch.dict(os.environ, env, clear=False), pytest.raises(ConfigError):
+        load_config(config_file)
+
+
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert load_config(config_file).logging.http_wire_trace is False
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):

@@ -469,19 +469,25 @@ class ObservabilityConfig(BaseModel):
 
 
 class AdminLoginRateLimitConfig(BaseModel):
-    """Pre-auth rate limits on ``POST /auth/login``.
+    """Pre-auth rate limits on the password logins.
 
-    Two token buckets guard every attempt: one per caller IP (bounds password
-    spraying from one host) and one per normalised email (bounds a distributed
-    guessing burst against one account, on top of the failed-login lockout).
-    The caller IP honours ``auth.oauth_rate_limit.trusted_proxies``. Buckets
-    live on the shared-state backend (``broker.resilience.backend``): per
-    process for ``memory``, cluster-wide for ``redis``.
+    Applies to both doors that verify an account password: ``POST /auth/login``
+    and the local-login form submit on the ``/authorize`` flow (one shared set
+    of buckets). Two token buckets guard every attempt: one per caller IP
+    (bounds password spraying from one host; IPv6 callers are bucketed per
+    ``/64``) and one per normalised email (bounds a distributed guessing burst
+    against one account, on top of the failed-login lockout). The caller IP
+    honours ``auth.oauth_rate_limit.trusted_proxies``. Buckets live on the
+    shared-state backend (``broker.resilience.backend``): per process for
+    ``memory``, cluster-wide for ``redis``.
     """
 
     enabled: bool = Field(
         default=True,
-        description="Enforce the ``POST /auth/login`` rate limits (429 when exhausted).",
+        description=(
+            "Enforce the password-login rate limits (``POST /auth/login`` answers "
+            "429, the local-login form re-renders with 429, when exhausted)."
+        ),
     )
     ip_rpm: int = Field(
         default=30,
@@ -540,6 +546,7 @@ class AdminAuthConfig(BaseModel):
     )
     failed_login_lockout_threshold: int = Field(
         default=5,
+        ge=1,
         description=("Consecutive failed logins after which an admin account is locked."),
     )
     failed_login_lockout_seconds: int = Field(
@@ -550,7 +557,10 @@ class AdminAuthConfig(BaseModel):
     )
     login_rate_limit: AdminLoginRateLimitConfig = Field(
         default_factory=AdminLoginRateLimitConfig,
-        description="Per-IP and per-email rate limits on ``POST /auth/login``.",
+        description=(
+            "Per-IP and per-email rate limits on the password logins "
+            "(``POST /auth/login`` and the ``/authorize`` local-login form)."
+        ),
     )
 
     @model_validator(mode="after")
@@ -712,6 +722,15 @@ _LOCAL_DEV_KEY_FINGERPRINT = "d35355bfb727b96b885e0ff817efd947bc5d8a88f169cabfa7
 _LOCAL_DEV_KEY_KID = "local-dev-key"
 
 
+def _csv_to_list(value: Any) -> list[str]:
+    """Coerce a comma-separated string into a list; pass through lists unchanged."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    raise TypeError(f"expected list or comma-separated string, got {type(value).__name__}")
+
+
 class OAuthRateLimitConfig(BaseModel):
     """Pre-auth rate limit tunables for OAuth endpoints."""
 
@@ -752,15 +771,20 @@ class OAuthRateLimitConfig(BaseModel):
         default=5,
         description="Burst allowance on top of ``registration_rpm``.",
     )
-    trusted_proxies: list[str] = Field(
+    trusted_proxies: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
         default_factory=list,
         description=(
-            "Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is "
-            "honored when deriving the per-client rate-limit identity. Empty "
+            "IP addresses or CIDR ranges (e.g. ``10.0.0.0/8``) of reverse "
+            "proxies whose ``X-Forwarded-For`` header is honored when deriving "
+            "the per-client rate-limit identity — for the OAuth endpoints and "
+            "for the password logins (``POST /auth/login``, see "
+            "``admin.auth.login_rate_limit``, and the local-login form). Empty "
             "(default) means the socket address is used as-is — behind a "
             "reverse proxy every request then carries the proxy's IP and all "
-            "clients share one bucket, so list the proxy IPs when deploying "
-            "behind one."
+            "clients share one bucket, so list the proxy addresses or ranges "
+            "when deploying behind one. Accepts a YAML list or a "
+            "comma-separated string; an entry that is not an IP address or "
+            "CIDR range fails config validation."
         ),
     )
     approval_status_rpm: int = Field(
@@ -779,6 +803,20 @@ class OAuthRateLimitConfig(BaseModel):
         default=60,
         description="Burst allowance on top of ``approval_status_rpm``.",
     )
+
+    @field_validator("trusted_proxies", mode="after")
+    @classmethod
+    def _validate_trusted_proxies(cls, entries: list[str]) -> list[str]:
+        # Fail at config load: an entry that silently never matches collapses
+        # every proxied caller into the proxy's single rate-limit bucket.
+        cleaned = [entry.strip() for entry in entries if entry.strip()]
+        for entry in cleaned:
+            try:
+                ipaddress.ip_network(entry, strict=False)
+            except ValueError as exc:
+                msg = f"trusted_proxies entry is not an IP address or CIDR range: {entry!r}"
+                raise ValueError(msg) from exc
+        return cleaned
 
 
 class LocalLoginConfig(BaseModel):
@@ -1463,15 +1501,6 @@ class RetryConfig(BaseModel):
     # Retry these upstream status codes (transient overload / rate limit). An
     # upstream ``Retry-After`` on these is honored (capped at the deadline).
     retry_statuses: list[int] = Field(default_factory=lambda: [429, 502, 503, 504])
-
-
-def _csv_to_list(value: Any) -> list[str]:
-    """Coerce a comma-separated string into a list; pass through lists unchanged."""
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(",") if item.strip()]
-    raise TypeError(f"expected list or comma-separated string, got {type(value).__name__}")
 
 
 class EgressConfig(BaseModel):
