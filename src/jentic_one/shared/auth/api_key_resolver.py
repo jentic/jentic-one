@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseSession
@@ -169,6 +170,11 @@ class ApiKeyResolver:
         return arm if isinstance(arm, Identity) else None
 
     async def _credential_row(self, raw_key: str) -> Any:
+        """The agent holding ``raw_key``'s digest, read in its own admin session."""
+        async with self._admin_db.session() as session:
+            return await self._fetch_credential_row(session, raw_key)
+
+    async def _fetch_credential_row(self, session: AsyncSession, raw_key: str) -> Any:
         """The agent holding ``raw_key``'s digest: ``agent_id, name, status, owner_id``.
 
         ``name`` rides along off the already-joined ``agents`` row (no extra
@@ -182,17 +188,19 @@ class ApiKeyResolver:
             " JOIN agents a ON a.id = ac.agent_id"
             " WHERE ac.api_key_hash = :key_hash"
         )
-        async with self._admin_db.session() as session:
-            return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
+        return (await session.execute(stmt, {"key_hash": key_hash})).one_or_none()
 
     async def _lookup_agent(self, raw_key: str) -> Identity | _AgentArm | _InactiveAgent:
-        row = await self._credential_row(raw_key)
-        if row is None:
-            return _AgentArm.MISS
-        if row.status != "active":
-            return _InactiveAgent(agent_id=row.agent_id)
-
-        permissions = await self._load_permissions(row.agent_id, ActorType.AGENT)
+        # One admin session per lookup: the credential row and the active
+        # agent's grants are read on the same pooled connection (#1703), as the
+        # ``at_`` path does. Grants are only read for an active agent.
+        async with self._admin_db.session() as session:
+            row = await self._fetch_credential_row(session, raw_key)
+            if row is None:
+                return _AgentArm.MISS
+            if row.status != "active":
+                return _InactiveAgent(agent_id=row.agent_id)
+            permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)
         return Identity(
             sub=row.agent_id,
             actor_name=row.name or "",
@@ -202,13 +210,13 @@ class ApiKeyResolver:
             active=True,
         )
 
-    async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
+    async def _load_permissions(
+        self, session: AsyncSession, actor_id: str, actor_type: ActorType
+    ) -> list[str]:
+        """The actor's granted permissions, read on the caller's ``session``."""
         stmt = text(
             "SELECT permission FROM actor_permission_grants"
             " WHERE actor_id = :actor_id AND actor_type = :actor_type"
         )
-        async with self._admin_db.session() as session:
-            result = await session.execute(
-                stmt, {"actor_id": actor_id, "actor_type": actor_type.value}
-            )
-            return [row.permission for row in result.all()]
+        result = await session.execute(stmt, {"actor_id": actor_id, "actor_type": actor_type.value})
+        return [row.permission for row in result.all()]

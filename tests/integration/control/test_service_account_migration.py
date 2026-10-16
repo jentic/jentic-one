@@ -29,6 +29,7 @@ import pytest
 import structlog
 from alembic import command
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
@@ -234,16 +235,17 @@ class _PreDropApiKeyResolver(ApiKeyResolver):
     the key-resolution logic under test is the shipped one.
     """
 
-    async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
-        async with self._admin_db.session() as session:
-            result = await session.execute(
-                text(
-                    "SELECT scope FROM actor_scope_grants"
-                    " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-                ),
-                {"actor_id": actor_id, "actor_type": actor_type.value},
-            )
-            return [row.scope for row in result.all()]
+    async def _load_permissions(
+        self, session: AsyncSession, actor_id: str, actor_type: ActorType
+    ) -> list[str]:
+        result = await session.execute(
+            text(
+                "SELECT scope FROM actor_scope_grants"
+                " WHERE actor_id = :actor_id AND actor_type = :actor_type"
+            ),
+            {"actor_id": actor_id, "actor_type": actor_type.value},
+        )
+        return [row.scope for row in result.all()]
 
 
 async def _rows(admin_db: DatabaseSession, query: str, params: dict[str, object]) -> list[Any]:
