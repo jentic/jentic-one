@@ -1281,7 +1281,7 @@ async def _race_path_edit_behind_cross_origin_move(
     integration_context: Context,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    wait_until_parked: Callable[[], Awaitable[None]],
+    wait_until_parked: Callable[[str], Awaitable[None]],
 ) -> None:
     """PATCH A moves token_url to another origin with a new client_secret and
     holds the refresh lock; PATCH B, a same-origin path edit with no secret,
@@ -1353,7 +1353,7 @@ async def _race_path_edit_behind_cross_origin_move(
             )
         )
         await path_edit_validated.wait()
-        await wait_until_parked()
+        await wait_until_parked(cid)
         release_move.set()
 
     moved = move.result()
@@ -1391,7 +1391,7 @@ async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_
     (the short pause only gives it time to queue). The recorded step order
     still pins the lock as the transaction's first statement."""
 
-    async def queued() -> None:
+    async def queued(_credential_id: str) -> None:
         await asyncio.sleep(0.1)
 
     await _race_path_edit_behind_cross_origin_move(
@@ -1414,7 +1414,12 @@ async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_
     without a secret, and the move's secret would end up paired with the old
     origin."""
 
-    async def parked_on_advisory_lock() -> None:
+    async def parked_on_advisory_lock(credential_id: str) -> None:
+        # Only this credential's lock in this database counts, so a waiter on
+        # another lock (another test, another database) cannot release the move
+        # early. ``acquire_refresh_lock`` keys on ``hashtext(credential_id)``
+        # widened to bigint; pg_locks splits a bigint key into ``classid``
+        # (high 32 bits) and ``objid`` (low 32 bits) with ``objsubid = 1``.
         while True:
             async with control_db.session() as session:
                 waiting = (
@@ -1422,7 +1427,13 @@ async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_
                         text(
                             "SELECT count(*) FROM pg_locks"
                             " WHERE locktype = 'advisory' AND NOT granted"
-                        )
+                            " AND database = (SELECT oid FROM pg_database"
+                            " WHERE datname = current_database())"
+                            " AND objsubid = 1"
+                            " AND ((classid::int8 << 32) | objid::int8)"
+                            " = hashtext(:cid)::int8"
+                        ),
+                        {"cid": credential_id},
                     )
                 ).scalar_one()
             if waiting:
