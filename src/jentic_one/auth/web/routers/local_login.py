@@ -116,13 +116,13 @@ _CSRF_TTL_SECONDS = CONSENT_STATE_MAX_AGE_SECONDS
 
 _GENERIC_FAILURE_MESSAGE = "Invalid email or password."
 
+#: Shown when the per-IP or per-email password-login bucket is exhausted.
+_RATE_LIMITED_MESSAGE = "Too many sign-in attempts — wait a moment, then try again."
+
 #: Shown after a *successful* credential check when the account carries
 #: ``must_change_password`` — post-authentication, so it opens no
 #: user-enumeration surface (an anonymous attacker never reaches it without
 #: the correct password).
-#: Shown when the per-IP or per-email password-login bucket is exhausted.
-_RATE_LIMITED_MESSAGE = "Too many sign-in attempts — wait a moment, then try again."
-
 _PASSWORD_ROTATION_MESSAGE = (
     "Your password must be changed before connecting applications — "
     "sign in to Jentic One directly, update your password, then try again."
