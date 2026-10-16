@@ -6,6 +6,7 @@ specs un-previewable with ``catalog spec unavailable: response exceeds size
 limit``; these tests pin the configured limit and the labelled error message.
 """
 
+import gzip
 import hashlib
 import json
 from typing import Any
@@ -406,3 +407,35 @@ async def test_conditional_304_reads_no_body() -> None:
     assert result.content is None
     assert stream.served == 0
     assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_gzip_bomb_rejected_as_oversize() -> None:
+    """A gzip body that inflates past the cap is refused with the size-limit error."""
+    bomb = gzip.compress(b"\0" * (8 * 1024 * 1024), compresslevel=9)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=bomb),
+            headers={"content-encoding": "gzip"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    cfg = IngestConfig(max_spec_bytes=1024 * 1024)
+    with _patched(client), pytest.raises(CatalogFetchError, match=r"size limit \(1 MB\)"):
+        await fetch_json("https://example.com/openapi.json", config=cfg)
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_unsupported_content_encoding_is_a_fetch_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=b"\x0b"),
+            headers={"content-encoding": "br"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client), pytest.raises(CatalogFetchError, match="unsupported content-encoding"):
+        await fetch_json("https://example.com/openapi.json", config=IngestConfig())

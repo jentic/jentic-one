@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from typing import Annotated, Any, Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -15,8 +15,9 @@ from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.bounded_read import (
     ResponseTooLargeError,
+    UndecodableBodyError,
     decode_body,
-    open_stream,
+    follow_redirects,
     read_capped_body,
 )
 from jentic_one.shared.config import IngestConfig
@@ -372,26 +373,16 @@ async def load_specification(
                 follow_redirects=False,
                 transport=build_pinned_transport(cfg.egress),
             ) as client:
-                resp = await open_stream(client, validated_url)
+                resp = await follow_redirects(
+                    client,
+                    validated_url,
+                    headers=None,
+                    egress=cfg.egress,
+                    max_redirects=cfg.max_redirects,
+                    on_unsafe=lambda exc: IngestStageError(f"unsafe URL rejected: {exc}"),
+                    on_too_many=lambda: IngestStageError("too many redirects"),
+                )
                 try:
-                    for _ in range(cfg.max_redirects):
-                        if resp.status_code < 300 or resp.status_code >= 400:
-                            break
-                        location = resp.headers.get("location")
-                        if not location:
-                            break
-                        # Resolve relative Location headers against the current URL.
-                        next_url = urljoin(validated_url, location)
-                        try:
-                            validated_url = await validate_upstream_url_async(next_url, cfg.egress)
-                        except ValueError as exc:
-                            raise IngestStageError(f"unsafe URL rejected: {exc}") from exc
-                        await resp.aclose()
-                        resp = await open_stream(client, validated_url)
-                    else:
-                        if 300 <= resp.status_code < 400:
-                            raise IngestStageError("too many redirects")
-
                     if resp.status_code < 200 or resp.status_code >= 300:
                         raise IngestStageError(
                             f"non-success status {resp.status_code} fetching {source.url}"
@@ -403,6 +394,8 @@ async def load_specification(
             raise
         except ResponseTooLargeError as exc:
             raise IngestStageError(f"response exceeds {size_limit_label} size limit") from exc
+        except UndecodableBodyError as exc:
+            raise IngestStageError(f"failed to fetch URL: {exc}") from exc
         except httpx.HTTPError as exc:
             raise IngestStageError(f"failed to fetch URL: {exc}") from exc
 

@@ -14,14 +14,14 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
 
 import httpx
 
 from jentic_one.shared.bounded_read import (
     ResponseTooLargeError,
+    UndecodableBodyError,
     decode_body,
-    open_stream,
+    follow_redirects,
     read_capped_body,
 )
 from jentic_one.shared.config import IngestConfig
@@ -80,7 +80,9 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
             follow_redirects=False,
             transport=build_pinned_transport(config.egress),
         ) as client:
-            resp = await _follow_redirects(client, validated_url, headers=headers, config=config)
+            resp = await _open_following_redirects(
+                client, validated_url, headers=headers, config=config
+            )
             try:
                 if resp.status_code < 200 or resp.status_code >= 300:
                     raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
@@ -91,6 +93,8 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
         raise
     except ResponseTooLargeError as exc:
         raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)") from exc
+    except UndecodableBodyError as exc:
+        raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
     except httpx.HTTPError as exc:
         raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
 
@@ -136,7 +140,9 @@ async def fetch_bytes_conditional(
             follow_redirects=False,
             transport=build_pinned_transport(config.egress),
         ) as client:
-            resp = await _follow_redirects(client, validated_url, headers=headers, config=config)
+            resp = await _open_following_redirects(
+                client, validated_url, headers=headers, config=config
+            )
             try:
                 if resp.status_code == 304:
                     return ConditionalFetch(
@@ -154,6 +160,8 @@ async def fetch_bytes_conditional(
         raise
     except ResponseTooLargeError as exc:
         raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)") from exc
+    except UndecodableBodyError as exc:
+        raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
     except httpx.HTTPError as exc:
         raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
 
@@ -165,34 +173,16 @@ async def fetch_bytes_conditional(
     )
 
 
-async def _follow_redirects(
+async def _open_following_redirects(
     client: httpx.AsyncClient, url: str, *, headers: dict[str, str], config: IngestConfig
 ) -> httpx.Response:
-    """Open ``url`` as a stream, following up to ``max_redirects`` revalidated hops.
-
-    Every ``Location`` is resolved against the current URL and re-checked by
-    ``validate_upstream_url_async`` before it is requested; ``headers`` are re-sent on
-    each hop. Intermediate redirect responses are closed unread. The returned
-    final response's body is unread — the caller must ``aclose()`` it.
-    """
-    resp = await open_stream(client, url, headers=headers)
-    try:
-        for _ in range(config.max_redirects):
-            if resp.status_code < 300 or resp.status_code >= 400:
-                break
-            location = resp.headers.get("location")
-            if not location:
-                break
-            try:
-                url = await validate_upstream_url_async(urljoin(url, location), config.egress)
-            except ValueError as exc:
-                raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-            await resp.aclose()
-            resp = await open_stream(client, url, headers=headers)
-        else:
-            if 300 <= resp.status_code < 400:
-                raise CatalogFetchError("too many redirects")
-    except BaseException:
-        await resp.aclose()
-        raise
-    return resp
+    """Open ``url`` via ``shared.bounded_read.follow_redirects`` with catalog errors."""
+    return await follow_redirects(
+        client,
+        url,
+        headers=headers,
+        egress=config.egress,
+        max_redirects=config.max_redirects,
+        on_unsafe=lambda exc: CatalogFetchError(f"unsafe URL rejected: {exc}"),
+        on_too_many=lambda: CatalogFetchError("too many redirects"),
+    )
