@@ -106,6 +106,24 @@ class OAuthAppChangedError(ConnectSessionServiceError):
         self.session_id = session_id
 
 
+class TokenEndpointMovedError(ConnectSessionServiceError):
+    """The credential's token_url moved to another origin during the code exchange.
+
+    The grant minted at the old origin is discarded, not stored: the next
+    refresh would present its refresh token to the new origin. A connect
+    session ends ``failed`` with ``error_code="token_url_moved"``, and like
+    every failed session its pending credential is deleted
+    (``ConnectSessionService._mark_terminal``).
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"credential {credential_id!r} token_url moved to another origin while "
+            "connecting; start a new connect session"
+        )
+        self.credential_id = credential_id
+
+
 class CredentialMissingCreatorError(ConnectSessionServiceError):
     """A credential with no ``created_by`` cannot finalise a connect flow.
 

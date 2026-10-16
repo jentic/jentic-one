@@ -227,6 +227,7 @@ class DirectOAuth2Provider(OAuth2Provider):
             expires_at=expires_at,
             scope=token_data.get("scope"),
             provider_account_ref=None,
+            token_url=token_url,
         )
 
     async def refresh(

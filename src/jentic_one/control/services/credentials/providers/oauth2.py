@@ -71,6 +71,11 @@ class OAuth2Provider(ABC):
     @abstractmethod
     def managed(self) -> bool: ...
 
+    @property
+    def mints_from_account_ref(self) -> bool:
+        # The grant lives in ``oauth_tokens``.
+        return False
+
     @abstractmethod
     async def begin_connect(
         self,
