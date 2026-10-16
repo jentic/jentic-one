@@ -18,6 +18,11 @@ describe('usageWindowBounds', () => {
 		expect(new Date(until * 1000)).toEqual(new Date(2026, 2, 11, 0, 0, 0));
 	});
 
+	it('defaults to the canonical step so callers share cache keys', () => {
+		const nowSec = 1_700_000_100;
+		expect(usageWindowBounds(nowSec, 1)).toEqual(usageWindowBounds(nowSec, 1, STEP_SEC));
+	});
+
 	it('exposes the shared chart sizing constants', () => {
 		expect(USAGE_TOP_LIMIT).toBe(12);
 		expect(USAGE_WINDOW_STEP_MS).toBe(300_000);

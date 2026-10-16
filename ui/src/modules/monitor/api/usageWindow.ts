@@ -24,8 +24,11 @@ export const USAGE_WINDOW_STEP_MS = 300_000;
  * screen keeps sliding: with a mount-time constant, staleTime/refocus
  * refetches would keep re-fetching the same frozen window forever and
  * executions newer than mount would never appear.
+ *
+ * `stepMs` defaults to {@link USAGE_WINDOW_STEP_MS}; pass another step only
+ * when a screen deliberately wants its own cache entries.
  */
-export function useCoarseNowSec(stepMs: number): number {
+export function useCoarseNowSec(stepMs: number = USAGE_WINDOW_STEP_MS): number {
 	const [nowMs, setNowMs] = useState(() => Math.floor(Date.now() / stepMs) * stepMs);
 	useEffect(() => {
 		const id = setInterval(() => {
@@ -48,11 +51,14 @@ export function useCoarseNowSec(stepMs: number): number {
  * aligned to local calendar days — midnight (days-1) days ago through the end
  * of today — to suit the day-bucketed volume chart: a rolling now-7d bound
  * straddles 8 calendar dates.
+ *
+ * `stepSec` defaults to {@link USAGE_WINDOW_STEP_MS} in seconds, matching
+ * {@link useCoarseNowSec}'s default.
  */
 export function usageWindowBounds(
 	nowSec: number,
 	days: number,
-	stepSec: number,
+	stepSec: number = USAGE_WINDOW_STEP_MS / 1000,
 ): { since: number; until: number } {
 	if (days === 1) {
 		const edge = nowSec + stepSec;
@@ -76,9 +82,6 @@ export function usageWindowBounds(
  * window nondeterministically.
  */
 export function useUsageWindow(days: number): { since: number; until: number } {
-	const nowSec = useCoarseNowSec(USAGE_WINDOW_STEP_MS);
-	return useMemo(
-		() => usageWindowBounds(nowSec, days, USAGE_WINDOW_STEP_MS / 1000),
-		[nowSec, days],
-	);
+	const nowSec = useCoarseNowSec();
+	return useMemo(() => usageWindowBounds(nowSec, days), [nowSec, days]);
 }
