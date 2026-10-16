@@ -400,6 +400,7 @@ async def test_complete_from_callback_refuses_unsafe_token_url() -> None:
 
 
 @pytest.mark.asyncio()
+@pytest.mark.usefixtures("uncached_dns")
 async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() -> None:
     # Pre-flight validation sees a public address; the connect-time resolution
     # answers with a blocked one. The pinned transport refuses before sending.

@@ -1,7 +1,7 @@
 """SSRF guard pins for the vendor-facing calls in the connect flow.
 
 Every raw ``httpx`` call in the connect flow (device authorization, token
-exchange, identity echo) is fronted by ``validate_upstream_url`` so that a
+exchange, identity echo) is fronted by ``validate_upstream_url_async`` so that a
 mis-configured or tampered upstream cannot aim a platform-issued request at a
 private / loopback / cloud-metadata target. These tests pin the guard at each
 call site: an unsafe URL must raise the site's typed error BEFORE any HTTP is
@@ -14,6 +14,7 @@ egress allowlist applies to both checks, and nothing beyond it.
 from __future__ import annotations
 
 import socket
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import patch
@@ -175,6 +176,32 @@ def _addrinfo(ip: str) -> list[tuple[Any, ...]]:
 
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(("call", "error"), _CONNECT_SITES)
+async def test_connect_site_preflight_resolves_off_the_event_loop(
+    call: Callable[[], Awaitable[Any]], error: type[Exception]
+) -> None:
+    # Pins #1734: the pre-flight DNS lookup runs in a worker thread, never on
+    # the event-loop thread, and a name resolving to a blocked range is still
+    # refused before any request is sent.
+    loop_thread = threading.get_ident()
+    lookup_threads: list[int] = []
+
+    def _resolve(*_a: Any, **_k: Any) -> list[tuple[Any, ...]]:
+        lookup_threads.append(threading.get_ident())
+        return _addrinfo("10.0.0.1")
+
+    with (
+        patch.object(socket, "getaddrinfo", side_effect=_resolve),
+        pytest.raises(error) as exc_info,
+    ):
+        await call()
+    _assert_refused_before_request(exc_info.value)
+    assert lookup_threads
+    assert loop_thread not in lookup_threads
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(("call", "error"), _CONNECT_SITES)
+@pytest.mark.usefixtures("uncached_dns")
 async def test_connect_site_refuses_host_rebinding_to_blocked_address(
     call: Callable[..., Awaitable[Any]], error: type[Exception]
 ) -> None:

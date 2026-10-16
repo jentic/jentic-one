@@ -104,7 +104,7 @@ from jentic_one.shared.permissions.evaluation import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger()
 
@@ -293,13 +293,15 @@ class CredentialService:
                 validated_token_url: str | None = None
                 if payload.token_url:
                     try:
-                        validated_token_url = validate_upstream_url(payload.token_url, egress)
+                        validated_token_url = await validate_upstream_url_async(
+                            payload.token_url, egress
+                        )
                     except ValueError as exc:
                         raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
                 validated_authorize_url: str | None = None
                 if payload.authorize_url:
                     try:
-                        validated_authorize_url = validate_upstream_url(
+                        validated_authorize_url = await validate_upstream_url_async(
                             payload.authorize_url, egress
                         )
                     except ValueError as exc:
@@ -1255,7 +1257,7 @@ class CredentialService:
                 validated_token_url: str | None = None
                 if payload.token_url:
                     try:
-                        validated_token_url = validate_upstream_url(
+                        validated_token_url = await validate_upstream_url_async(
                             payload.token_url, resolved_control_egress(self._ctx.config)
                         )
                     except ValueError as exc:
