@@ -113,9 +113,10 @@ def make_superset_verifier(ctx: Context) -> Any:
     naming the replacement, and a retired ``jntc_live_`` key is accepted only
     by the broker), opaque ``at_`` access
     tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
-    the verifier a combined-app assembler should install so admin/enterprise
-    routes accept ``at_`` regardless of surface ordering — the auth surface's
-    ``install_on_app`` uses it, and other assemblers can call it directly.
+    the one control-plane chain: ``shared.web.app_factory`` installs it on the
+    combined app and on every standalone control-plane surface
+    (``make_platform_token_verifier``), the auth surface's ``install_on_app``
+    uses it, and other assemblers can call it directly.
     """
     return _make_auth_verifier(ctx)
 

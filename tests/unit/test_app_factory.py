@@ -5,15 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one import __version__
 from jentic_one.__main__ import _expand_allowed_dbs
+from jentic_one.admin.web.app import create_app as create_admin_app
 from jentic_one.auth.web.app import create_app as create_auth_app
 from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
+from jentic_one.shared.web.endpoint_permissions import _iter_api_routes
 
 
 @pytest.fixture()
@@ -179,6 +182,32 @@ def test_reference_endpoint_hidden_from_schema(ctx: Context) -> None:
     """The reference endpoint is tooling metadata, kept out of the OpenAPI spec."""
     app = create_combined_app(ctx, ["control"])
     assert "/reference/endpoints.json" not in app.openapi()["paths"]
+
+
+def _reference_route_count(app: FastAPI) -> int:
+    return sum(
+        prefix + route.path == "/reference/endpoints.json"
+        for prefix, route in _iter_api_routes(app.routes)
+    )
+
+
+@pytest.mark.parametrize("apps", [["registry", "admin", "control", "auth"], ["admin", "auth"]])
+def test_reference_endpoint_mounted_once(ctx: Context, apps: list[str]) -> None:
+    """Full or partial combined app: exactly one /reference/endpoints.json route."""
+    app = create_combined_app(ctx, apps)
+    assert _reference_route_count(app) == 1
+
+
+def test_standalone_admin_serves_reference(ctx: Context) -> None:
+    """Split mode: the admin surface (it serves the docs SPA) answers the reference (#1445)."""
+    app = create_admin_app(ctx)
+    assert _reference_route_count(app) == 1
+    resp = TestClient(app, raise_server_exceptions=False).get("/reference/endpoints.json")
+    assert resp.status_code == 200
+    payload = resp.json()
+    # The whole control plane is documented, not just admin's own routes.
+    assert any(ep["path"].startswith("/credentials") for ep in payload["endpoints"])
+    assert any(ep["path"].startswith("/apis") for ep in payload["endpoints"])
 
 
 # ── Anonymous HTML navigations that 401 land in the SPA (#813) ──────────────

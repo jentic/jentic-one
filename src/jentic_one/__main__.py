@@ -21,7 +21,6 @@ from jentic_one.admin.services.errors import (
     SetupAlreadyCompleteError,
     UserEmailNotFoundError,
 )
-from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
 from jentic_one.control.services.rule_base_path_rewrite import RuleBasePathRewriteService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
@@ -40,7 +39,11 @@ from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
 from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.url import is_loopback_host
-from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
+from jentic_one.shared.web.app_factory import (
+    SURFACE_MODULES,
+    create_combined_app,
+    install_platform_token_verifier,
+)
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 from jentic_one.wiring import (
@@ -58,8 +61,9 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
     "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
     # Every standalone surface in SURFACES_NEEDING_AUTH verifies callers locally
-    # via the auth verifier (_install_auth_verifier), whose ApiKeyResolver and
-    # PermissionService resolve API keys / permissions against the admin DB.
+    # via the platform token verifier (install_platform_token_verifier), whose
+    # ApiKeyResolver and PermissionService resolve API keys / permissions against
+    # the admin DB.
     # Without this, a standalone control/registry process crashes at boot with
     # "Access to 'admin' database is not allowed in this context" — the failure
     # mode behind the parts-mode Helm smoke timeouts.
@@ -125,8 +129,10 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             app: FastAPI = mod.create_app(ctx, container=container)
         else:
             app = mod.create_app(ctx)
-        if surface in SURFACES_NEEDING_AUTH and not hasattr(app.state, "verify_token"):
-            _install_auth_verifier(app, ctx)
+        # Safety net: create_surface_app already installs the platform verifier
+        # (the broker its own), so this only fires for a factory that skipped it.
+        if surface in SURFACES_NEEDING_AUTH:
+            install_platform_token_verifier(app, ctx, replace=False)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
         # Standalone control: enable catalog auto-import only when the process

@@ -1,10 +1,9 @@
 """Unit test for the deterministic combined-app identity verifier (WI-3).
 
-When the ``auth`` surface is enabled, ``create_combined_app`` must install the
-auth surface's full-taxonomy ("superset") verifier — the one that resolves API
-keys + opaque ``at_`` access tokens + HS256 JWTs — regardless of the order the
-surfaces appear in ``apps``. Without this the active verifier depends on surface
-ordering (the admin surface ships an HS256-only, ``at_``-blind verifier).
+``create_combined_app`` must install the platform ("superset") verifier — the
+auth surface's chain that resolves API keys + opaque ``at_`` access tokens +
+HS256 JWTs — regardless of the order the surfaces appear in ``apps`` and of
+whether the auth surface rides the process at all.
 
 The verifier is a closure, so identity is asserted by monkeypatching the auth
 surface's factory to a sentinel and checking ``app.state.verify_token`` is it.
@@ -55,17 +54,21 @@ def test_combined_app_installs_auth_superset_verifier(
     assert app.state.verify_token is sentinel
 
 
-def test_combined_app_without_auth_leaves_admin_verifier(
+def test_combined_app_without_auth_installs_platform_verifier(
     sample_config_dict: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No auth surface → the auth superset is never installed (hardening is a no-op)."""
+    """No auth surface in-process → the same full-taxonomy chain is still installed.
+
+    The admin surface has no verifier of its own, so a combined app without the
+    auth surface resolves ``at_`` tokens exactly like one with it (#1445).
+    """
     sentinel = object()
     monkeypatch.setattr(auth_app, "make_superset_verifier", lambda _ctx: sentinel)
 
     app = create_combined_app(_ctx(sample_config_dict), ["admin"])
 
-    assert app.state.verify_token is not sentinel
+    assert app.state.verify_token is sentinel
 
 
 # ---------------------------------------------------------------------------

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Request
-from jentic.problem_details import Unauthorized
+from fastapi import APIRouter, FastAPI
 
-from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import AdminServiceError
 from jentic_one.admin.web.errors import database_error_handler, service_error_handler
 from jentic_one.admin.web.routers import (
@@ -26,17 +24,13 @@ from jentic_one.admin.web.routers import (
     permissions,
     users,
 )
-from jentic_one.shared.auth.api_key_resolver import (
-    AGENT_API_KEY_PREFIX,
-    RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
-    ApiKeyResolver,
-    is_retired_service_account_key,
-)
-from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.app_factory import (
+    create_surface_app,
+    get_control_plane_reference_router,
+)
 from jentic_one.shared.web.static import mount_spa
 
 
@@ -84,46 +78,18 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
-def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the admin token verifier on the app for shared identity resolution."""
-    if not hasattr(app.state, "verify_token"):
-        app.state.verify_token = _make_verifier(ctx)
-
-
-def _make_verifier(ctx: Context) -> Any:
-    """Build the admin token verifier (API keys + JWT)."""
-    api_key_resolver = ApiKeyResolver(ctx.admin_db)
-
-    async def _verify(token: str, request: Request) -> Identity:
-        if is_retired_service_account_key(token):
-            await api_key_resolver.resolve(token)  # logs the refusal; never resolves
-            raise Unauthorized(
-                detail=RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
-                instance=request.url.path,
-                type="unauthorized",
-            )
-        if token.startswith(AGENT_API_KEY_PREFIX):
-            resolved = await api_key_resolver.resolve(token)
-            if resolved is None or not resolved.active:
-                raise Unauthorized(
-                    detail="Invalid or expired API key",
-                    instance=request.url.path,
-                    type="unauthorized",
-                )
-            return resolved
-        return await AuthService(ctx).verify_token(token)
-
-    return _verify
-
-
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
     app = create_surface_app(
         ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
     )
-    install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
+    # The docs SPA is served from this surface, so its endpoint reference is
+    # too (the split-deploy gateway routes /reference here). A combined app
+    # mounts its own and never calls this factory. The reference documents the
+    # whole control plane, not just admin's routes.
+    app.include_router(get_control_plane_reference_router())
     # Serve the SPA after all API routers are registered. ``app.frontend()``
     # routes are low-priority, so API routes always win; this only needs the
     # routers present so the bundle never answers a real API path. No-op when no
