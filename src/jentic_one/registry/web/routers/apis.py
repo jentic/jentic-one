@@ -193,6 +193,7 @@ def _payload_too_large(
 ) -> Exception:
     return ProblemDetailException(
         status_code=413,
+        title="Content Too Large",
         detail=detail,
         type="payload_too_large",
         instance=instance,
@@ -215,7 +216,7 @@ class _ImportBodyCapRoute(APIRoute):
         original = super().get_route_handler()
 
         async def handler(request: Request) -> Response:
-            ctx: Context = request.app.state.ctx
+            ctx = get_ctx(request)
             cap = ctx.config.ingest.import_request_cap_bytes
             instance = request.url.path
             too_large = "Import request body exceeds the size limit"

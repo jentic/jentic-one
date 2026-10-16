@@ -170,6 +170,7 @@ class CatalogService:
             )
         # An explicit refresh is the operator's "pick up upstream changes" lever,
         # so cached preview projections are dropped along with the old snapshot.
+        # The cache is per process: other workers/replicas refetch after the TTL.
         self._ctx.catalog_preview_cache.clear()
         return CatalogRefreshResult(count=count)
 
@@ -761,7 +762,9 @@ class CatalogService:
         The upstream fetch + projection is cached per spec URL on the process
         (``Context.catalog_preview_cache``), so paging, filtering, or reloading
         the same entry within ``catalog.preview_cache_ttl_seconds`` does not
-        refetch it; concurrent misses for one URL share a single fetch.
+        refetch it; concurrent misses for one URL share a single fetch (and its
+        failure), and a failed load is remembered for
+        ``catalog.preview_cache_failure_ttl_seconds``.
         """
         entry = await self.get(api_id)
         spec_url = entry.spec_url
@@ -789,7 +792,9 @@ class CatalogService:
             offset=start,
             truncated=start + len(window) < total,
             info=projection.info,
-            security_schemes=dict(projection.security_schemes),
+            security_schemes={
+                name: dict(scheme) for name, scheme in projection.security_schemes.items()
+            },
         )
 
     # ── import ───────────────────────────────────────────────────────────────

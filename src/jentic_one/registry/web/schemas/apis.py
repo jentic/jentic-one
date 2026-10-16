@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -16,6 +17,9 @@ _EX_SPEC_URL = (
     f"{ex.API_VENDOR}/main/{ex.API_VERSION}/openapi.json"
 )
 _EX_ICON_URL = "https://stripe.com/favicon.ico"
+# JSON lets a string carry an unpaired ``\\uD800``-style escape, which decodes to
+# a lone surrogate that no UTF-8 encoder (or Postgres JSONB) accepts.
+_LONE_SURROGATE = re.compile("[\\ud800-\\udfff]")
 _EX_DESCRIPTION = "Online payments platform: charges, customers, subscriptions and payouts."
 
 
@@ -92,6 +96,14 @@ class ApiSourceInline(BaseModel):
     filename: str = Field(
         description="File name of the submitted document.", examples=["openapi.json"]
     )
+
+    @field_validator("content")
+    @classmethod
+    def _reject_lone_surrogates(cls, value: str) -> str:
+        if _LONE_SURROGATE.search(value):
+            raise ValueError("content must be valid Unicode (no unpaired surrogate escapes)")
+        return value
+
     vendor: str | None = Field(
         default=None,
         description="Vendor to register the API under; taken from the document when omitted.",
