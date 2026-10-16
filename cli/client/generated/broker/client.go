@@ -636,8 +636,12 @@ type ExecuteDeleteParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -698,8 +702,12 @@ type ExecuteGetParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -760,8 +768,12 @@ type ExecuteHeadParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -822,8 +834,12 @@ type ExecuteOptionsParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -884,8 +900,12 @@ type ExecutePatchParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -946,8 +966,12 @@ type ExecutePostParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
@@ -1008,8 +1032,12 @@ type ExecutePutParams struct {
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
-	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// and replays the original response on retry. A failure that
+	// provably never reached the upstream frees the key at once; a
+	// failure after the request may have reached the upstream is
+	// replayed too, so re-running it takes a new key. UUIDv4
+	// recommended. See the `Idempotency` section above for full
+	// semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`

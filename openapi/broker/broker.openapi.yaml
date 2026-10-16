@@ -234,18 +234,22 @@ paths:
 
       - **Nothing reached the upstream** — a connect failure
         (`upstream_connect_failed`), an open circuit (`circuit_open`),
-        an unavailable runner, or an error raised before the upstream
+        an unavailable runner, an error raised before the upstream
         call (e.g. a credential that is not provisioned, cannot be
-        decrypted, or needs reconnecting). The key is freed at once:
+        decrypted, or needs reconnecting), or an overall deadline
+        (`deadline_exceeded`) that ran out before any request was sent
+        (while the call waited for an upstream connection slot, or
+        between retries of a connect failure). The key is freed at once:
         retrying with the same key runs the request again.
       - **The upstream may have acted** — a read timeout
         (`upstream_timeout`), a connection dropped after the request was
         sent (`upstream_transport_error`), an oversized response
-        (`upstream_response_too_large`), the overall deadline
-        (`deadline_exceeded`), or an upstream answer the broker could
-        not record. The failure (or the upstream answer) is stored and
-        replayed to the same key like any other response, so a same-key
-        retry never sends the call upstream twice. If the upstream may
+        (`upstream_response_too_large`), an overall deadline
+        (`deadline_exceeded`) that cut off a request in progress, or an
+        upstream answer the broker could not record. The failure (or the
+        upstream answer) is stored and replayed to the same key like any
+        other response, so a same-key retry never sends the call
+        upstream twice. If the upstream may
         have acted but there is nothing to store (the request was
         cancelled, or an unexpected broker error), the key stays
         `idempotency_in_progress` until the pending claim lapses (the

@@ -266,7 +266,8 @@ class DeadlineExceededError(BrokerError):
     ``504`` class, but the cause is "we ran out of time across the envelope", not
     "one attempt stalled". ``broker`` origin — the broker cut the call off and
     generated this response — and the agent's directive points at the
-    async-pivot / wait recovery.
+    async-pivot / wait recovery. It is ``pre_send`` only when the transport
+    proved no request bytes left before the budget ran out.
     """
 
     default_type = "deadline_exceeded"
@@ -320,10 +321,12 @@ def upstream_contact_ruled_out(exc: BaseException) -> bool:
 
     True only for a ``BrokerError`` that is connect-phase (``pre_send``) or one
     the envelope raises before dispatch (open circuit, no/unavailable runner),
-    and only when no earlier retry attempt may have reached the upstream. Any
-    other failure — a read timeout, a dropped connection, an oversized
-    response, a blown deadline, a non-``BrokerError`` — may have been acted on
-    upstream, so it fails closed.
+    and only when no earlier retry attempt may have reached the upstream. A
+    ``deadline_exceeded`` is ``pre_send`` only when the transport reported that
+    no send it started can have reached the upstream (see
+    ``broker/adapters/runners/dispatch.py``). Any other failure — a read timeout,
+    a dropped connection, an oversized response, a deadline that cut off a send,
+    a non-``BrokerError`` — may have been acted on upstream, so it fails closed.
     """
     if not isinstance(exc, BrokerError) or exc.prior_attempt_sent:
         return False
