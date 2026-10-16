@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import asyncio
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -35,6 +36,7 @@ from jentic_one.control.services.credentials.state import decode_state
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
+from jentic_one.control.services.integrations.errors import TokenEndpointMovedError
 from jentic_one.control.services.integrations.flow_handlers.auth_code import AuthCodeFlowHandler
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.shared.auth.identity import Identity
@@ -573,14 +575,21 @@ class _RecordingOAuth2(DirectOAuth2Provider):
             )
         )
         self.posted_to: list[str] = []
+        # When set, the code exchange pauses after the vendor answered and
+        # before the connect opens its token-write transaction.
+        self.hold_after_exchange: asyncio.Event | None = None
+        self.exchanged = asyncio.Event()
 
     async def _post_token(self, token_url: str, payload: dict[str, str]) -> dict[str, str]:
         self.posted_to.append(token_url)
+        if self.hold_after_exchange is not None:
+            self.exchanged.set()
+            await self.hold_after_exchange.wait()
         return {"access_token": "at-reconnected", "refresh_token": "rt-reconnected"}
 
 
-async def _connected_then_moved(ctx: Context) -> str:
-    """An auth-code credential with a live grant, then moved cross-origin."""
+async def _connected(ctx: Context) -> str:
+    """An auth-code credential with a live grant at the original token_url."""
     async with ctx.control_db.transaction() as session:
         credential = await CredentialRepository.create(
             session,
@@ -602,6 +611,11 @@ async def _connected_then_moved(ctx: Context) -> str:
             encrypted_refresh_token=ctx.encryption.encrypt("rt-old"),
             created_by=_OWNER.sub,
         )
+    return credential_id
+
+
+async def _move_token_url(ctx: Context, credential_id: str) -> None:
+    """The cross-origin token_url PATCH (re-entering the client secret)."""
     moved = await CredentialService(ctx).update(
         credential_id,
         CredentialUpdate(
@@ -613,6 +627,12 @@ async def _connected_then_moved(ctx: Context) -> str:
     )
     assert isinstance(moved.details, OAuth2Redacted)
     assert moved.details.connected is False
+
+
+async def _connected_then_moved(ctx: Context) -> str:
+    """An auth-code credential with a live grant, then moved cross-origin."""
+    credential_id = await _connected(ctx)
+    await _move_token_url(ctx, credential_id)
     return credential_id
 
 
@@ -670,6 +690,80 @@ async def test_connect_session_finalise_reconnects_after_token_url_move(
     )
 
     await _assert_reconnected(ctx, credential_id)
+
+
+async def test_inflight_connect_discards_grant_minted_before_token_url_move(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Pins #1425: a credential-page connect whose code exchange at the old
+    token endpoint is in flight when a cross-origin token_url edit commits
+    must not store that grant beside the new token_url (the next refresh
+    would present its refresh token to the new origin). The connect fails
+    and the credential is left needing a reconnect."""
+    ctx = integration_context
+    provider = _RecordingOAuth2()
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    credential_id = await _connected(ctx)
+    svc = ConnectService(ctx)
+    challenge = await svc.begin(credential_id, ConnectRequest(), identity=_OWNER)
+    assert isinstance(challenge, AuthCodeChallenge)
+    release = asyncio.Event()
+    provider.hold_after_exchange = release
+
+    async with asyncio.TaskGroup() as tg:
+        complete = tg.create_task(
+            _raises(svc.complete(challenge.state, ConnectCallback(code="code-in-flight")))
+        )
+        await asyncio.wait_for(provider.exchanged.wait(), timeout=5)
+        await _move_token_url(ctx, credential_id)
+        release.set()
+
+    assert isinstance(complete.result(), ConnectFlowError)
+    assert provider.posted_to == ["https://idp.example.com/token"]
+    async with ctx.control_db.session() as session:
+        assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
+    view = await CredentialService(ctx).get(credential_id, identity=_OWNER)
+    assert isinstance(view.details, OAuth2Redacted)
+    assert view.details.connected is False
+
+
+async def test_connect_session_finalise_discards_grant_minted_before_token_url_move(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Pins #1425: the connect-session finalise write re-checks the token
+    endpoint under the refresh lock too, and discards a grant exchanged at
+    an origin the credential has since moved off."""
+    ctx = integration_context
+    _patch_provider_registry(ctx, "my_oauth", _RecordingOAuth2())
+    credential_id = await _connected_then_moved(ctx)
+    async with ctx.control_db.session() as session:
+        credential = await CredentialRepository.get_by_id(session, credential_id)
+    assert credential is not None
+
+    with pytest.raises(TokenEndpointMovedError):
+        await ConnectSessionService(ctx)._finalise_credential_connected(
+            credential,
+            AuthCodeFlowHandler(ctx),
+            SuccessTokens(
+                access_token="at-stale",
+                refresh_token="rt-stale",
+                expires_in=None,
+                scope=None,
+                token_url="https://idp.example.com/token",
+            ),
+        )
+
+    async with ctx.control_db.session() as session:
+        assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
+
+
+async def _raises(awaitable: Awaitable[object]) -> BaseException | None:
+    """Await *awaitable* and return the exception it raised (None if none)."""
+    try:
+        await awaitable
+    except Exception as exc:
+        return exc
+    return None
 
 
 async def test_reconnect_clears_revocation(

@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
-from urllib.parse import urlsplit
 
 import structlog
 from pydantic import SecretStr
@@ -78,6 +77,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.credentials.token_endpoint import same_origin
 from jentic_one.control.services.credentials.typed_secrets import (
     write_api_key_secret,
     write_basic_secret,
@@ -145,7 +145,6 @@ _SECRET_ROTATION_MARKERS: dict[CredentialType, tuple[tuple[str, str], ...]] = {
         ("session_token", "session_token_rotated"),
     ),
 }
-_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 def _is_blank_str(value: str | None, *, missing: bool = False) -> bool:
@@ -166,22 +165,6 @@ def _validate_scope_tokens(scopes: Sequence[str]) -> None:
             raise InvalidCredentialInputError(
                 f"Invalid scope {scope!r}: each scope must be non-empty and contain no whitespace"
             )
-
-
-def _url_origin(url: str) -> tuple[str, str, int | None]:
-    """``(scheme, host, port)`` of *url*, with the scheme's default port filled in."""
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    try:
-        port = parts.port
-    except ValueError:
-        port = None
-    return scheme, (parts.hostname or "").lower(), port or _DEFAULT_PORTS.get(scheme)
-
-
-def _same_origin(new_url: str, stored_url: str | None) -> bool:
-    """Whether *new_url* keeps the origin of *stored_url* (no stored URL never matches)."""
-    return bool(stored_url) and _url_origin(new_url) == _url_origin(stored_url or "")
 
 
 def _no_client_config_error() -> InvalidCredentialInputError:
@@ -1266,6 +1249,18 @@ class CredentialService:
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
             credential = await self._get_updatable(session, credential_id, payload, access_filters)
+            if validated_token_url is not None:
+                # Serialise with the broker's single-flight refresh and with a
+                # connect's token write before any write in this transaction:
+                # a refresh already holding the lock finishes against the
+                # stored origin, and the next one finds the token row gone
+                # (needs-reconnect) rather than presenting the old refresh
+                # token to the new origin; a connect writing after this commits
+                # re-checks the endpoint and discards a grant minted at the old
+                # origin. Taken for every token_url edit, before the origin
+                # comparison, so no header UPDATE holds the credentials row
+                # while this waits.
+                await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
 
             before_state = self._audit_snapshot(credential)
 
@@ -1610,7 +1605,8 @@ class CredentialService:
         change requires ``client_secret`` in the same PATCH, and it drops the
         live ``oauth_token`` row so the old grant is never presented to the
         new origin; the credential must be reconnected. Same-origin path edits
-        apply on their own.
+        apply on their own. The caller holds the refresh lock
+        (``OAuthTokenRepository.acquire_refresh_lock``) for any token_url edit.
 
         Raises ``InvalidCredentialInputError`` (400) when the credential uses
         a shared app registration, when it has no stored client config (a
@@ -1640,7 +1636,7 @@ class CredentialService:
         occ = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
         if occ is None:
             raise _no_client_config_error()
-        cross_origin = validated_token_url is not None and not _same_origin(
+        cross_origin = validated_token_url is not None and not same_origin(
             validated_token_url, occ.token_url
         )
         if cross_origin and payload.client_secret is None:
@@ -1648,13 +1644,6 @@ class CredentialService:
                 "Changing the token_url origin (scheme, host or port) requires "
                 "re-entering client_secret in the same request"
             )
-        if cross_origin:
-            # Serialise with the broker's single-flight refresh before any
-            # write: a refresh already holding the lock finishes against the
-            # stored origin, and the next one finds the token row gone (and
-            # fails as needs-reconnect) rather than presenting the old refresh
-            # token to the new origin.
-            await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
         await OAuthClientCredentialRepository.update(
             session,
             credential_id,
@@ -1710,7 +1699,7 @@ class CredentialService:
                 "A device authorization flow is in progress for this credential; "
                 "retry once it completes or expires"
             )
-        if validated_token_url is not None and not _same_origin(validated_token_url, dfc.token_url):
+        if validated_token_url is not None and not same_origin(validated_token_url, dfc.token_url):
             raise InvalidCredentialInputError(
                 "device_code credentials cannot move token_url to a different origin "
                 "(scheme, host or port); create a new credential instead"
