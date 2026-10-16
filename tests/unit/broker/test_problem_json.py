@@ -7,6 +7,8 @@ import typing
 from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from jentic_one.broker.core.exceptions import (
     AgentDirective,
@@ -31,10 +33,15 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
-from jentic_one.broker.web.errors import handle_broker_error, problem_response
+from jentic_one.broker.web.errors import (
+    handle_broker_error,
+    install_broker_error_handlers,
+    problem_response,
+)
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 
 
 def _body(resp: Any) -> dict[str, Any]:
@@ -446,3 +453,28 @@ def test_explicit_type_overrides_the_class_default() -> None:
     assert UpstreamTimeoutError("x", type="upstream_connect_failed").type == (
         "upstream_connect_failed"
     )
+
+
+def test_database_unavailable_is_a_broker_origin_503_without_internals() -> None:
+    """A lost broker-DB connection answers a typed 503, not a bare 500.
+
+    The driver message (host, user, SQL) never reaches the client, and no
+    retry directive is offered because the failure may follow dispatch.
+    """
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise DatabaseUnavailableError("connection is closed host=db.internal user=broker")
+
+    resp = TestClient(app).get("/boom")
+
+    assert resp.status_code == 503
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+    body = resp.json()
+    assert body["type"] == "database_unavailable"
+    assert body["error_origin"] == "broker"
+    assert "agent_directive" not in body
+    assert "db.internal" not in resp.text
