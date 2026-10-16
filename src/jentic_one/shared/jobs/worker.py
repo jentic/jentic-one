@@ -23,6 +23,7 @@ from jentic_one.shared.db.connectivity import (
     is_connection_loss,
     redact_sql,
 )
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
@@ -213,6 +214,20 @@ class WorkerLoop:
             try:
                 result = await self._execute_handler(handler, job)
                 await self._complete_job(job.id, job.kind, result)
+            except DatabaseCommitOutcomeUnknownError as exc:
+                # The connection dropped while committing, so the write may
+                # have landed (for _complete_job: the job is already
+                # COMPLETED). Requeueing would run the job again, so the row is
+                # left as is: if the commit did not land it stays RUNNING and
+                # the visibility-timeout reclaim picks it up.
+                cause = exc.__cause__
+                logger.warning(
+                    "job_commit_outcome_unknown",
+                    job_id=job.id,
+                    attempts=job.attempts,
+                    error_type=type(cause or exc).__name__,
+                    error=exc.detail[:_ERROR_MAX_LEN],
+                )
             except Exception as exc:
                 cause = connection_loss_cause(exc)
                 if cause is not None:
@@ -405,13 +420,23 @@ class WorkerLoop:
 
         Approved executions never retry: an approval releases one run, so a
         handler failure moves the job straight to ``FAILED``.
+
+        Every transition applies only while this worker still holds the claim:
+        the row is ``RUNNING`` with the ``attempts`` value stamped by this
+        claim. A job that already reached a terminal status (e.g. a completion
+        whose commit landed before the connection dropped), was cancelled, or
+        was reclaimed by another worker is left untouched.
         """
         if job.kind == JobKind.EXECUTION:
             async with self._db.session() as check_session:
                 is_approved = await self._is_approved_execution(check_session, job.id)
             if is_approved:
                 await self._terminal_job(
-                    job.id, JobStatus.FAILED, error, event_summary_prefix="Execution failed"
+                    job.id,
+                    JobStatus.FAILED,
+                    error,
+                    event_summary_prefix="Execution failed",
+                    claim_attempts=job.attempts,
                 )
                 logger.info("approved_job_failed_no_retry", job_id=job.id)
                 return
@@ -423,6 +448,7 @@ class WorkerLoop:
                 JobStatus.DEAD_LETTER,
                 error,
                 event_summary_prefix="Job dead-lettered",
+                claim_attempts=job.attempts,
             )
             logger.error("job_dead_lettered", job_id=job.id, attempts=attempts)
             return
@@ -430,12 +456,22 @@ class WorkerLoop:
         delay_s = _backoff_s(attempts, self._config)
         requeue_at = datetime.now(UTC) + timedelta(seconds=delay_s)
         async with self._db.transaction() as session:
-            db_job = await session.get(Job, job.id)
-            if db_job is None or db_job.status == JobStatus.CANCELLED:
-                return
-            db_job.status = JobStatus.QUEUED
-            db_job.error = error[:_ERROR_MAX_LEN]
-            db_job.visible_at = requeue_at
+            result = await session.execute(
+                update(Job)
+                .where(
+                    Job.id == job.id,
+                    Job.status == JobStatus.RUNNING,
+                    Job.attempts == job.attempts,
+                )
+                .values(
+                    status=JobStatus.QUEUED,
+                    error=error[:_ERROR_MAX_LEN],
+                    visible_at=requeue_at,
+                )
+            )
+        if not result.rowcount:  # type: ignore[attr-defined]
+            logger.info("job_requeue_skipped_claim_lost", job_id=job.id, attempts=attempts)
+            return
         logger.info("job_requeued", job_id=job.id, attempts=attempts, delay_s=round(delay_s, 2))
 
     async def _fail_job(self, job_id: str, error: str) -> None:
@@ -445,11 +481,32 @@ class WorkerLoop:
         )
 
     async def _terminal_job(
-        self, job_id: str, status: JobStatus, error: str, *, event_summary_prefix: str
+        self,
+        job_id: str,
+        status: JobStatus,
+        error: str,
+        *,
+        event_summary_prefix: str,
+        claim_attempts: int | None = None,
     ) -> None:
-        """Move a job to a terminal status, clear its claim, and emit an event."""
+        """Move a job to a terminal status, clear its claim, and emit an event.
+
+        With ``claim_attempts`` the transition applies only while the row is
+        still ``RUNNING`` under that claim (see :meth:`_handle_failure`); the
+        row is locked for the check so a concurrent reclaim cannot interleave.
+        """
         async with self._db.transaction() as session:
-            job = await session.get(Job, job_id)
+            if claim_attempts is None:
+                job = await session.get(Job, job_id)
+            else:
+                job = await session.get(Job, job_id, with_for_update=True)
+                if job is not None and (
+                    job.status != JobStatus.RUNNING or job.attempts != claim_attempts
+                ):
+                    logger.info(
+                        "job_terminal_skipped_claim_lost", job_id=job_id, status=str(status)
+                    )
+                    return
             if job is None:
                 return
             job.status = status

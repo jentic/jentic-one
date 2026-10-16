@@ -1,7 +1,9 @@
 """Integration tests for worker job durability (§09 E4.2) against a real DB.
 
 Covers the visibility-timeout recovery, retry-with-backoff requeue, dead-letter
-budget, and that a healthy claim stamps a future visibility deadline + attempts.
+budget, that a healthy claim stamps a future visibility deadline + attempts, and
+that a failure (or a completion whose commit outcome is unknown) never
+overwrites a job this claim no longer holds.
 Per the repo's no-DB-mocking rule these run against the real admin DB.
 """
 
@@ -16,6 +18,7 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.config import WorkerConfig
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import WorkerLoop
@@ -178,3 +181,102 @@ async def test_completion_clears_visibility(admin_db: DatabaseSession, clean_job
     job = await _get(admin_db, job_id)
     assert job.status == JobStatus.COMPLETED
     assert job.visible_at is None
+
+
+class _CountingOkHandler(_OkHandler):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, job_id: str, session: Any, **kwargs: Any) -> JobResultPayload:
+        self.calls += 1
+        return await super().execute(job_id, session, **kwargs)
+
+
+class _CompletionOutcomeUnknownWorker(WorkerLoop):
+    """Its completion raises ``DatabaseCommitOutcomeUnknownError``.
+
+    With ``landed`` the completion is written first, modelling a COMMIT the
+    server applied before the connection dropped; without it nothing is written.
+    """
+
+    def __init__(self, admin_db: DatabaseSession, handler: Any, *, landed: bool) -> None:
+        super().__init__(admin_db, _registry(handler), worker_config=WorkerConfig())
+        self._landed = landed
+
+    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+        if self._landed:
+            await super()._complete_job(job_id, kind, result)
+        raise DatabaseCommitOutcomeUnknownError("connection is closed")
+
+
+async def test_completion_outcome_unknown_after_commit_landed_is_not_requeued(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A completion that landed stays COMPLETED and the handler never runs again."""
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _CompletionOutcomeUnknownWorker(admin_db, handler, landed=True)
+
+    assert await worker._tick() is True
+    assert await worker._tick() is False
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.COMPLETED
+    assert job.visible_at is None
+    assert handler.calls == 1
+
+
+async def test_completion_outcome_unknown_not_landed_is_left_for_reclaim(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A completion that did not land leaves the job RUNNING for the visibility reclaim."""
+    job_id = await _insert_job(admin_db)
+    handler = _CountingOkHandler()
+    worker = _CompletionOutcomeUnknownWorker(admin_db, handler, landed=False)
+
+    assert await worker._tick() is True
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    assert job.attempts == 1
+    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    assert job.visible_at is not None and job.visible_at.replace(tzinfo=None) > now_naive
+    assert handler.calls == 1
+
+
+@pytest.mark.parametrize("attempts", [1, 3], ids=["requeue", "dead_letter"])
+async def test_failure_never_overwrites_a_completed_job(
+    admin_db: DatabaseSession, clean_jobs: None, attempts: int
+) -> None:
+    """Requeue and dead-letter apply only while the job is still RUNNING."""
+    job_id = await _insert_job(admin_db, status=JobStatus.COMPLETED, attempts=attempts)
+    worker = WorkerLoop(
+        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
+    )
+    claimed = await _get(admin_db, job_id)
+
+    await worker._handle_failure(claimed, "interrupted: database connection lost")
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.COMPLETED
+    assert job.error is None
+
+
+@pytest.mark.parametrize("attempts", [1, 3], ids=["requeue", "dead_letter"])
+async def test_failure_leaves_a_job_reclaimed_by_another_claim(
+    admin_db: DatabaseSession, clean_jobs: None, attempts: int
+) -> None:
+    """A RUNNING row stamped by a later claim (higher attempts) is not this worker's."""
+    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=attempts + 1)
+    worker = WorkerLoop(
+        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
+    )
+    stale = await _get(admin_db, job_id)
+    stale.attempts = attempts
+
+    await worker._handle_failure(stale, "handler boom")
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    assert job.attempts == attempts + 1
+    assert job.error is None
