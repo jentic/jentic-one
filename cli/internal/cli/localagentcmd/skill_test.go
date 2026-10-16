@@ -24,7 +24,7 @@ func runSkill(t *testing.T, args ...string) (*Cmd, string) {
 	app.Out = out
 	app.Err = out
 
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs(args)
@@ -52,7 +52,7 @@ func TestBareSkillShowsHelpAndWritesNothing(t *testing.T) {
 	app := testApp(t)
 	app.Out = out
 	app.Err = out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs(nil) // bare `jentic skill`
@@ -110,7 +110,7 @@ func TestSkillInitUnknownOperatorErrors(t *testing.T) {
 	t.Chdir(tmp)
 	app := testApp(t)
 	app.Out = new(bytes.Buffer)
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(app.Out)
 	cmd.SetErr(app.Out)
 	cmd.SetArgs([]string{"init", "--operator", "bogus", "--yes"})
@@ -145,7 +145,7 @@ func TestSkillInitNoOperatorNonInteractiveErrorsWhenNothingDetected(t *testing.T
 	app := testApp(t)
 	stubDetect(t, app, tmp, tmp) // nothing detected
 	app.Out = new(bytes.Buffer)
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(app.Out)
 	cmd.SetErr(app.Out)
 	// --yes with no --operator, nothing detected: must error rather than hang
@@ -171,7 +171,7 @@ func TestSkillInitNoOperatorNonInteractiveDefaultsToDetected(t *testing.T) {
 	stubDetect(t, app, home, cwd, "claude")
 	app.Out = out
 	app.Err = out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	// #755: --yes (or no TTY) with no --operator degrades to the detected
@@ -233,7 +233,7 @@ func TestSkillListJSONReportsInstalledAfterInit(t *testing.T) {
 		stubDetect(t, app, home, cwd)
 		app.Out = out
 		app.Err = out
-		cmd := NewSkillCmd(app.App)
+		cmd := newHumanSkillCmd(t, app)
 		cmd.SetOut(out)
 		cmd.SetErr(out)
 		cmd.SetArgs(args)
@@ -297,7 +297,7 @@ func TestSkillInitNonInteractiveDefaultsToDetectedProjectScope(t *testing.T) {
 	stubDetect(t, app, home, cwd, "codex")
 	app.Out = out
 	app.Err = out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs([]string{"init", "--yes"})
@@ -333,7 +333,7 @@ func TestSkillInitDefaultedProjectScopeWarnsInsideGitRepo(t *testing.T) {
 	stubDetect(t, app, home, cwd, "codex")
 	app.Out = out
 	app.Err = out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs([]string{"init", "--yes"})
@@ -406,7 +406,7 @@ func TestSkillRemoveFindsNonDefaultScope(t *testing.T) {
 		stubDetect(t, app, home, cwd)
 		app.Out = out
 		app.Err = out
-		cmd := NewSkillCmd(app.App)
+		cmd := newHumanSkillCmd(t, app)
 		cmd.SetOut(out)
 		cmd.SetErr(out)
 		cmd.SetArgs(args)
@@ -437,7 +437,7 @@ func TestSkillRemoveNoOperatorErrors(t *testing.T) {
 	t.Chdir(tmp)
 	app := testApp(t)
 	app.Out = new(bytes.Buffer)
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(app.Out)
 	cmd.SetErr(app.Out)
 	cmd.SetArgs([]string{"remove"})
@@ -458,7 +458,7 @@ func TestSkillInitInstallsFullSet(t *testing.T) {
 	app := testApp(t)
 	stubDetect(t, app, home, cwd)
 	app.Out, app.Err = out, out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs([]string{"init", "--operator", "claude", "--yes"})
@@ -484,7 +484,7 @@ func TestSkillInitSkillFilter(t *testing.T) {
 	app := testApp(t)
 	stubDetect(t, app, home, cwd)
 	app.Out, app.Err = out, out
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SetArgs([]string{"init", "--operator", "claude", "--skill", "jentic", "--yes"})
@@ -506,7 +506,7 @@ func TestSkillInitUnknownSkillErrors(t *testing.T) {
 	t.Chdir(tmp)
 	app := testApp(t)
 	app.Out = new(bytes.Buffer)
-	cmd := NewSkillCmd(app.App)
+	cmd := newHumanSkillCmd(t, app)
 	cmd.SetOut(app.Out)
 	cmd.SetErr(app.Out)
 	cmd.SetArgs([]string{"init", "--operator", "claude", "--skill", "bogus-skill", "--yes"})
@@ -532,7 +532,7 @@ func TestSkillUpdateRewritesOnBaseURLChange(t *testing.T) {
 		app := testApp(t)
 		stubDetect(t, app, home, cwd)
 		app.Out, app.Err = out, out
-		cmd := NewSkillCmd(app.App)
+		cmd := newHumanSkillCmd(t, app)
 		cmd.SetOut(out)
 		cmd.SetErr(out)
 		cmd.SetArgs(args)
@@ -578,7 +578,7 @@ func TestSkillListJSONPerSkillRows(t *testing.T) {
 		app := testApp(t)
 		stubDetect(t, app, home, cwd)
 		app.Out, app.Err = out, out
-		cmd := NewSkillCmd(app.App)
+		cmd := newHumanSkillCmd(t, app)
 		cmd.SetOut(out)
 		cmd.SetErr(out)
 		cmd.SetArgs(args)
@@ -644,7 +644,7 @@ func TestSkillRemoveOneSkillKeepsSiblingInAgents(t *testing.T) {
 		app := testApp(t)
 		stubDetect(t, app, home, cwd)
 		app.Out, app.Err = out, out
-		cmd := NewSkillCmd(app.App)
+		cmd := newHumanSkillCmd(t, app)
 		cmd.SetOut(out)
 		cmd.SetErr(out)
 		cmd.SetArgs(args)
