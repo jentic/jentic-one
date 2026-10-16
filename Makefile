@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help $(addprefix perf-,$(PERF_TARGETS)) help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -304,7 +304,10 @@ release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGIST
 PERF_TARGETS := build up provision overhead dbcost capacity profile ui load obs report down \
 	agent-doctor agent-sql agent-stages agent-cpu agent-resilience agent-compare
 
+# .PHONY is registered per rule here: PERF_TARGETS is defined after the .PHONY
+# list at the top of the file, which make expands at parse time.
 define PERF_RULE
+.PHONY: perf-$(1)
 perf-$(1):
 	@$$(MAKE) --no-print-directory -C tests/perf $(1)
 endef
