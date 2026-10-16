@@ -175,6 +175,48 @@ its record was silently dropped — the only signal that happened),
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
 
+### Broker latency histograms
+
+Two histograms describe where a sync execution's time goes. Both are in
+milliseconds and labelled by `operation` (the operation id); the overhead one
+also carries `mode`. The Prometheus exporter appends the unit, so the series
+are `broker_execution_duration_ms_milliseconds_{bucket,sum,count}` and
+`broker_execution_overhead_ms_milliseconds_{bucket,sum,count}`.
+
+| Histogram | Measures |
+| --------- | -------- |
+| `broker.execution.duration_ms` | The upstream round trip as timed by the HTTP runner. **Buffered:** the final attempt only, request send to response body read. **Streaming:** stream open (including any bulkhead wait) to body end, so a slow-reading client shows up here. Recorded for sync and async executions. |
+| `broker.execution.overhead_ms` | **Wall-clock** broker time on a sync execution outside the upstream window, from the broker's middleware receiving the request (inside admission control). **Buffered:** everything except `jentic-upstream`, up to the point the execution record has committed, the response is assembled and any `Idempotency-Key` completed. **Streaming:** everything before the upstream response headers, plus the record's persistence after the body has been sent. |
+
+Overhead is wall-clock, not CPU: database and shared-state round trips,
+connection-pool waits, and the client's request-body upload all count.
+
+How the time of one request splits:
+
+- **Buffered:** request time = `overhead_ms` + `jentic-upstream`. The
+  upstream window is `duration_ms` plus the resilience time around it:
+  bulkhead waits, earlier retry attempts, backoff sleeps and the
+  circuit-breaker check. That resilience time is in **neither** histogram, so
+  `duration_ms + overhead_ms` falls short of the request time by exactly that
+  much. Watch `broker.retry.attempts_total` for it, or read `jentic-upstream`
+  from `Server-Timing` per request.
+- **Streaming:** request time ≈ `overhead_ms` + `duration_ms`. Streaming
+  calls are never retried, and the bulkhead wait is inside `duration_ms`.
+  Only the response teardown between the body's end and the persistence
+  (sub-millisecond) is in neither.
+
+Always filter or group by `mode`: buffered overhead is time the client waits
+for, while streaming persistence runs after the client already has the body.
+To see which stage dominates, use the per-request `Server-Timing` stages.
+
+`overhead_ms` is recorded only for an execution that reached the upstream and
+whose record was persisted. Transport failures (connect refused, timeouts, an
+open circuit), a stream that fails to open, a failed record write, and paths
+that never call the upstream (async `202`, approval holds, idempotent
+replays, broker-raised errors) record nothing. Time spent outside the broker's
+middleware stack (the admission gate, the ASGI server) is not included;
+`http.server.duration` covers the whole request.
+
 ### Per-request stage timing (`Server-Timing`)
 
 To see where one broker request spends its time without a profiler, set
@@ -214,6 +256,10 @@ also covers earlier retry attempts, backoff and the circuit-breaker check.
 
 On the streaming fast path the headers are sent before the body, and the
 execution record is written after it, so `jentic-persist` is absent there.
+
+The same per-request recorder feeds `broker.execution.overhead_ms` (see
+[Broker latency histograms](#broker-latency-histograms)): with the header off
+it still runs whenever metrics are exported, and emits nothing to the caller.
 
 **Namespacing and upstream timing.** Every broker name carries the `jentic-`
 prefix, so the broker's entries can't be confused with an upstream's own

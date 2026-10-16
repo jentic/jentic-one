@@ -406,25 +406,51 @@ def test_infra_routes_get_no_timing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _broker_app(sample_config_dict: dict[str, Any], *, server_timing: bool | None) -> FastAPI:
+def _broker_app(
+    sample_config_dict: dict[str, Any],
+    *,
+    server_timing: bool | None,
+    metrics_exporter: str | None = None,
+) -> FastAPI:
     if server_timing is not None:
         sample_config_dict.setdefault("broker", {})["server_timing"] = server_timing
+    if metrics_exporter is not None:
+        sample_config_dict.setdefault("observability", {})["metrics"] = {
+            "exporter": metrics_exporter
+        }
     config = AppConfig.model_validate(sample_config_dict)
     ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"], config))
     return create_broker_app(ctx)
 
 
 @pytest.mark.parametrize(
-    ("server_timing", "installed"),
-    [(None, False), (False, False), (True, True)],
-    ids=["default", "off", "on"],
+    ("server_timing", "metrics_exporter", "emit_header"),
+    [
+        (None, None, False),
+        (False, "prometheus", False),
+        (True, "none", True),
+        (True, None, True),
+        (False, "none", None),
+    ],
+    ids=["default", "metrics-only", "header-only", "both", "neither"],
 )
-def test_middleware_installed_only_when_enabled(
-    sample_config_dict: dict[str, Any], server_timing: bool | None, installed: bool
+def test_recorder_mounted_for_header_or_metrics(
+    sample_config_dict: dict[str, Any],
+    server_timing: bool | None,
+    metrics_exporter: str | None,
+    emit_header: bool | None,
 ) -> None:
-    app = _broker_app(sample_config_dict, server_timing=server_timing)
-    names = [m.cls.__name__ for m in app.user_middleware]  # type: ignore[attr-defined]
-    assert (ServerTimingMiddleware.__name__ in names) is installed
+    """The recorder runs whenever the header or the overhead histogram needs it;
+    only ``broker.server_timing`` makes it emit the header (``None``: not mounted)."""
+    app = _broker_app(
+        sample_config_dict, server_timing=server_timing, metrics_exporter=metrics_exporter
+    )
+    mounted = [
+        m.kwargs.get("emit_header", True)
+        for m in app.user_middleware
+        if m.cls.__name__ == ServerTimingMiddleware.__name__  # type: ignore[attr-defined]
+    ]
+    assert mounted == ([] if emit_header is None else [emit_header])
 
 
 def test_middleware_sits_inside_admission_control(sample_config_dict: dict[str, Any]) -> None:

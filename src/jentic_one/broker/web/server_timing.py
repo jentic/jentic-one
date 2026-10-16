@@ -1,6 +1,8 @@
 """Opt-in ``Server-Timing`` response header for the broker (#1717).
 
-Installed only when ``broker.server_timing`` is enabled — with the flag off the
+Installed when ``broker.server_timing`` is enabled, and also — with
+``emit_header=False`` — whenever metrics are exported, because the same
+recorder feeds ``broker.execution.overhead_ms``. With neither on, the
 middleware is absent and the stage hooks in the execute path reduce to one
 context-variable read each.
 
