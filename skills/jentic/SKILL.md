@@ -1,7 +1,7 @@
 ---
 name: jentic
-description: Use this skill whenever the user wants to work with a third-party or external API/tool through the Jentic platform — e.g. asks to "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Prefer launching this before ToolSearch or hand-rolled HTTP: it drives the audited Jentic loop (identity → discover → check access → execute) over whichever Jentic surface the session has — `jentic` MCP tools or the `jentic` CLI — even inside a code repo. Do NOT use it for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 6
+description: Calls third-party APIs through a Jentic One instance — governed, credential-managed access where the agent searches for an operation, inspects it, and executes it through an audited broker that holds the credentials (identity → discover → check access → execute). Applies when the user asks to call an external API or use a connected service — e.g. "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Works over whichever Jentic surface the session has, the `jentic` MCP tools or the `jentic` CLI. Not for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
+version: 7
 ---
 
 # Using Jentic
@@ -35,16 +35,15 @@ check; in a CLI session `jentic context view` reads the same facts.
   its SDK or credentials wired up.
 - The user asks to **find, add, import, connect, or search for an API/tool**
   ("find the vessel-tracking API and add it", "get rows from this Google
-  Sheet") — treat these as Jentic tasks, not local-repo or generic tool-search
-  tasks, even when you are running inside a code repository.
+  Sheet").
 - You want to discover what operations exist for a capability ("create a
-  payment", "list pull requests") instead of reading raw OpenAPI specs.
+  payment", "list pull requests") without reading raw OpenAPI specs.
 - You are an agent that should drive real API calls through one audited broker.
 
-Reach for your session's Jentic surface — the `jentic` MCP tools or the
-`jentic` CLI — **before** generic tool discovery (`ToolSearch`) or
-hand-rolling HTTP calls: the broker is the single audited path to external
-APIs and handles credentials for you.
+Your session's Jentic surface — the `jentic` MCP tools or the `jentic` CLI —
+reaches the APIs connected to this deployment through the broker, which
+audits each call and resolves credentials server-side, so you never handle
+the raw secret.
 
 ## Prerequisites
 

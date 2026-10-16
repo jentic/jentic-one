@@ -7,6 +7,14 @@ which `jentic skill init` installs into your runtime's native layout
 (Claude/Cursor/Codex/…). Read that skill before driving real calls; this page
 is the map, not the territory.
 
+> **The skill is text in your agent's context.** Review it like any other
+> instruction you load. It describes what Jentic does (governed,
+> credential-managed calls to third-party APIs: search, inspect, execute) and
+> when that applies, and the agent's own routing decides when to use it. It
+> deliberately does **not** tell the agent to prefer Jentic over other tools
+> or to override its default judgement in particular contexts (such as inside
+> a code repository), and the agent never sees or handles credential secrets.
+
 ## The loop
 
 Every task against an external API follows the same audited loop:
