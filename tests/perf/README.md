@@ -21,6 +21,7 @@ make perf-provision    # vendors, credentials, callers -> results/.perf-env.json
 make perf-overhead ARGS=--quick   # ~3 min: broker vs direct at 10 rps
 make perf-dbcost       # per-call DB cost, warm vs cold caches
 make perf-capacity     # ~7 min: throughput vs concurrency for 1/2/4 workers
+make perf-profile      # ~2 min: py-spy flamegraph + CPU share per subsystem
 make perf-report       # results/report.html
 make perf-down         # stop + wipe volumes
 ```
@@ -31,6 +32,7 @@ make perf-down         # stop + wipe volumes
 | --- | --- | --- |
 | `bench_overhead.py` (`make perf-overhead`) | How much latency does the broker add? | [oha](https://github.com/hatoo/oha), **open loop** (fixed `-q` rate, `--latency-correction`), same request direct vs via broker, per case. |
 | `bench_capacity.py` (`make perf-capacity`) | What's the max throughput per worker/CPU config, and what's the bottleneck? | oha **closed loop** (fixed concurrency, no rate cap), broker recreated per `workers x CPUs`, one `docker stats` CPU sample per step. |
+| `pyspy_profile.py` (`make perf-profile`) | Where does the broker spend its CPU? | py-spy in a sidecar sharing the broker's PID namespace (image untouched), under oha closed-loop load; flamegraph SVG + CPU share per subsystem (DB client, DNS, OTel, ASGI, …). SQLAlchemy's greenlet bridge splits ORM stacks from their callers, so call-site shares are lower bounds. |
 | `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the `pool_pre_ping` ping transaction per checkout. |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | Where's the knee? What happens under faults, imports, mixed admin load? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. |
 | Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. |
