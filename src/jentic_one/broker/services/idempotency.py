@@ -28,8 +28,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+import structlog
+
+from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
 from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS
-from jentic_one.shared.state.backend import AtomicStore, KeyValueStore
+from jentic_one.shared.state.backend import (
+    AtomicStore,
+    KeyValueStore,
+    StateBackendCapacityError,
+)
+
+_logger = structlog.get_logger(__name__)
 
 
 @runtime_checkable
@@ -115,10 +124,26 @@ class SharedStateIdempotencyStore:
         decode the existing record: a different fingerprint ⇒ ``CONFLICT``; a
         matching fingerprint that is still ``PENDING`` ⇒ ``IN_PROGRESS``; a
         matching ``DONE`` record ⇒ ``REPLAY`` with the stored response.
+
+        Raises:
+            IdempotencyUnavailableError: The store refused the claim write (it
+                is full). The caller must not run the request: an unrecorded
+                claim cannot dedupe a retry.
         """
         slot = self._slot(caller, key)
         claim = json.dumps({"phase": _PHASE_PENDING, "fp": fingerprint}).encode()
-        if await self._store.set_if_absent(slot, claim, ttl_s=self._pending_ttl):
+        try:
+            claimed = await self._store.set_if_absent(slot, claim, ttl_s=self._pending_ttl)
+        except StateBackendCapacityError as exc:
+            raise IdempotencyUnavailableError(
+                detail=(
+                    "The Idempotency-Key claim could not be recorded, so the request "
+                    "was not executed; retry after the indicated delay."
+                ),
+                type="idempotency_unavailable",
+                headers={"Retry-After": str(exc.retry_after_s)},
+            ) from exc
+        if claimed:
             return IdempotencyOutcome(IdempotencyState.FRESH)
 
         existing = await self._store.get(slot)
@@ -154,6 +179,12 @@ class SharedStateIdempotencyStore:
         over ``max_response_bytes`` is dropped (``body_omitted``) — the
         no-duplicate-execution guarantee is preserved; only byte-identical replay
         of a rare oversized body is lost.
+
+        When the store refuses the full record (it is full), the record is
+        stored without its body (``body_omitted``) so a retry still replays
+        rather than re-executing. If even that is refused, the PENDING claim is
+        left in place (it expires after ``pending_ttl_s``) and the refusal is
+        logged; the caller still returns the response it already has.
         """
         omit = len(body) > self._max_response_bytes
         record = {
@@ -165,7 +196,25 @@ class SharedStateIdempotencyStore:
             "body_b64": "" if omit else base64.b64encode(body).decode(),
         }
         slot = self._slot(caller, key)
-        await self._store.set(slot, json.dumps(record).encode(), ttl_s=self._done_ttl)
+        candidates = [record]
+        if not omit:
+            candidates.append({**record, "body_omitted": True, "body_b64": ""})
+        for attempt, candidate in enumerate(candidates):
+            try:
+                await self._store.set(slot, json.dumps(candidate).encode(), ttl_s=self._done_ttl)
+            except StateBackendCapacityError:
+                continue
+            if attempt:
+                _logger.warning("idempotency_record_stored_without_body", reason="store_full")
+            return
+        _logger.warning(
+            "idempotency_record_not_stored",
+            reason="store_full",
+            detail=(
+                "the response could not be recorded; the pending claim stays until "
+                "it expires, after which a retry with this Idempotency-Key runs again"
+            ),
+        )
 
     def _retry_after(self) -> int:
         # Round the short claim TTL up to whole seconds for the Retry-After hint.

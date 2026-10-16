@@ -83,7 +83,13 @@ class AssertionService:
         self._jti_cache = _get_jti_cache(self._max_ttl)
 
     async def _claim_jti(self, jti: str) -> bool:
-        """Record ``jti`` as used; False when it was already used (a replay)."""
+        """Record ``jti`` as used; False when it was already used (a replay).
+
+        Raises:
+            StateBackendCapacityError: The replay store refused the write (it is
+                full). Propagates so the exchange is refused, never treated as
+                a first use.
+        """
         if self._replay_store is None:
             return self._jti_cache.check_and_insert(jti)
         return await self._replay_store.set_if_absent(

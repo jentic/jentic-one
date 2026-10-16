@@ -142,7 +142,8 @@ def get_assertion_service(request: Request, ctx: Context = Depends(get_ctx)) -> 
     # The jti replay record lives on the auth surface's shared-state backend,
     # so a replayed assertion is refused by every process sharing it. Each jti
     # key is written once and never read again; both backends expire it by TTL
-    # (the memory backend sweeps on write and caps its size). Without a backend
+    # (the memory backend sweeps expired keys on write and refuses new ones once
+    # the jti namespace is full of live keys). Without a backend
     # the service keeps its process-wide cache (a per-call fallback backend
     # would remember nothing).
     backend: object = getattr(request.app.state, "auth_state_backend", None)

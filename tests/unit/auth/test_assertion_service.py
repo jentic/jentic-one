@@ -18,7 +18,11 @@ from jentic_one.auth.services import assertion_service
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.routers.oauth import get_assertion_service
-from jentic_one.shared.state.backend import MemoryStateBackend, RateLimitDecision
+from jentic_one.shared.state.backend import (
+    MemoryStateBackend,
+    RateLimitDecision,
+    StateBackendCapacityError,
+)
 
 
 def _make_ctx() -> MagicMock:
@@ -425,3 +429,69 @@ async def test_verify_rejects_audience_not_matching_request_or_bind(
             _make_assertion(private_key, aud="http://evil.example:8000/oauth/token"),
             request_base_url="http://192.168.1.20:8000",
         )
+
+
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_jti_replay_is_refused_after_a_login_csrf_flood(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+) -> None:
+    """Unauthenticated CSRF nonces cannot push a live jti record out of the store.
+
+    ``GET /login`` mints a ``login-csrf:`` key per render. Flooding the store
+    with them must neither evict the jti replay record (a replay would then be
+    accepted) nor block the jti namespace.
+    """
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
+    token_svc_instance = MagicMock()
+    token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))
+    mock_token_svc_cls.return_value = token_svc_instance
+    backend = MemoryStateBackend(max_entries=100)
+    svc = AssertionService(ctx, replay_store=backend)
+
+    await svc.verify_and_exchange(_make_assertion(private_key, jti="captured-jti"))
+
+    refused = 0
+    for i in range(150):
+        try:
+            await backend.set(f"login-csrf:nonce-{i}", b"digest", ttl_s=300.0)
+        except StateBackendCapacityError:
+            refused += 1
+    assert refused == 50
+
+    with pytest.raises(InvalidGrantError, match="invalid"):
+        await svc.verify_and_exchange(_make_assertion(private_key, jti="captured-jti"))
+    # The jti namespace still accepts new assertions.
+    await svc.verify_and_exchange(_make_assertion(private_key, jti="next-jti"))
+
+
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_exchange_is_refused_when_the_jti_record_cannot_be_stored(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+) -> None:
+    """A full jti namespace refuses the exchange; it never mints unrecorded tokens."""
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
+    token_svc_instance = MagicMock()
+    token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))
+    mock_token_svc_cls.return_value = token_svc_instance
+    backend = MemoryStateBackend(max_entries=1)
+    svc = AssertionService(ctx, replay_store=backend)
+    await svc.verify_and_exchange(_make_assertion(private_key, jti="first"))
+    token_svc_instance.issue_pair.reset_mock()
+
+    with pytest.raises(StateBackendCapacityError):
+        await svc.verify_and_exchange(_make_assertion(private_key, jti="second"))
+    token_svc_instance.issue_pair.assert_not_awaited()

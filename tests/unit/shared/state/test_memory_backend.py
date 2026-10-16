@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import pytest
+import structlog
 
-from jentic_one.shared.state import MemoryStateBackend
+from jentic_one.shared.state import (
+    MemoryStateBackend,
+    NamespaceBudget,
+    StateBackendCapacityError,
+)
 
 
 class FakeClock:
@@ -153,42 +158,98 @@ async def test_expired_keys_swept_on_any_write_after_the_interval(clock: FakeClo
     assert set(backend._kv) == {"fresh"}
 
 
-async def test_max_entries_is_a_hard_ceiling(clock: FakeClock) -> None:
-    """With every entry still live the store evicts the one closest to expiry."""
+async def test_live_key_is_never_evicted_at_the_cap(clock: FakeClock) -> None:
+    """A full namespace refuses the new write; every live claim survives."""
     backend = MemoryStateBackend(clock=clock, max_entries=3)
-    await backend.set("soon", b"v", ttl_s=10.0)
-    await backend.set("mid", b"v", ttl_s=20.0)
-    await backend.set("late", b"v", ttl_s=30.0)
-    assert await backend.set_if_absent("new", b"v", ttl_s=40.0) is True
+    for key in ("ns:soon", "ns:mid", "ns:late"):
+        assert await backend.set_if_absent(key, b"v", ttl_s=10.0) is True
 
-    assert len(backend._kv) == 3
-    assert await backend.get("soon") is None
-    assert await backend.get("mid") == b"v"
-    assert await backend.get("new") == b"v"
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set_if_absent("ns:new", b"v", ttl_s=40.0)
 
-
-async def test_capacity_eviction_frees_a_batch(clock: FakeClock) -> None:
-    """A full store frees a tenth of its bound at once, not one entry per write."""
-    backend = MemoryStateBackend(clock=clock, max_entries=20)
-    for i in range(20):
-        await backend.set(f"k{i:02d}", b"v", ttl_s=100.0 + i)
-    await backend.set("new", b"v", ttl_s=500.0)
-    assert len(backend._kv) == 19
-    assert "k00" not in backend._kv
-    assert "k01" not in backend._kv
-    assert "k02" in backend._kv
+    assert refused.value.namespace == "ns"
+    assert refused.value.retry_after_s >= 1
+    for key in ("ns:soon", "ns:mid", "ns:late"):
+        assert await backend.set_if_absent(key, b"v", ttl_s=10.0) is False
+    assert await backend.get("ns:new") is None
 
 
-async def test_max_entries_prefers_dropping_expired_entries(clock: FakeClock) -> None:
+async def test_every_write_kind_past_the_cap_raises(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1)
+    await backend.set("ns:a", b"v", ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("ns:b", b"v", ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.incr_with_ttl("ns:c", ttl_s=60.0)
+
+
+async def test_byte_budget_refuses_a_large_value(clock: FakeClock) -> None:
+    """The byte budget bounds memory for large values, not just the entry count."""
+    backend = MemoryStateBackend(clock=clock, max_entries=1_000, max_bytes=10_000)
+    await backend.set("idem:a", b"x" * 6_000, ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("idem:b", b"x" * 6_000, ttl_s=60.0)
+    assert await backend.get("idem:a") == b"x" * 6_000
+    # A small value still fits in what is left.
+    await backend.set("idem:c", b"x" * 100, ttl_s=60.0)
+
+
+async def test_overwrite_counts_only_the_size_difference(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_bytes=10_000)
+    await backend.set("idem:a", b"x" * 9_000, ttl_s=60.0)
+    await backend.set("idem:a", b"x" * 9_500, ttl_s=60.0)
+    assert await backend.get("idem:a") == b"x" * 9_500
+
+
+async def test_namespaces_have_separate_budgets(clock: FakeClock) -> None:
+    """Filling one key kind (CSRF nonces) never refuses another (jti records)."""
+    backend = MemoryStateBackend(clock=clock, max_entries=5)
+    for i in range(5):
+        await backend.set(f"login-csrf:{i}", b"d", ttl_s=300.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("login-csrf:overflow", b"d", ttl_s=300.0)
+
+    assert await backend.set_if_absent("auth:jwt_bearer_jti:j1", b"1", ttl_s=300.0) is True
+    assert await backend.set_if_absent("idem:caller:k", b"c", ttl_s=35.0) is True
+
+
+async def test_namespace_budget_override(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(
+        clock=clock,
+        max_entries=1,
+        namespace_budgets={"idem": NamespaceBudget(max_entries=3, max_bytes=1_000_000)},
+    )
+    for i in range(3):
+        await backend.set(f"idem:{i}", b"v", ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("idem:3", b"v", ttl_s=60.0)
+    await backend.set("cb:total:h", b"1", ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("cb:fail:h", b"1", ttl_s=60.0)
+
+
+async def test_refusal_is_logged_once_per_interval(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1, sweep_interval_s=30.0)
+    await backend.set("ns:a", b"v", ttl_s=600.0)
+    with structlog.testing.capture_logs() as logs:
+        for i in range(20):
+            with pytest.raises(StateBackendCapacityError):
+                await backend.set(f"ns:{i}x", b"v", ttl_s=600.0)
+    refused = [e for e in logs if e["event"] == "memory_state_backend_capacity_refused"]
+    assert len(refused) == 1
+    assert refused[0]["namespace"] == "ns"
+
+
+async def test_expired_entries_are_reclaimed_before_refusing(clock: FakeClock) -> None:
     backend = MemoryStateBackend(clock=clock, max_entries=2)
-    await backend.set("expired", b"v", ttl_s=1.0)
-    await backend.set("live", b"v", ttl_s=60.0)
+    await backend.set("ns:expired", b"v", ttl_s=1.0)
+    await backend.set("ns:live", b"v", ttl_s=60.0)
     clock.advance(2.0)
-    await backend.set("new", b"v", ttl_s=60.0)
-    assert set(backend._kv) == {"live", "new"}
+    await backend.set("ns:new", b"v", ttl_s=60.0)
+    assert set(backend._kv) == {"ns:live", "ns:new"}
 
 
-async def test_overwriting_an_existing_key_at_capacity_evicts_nothing(
+async def test_overwriting_an_existing_key_at_capacity_succeeds(
     clock: FakeClock,
 ) -> None:
     backend = MemoryStateBackend(clock=clock, max_entries=2)
@@ -216,6 +277,10 @@ async def test_refilled_token_buckets_are_swept(clock: FakeClock) -> None:
     assert (await backend.token_bucket("active", rate=1.0, burst=2)).remaining == 0
 
 
-def test_max_entries_must_be_positive() -> None:
+def test_budgets_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_entries"):
         MemoryStateBackend(max_entries=0)
+    with pytest.raises(ValueError, match="max_bytes"):
+        MemoryStateBackend(max_bytes=0)
+    with pytest.raises(ValueError, match="idem"):
+        MemoryStateBackend(namespace_budgets={"idem": NamespaceBudget(max_entries=0, max_bytes=1)})

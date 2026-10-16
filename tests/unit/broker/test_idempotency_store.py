@@ -14,7 +14,10 @@ Exercises the full claim/replay state machine over the in-process memory backend
 from __future__ import annotations
 
 import pytest
+import structlog
 
+from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.services.idempotency import (
     IdempotencyState,
     SharedStateIdempotencyStore,
@@ -162,3 +165,57 @@ async def test_oversized_body_omitted_but_still_replays() -> None:
     assert replay.stored.body == b""
     # Status/headers still replay so the side-effect isn't repeated.
     assert replay.stored.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_in_flight_retry_is_never_fresh_when_the_store_is_full() -> None:
+    """A full store refuses new claims; it never drops a live one.
+
+    Evicting the in-flight claim to make room would let the client's retry
+    claim the key ``FRESH`` and run the upstream call a second time.
+    """
+    backend = MemoryStateBackend(clock=_Clock(), max_entries=10)
+    store = _store(backend)
+    assert (await store.begin("agent-1", "in-flight", "fp")).state is IdempotencyState.FRESH
+    for i in range(9):
+        assert (await store.begin("agent-1", f"other-{i}", "fp")).state is IdempotencyState.FRESH
+
+    with pytest.raises(IdempotencyUnavailableError) as refused:
+        await store.begin("agent-1", "overflow", "fp")
+    assert status_for_broker_error(refused.value) == 503
+    assert int(refused.value.headers["Retry-After"]) >= 1
+
+    retry = await store.begin("agent-1", "in-flight", "fp")
+    assert retry.state is IdempotencyState.IN_PROGRESS
+
+
+@pytest.mark.asyncio
+async def test_complete_stores_the_record_without_its_body_when_the_body_does_not_fit() -> None:
+    backend = MemoryStateBackend(clock=_Clock(), max_bytes=1_500)
+    store = _store(backend, max_response_bytes=10_000)
+    assert (await store.begin("agent-1", "key-1", "fp")).state is IdempotencyState.FRESH
+
+    await store.complete(
+        "agent-1", "key-1", "fp", status_code=201, headers={"x": "1"}, body=b"b" * 2_000
+    )
+
+    replay = await store.begin("agent-1", "key-1", "fp")
+    assert replay.state is IdempotencyState.REPLAY
+    assert replay.stored is not None
+    assert replay.stored.status_code == 201
+    assert replay.stored.body_omitted is True
+
+
+@pytest.mark.asyncio
+async def test_complete_keeps_the_pending_claim_when_nothing_fits() -> None:
+    backend = MemoryStateBackend(clock=_Clock(), max_bytes=300)
+    store = _store(backend)
+    assert (await store.begin("agent-1", "k", "fp")).state is IdempotencyState.FRESH
+
+    with structlog.testing.capture_logs() as logs:
+        await store.complete(
+            "agent-1", "k", "fp", status_code=200, headers={"h": "v" * 200}, body=b"x"
+        )
+
+    assert "idempotency_record_not_stored" in {entry["event"] for entry in logs}
+    assert (await store.begin("agent-1", "k", "fp")).state is IdempotencyState.IN_PROGRESS

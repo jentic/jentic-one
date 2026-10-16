@@ -17,6 +17,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+import structlog
+
+from jentic_one.shared.state.backend import StateBackendCapacityError
+
+_logger = structlog.get_logger(__name__)
+
 _OPEN_PREFIX = "cb:open:"
 _TOTAL_PREFIX = "cb:total:"
 _FAIL_PREFIX = "cb:fail:"
@@ -89,7 +95,19 @@ class CircuitBreaker:
         an in-window increment keeps it, so the ratio is always over the same
         rolling window. The latch is set with ``set_if_absent`` so concurrent
         trippers don't extend an already-open circuit's cooldown.
+
+        A counter or latch write the store refuses (its ``cb`` namespace is
+        full) skips this outcome and is logged. It runs after the upstream call
+        has already completed, so failing the request would discard a real
+        response. The breaker is an availability guard, not a correctness one:
+        while the namespace is full it may trip late or not at all.
         """
+        try:
+            await self._record(host, ok=ok)
+        except StateBackendCapacityError:
+            _logger.warning("circuit_breaker_record_skipped", host=host, reason="store_full")
+
+    async def _record(self, host: str, *, ok: bool) -> None:
         total = await self._store.incr_with_ttl(f"{_TOTAL_PREFIX}{host}", ttl_s=self._window_s)
         failures = 0
         if not ok:

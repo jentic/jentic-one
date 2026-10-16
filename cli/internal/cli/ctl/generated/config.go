@@ -1681,6 +1681,103 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Bounds for the in-process (“memory“) shared-state backend.
+//
+// Every key belongs to a namespace, its prefix up to the first “:“
+// (“idem“ for Idempotency-Key records, “auth“ for JWT-bearer jti replay
+// records, “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker
+// counters, and so on). Each namespace has its own budget, so one key kind
+// filling up never starves another. A namespace that is full of live entries
+// refuses new writes (the request that needed it gets a 503) rather than
+// evicting a live entry. Ignored by the redis backend.
+type MemoryBackendConfig struct {
+	// Default most approximate bytes (key + value + a fixed per-entry overhead) one
+	// key namespace may hold before its writes are refused.
+	MaxBytesPerNamespace int `json:"max_bytes_per_namespace,omitempty,omitzero" yaml:"max_bytes_per_namespace,omitempty" mapstructure:"max_bytes_per_namespace,omitempty"`
+
+	// Default most live entries one key namespace may hold before its writes are
+	// refused.
+	MaxEntriesPerNamespace int `json:"max_entries_per_namespace,omitempty,omitzero" yaml:"max_entries_per_namespace,omitempty" mapstructure:"max_entries_per_namespace,omitempty"`
+
+	// Per-namespace budget overrides, keyed by namespace (the key prefix before the
+	// first ``:``). ``idem`` defaults to 1000000 entries and 268435456 bytes (256
+	// MiB) unless overridden here. At most max_entries / broker.idempotency.ttl_s
+	// idempotent requests per second can be held, so size it (or lower the TTL) for
+	// your load.
+	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
+}
+
+// Per-namespace budget overrides, keyed by namespace (the key prefix before the
+// first “:“). “idem“ defaults to 1000000 entries and 268435456 bytes (256 MiB)
+// unless overridden here. At most max_entries / broker.idempotency.ttl_s
+// idempotent requests per second can be held, so size it (or lower the TTL) for
+// your load.
+type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *MemoryBackendConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain MemoryBackendConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["max_bytes_per_namespace"]; !ok || v == nil {
+		plain.MaxBytesPerNamespace = 67108864
+	}
+	if 1 > plain.MaxBytesPerNamespace {
+		return fmt.Errorf("field %s: must be >= %v", "max_bytes_per_namespace", 1)
+	}
+	if v, ok := raw["max_entries_per_namespace"]; !ok || v == nil {
+		plain.MaxEntriesPerNamespace = 100000
+	}
+	if 1 > plain.MaxEntriesPerNamespace {
+		return fmt.Errorf("field %s: must be >= %v", "max_entries_per_namespace", 1)
+	}
+	*j = MemoryBackendConfig(plain)
+	return nil
+}
+
+// Entry-count and approximate byte budget for one memory-backend key namespace.
+type MemoryNamespaceBudgetConfig struct {
+	// Most approximate bytes (key + value + a fixed per-entry overhead) the namespace
+	// may hold.
+	MaxBytes int `json:"max_bytes" yaml:"max_bytes" mapstructure:"max_bytes"`
+
+	// Most live entries the namespace may hold.
+	MaxEntries int `json:"max_entries" yaml:"max_entries" mapstructure:"max_entries"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *MemoryNamespaceBudgetConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["max_bytes"]; raw != nil && !ok {
+		return fmt.Errorf("field max_bytes in MemoryNamespaceBudgetConfig: required")
+	}
+	if _, ok := raw["max_entries"]; raw != nil && !ok {
+		return fmt.Errorf("field max_entries in MemoryNamespaceBudgetConfig: required")
+	}
+	type Plain MemoryNamespaceBudgetConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if 1 > plain.MaxBytes {
+		return fmt.Errorf("field %s: must be >= %v", "max_bytes", 1)
+	}
+	if 1 > plain.MaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "max_entries", 1)
+	}
+	*j = MemoryNamespaceBudgetConfig(plain)
+	return nil
+}
+
 // Metrics exporter configuration.
 type MetricsConfig struct {
 	// ExportIntervalSeconds corresponds to the JSON schema field
@@ -2294,8 +2391,9 @@ type ServerConfig struct {
 	// limits, caches and Prometheus metrics are per process, and each worker is a
 	// full interpreter (budget memory per worker). Values above 1 require PostgreSQL
 	// for every database, are incompatible with ``server.reload``, and require the
-	// redis shared-state backend when the process runs the auth surface, or the
-	// broker surface with idempotency, rate limiting or the circuit breaker enabled.
+	// redis shared-state backend when the process runs the auth or control surface,
+	// or the broker surface with idempotency, rate limiting or the circuit breaker
+	// enabled.
 	Workers int `json:"workers,omitempty,omitzero" yaml:"workers,omitempty" mapstructure:"workers,omitempty"`
 }
 
@@ -2438,6 +2536,9 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 type StateBackendConfig struct {
 	// Backend corresponds to the JSON schema field "backend".
 	Backend BackendKind `json:"backend,omitempty,omitzero" yaml:"backend,omitempty" mapstructure:"backend,omitempty"`
+
+	// Memory corresponds to the JSON schema field "memory".
+	Memory *MemoryBackendConfig `json:"memory,omitempty,omitzero" yaml:"memory,omitempty" mapstructure:"memory,omitempty"`
 
 	// RedisKeyPrefix corresponds to the JSON schema field "redis_key_prefix".
 	RedisKeyPrefix string `json:"redis_key_prefix,omitempty,omitzero" yaml:"redis_key_prefix,omitempty" mapstructure:"redis_key_prefix,omitempty"`
@@ -3072,33 +3173,6 @@ func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
 // Background job-worker durability knobs.
 //
 // The worker claims a job, sets a **visibility deadline**
@@ -3183,3 +3257,30 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 }
 
 type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
