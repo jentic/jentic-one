@@ -85,11 +85,16 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"and ;filename=name sets the uploaded file name (default: the path's base\n" +
 			"name). Suffixes are parsed from the right, so any other ';' stays part of\n" +
 			"the path; quote a path that itself ends in ;type=… or ;filename=… as\n" +
-			"key=@\"path\". Option values cannot contain ';'. Field names and file\n" +
-			"names must not contain CR/LF, and stdin (@-) is not accepted as a file\n" +
-			"part. The assembled body is checked against the broker's 50 MiB\n" +
-			"multipart/form-data limit before anything is sent. --dry-run prints a\n" +
-			"parts summary (names, kinds, filenames, content types, file sizes, total\n" +
+			"key=@\"path\" (a leading \" counts as quoting only when a closing \" is\n" +
+			"followed by the end or a ';'). Option values cannot contain ';'. Field\n" +
+			"names and file names must not contain CR/LF. A file part must be a\n" +
+			"regular file: stdin (@-, /dev/stdin), pipes and devices are refused.\n" +
+			"The assembled body is checked against the broker's default 50 MiB\n" +
+			"multipart/form-data limit before anything is sent (a broker cap raised\n" +
+			"above 50 MiB is not usable from the CLI); an oversize body is refused\n" +
+			"with MISSING_ARGUMENT and details.reason=body_too_large (plus\n" +
+			"details.total_bytes/limit_bytes). --dry-run prints a parts summary\n" +
+			"(names, kinds, filenames, content types, per-part byte lengths, total\n" +
 			"bytes) — never field values or file contents.\n\n" +
 			"When the broker denies the call (e.g. you have no credential binding\n" +
 			"for the API, or no credential is provisioned), it returns an\n" +

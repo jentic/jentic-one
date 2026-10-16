@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -74,6 +75,12 @@ func TestParseFormFileSpec(t *testing.T) {
 		{"doc=@/tmp/a\nb;filename=clean", formFileSpec{key: "doc", path: "/tmp/a\nb", filename: "clean"}},
 		// Value edges: '=' inside the path is preserved (only the first '=' splits).
 		{"doc=@a=b.txt", formFileSpec{key: "doc", path: "a=b.txt"}},
+		// A leading '"' is quoting only when a closing '"' is followed by the
+		// end or ';'; otherwise it is a literal part of the path.
+		{`k=@"weird`, formFileSpec{key: "k", path: `"weird`}},
+		{`k=@"face.jpg"x`, formFileSpec{key: "k", path: `"face.jpg"x`}},
+		{`k=@"a";type=text/plain`, formFileSpec{key: "k", path: "a", contentType: "text/plain"}},
+		{`k=@"a"b";type=text/plain`, formFileSpec{key: "k", path: `a"b`, contentType: "text/plain"}},
 	}
 	for _, tc := range ok {
 		t.Run("ok/"+tc.in, func(t *testing.T) {
@@ -98,9 +105,8 @@ func TestParseFormFileSpec(t *testing.T) {
 		{"images=@;type=text/plain", "expected key=@path"},
 		{"images=@-", "stdin"},
 		{"images=@-;type=text/plain", "stdin"},
-		{`images=@"face.jpg`, "unterminated"},
-		{`images=@"face.jpg"x`, "unexpected text"},
 		{`images=@"face.jpg";bogus=1`, "unknown option"},
+		{`images=@"face.jpg";`, "unknown option"},
 		{"images=@face.jpg;type=", "empty type="},
 		{"images=@face.jpg;filename=", "empty filename="},
 		{"images=@face.jpg;type=notamediatype", "invalid type="},
@@ -157,6 +163,14 @@ func TestParseFormField(t *testing.T) {
 		_, err := parseFormField(tc.in)
 		wantUsageError(t, err, tc.msg)
 	}
+
+	t.Run("@ refusal never echoes the value", func(t *testing.T) {
+		_, err := parseFormField("token=@SECRET-VALUE")
+		coded := wantUsageError(t, err, "starts with @")
+		if strings.Contains(coded.Msg, "SECRET-VALUE") || strings.Contains(coded.Actionable, "SECRET-VALUE") {
+			t.Errorf("error echoes the field value: msg=%q actionable=%q", coded.Msg, coded.Actionable)
+		}
+	})
 }
 
 // TestBuildMultipartBodyCRLFNeverReachesWire is the end-to-end security pin:
@@ -202,17 +216,20 @@ func TestBuildMultipartBodySizeGuard(t *testing.T) {
 	}
 	half := writeTemp(t, dir, "half.bin", strings.Repeat("h", 600))
 	small := writeTemp(t, dir, "small.bin", strings.Repeat("s", 100))
-	nearly := writeTemp(t, dir, "nearly.bin", strings.Repeat("n", limit-10))
+	nearly := writeTemp(t, dir, "nearly.bin", strings.Repeat("n", limit-30))
 
+	// The pre-flight sum counts values, file sizes, and the field names and
+	// upload filenames that land in part headers.
 	cases := []struct {
 		name           string
 		form, formFile []string
 		wantTotal      int64 // exact Details.total_bytes from the pre-flight sum; 0 = framing case
 	}{
-		{"single oversize file", nil, []string{"f=@" + sparse}, 4 * limit},
-		{"files sum over limit", nil, []string{"a=@" + half, "b=@" + half}, 1200},
-		{"fields count toward the limit", []string{"big=" + strings.Repeat("v", 2000)}, nil, 2000},
-		{"field plus file over limit", []string{"big=" + strings.Repeat("v", 1000)}, []string{"f=@" + small}, 1100},
+		{"single oversize file", nil, []string{"f=@" + sparse}, 1 + int64(len("huge.bin")) + 4*limit},
+		{"files sum over limit", nil, []string{"a=@" + half, "b=@" + half}, 2 * (1 + int64(len("half.bin")) + 600)},
+		{"fields count toward the limit", []string{"big=" + strings.Repeat("v", 2000)}, nil, 3 + 2000},
+		{"field plus file over limit", []string{"big=" + strings.Repeat("v", 1000)}, []string{"f=@" + small}, 3 + 1000 + 1 + int64(len("small.bin")) + 100},
+		{"field names count toward the limit", []string{strings.Repeat("k", 1100) + "=v"}, nil, 1100 + 1},
 		// Payload fits, framing tips it over: the exact post-build check.
 		{"framing tips over", nil, []string{"f=@" + nearly}, 0},
 	}
@@ -223,6 +240,9 @@ func TestBuildMultipartBodySizeGuard(t *testing.T) {
 				t.Fatal("an over-limit body must not be returned")
 			}
 			coded := wantUsageError(t, err, "multipart/form-data limit")
+			if got := coded.Details["reason"]; got != "body_too_large" {
+				t.Errorf("reason = %v, want body_too_large", got)
+			}
 			if got := coded.Details["limit_bytes"]; got != int64(limit) {
 				t.Errorf("limit_bytes = %v, want %d", got, limit)
 			}
@@ -269,18 +289,31 @@ func TestBuildMultipartBodySizeGuard(t *testing.T) {
 	})
 }
 
-// TestBuildMultipartBodySizeGuardNonRegularFile pins the bounded copy: a
-// non-regular file has no stat size, so the copy itself enforces the limit — an
-// endless source (/dev/zero) is refused instead of exhausting memory.
-func TestBuildMultipartBodySizeGuardNonRegularFile(t *testing.T) {
-	if _, err := os.Stat("/dev/zero"); err != nil {
-		t.Skip("no /dev/zero on this platform")
+// TestBuildMultipartBodyRefusesNonRegularFiles pins the regular-file-only
+// contract: a device (/dev/zero) or an stdin alias (/dev/stdin, /dev/fd/0) is
+// refused at the pre-flight stat with a coded error, before any open or read —
+// /dev/stdin reads the inherited stdin that may never send EOF (#1354). The
+// FIFO case is in execute_multipart_unix_test.go.
+func TestBuildMultipartBodyRefusesNonRegularFiles(t *testing.T) {
+	for _, p := range []string{"/dev/zero", "/dev/stdin", "/dev/fd/0"} {
+		t.Run(p, func(t *testing.T) {
+			fi, err := os.Stat(p)
+			if err != nil {
+				t.Skipf("no %s on this platform", p)
+			}
+			if fi.Mode().IsRegular() {
+				t.Skipf("%s resolves to a regular file in this test process", p)
+			}
+			var mp *multipartBody
+			runWithTimeout(t, 5*time.Second, "buildMultipartBody with "+p, func() {
+				mp, err = buildMultipartBody(nil, []string{"f=@" + p}, 4096)
+			})
+			if mp != nil {
+				t.Fatal("a non-regular file must not produce a body")
+			}
+			wantUsageError(t, err, "not a regular file")
+		})
 	}
-	mp, err := buildMultipartBody(nil, []string{"f=@/dev/zero"}, 4096)
-	if mp != nil {
-		t.Fatal("an endless source must not produce a body")
-	}
-	wantUsageError(t, err, "multipart/form-data limit")
 }
 
 // TestBuildMultipartBodyPartsAndSummary pins the assembled parts and the
@@ -345,15 +378,14 @@ func TestBuildMultipartBodyPartsAndSummary(t *testing.T) {
 		}
 	}
 
-	i64 := func(n int64) *int64 { return &n }
 	wantSummary := []multipartPartSummary{
-		{Name: "caption", Kind: "field"},
-		{Name: "empty", Kind: "field"},
-		{Name: "images", Kind: "file", Filename: "a.jpg", ContentType: "image/jpeg", Bytes: i64(4)},
-		{Name: "images", Kind: "file", Filename: "b.png", ContentType: "image/png", Bytes: i64(6)},
-		{Name: "doc", Kind: "file", Filename: "report.pdf", ContentType: "application/pdf", Bytes: i64(8)},
-		{Name: "raw", Kind: "file", Filename: "pic.gif", ContentType: "image/gif", Bytes: i64(2)},
-		{Name: "bin", Kind: "file", Filename: "noext", ContentType: "application/octet-stream", Bytes: i64(2)},
+		{Name: "caption", Kind: "field", Bytes: int64(len("SECRET-FIELD-VALUE"))},
+		{Name: "empty", Kind: "field", Bytes: 0},
+		{Name: "images", Kind: "file", Filename: "a.jpg", ContentType: "image/jpeg", Bytes: 4},
+		{Name: "images", Kind: "file", Filename: "b.png", ContentType: "image/png", Bytes: 6},
+		{Name: "doc", Kind: "file", Filename: "report.pdf", ContentType: "application/pdf", Bytes: 8},
+		{Name: "raw", Kind: "file", Filename: "pic.gif", ContentType: "image/gif", Bytes: 2},
+		{Name: "bin", Kind: "file", Filename: "noext", ContentType: "application/octet-stream", Bytes: 2},
 	}
 	if mp.Summary.Kind != "multipart/form-data" || mp.Summary.TotalBytes != int64(mp.Body.Len()) {
 		t.Errorf("summary kind/total = %q/%d, want multipart/form-data/%d", mp.Summary.Kind, mp.Summary.TotalBytes, mp.Body.Len())
@@ -362,9 +394,7 @@ func TestBuildMultipartBodyPartsAndSummary(t *testing.T) {
 		t.Fatalf("summary parts = %d, want %d", len(mp.Summary.Parts), len(wantSummary))
 	}
 	for i, w := range wantSummary {
-		g := mp.Summary.Parts[i]
-		if g.Name != w.Name || g.Kind != w.Kind || g.Filename != w.Filename || g.ContentType != w.ContentType ||
-			(g.Bytes == nil) != (w.Bytes == nil) || (g.Bytes != nil && *g.Bytes != *w.Bytes) {
+		if g := mp.Summary.Parts[i]; g != w {
 			t.Errorf("summary part %d = %+v, want %+v", i, g, w)
 		}
 	}
@@ -407,9 +437,11 @@ func runMultipartExecute(t *testing.T, onBroker func(*http.Request), args ...str
 
 // TestExecuteDryRunMultipartSummary pins the --dry-run parts summary (#1320)
 // in both output shapes (agent JSON and explicit human, which pretty-prints
-// the same plan): names, kinds, filenames, content types, file sizes and the
-// total — and NEVER a field value or file content. The plan headers carry the
-// generated boundary Content-Type, and the broker is never dialed.
+// the same plan): names, kinds, filenames, content types, per-part byte
+// lengths and the total — and NEVER a field value or file content. A field's
+// length is reported: framing is deterministic, so total_bytes would reveal it
+// anyway. The plan headers carry the generated boundary Content-Type, and the
+// broker is never dialed.
 func TestExecuteDryRunMultipartSummary(t *testing.T) {
 	dir := t.TempDir()
 	img := writeTemp(t, dir, "face.jpg", "FILE-CONTENT-SECRET")
@@ -468,8 +500,9 @@ func TestExecuteDryRunMultipartSummary(t *testing.T) {
 				t.Fatalf("body summary = %+v", body)
 			}
 			field, file1, file2 := body.Parts[0], body.Parts[1], body.Parts[2]
-			if field.Name != "api_token" || field.Kind != "field" || field.Bytes != nil || field.Filename != "" {
-				t.Errorf("field summary = %+v (a field carries no size or filename)", field)
+			if field.Name != "api_token" || field.Kind != "field" || field.Filename != "" ||
+				field.Bytes == nil || *field.Bytes != int64(len("FIELD-VALUE-SECRET")) {
+				t.Errorf("field summary = %+v (a field carries its value length, no filename)", field)
 			}
 			if file1.Name != "images" || file1.Kind != "file" || file1.Filename != "face.jpg" ||
 				file1.ContentType != "image/jpeg" || file1.Bytes == nil || *file1.Bytes != int64(len("FILE-CONTENT-SECRET")) {
@@ -552,15 +585,16 @@ func TestExecuteMultipartRefusedBeforeBroker(t *testing.T) {
 	data := writeTemp(t, dir, "body.json", `{}`)
 
 	cases := []struct {
-		name string
-		args []string
-		msg  string
+		name   string
+		args   []string
+		msg    string
+		reason string // expected details.reason; "" = not asserted
 	}{
-		{"over the broker cap", []string{"--form-file", "f=@" + huge}, "52428800-byte (50 MiB)"},
-		{"stdin file part", []string{"--form-file", "f=@-"}, "stdin"},
-		{"crlf form name", []string{"--form", "a\r\nX-Injected: 1=v"}, "CR or LF"},
-		{"crlf filename", []string{"--form-file", "f=@" + small + ";filename=x\r\nX-Injected: 1"}, "CR or LF"},
-		{"form-file with data-file", []string{"--form-file", "f=@" + small, "--data-file", data}, "cannot be combined"},
+		{"over the broker cap", []string{"--form-file", "f=@" + huge}, "52428800-byte (50 MiB)", "body_too_large"},
+		{"stdin file part", []string{"--form-file", "f=@-"}, "stdin", ""},
+		{"crlf form name", []string{"--form", "a\r\nX-Injected: 1=v"}, "CR or LF", ""},
+		{"crlf filename", []string{"--form-file", "f=@" + small + ";filename=x\r\nX-Injected: 1"}, "CR or LF", ""},
+		{"form-file with data-file", []string{"--form-file", "f=@" + small, "--data-file", data}, "cannot be combined", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -568,7 +602,10 @@ func TestExecuteMultipartRefusedBeforeBroker(t *testing.T) {
 			if hit {
 				t.Error("broker must not be dialed")
 			}
-			wantUsageError(t, err, tc.msg)
+			coded := wantUsageError(t, err, tc.msg)
+			if tc.reason != "" && coded.Details["reason"] != tc.reason {
+				t.Errorf("details.reason = %v, want %q", coded.Details["reason"], tc.reason)
+			}
 		})
 	}
 }

@@ -22,26 +22,31 @@ import (
 // _read_capped_body in src/jentic_one/broker/web/routers/execute.py. The cap is
 // on the whole request body, multipart framing included. execute checks the
 // assembled body against it before sending so an oversize upload fails fast and
-// locally instead of being buffered in RAM and refused by the broker. An
-// operator-raised broker cap is still bounded by the SDK transport's
-// client.MaxBodyBytes ceiling (64 MiB), so the CLI cannot send past that anyway.
+// locally instead of being buffered in RAM and refused by the broker. The CLI
+// has no knowledge of an operator-raised broker cap: a deployment that raises
+// max_request_bytes_by_type["multipart/form-data"] above 50 MiB still cannot
+// receive a larger multipart upload from this CLI (and nothing above the SDK
+// transport's client.MaxBodyBytes ceiling of 64 MiB in any case).
 const multipartBodyLimit int64 = 50 << 20
 
 // multipartPartOverhead approximates the per-part framing bytes (boundary line
-// and part headers) used to pre-size the body buffer, so the retained backing
-// array is ~1×N instead of the ~1.6×N bytes.Buffer doubling would leave.
+// and part headers, excluding the field name and filename, which are counted
+// exactly) used to pre-size the body buffer, so the retained backing array is
+// ~1×N instead of the ~1.6×N bytes.Buffer doubling would leave.
 const multipartPartOverhead = 1 << 10
 
 // multipartPartSummary is the --dry-run view of one multipart part. It carries
 // only metadata — never a field value or file content — so a plan is safe to
-// paste into an LLM context or a ticket. A field part deliberately omits its
-// byte length too: the length of a short secret value is itself a hint.
+// paste into an LLM context or a ticket. Bytes is the part's payload length
+// for both kinds: the multipart framing is deterministic, so the exact
+// total_bytes would reveal the summed field-value length anyway, and the
+// caller already knows its own values.
 type multipartPartSummary struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"` // "field" | "file"
 	Filename    string `json:"filename,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
-	Bytes       *int64 `json:"bytes,omitempty"`
+	Bytes       int64  `json:"bytes"`
 }
 
 // multipartSummary is the "body" block of the execute --dry-run plan for a
@@ -108,7 +113,9 @@ func rejectHeaderBreak(flag, what, value string) error {
 // and any other `;` stays part of the path (so `@a;b.txt` uploads "a;b.txt").
 // A path that itself ends in an option-looking segment is wrapped in double
 // quotes (`key=@"odd;type=x"`); after a quoted path every `;` segment must be a
-// known option. Option values cannot contain `;`. `@-` (stdin) is rejected:
+// known option. A quoted path cannot contain `";`, and a leading `"` with no
+// matching close is a literal part of the path (see cutQuotedPath). Option
+// values cannot contain `;`. `@-` (stdin) is rejected:
 // stdin may be an idle inherited stream that never sends EOF (#1354), so
 // execute never reads it for a file part.
 func parseFormFileSpec(kv string) (formFileSpec, error) {
@@ -123,18 +130,9 @@ func parseFormFileSpec(kv string) (formFileSpec, error) {
 	rest := spec[1:]
 
 	var options []string
-	if strings.HasPrefix(rest, `"`) {
-		end := strings.Index(rest[1:], `"`)
-		if end < 0 {
-			return formFileSpec{}, multipartUsageError(fmt.Sprintf("--form-file value %q has an unterminated quoted path", kv), formFileUsage)
-		}
-		out.path = rest[1 : 1+end]
-		tail := rest[2+end:]
+	if quoted, tail, isQuoted := cutQuotedPath(rest); isQuoted {
+		out.path = quoted
 		if tail != "" {
-			if !strings.HasPrefix(tail, ";") {
-				return formFileSpec{}, multipartUsageError(
-					fmt.Sprintf("--form-file value %q has unexpected text %q after the quoted path", kv, tail), formFileUsage)
-			}
 			options = strings.Split(tail[1:], ";")
 		}
 	} else {
@@ -175,6 +173,26 @@ func parseFormFileSpec(kv string) (formFileSpec, error) {
 		}
 	}
 	return out, nil
+}
+
+// cutQuotedPath splits a `"path"[;options]` spec. A leading `"` is quoting
+// only when a closing `"` follows that is itself followed by end of string or
+// `;` (the first such quote closes the path); otherwise the spec is not quoted
+// and the caller parses it as a literal path, so a real file name that starts
+// with `"` still works unquoted. tail is "" or starts with `;`.
+func cutQuotedPath(rest string) (path, tail string, ok bool) {
+	if !strings.HasPrefix(rest, `"`) {
+		return "", "", false
+	}
+	for i := 1; i < len(rest); i++ {
+		if rest[i] != '"' {
+			continue
+		}
+		if after := rest[i+1:]; after == "" || strings.HasPrefix(after, ";") {
+			return rest[1:i], after, true
+		}
+	}
+	return "", "", false
 }
 
 // isFormFileOption reports whether seg is a recognized `type=`/`filename=`
@@ -280,7 +298,7 @@ func parseFormField(kv string) (formField, error) {
 		value = value[1:]
 	} else if strings.HasPrefix(value, "@") {
 		return formField{}, multipartUsageError(
-			fmt.Sprintf("--form value for %q starts with @ (%q); --form sends the literal text, file parts use --form-file", key, value),
+			fmt.Sprintf("--form value for %q starts with @; --form sends the literal text, file parts use --form-file", key),
 			fmt.Sprintf("Upload a file with --form-file %s=@path, or send a literal leading @ by doubling it (--form %s=@@…).", key, key),
 		)
 	}
@@ -292,15 +310,30 @@ func parseFormField(kv string) (formField, error) {
 var errMultipartTooLarge = errors.New("multipart body exceeds limit")
 
 // multipartTooLargeError is the coded refusal for a body over the limit.
-// totalBytes is a lower bound when the overflow was detected mid-read.
+// totalBytes is a lower bound when the overflow was detected mid-read. The
+// code is MISSING_ARGUMENT (the closed enum has no size code), so
+// details.reason carries the stable "body_too_large" discriminator agents
+// branch on.
 func multipartTooLargeError(totalBytes, limit int64) error {
 	return &ux.CodedError{
 		Code: ux.CodeMissingArgument,
 		Msg: fmt.Sprintf("multipart body is %d bytes, over the broker's %d-byte (%d MiB) multipart/form-data limit",
 			totalBytes, limit, limit>>20),
 		Actionable: "Upload smaller files (or fewer --form-file parts per call); the broker refuses multipart bodies over this size with 413.",
-		Details:    map[string]any{"total_bytes": totalBytes, "limit_bytes": limit},
+		Details:    map[string]any{"reason": "body_too_large", "total_bytes": totalBytes, "limit_bytes": limit},
 	}
+}
+
+// notRegularFileError refuses a --form-file path that is not a regular file. A
+// FIFO blocks in open until a writer appears, and /dev/stdin, /dev/fd/0 and
+// friends read the inherited stdin that may never send EOF (#1354); the body is
+// assembled before any request context exists, so neither --timeout nor
+// cancellation could interrupt either hang.
+func notRegularFileError(path, key string) error {
+	return multipartUsageError(
+		fmt.Sprintf("--form-file %s is not a regular file (pipe, device, or stdin alias)", path),
+		fmt.Sprintf("Write the content to a regular file first, then pass --form-file %s=@<path>.", key),
+	)
 }
 
 // buildMultipartBody assembles a multipart/form-data body from --form text
@@ -328,12 +361,14 @@ func buildMultipartBody(form, formFile []string, limit int64) (*multipartBody, e
 		files = append(files, s)
 	}
 
-	// Pre-flight: stat every file and sum the payload bytes against the limit
-	// before reading anything. A non-regular file (FIFO, device) has no
-	// meaningful size here; the bounded copy below still enforces the limit.
+	// Pre-flight: stat every file and sum the payload bytes (values, file
+	// sizes, and the field names/filenames that land in part headers) against
+	// the limit before reading anything. Only regular files are accepted, so
+	// every stat size is meaningful; the bounded copy below still catches a
+	// file that grows after the stat.
 	var payload int64
 	for _, f := range fields {
-		payload += int64(len(f.value))
+		payload += int64(len(f.key) + len(f.value))
 	}
 	for _, s := range files {
 		fi, err := os.Stat(s.path)
@@ -353,9 +388,10 @@ func buildMultipartBody(form, formFile []string, limit int64) (*multipartBody, e
 				fmt.Sprintf("Point --form-file %s=@<path> at a regular file.", s.key),
 			)
 		}
-		if fi.Mode().IsRegular() {
-			payload += fi.Size()
+		if !fi.Mode().IsRegular() {
+			return nil, notRegularFileError(s.path, s.key)
 		}
+		payload += int64(len(s.key)+len(s.uploadName())) + fi.Size()
 	}
 	if payload > limit {
 		return nil, multipartTooLargeError(payload, limit)
@@ -370,7 +406,7 @@ func buildMultipartBody(form, formFile []string, limit int64) (*multipartBody, e
 		if err := w.WriteField(f.key, f.value); err != nil {
 			return nil, fmt.Errorf("write form field %q: %w", f.key, err)
 		}
-		summary.Parts = append(summary.Parts, multipartPartSummary{Name: f.key, Kind: "field"})
+		summary.Parts = append(summary.Parts, multipartPartSummary{Name: f.key, Kind: "field", Bytes: int64(len(f.value))})
 	}
 
 	for _, s := range files {
@@ -383,14 +419,14 @@ func buildMultipartBody(form, formFile []string, limit int64) (*multipartBody, e
 		if err != nil {
 			return nil, fmt.Errorf("create form file %q: %w", s.key, err)
 		}
-		n, err := copyFilePart(part, s.path, limit-int64(buf.Len()))
+		n, err := copyFilePart(part, s, limit-int64(buf.Len()))
 		if errors.Is(err, errMultipartTooLarge) {
 			return nil, multipartTooLargeError(int64(buf.Len()), limit)
 		}
 		if err != nil {
 			return nil, err
 		}
-		summary.Parts = append(summary.Parts, multipartPartSummary{Name: s.key, Kind: "file", Filename: name, ContentType: ct, Bytes: &n})
+		summary.Parts = append(summary.Parts, multipartPartSummary{Name: s.key, Kind: "file", Filename: name, ContentType: ct, Bytes: n})
 	}
 
 	if err := w.Close(); err != nil {
@@ -404,26 +440,38 @@ func buildMultipartBody(form, formFile []string, limit int64) (*multipartBody, e
 	return &multipartBody{Body: buf, ContentType: w.FormDataContentType(), Summary: summary}, nil
 }
 
-// copyFilePart streams path into part, refusing to copy more than budget bytes
-// (a file that grew since the pre-flight stat, or a non-regular file with no
-// stat size). Streaming avoids a second whole-file copy; the body still
-// accumulates in the caller's buffer so the request stays replayable for the
-// SDK transport's retry rewind (an io.Pipe stream would break that).
-func copyFilePart(part io.Writer, path string, budget int64) (int64, error) {
-	f, err := os.Open(path) //nolint:gosec // operator-supplied upload path; same trust as --data-file.
-	if err != nil {
-		return 0, multipartUsageError(
-			fmt.Sprintf("cannot read --form-file %s: %v", path, err),
-			"Check that the file exists and is readable, then retry.",
+// copyFilePart streams s.path into part, refusing to copy more than budget
+// bytes (a file that grew since the pre-flight stat). The opened handle is
+// re-checked as a regular file, narrowing the window in which the path could be
+// swapped for a pipe or device after the stat. Streaming avoids a second
+// whole-file copy; the body still accumulates in the caller's buffer so the
+// request stays replayable for the SDK transport's retry rewind (an io.Pipe
+// stream would break that).
+func copyFilePart(part io.Writer, s formFileSpec, budget int64) (int64, error) {
+	readErr := func(err error) error {
+		return multipartUsageError(
+			fmt.Sprintf("cannot read --form-file %s: %v", s.path, err),
+			fmt.Sprintf("Check that the file exists and is readable, then retry with --form-file %s=@<path>.", s.key),
 		)
 	}
+	f, err := os.Open(s.path)
+	if err != nil {
+		return 0, readErr(err)
+	}
 	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, readErr(err)
+	}
+	if !fi.Mode().IsRegular() {
+		return 0, notRegularFileError(s.path, s.key)
+	}
 	if budget < 0 {
 		budget = 0
 	}
 	n, err := io.Copy(part, io.LimitReader(f, budget+1))
 	if err != nil {
-		return n, fmt.Errorf("read --form-file %s: %w", path, err)
+		return n, readErr(err)
 	}
 	if n > budget {
 		return n, errMultipartTooLarge
