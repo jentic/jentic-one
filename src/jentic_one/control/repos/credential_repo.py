@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -15,6 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -43,6 +44,12 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
     StoredCredentialType.OAUTH2_IMPLICIT: "oauth_token",
     StoredCredentialType.AWS_SIGV4: "sigv4_credential",
 }
+
+# OAuth grants a human connects interactively; they need a live token.
+_INTERACTIVE_OAUTH_TYPES: tuple[str, ...] = (
+    StoredCredentialType.OAUTH2_AUTHORIZATION_CODE.value,
+    StoredCredentialType.OAUTH2_DEVICE_CODE.value,
+)
 
 
 class CredentialRepository:
@@ -348,11 +355,37 @@ class CredentialRepository:
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
         a ``None`` reference axis matches any value. ``filters`` carries the
         caller's access scoping.
+
+        An interactive OAuth grant (authorization_code / device_code) counts
+        as connected only while it can mint a token, matching the redacted
+        view's ``connected`` flag: a managed-provider account reference, or a
+        live token row that is unrevoked and either refreshable or unexpired.
+        One whose grant was dropped or revoked needs a reconnect, so it is
+        not offered for reuse.
         """
+        now = datetime.now(UTC)
+        live_grant = (
+            select(OAuthToken.id)
+            .where(
+                OAuthToken.credential_id == Credential.id,
+                OAuthToken.revoked_at.is_(None),
+                or_(
+                    OAuthToken.encrypted_refresh_token.is_not(None),
+                    OAuthToken.expires_at.is_(None),
+                    OAuthToken.expires_at > now,
+                ),
+            )
+            .exists()
+        )
         stmt = select(Credential).where(
             Credential.api_vendor == vendor,
             Credential.state == "connected",
             Credential.active.is_(True),
+            or_(
+                Credential.type.not_in(_INTERACTIVE_OAUTH_TYPES),
+                Credential.provider_account_ref.is_not(None),
+                live_grant,
+            ),
         )
         if name is not None:
             stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
