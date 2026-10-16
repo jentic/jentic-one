@@ -21,6 +21,7 @@ from jentic_one.shared.db.connectivity import (
     connection_loss_cause,
     describe_connection_loss,
     is_connection_loss,
+    redact_sql,
 )
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
@@ -48,6 +49,9 @@ _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS = 86_400
 # refresh-token reuse forensics.
 _TOKEN_RETENTION_DAYS = 7
 _ERROR_MAX_LEN = 128
+# Persisted on the job (and its event) when an attempt is cut short by a lost
+# database connection; the details are logged server-side only.
+_DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
 
 
 def _backoff_s(attempts: int, cfg: WorkerConfig) -> float:
@@ -211,8 +215,27 @@ class WorkerLoop:
                 result = await self._execute_handler(handler, job)
                 await self._complete_job(job.id, job.kind, result)
             except Exception as exc:
-                logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
-                await self._handle_failure(job, str(exc))
+                cause = connection_loss_cause(exc)
+                if cause is not None:
+                    # Infrastructure, not the job: no traceback, and only a
+                    # generic reason is persisted (the raw error carries SQL).
+                    logger.warning(
+                        "job_interrupted_db_connection_lost",
+                        job_id=job.id,
+                        attempts=job.attempts,
+                        error_type=type(cause).__name__,
+                        error=describe_connection_loss(cause),
+                    )
+                    error = _DB_CONNECTION_LOST_ERROR
+                else:
+                    logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
+                    error = redact_sql(str(exc)) or type(exc).__name__
+                # Same retry contract as any failed attempt: requeue with
+                # backoff, dead-letter past the budget. If the database is
+                # still unreachable this raises a connection-loss error to
+                # run(), which owns the outage warning and backoff; the job
+                # stays RUNNING and is reclaimed after its visibility timeout.
+                await self._handle_failure(job, error)
             return True
         finally:
             self._idle.set()

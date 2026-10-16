@@ -9,7 +9,7 @@ from typing import Any
 import asyncpg
 import pytest
 import structlog
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
@@ -300,3 +300,86 @@ async def test_sweep_reraises_connection_loss_but_logs_other_errors() -> None:
     with structlog.testing.capture_logs() as logs:
         await buggy._sweep_expired()
     assert _events(logs, "retention_sweep_failed")
+
+
+class _Job:
+    id = "job-1"
+    kind = JobKind.EXECUTION
+    attempts = 1
+    payload = None
+    created_by = None
+    actor_type = None
+
+
+class _MidJobWorker(WorkerLoop):
+    """Claims one job whose handler (or completion) raises ``exc``.
+
+    ``_handle_failure`` records the persisted error string instead of writing
+    it, or raises ``requeue_exc`` to model a database still down at requeue.
+    """
+
+    def __init__(self, exc: BaseException, *, requeue_exc: BaseException | None = None) -> None:
+        super().__init__(
+            db=object(),  # type: ignore[arg-type]
+            handler_registry=_registry_with(_FakeHandler()),
+        )
+        self._exc = exc
+        self._requeue_exc = requeue_exc
+        self.persisted: list[str] = []
+
+    async def _claim_next(self) -> Any:
+        return _Job()
+
+    async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
+        raise self._exc
+
+    async def _handle_failure(self, job: Any, error: str) -> None:
+        if self._requeue_exc is not None:
+            raise self._requeue_exc
+        self.persisted.append(error)
+
+
+@pytest.mark.asyncio
+async def test_tick_mid_job_connection_loss_persists_generic_error_without_traceback() -> None:
+    """A drop mid-job: one warning (no traceback), generic error persisted, job requeued."""
+    worker = _MidJobWorker(_connection_dropped())
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    assert not _events(logs, "job_failed")
+    interrupted = _events(logs, "job_interrupted_db_connection_lost")
+    assert len(interrupted) == 1
+    assert interrupted[0]["log_level"] == "warning"
+    assert "exc_info" not in interrupted[0]
+    assert interrupted[0]["error_type"] == "ConnectionDoesNotExistError"
+    assert "UPDATE jobs" not in str(interrupted[0])
+    assert worker.persisted == ["interrupted: database connection lost"]
+    assert worker._idle.is_set()
+
+
+@pytest.mark.asyncio
+async def test_tick_mid_job_connection_loss_with_db_still_down_defers_to_run_loop() -> None:
+    """If the requeue also hits the dead connection, the error escapes to run()."""
+    worker = _MidJobWorker(_connection_dropped(), requeue_exc=_connection_dropped())
+    with pytest.raises(DBAPIError):
+        await worker._tick()
+    assert worker._idle.is_set()
+
+
+@pytest.mark.asyncio
+async def test_tick_job_db_error_keeps_traceback_but_persists_no_sql() -> None:
+    """A non-connection DB error is a real failure: traceback kept, SQL never persisted."""
+    exc = OperationalError(
+        "SELECT * FROM jobs WHERE secret = ?", ("s3cr3t",), Exception("no such table: jobs")
+    )
+    worker = _MidJobWorker(exc)
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+
+    failed = _events(logs, "job_failed")
+    assert len(failed) == 1 and failed[0]["exc_info"] is True
+    assert not _events(logs, "job_interrupted_db_connection_lost")
+    assert len(worker.persisted) == 1
+    persisted = worker.persisted[0]
+    assert "no such table: jobs" in persisted
+    assert "SELECT" not in persisted and "s3cr3t" not in persisted

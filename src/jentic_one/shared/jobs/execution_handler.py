@@ -37,6 +37,7 @@ import structlog
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
+from jentic_one.shared.db.connectivity import redact_sql
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -291,14 +292,17 @@ class ExecutionHandler:
             # Re-raise programming errors; treat domain errors as pipeline failures.
             if isinstance(exc, (TypeError, AttributeError, KeyError, IndexError)):
                 raise
+            # redact_sql: a DB error's str() carries the statement and bound
+            # parameters, which must not reach the persisted event summary.
+            safe_error = redact_sql(str(exc)) or type(exc).__name__
             logger.warning(
                 "pipeline_error",
                 job_id=job_id,
                 error_type=type(exc).__name__,
-                error=str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN],
+                error=safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN],
             )
             status = ExecutionStatus.FAILED
-            error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
         await self._emit_lifecycle(
             session,
