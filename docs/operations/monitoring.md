@@ -214,9 +214,10 @@ headers and whose record was persisted. A failure before the upstream response
 headers (connect refused, a header timeout, an open circuit, a stream that
 fails to open), a failed record write, and paths that never call the upstream
 (async `202`, approval holds, idempotent replays, broker-raised errors) record
-nothing. A streaming call that fails after the headers (a mid-body reset, the
-transfer deadline) still records its FAILED execution, so it records a
-`mode="streaming"` sample: its pre-header time plus the persistence. Time spent
+nothing. A streaming call whose body fails after the headers (a mid-body
+reset, the transfer deadline, a client disconnect) records nothing either: its
+record is written only after a body that completes, so it has no persisted
+record ([#1712](https://github.com/jentic/jentic-one/issues/1712)). Time spent
 outside the broker's middleware stack (the admission gate, the ASGI server) is
 not included; `http.server.duration` covers the whole request.
 
