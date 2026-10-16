@@ -198,3 +198,46 @@ async def test_run_in_transaction_retries_connection_lost_before_commit(
 
     assert result == "ok"
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_cls", [DBAPIError, OperationalError])
+async def test_run_in_transaction_does_not_replay_connection_lost_at_manual_commit(
+    sqlite_session: DatabaseSession,
+    commit_raises: list[BaseException],
+    error_cls: type[DBAPIError],
+) -> None:
+    """A loss at a manual ``session.commit()`` in ``fn`` is outcome-unknown too."""
+    commit_raises.append(_connection_lost("COMMIT", error_cls))
+    attempts = 0
+
+    async def fn(session: AsyncSession) -> None:
+        nonlocal attempts
+        attempts += 1
+        await session.execute(text("SELECT 1"))
+        await session.commit()
+
+    with pytest.raises(DatabaseCommitOutcomeUnknownError) as excinfo:
+        await sqlite_session.run_in_transaction(fn, retries=2, backoff_s=0)
+
+    assert attempts == 1
+    assert "[SQL:" not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_run_in_transaction_replays_loss_after_a_successful_manual_commit(
+    sqlite_session: DatabaseSession,
+) -> None:
+    """Only a commit in flight is outcome-unknown; a later statement's loss is replayed."""
+    attempts = 0
+
+    async def fn(session: AsyncSession) -> str:
+        nonlocal attempts
+        attempts += 1
+        await session.commit()
+        if attempts == 1:
+            raise _connection_lost("SELECT 1")
+        return "ok"
+
+    assert await sqlite_session.run_in_transaction(fn, backoff_s=0) == "ok"
+    assert attempts == 2

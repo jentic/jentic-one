@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
 
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.backends import (
@@ -44,6 +45,32 @@ from jentic_one.shared.db.errors import (
 T = TypeVar("T")
 
 logger = structlog.get_logger(__name__)
+
+# ``Session.info`` key set while a commit is in flight and cleared once it
+# returns, so a failure raised by a manual ``session.commit()`` inside a
+# ``transaction()`` body is told apart from one raised by an ordinary statement.
+_COMMIT_IN_FLIGHT = "jentic_commit_in_flight"
+
+
+class _CommitTrackingSession(Session):
+    """ORM session that flags the window in which a commit is running."""
+
+    def commit(self) -> None:
+        self.info[_COMMIT_IN_FLIGHT] = True
+        super().commit()
+        self.info.pop(_COMMIT_IN_FLIGHT, None)
+
+
+def _connection_lost_error(sess: AsyncSession, exc: BaseException) -> DatabaseUnavailableError:
+    """Map a connection lost in a ``transaction()`` body to its domain error.
+
+    A loss while a manual ``session.commit()`` was running leaves the outcome
+    unknown, exactly like a loss at the context manager's own commit, so it
+    raises :class:`DatabaseCommitOutcomeUnknownError` and is never replayed.
+    """
+    if sess.info.pop(_COMMIT_IN_FLIGHT, False):
+        return _commit_outcome_unknown(exc)
+    return _unavailable(exc)
 
 
 def _is_data_error(exc: DBAPIError) -> bool:
@@ -130,7 +157,11 @@ class DatabaseSession:
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
             enable_sqlite_manual_begin(self._engine)
-        self._session_factory = async_sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._session_factory = async_sessionmaker(
+            bind=self._engine,
+            expire_on_commit=False,
+            sync_session_class=_CommitTrackingSession,
+        )
 
     async def close(self) -> None:
         """Dispose the engine and release all connections."""
@@ -173,7 +204,8 @@ class DatabaseSession:
         ``InterfaceError``, not ``OperationalError``): raises
         DatabaseUnavailableError.
         A connection lost at commit raises DatabaseCommitOutcomeUnknownError
-        (a DatabaseUnavailableError) instead: the commit may have landed.
+        (a DatabaseUnavailableError) instead: the commit may have landed. This
+        also covers a manual ``session.commit()`` inside the body.
         On any other exception: rolls back and re-raises unchanged.
 
         The *retries* parameter controls how many times a transient error during
@@ -201,6 +233,9 @@ class DatabaseSession:
                 await sess.rollback()
                 raise DatabaseIntegrityError(str(exc)) from exc
             except (OperationalError, DisconnectionError) as exc:
+                if is_connection_loss(exc):
+                    await _rollback_after_connection_loss(sess)
+                    raise _connection_lost_error(sess, exc) from exc
                 await sess.rollback()
                 raise _unavailable(exc) from exc
             except InvalidRequestError as exc:
@@ -220,7 +255,7 @@ class DatabaseSession:
                 # (#690). Anything else propagates unchanged.
                 if is_connection_loss(exc):
                     await _rollback_after_connection_loss(sess)
-                    raise _unavailable(exc) from exc
+                    raise _connection_lost_error(sess, exc) from exc
                 await sess.rollback()
                 if _is_data_error(exc):
                     raise DatabaseDataError(str(exc)) from exc
@@ -333,7 +368,8 @@ class DatabaseSession:
 
         A connection lost at commit is never replayed: the commit may already
         have applied, so :class:`DatabaseCommitOutcomeUnknownError` (still a
-        503 at the edge) propagates after the first attempt.
+        503 at the edge) propagates after the first attempt. The same holds
+        for a manual ``session.commit()`` inside ``fn``.
 
         ``IntegrityError`` (→ :class:`DatabaseIntegrityError`) and every other
         exception propagate immediately without retry, matching the
