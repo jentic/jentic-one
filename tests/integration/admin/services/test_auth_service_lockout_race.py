@@ -19,6 +19,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository, UserSecretRepository
+from jentic_one.admin.repos.user_secret_repo import FailedLoginOutcome
 from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
@@ -75,7 +76,7 @@ async def test_record_failed_login_concurrent_increments_are_not_lost(
     threshold = 5
     locked_until = datetime.now(UTC) + timedelta(minutes=15)
 
-    async def _fail_once() -> int | None:
+    async def _fail_once() -> FailedLoginOutcome | None:
         async with ctx.admin_db.transaction() as session:
             return await UserSecretRepository.record_failed_login(
                 session,
@@ -85,10 +86,11 @@ async def test_record_failed_login_concurrent_increments_are_not_lost(
                 now=datetime.now(UTC),
             )
 
-    counts = await asyncio.gather(*(_fail_once() for _ in range(attempts)))
+    outcomes = await asyncio.gather(*(_fail_once() for _ in range(attempts)))
 
     # Every increment observed a distinct post-update count: none was lost.
-    assert sorted(c for c in counts if c is not None) == list(range(1, attempts + 1))
+    counts = sorted(o.failed_login_count for o in outcomes if o is not None)
+    assert counts == list(range(1, attempts + 1))
     secret = await _load_secret(ctx, race_user)
     assert secret.failed_login_count == attempts
     assert secret.locked_until is not None
@@ -190,3 +192,32 @@ async def test_authenticate_after_lockout_expiry_grants_fresh_threshold(
     assert await service.authenticate(LoginPayload(email=_EMAIL, password=_PASSWORD)) == race_user
     secret = await _load_secret(ctx, race_user)
     assert secret.failed_login_count == 0
+
+
+async def test_authenticate_reports_lockout_after_threshold_lowered(
+    integration_context: Context, race_user: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lowering the threshold below an unlocked row's count still reports the lockout it trips."""
+    ctx = integration_context
+    service = AuthService(ctx)
+    async with ctx.admin_db.transaction() as session:
+        for _ in range(4):
+            await UserSecretRepository.record_failed_login(
+                session,
+                race_user,
+                lockout_threshold=5,
+                locked_until=datetime.now(UTC) + timedelta(minutes=15),
+                now=datetime.now(UTC),
+            )
+    monkeypatch.setattr(ctx.config.admin.auth, "failed_login_lockout_threshold", 3)
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(InvalidCredentialsError):
+        await service.authenticate(LoginPayload(email=_EMAIL, password=_WRONG))
+
+    secret = await _load_secret(ctx, race_user)
+    assert secret.failed_login_count == 5
+    assert secret.locked_until is not None
+    assert secret.locked_until > datetime.now(UTC)
+    assert [log["event"] for log in logs if log["event"] in {"account_locked", "login_failed"}] == [
+        "account_locked"
+    ]

@@ -168,16 +168,19 @@ class AuthService:
                 # from the database's post-increment count: concurrent wrong
                 # guesses each observe a distinct count, so a burst cannot
                 # slip past the threshold without tripping the lock (#1441).
-                new_count = await UserSecretRepository.record_failed_login(
+                outcome = await UserSecretRepository.record_failed_login(
                     session,
                     user.id,
                     lockout_threshold=config.failed_login_lockout_threshold,
                     locked_until=locked_until,
                     now=now,
                 )
-                # Exactly one increment per lockout lands on the threshold, so
-                # a burst that overshoots it reports the lockout once.
-                if new_count == config.failed_login_lockout_threshold:
+                # Report a lockout exactly when this statement applied the
+                # lock: the returned lock is the one passed in. A straggler
+                # behind an already-active lock gets that earlier lock back, so
+                # an overshooting burst reports once; a row already past a
+                # lowered threshold still reports the lock it now gets.
+                if outcome is not None and outcome.locked_until == locked_until:
                     logger.warning("account_locked", user_id=user.id, locked_until=locked_until)
                     login_counter.add(1, {"outcome": "lockout"})
                 else:

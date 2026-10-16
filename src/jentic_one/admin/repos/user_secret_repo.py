@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import case, literal, null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.user_secrets import UserSecret
+
+
+class FailedLoginOutcome(NamedTuple):
+    """Post-update state of one :meth:`UserSecretRepository.record_failed_login`."""
+
+    failed_login_count: int
+    locked_until: datetime | None
 
 
 class UserSecretRepository:
@@ -74,7 +82,7 @@ class UserSecretRepository:
         lockout_threshold: int,
         locked_until: datetime,
         now: datetime,
-    ) -> int | None:
+    ) -> FailedLoginOutcome | None:
         """Atomically count one failed login, locking the account at the threshold.
 
         A single ``UPDATE … RETURNING`` increments the counter in the database
@@ -97,8 +105,10 @@ class UserSecretRepository:
         * **no lock** — the counter advances and the lock is set once it
           reaches ``lockout_threshold``.
 
-        Returns the new failed-login count, or ``None`` when the user has no
-        secret row.
+        Returns the row's new count and ``locked_until``, or ``None`` when the
+        user has no secret row. ``locked_until`` equal to the value passed in
+        means this very statement applied the lock; an earlier, still-active
+        lock comes back unchanged.
         """
         # A NULL ``locked_until`` makes both comparisons NULL (not true), so a
         # never-locked row falls through to the ``else`` branches.
@@ -120,11 +130,13 @@ class UserSecretRepository:
                     else_=null(),
                 ),
             )
-            .returning(UserSecret.failed_login_count)
+            .returning(UserSecret.failed_login_count, UserSecret.locked_until)
             .execution_options(synchronize_session=False)
         )
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+        row = (await session.execute(stmt)).one_or_none()
+        if row is None:
+            return None
+        return FailedLoginOutcome(failed_login_count=row[0], locked_until=row[1])
 
     @staticmethod
     async def reset_failed_logins_unless_locked(
@@ -151,30 +163,6 @@ class UserSecretRepository:
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none() is not None
-
-    @staticmethod
-    async def reset_failed_logins(session: AsyncSession, user_id: str) -> UserSecret | None:
-        stmt = select(UserSecret).where(UserSecret.user_id == user_id)
-        result = await session.execute(stmt)
-        secret = result.scalar_one_or_none()
-        if secret is None:
-            return None
-        secret.failed_login_count = 0
-        await session.flush()
-        return secret
-
-    @staticmethod
-    async def lock_until(
-        session: AsyncSession, user_id: str, *, locked_until: datetime
-    ) -> UserSecret | None:
-        stmt = select(UserSecret).where(UserSecret.user_id == user_id)
-        result = await session.execute(stmt)
-        secret = result.scalar_one_or_none()
-        if secret is None:
-            return None
-        secret.locked_until = locked_until
-        await session.flush()
-        return secret
 
     @staticmethod
     async def unlock(session: AsyncSession, user_id: str) -> UserSecret | None:

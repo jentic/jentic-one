@@ -139,10 +139,7 @@ async def test_login_lockout_logs_warning(
 
     # Unlock and reset for any subsequent test relying on the fixture.
     async with ctx.admin_db.transaction() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) - timedelta(minutes=1)
-        )
-        await UserSecretRepository.reset_failed_logins(session, user_id)
+        await UserSecretRepository.unlock(session, user_id)
 
 
 async def test_login_already_locked_raises(
@@ -152,8 +149,12 @@ async def test_login_already_locked_raises(
     ctx = integration_context
 
     async with ctx.admin_db.transaction() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        await UserSecretRepository.record_failed_login(
+            session,
+            user_id,
+            lockout_threshold=1,
+            locked_until=datetime.now(UTC) + timedelta(minutes=15),
+            now=datetime.now(UTC),
         )
 
     service = AuthService(ctx)
@@ -163,9 +164,7 @@ async def test_login_already_locked_raises(
         )
 
     async with ctx.admin_db.transaction() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) - timedelta(minutes=1)
-        )
+        await UserSecretRepository.unlock(session, user_id)
 
 
 async def test_change_password_logs_info(
