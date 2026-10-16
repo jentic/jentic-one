@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -28,14 +27,11 @@ var errOperatorAndAll = errors.New("--operator and --all are mutually exclusive;
 var errNothingDetected = errors.New("no operators given and none detected")
 
 // promptable reports whether the huh pickers can actually run interactively.
-// A TTY alone is not enough: on TERM=dumb (emacs shells, many agent
-// harnesses) huh silently falls back to its "accessible" numbered prompts,
-// which loop on stdin without honoring Esc, Ctrl-C, or the signal-cancelled
-// command context — an inescapable picker (jentic-one#841). Those sessions
-// are exactly the ones the #755 defaulting path is for, so treat them as
-// non-interactive instead.
+// It is the CLI-wide prompt.Promptable gate: TERM=dumb sessions (emacs shells,
+// many agent harnesses) are exactly the ones the #755 defaulting path is for,
+// so they are treated as non-interactive (jentic-one#841).
 func promptable() bool {
-	return term.IsTerminal(os.Stdin.Fd()) && os.Getenv("TERM") != "dumb"
+	return prompt.Promptable()
 }
 
 // skillOptions are shared across the skill subcommands.

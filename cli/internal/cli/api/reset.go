@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -76,7 +75,7 @@ func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 		return err
 	}
 
-	interactive := term.IsTerminal(os.Stdin.Fd())
+	interactive := prompt.Promptable()
 	return a.resetAll(ctx, st, opts, interactive, operator, operatorHome)
 }
 

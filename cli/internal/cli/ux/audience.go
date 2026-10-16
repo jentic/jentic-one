@@ -1,9 +1,7 @@
 package ux
 
 import (
-	"os"
-
-	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 )
 
 // Audience is the sole gatekeeper between a command's business logic and the
@@ -43,15 +41,10 @@ type Audience interface {
 }
 
 // promptable reports whether the current session may open an interactive prompt.
-// A TTY is necessary but NOT sufficient (jentic-one#841): TERM=dumb makes huh
-// switch to an accessible input loop that ignores context cancellation, so Ctrl-C
-// is swallowed on pty harnesses (emacs shell, expect, agent sandboxes). The rule
-// is TTY AND TERM != "dumb" (mode is checked by the caller — only HumanUX prompts).
-// A non-promptable human session behaves like agent Ask: fail with the missing-flag
-// instruction instead of hanging on a prompt.
+// It delegates to the CLI-wide gate (prompt.Promptable: stdin TTY AND
+// TERM != "dumb", jentic-one#841); mode is checked by the caller — only HumanUX
+// prompts. A non-promptable human session behaves like agent Ask: fail with the
+// missing-flag instruction instead of hanging on a prompt.
 func promptable() bool {
-	if os.Getenv("TERM") == "dumb" {
-		return false
-	}
-	return term.IsTerminal(os.Stdin.Fd())
+	return prompt.Promptable()
 }

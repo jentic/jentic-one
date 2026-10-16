@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
@@ -103,7 +102,7 @@ func newWizardCmd(app *app) *cobra.Command {
 
 func (a *app) wizardE(ctx context.Context, opts *wizardOptions) error {
 	baseURL := a.resolveWizardBaseURL(opts.baseURL)
-	interactive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+	interactive := !opts.yes && prompt.Promptable()
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Headingf("Welcome to Jentic — let's get you set up"))

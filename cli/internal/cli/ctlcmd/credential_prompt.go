@@ -3,10 +3,9 @@ package ctlcmd
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -26,7 +25,7 @@ type credentialPrompt struct {
 // prompts using p's labels, masking the password and requiring a matching
 // confirmation. The bound pointers receive the entered values.
 func (a *app) collectCredentials(p credentialPrompt, skipPrompts bool, email, password *string) error {
-	interactive := !skipPrompts && term.IsTerminal(os.Stdin.Fd())
+	interactive := !skipPrompts && prompt.Promptable()
 	if !interactive {
 		return nil
 	}

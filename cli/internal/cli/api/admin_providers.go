@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
@@ -163,7 +162,7 @@ func (a *app) readProviderSecret(fromStdin bool) (string, error) {
 		}
 		return strings.TrimRight(string(data), "\r\n"), nil
 	}
-	if !term.IsTerminal(os.Stdin.Fd()) {
+	if !prompt.Promptable() {
 		return "", nil
 	}
 	var secret string

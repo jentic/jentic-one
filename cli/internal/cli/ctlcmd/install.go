@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/google/uuid"
 	"github.com/jentic/jentic-one/cli/internal/cli/binder"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ctl"
 	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
@@ -231,7 +231,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// re-installs skip it. Non-interactive (CI / no TTY) first run defaults OFF.
 	// The headless --defaults/--answers path never prompts even on a TTY — its
 	// contract is "no interaction", so it keeps any saved choice / defaults OFF.
-	proceed, enabled, err := a.ensureTelemetryConsent(consentInteractive(opts, term.IsTerminal(os.Stdin.Fd())))
+	proceed, enabled, err := a.ensureTelemetryConsent(consentInteractive(opts, prompt.Promptable()))
 	if err != nil {
 		return err
 	}

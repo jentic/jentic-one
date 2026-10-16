@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -82,6 +83,23 @@ func FormTheme() *huh.Theme {
 // a form shares one look. huh styles the prompt but cannot set its string via the
 // theme, so inputs must be built through Input() to pick this up.
 const PromptGlyph = theme.SelectOn + " "
+
+// StdinIsTerminal reports whether stdin is a real terminal. A var so tests in any
+// package can simulate the PTY an agent harness runs on.
+var StdinIsTerminal = func() bool { return term.IsTerminal(os.Stdin.Fd()) }
+
+// Promptable reports whether the current session may open an interactive huh
+// form. It is the single gate every prompt path uses (enforced by
+// TestStdinTTYGatesUsePromptable). A TTY is necessary but NOT sufficient: on
+// TERM=dumb (emacs shell, expect, many CI/agent pty harnesses) huh v1 silently
+// switches to its accessible mode, whose stdin loop ignores the command
+// context, Esc, and Ctrl-C and discards per-field errors, so the prompt can
+// never be cancelled (jentic-one#841). Those sessions take the same
+// non-interactive path as a piped stdin: commands fall back to their flag /
+// --yes / defaulting behaviour instead of hanging.
+func Promptable() bool {
+	return os.Getenv("TERM") != "dumb" && StdinIsTerminal()
+}
 
 // NewForm builds a huh form wired to the shared brand theme and key map. Every
 // interactive form in the CLI must go through this (enforced by the guard test

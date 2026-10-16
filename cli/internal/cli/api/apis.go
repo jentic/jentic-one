@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
@@ -654,12 +653,10 @@ func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) erro
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-// browserInteractive reports whether stdin can drive a BubbleTea browser: a
-// real terminal that isn't TERM=dumb (the same test ux uses for prompting).
+// browserInteractive reports whether stdin can drive a BubbleTea browser: the
+// CLI-wide prompt.Promptable gate (a real terminal that isn't TERM=dumb).
 // A var so tests can simulate the PTY an agent harness runs on.
-var browserInteractive = func() bool {
-	return os.Getenv("TERM") != "dumb" && term.IsTerminal(os.Stdin.Fd())
-}
+var browserInteractive = prompt.Promptable
 
 // parseAPIRef splits a "vendor/name/version" identity into its three parts.
 // Local API identities never contain slashes within a segment, so an exact

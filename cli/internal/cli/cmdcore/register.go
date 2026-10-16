@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/charmbracelet/x/term"
-
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -100,9 +98,10 @@ var registerFieldFlags = []string{"url", "env", "name", "broker-url"}
 var SetupFieldFlags = append(append([]string{}, registerFieldFlags...),
 	"operator", "all", "scope", "skip-skill")
 
-// WantsInteractive also requires a real terminal (so pipes/CI stay non-interactive).
+// WantsInteractive also requires a promptable session (prompt.Promptable: a real
+// terminal that isn't TERM=dumb), so pipes/CI/dumb ptys stay non-interactive.
 func WantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
-	return flagsAllowPrompt(cmd, yes, fieldFlags...) && term.IsTerminal(os.Stdin.Fd())
+	return flagsAllowPrompt(cmd, yes, fieldFlags...) && prompt.Promptable()
 }
 
 // registerProgress writes a human-facing progress line to stdout ONLY in a

@@ -95,6 +95,37 @@ func TestNoConfirmRunEscapeHatch(t *testing.T) {
 	}
 }
 
+// TestStdinTTYGatesUsePromptable keeps prompt.Promptable the single gate for
+// "may this session open a form?". A bare stdin-TTY probe would miss TERM=dumb,
+// where huh's accessible mode ignores Ctrl-C and the command context
+// (jentic-one#841), so it may only appear in prompt.go itself.
+func TestStdinTTYGatesUsePromptable(t *testing.T) {
+	root := moduleRoot(t)
+	allowed := filepath.Join(root, "internal", "cli", "prompt", "prompt.go")
+	pattern := regexp.MustCompile(`IsTerminal\(\s*(int\()?\s*os\.Stdin\.Fd\(\)`)
+
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || path == allowed {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if pattern.Match(data) {
+			rel, _ := filepath.Rel(root, path)
+			t.Errorf("%s probes stdin for a TTY directly; gate prompts on prompt.Promptable() instead", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk module: %v", err)
+	}
+}
+
 // moduleRoot walks up from the test's working directory to the dir holding go.mod.
 func moduleRoot(t *testing.T) string {
 	t.Helper()

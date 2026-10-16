@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
@@ -199,10 +197,10 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 	var setup agentSetup
 	if !opts.skipSkill {
 		// Interactivity for the sudo gate matches the skill picker's own rule
-		// (!yes && a real TTY), not opts.interactive — the wizard deliberately
+		// (!yes && prompt.Promptable()), not opts.interactive — the wizard deliberately
 		// leaves opts.interactive false (it owns the URL prompt) while the
 		// user is very much at a terminal.
-		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+		agentInteractive := !opts.yes && prompt.Promptable()
 		s, err := a.setupAgentUser(ctx, operatorNames(targetAdapters(targets)), agentInteractive)
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
@@ -258,7 +256,7 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 		// registration failures are reported per runtime and isolation never
 		// blocks the non-isolated flow.
 		outcomes := a.registerMCPEntries(ctx, targets, false)
-		a.offerMCPIsolation(ctx, outcomes, !opts.yes && term.IsTerminal(os.Stdin.Fd()))
+		a.offerMCPIsolation(ctx, outcomes, !opts.yes && prompt.Promptable())
 	}
 
 	fmt.Fprintln(a.Out)
@@ -274,7 +272,7 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 	// natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
 	// declining leaves the printed command for later. Only when interactive and
 	// a real account exists.
-	agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+	agentInteractive := !opts.yes && prompt.Promptable()
 	if setup.created && setup.agentUser != "" && agentInteractive {
 		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
 			return err
