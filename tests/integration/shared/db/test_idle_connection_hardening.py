@@ -2,7 +2,8 @@
 
 Covers the engine wiring that keeps pooled connections healthy across a
 dropped/idle connection: TCP keepalive on the client socket and transparent
-replacement of a pooled connection the server has terminated.
+replacement of a pooled connection the server has terminated — and that real
+errors on a live connection are not mistaken for a lost one.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from jentic_one.shared.db.backends.postgres import (
     TCP_KEEPALIVE_IDLE_S,
     KeepaliveConnection,
 )
+from jentic_one.shared.db.connectivity import is_connection_loss
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
@@ -76,3 +79,35 @@ async def test_terminated_pooled_connection_is_replaced_transparently(
 
     fresh_pid = await admin_db.run_in_transaction(_pid)
     assert fresh_pid != stale_pid
+
+
+@pytest.mark.asyncio
+async def test_live_connection_db_errors_are_not_connection_loss(admin_db: DatabaseSession) -> None:
+    """Real errors on a live connection, as DatabaseSession raises them, stay real errors.
+
+    SQLite reports a missing table as ``OperationalError`` (mapped to
+    ``DatabaseUnavailableError``); Postgres reports a statement timeout as an
+    asyncpg ``QueryCanceledError``. Neither may be mistaken for a lost connection.
+    """
+
+    async def _missing_table(session: AsyncSession) -> None:
+        await session.execute(text("SELECT * FROM table_that_does_not_exist_1082"))
+
+    async def _statement_timeout(session: AsyncSession) -> None:
+        await session.execute(text("SET LOCAL statement_timeout = '50ms'"))
+        await session.execute(text("SELECT pg_sleep(2)"))
+
+    is_postgres = admin_db.backend.dialect_name == "postgres"
+    with pytest.raises(Exception) as caught:
+        await admin_db.run_in_transaction(
+            _statement_timeout if is_postgres else _missing_table, retries=0
+        )
+    assert not is_connection_loss(caught.value), repr(caught.value)
+    if not is_postgres:
+        assert isinstance(caught.value, DatabaseUnavailableError)
+
+    # The pool is still usable afterwards.
+    async def _one(session: AsyncSession) -> int:
+        return int((await session.execute(text("SELECT 1"))).scalar_one())
+
+    assert await admin_db.run_in_transaction(_one) == 1

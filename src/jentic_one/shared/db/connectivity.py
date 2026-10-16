@@ -12,9 +12,7 @@ import socket
 from collections.abc import Iterator
 
 import asyncpg
-from sqlalchemy.exc import DBAPIError, DisconnectionError, OperationalError
-
-from jentic_one.shared.db.errors import DatabaseUnavailableError
+from sqlalchemy.exc import DBAPIError, DisconnectionError
 
 # Server-side conditions that drop or refuse sessions: SQLSTATE class 08
 # (connection exception, e.g. ``ConnectionDoesNotExistError``) plus the
@@ -34,6 +32,20 @@ _NETWORK_ERRORS: tuple[type[BaseException], ...] = (
     TimeoutError,
     socket.gaierror,
 )
+
+# SQLSTATEs that mean the session is gone, for driver errors that are not one
+# of the asyncpg classes above (e.g. SQLAlchemy's asyncpg adapter error, which
+# copies ``sqlstate`` from the asyncpg exception): class 08 plus the
+# admin/crash shutdown and "starting up" states. Lock timeouts (55P03),
+# statement timeouts (57014), serialization failures (40001) and deadlocks
+# (40P01) arrive on a live connection and are deliberately absent.
+_CONNECTION_SQLSTATE_CLASS = "08"
+_CONNECTION_SQLSTATES = frozenset({"57P01", "57P02", "57P03"})
+
+# SQLAlchemy appends the statement and bound parameters to ``str(exc)`` after
+# the driver message; everything from this marker on is dropped before an
+# error string is logged or persisted.
+_SQL_MARKER = "[SQL:"
 
 _MAX_CHAIN_DEPTH = 8
 
@@ -59,14 +71,30 @@ def _chain(exc: BaseException) -> Iterator[BaseException]:
             pending.append(current.__cause__)
 
 
+def _has_connection_sqlstate(exc: BaseException) -> bool:
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if not isinstance(sqlstate, str):
+        return False
+    return sqlstate.startswith(_CONNECTION_SQLSTATE_CLASS) or sqlstate in _CONNECTION_SQLSTATES
+
+
 def _is_connection_loss_leaf(exc: BaseException) -> bool:
-    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
-        return True
-    if isinstance(exc, (DisconnectionError, DatabaseUnavailableError)):
-        return True
-    if isinstance(exc, OperationalError):
+    """True when ``exc`` itself (not its causes) marks a lost connection.
+
+    SQLAlchemy wrappers (``OperationalError`` and every other ``DBAPIError``)
+    and the domain ``DatabaseUnavailableError`` are *not* matched by type:
+    they also carry live-connection failures (SQLite ``no such table`` /
+    ``database is locked``, lock and statement timeouts). They only count when
+    SQLAlchemy flagged the connection invalidated, or when a cause in the
+    chain (``.orig`` / ``__cause__``) is itself a connection error.
+    """
+    if isinstance(exc, DBAPIError):
+        return exc.connection_invalidated
+    if isinstance(exc, DisconnectionError):
         return True
     if isinstance(exc, _ASYNCPG_CONNECTION_ERRORS):
+        return True
+    if _has_connection_sqlstate(exc):
         return True
     # asyncpg's bare InterfaceError covers "connection is closed"; its
     # subclasses (DataError, ClientConfigurationError, …) are real bugs.
@@ -94,15 +122,26 @@ def is_connection_loss(exc: BaseException) -> bool:
     return connection_loss_cause(exc) is not None
 
 
+def redact_sql(text: str) -> str:
+    """Drop the ``[SQL: …]`` / ``[parameters: …]`` tail SQLAlchemy appends to errors.
+
+    Applies to SQLAlchemy exceptions and to domain errors built from their
+    ``str()`` (``DatabaseUnavailableError(str(exc))``), so query text and
+    bound values never reach logs or persisted job/event fields.
+    """
+    head, _, _ = text.partition(_SQL_MARKER)
+    return head.strip()
+
+
 def describe_connection_loss(cause: BaseException, *, max_len: int = 200) -> str:
     """Short, log-safe reason for a connection-loss ``cause``.
 
-    SQLAlchemy wrappers render the SQL statement and bound parameters in
-    ``str()``; use the underlying DBAPI error's message instead so a warning
-    never carries query text or parameter values.
+    Prefers the underlying DBAPI error's message over the SQLAlchemy wrapper
+    and strips any SQL tail, so the result never carries query text or
+    parameter values.
     """
     source: BaseException = cause
     if isinstance(cause, DBAPIError) and isinstance(cause.orig, BaseException):
         source = cause.orig
-    text = str(source).strip() or type(source).__name__
+    text = redact_sql(str(source)) or type(source).__name__
     return text[:max_len]
