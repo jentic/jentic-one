@@ -150,6 +150,7 @@ database to save them; keep `pool_recycle_s` below the shortest idle timeout
 on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud NAT or
 load balancer) so connections are retired before anything in between drops
 them, lowering it from the default if any of those cut off sooner.
+`pool_recycle_s: 0` disables recycling. Both are ignored for SQLite.
 
 Recycling and keepalive do **not** cover a Postgres restart or failover
 (including managed-Postgres maintenance), a pgbouncer/proxy restart, or a
@@ -157,10 +158,11 @@ backend terminated with `pg_terminate_backend`: every pooled connection is
 dead until it is next used. Without pre-ping, the first request on each pool
 in each process after such an event can fail with an HTTP `503`
 (`database_unavailable`); work that runs through the retrying transaction
-helper is re-run on a fresh connection instead. Each server process holds its
-own pools, so the count scales with the number of processes. Only disable
-pre-ping where those events are rare and that error is acceptable. `pool_recycle_s: 0` disables recycling. Both are
-ignored for SQLite. See
+helper is re-run on a fresh connection instead, unless the connection drops
+while the commit is in flight, when the outcome is unknown and the `503` is
+returned without a re-run. Each server process holds its own pools, so the
+count scales with the number of processes. Only disable pre-ping where those
+events are rare and that error is acceptable. See
 [`databases.*.pool_pre_ping`](../reference/config.md#databases).
 
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
