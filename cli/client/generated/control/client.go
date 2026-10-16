@@ -12175,8 +12175,10 @@ type ClientInterface interface {
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
 	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
-	// their outstanding invites. Idempotent: deleting an already-deleted user
-	// answers 204 and changes nothing.
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -16991,8 +16993,10 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
 // switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
-// their outstanding invites. Idempotent: deleting an already-deleted user
-// answers 204 and changes nothing.
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -28763,8 +28767,10 @@ type ClientWithResponsesInterface interface {
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
 	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
-	// their outstanding invites. Idempotent: deleting an already-deleted user
-	// answers 204 and changes nothing.
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -47767,8 +47773,10 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
 // switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
-// their outstanding invites. Idempotent: deleting an already-deleted user
-// answers 204 and changes nothing.
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Returns a wrapper object for the known response body format(s).
 //

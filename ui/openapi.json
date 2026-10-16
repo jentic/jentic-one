@@ -50642,7 +50642,7 @@
     },
     "/users/{user_id}": {
       "delete": {
-        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels\ntheir outstanding invites. Idempotent: deleting an already-deleted user\nanswers 204 and changes nothing.",
+        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels\ntheir outstanding invites: redeeming one answers 409\n``invite_already_redeemed``, the same as an invite replaced by a reissue.\nIdempotent: deleting an already-deleted user answers 204 and changes\nnothing.",
         "operationId": "deleteUser",
         "parameters": [
           {
