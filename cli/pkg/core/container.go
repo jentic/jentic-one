@@ -100,8 +100,8 @@ func Run(root *cobra.Command) (code int) {
 // behavior exactly.
 func RunTree(root *cobra.Command, mapErr func(*cobra.Command, error) error) (code int) {
 	// Cancel the command context on the first SIGINT/SIGTERM so long-running
-	// commands can unwind gracefully.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// commands can unwind gracefully; a second signal kills the process.
+	ctx, stop := signalContext(context.Background(), signal.NotifyContext, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// Panic backstop: an escaped panic would exit with the Go runtime's code 2,
