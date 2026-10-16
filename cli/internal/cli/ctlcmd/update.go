@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	if err != nil {
 		return err
 	}
-	brewManaged := update.BrewManaged(ctlTarget)
+	brewManaged := isBrewManaged(ctlTarget)
 
 	fmt.Fprint(a.Out, a.BrandHeader(ctx, opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
@@ -196,15 +197,32 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 
 	cliUpdated := false
+	cliLanded := ""
 	if doCLI {
+		var landed config.CLIUpdate
 		if brewManaged {
-			if err := a.brewUpgradeCLI(ctx, latest, latestKnown); err != nil {
+			caskVersion, err := upgradeBrewCLI(a, ctx, latest, latestKnown)
+			if err != nil {
 				return err
 			}
-		} else if err := swapCLI(a, ctx, repo, ref, ctlTarget); err != nil {
-			return err
+			// brew is a clean no-op while the cask lags the release; only a cask
+			// that actually moved past the recorded version counts as an update.
+			// An unreadable cask version is assumed to have moved (brew succeeded).
+			cliUpdated = caskVersion == "" || update.NewerAvailable(cliVersion, caskVersion)
+			if cliUpdated {
+				landed = config.CLIUpdate{Version: caskVersion}
+			}
+		} else {
+			if landed, err = swapCLI(a, ctx, repo, ref, ctlTarget); err != nil {
+				return err
+			}
+			cliUpdated = true
 		}
-		cliUpdated = true
+		// Record what the CLI half installed before the stack half runs, so a
+		// stack failure leaves the manifest naming the new CLI and the old
+		// stack — the next run's verdict and CLI-skip read these (#976).
+		a.recordCLIUpdate(landed)
+		cliLanded = landed.Version
 		// A new CLI can ship a new skill body (transport-error recovery, envelope
 		// parsing, per-BC guidance — plan.md Phase 6 "skill lifecycle"). Refresh
 		// every INSTALLED skill so old-CLI guidance can't linger, respecting the
@@ -212,12 +230,14 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		// without --force). Best-effort: the binaries are already swapped, so a
 		// skill-refresh failure must not fail the update — it only leaves skills
 		// a `jentic skill update` away.
-		refreshSkills(a)
+		if cliUpdated {
+			refreshSkills(a)
+		}
 	}
 	if doStack {
 		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted); err != nil {
 			if cliUpdated {
-				return newStackDivergedError(err, cliTargetLabel(brewManaged, ref), stackVersion, stackRetryCommand(ref, pinned))
+				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), stackVersion, stackRetryCommand(ref, pinned))
 			}
 			return err
 		}
@@ -236,6 +256,11 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 var (
 	latestReleaseTag     = update.LatestReleaseTag
 	swapCLI              = (*app).updateCLI
+	acquireCLI           = (*app).acquireCLIBinaries
+	upgradeBrewCLI       = (*app).brewUpgradeCLI
+	brewUpgrade          = update.BrewUpgrade
+	brewCaskVersion      = update.BrewCaskVersion
+	isBrewManaged        = update.BrewManaged
 	refreshSkills        = (*app).refreshSkillsAfterUpdate
 	rebuildStack         = (*app).updateStack
 	foreignPortHolders   = install.ForeignPortHolders
@@ -294,11 +319,15 @@ func (e *stackDivergedError) Unwrap() error { return e.err }
 
 // cliTargetLabel words where the CLI half landed for the divergence message:
 // a brew-managed CLI reaches whatever the cask ships, not necessarily ref.
-func cliTargetLabel(brewManaged bool, ref string) string {
-	if brewManaged {
+func cliTargetLabel(brewManaged bool, version string) string {
+	switch {
+	case brewManaged && version != "":
+		return "via Homebrew to " + version
+	case brewManaged:
 		return "via Homebrew"
+	default:
+		return "to " + version
 	}
-	return "to " + ref
 }
 
 // stackRetryCommand is the command that re-runs only the stack half at the
@@ -380,6 +409,20 @@ func (a *app) recordStackBuild(ref string) {
 	}
 }
 
+// recordCLIUpdate persists what the CLI half just installed (see
+// config.Manifest.RecordCLIUpdate). Best-effort: the binaries are already in
+// place, so a manifest write failure is warned, not fatal — it only costs a
+// redundant CLI swap next time.
+func (a *app) recordCLIUpdate(u config.CLIUpdate) {
+	m, _, err := config.LoadManifest(a.Paths)
+	if err != nil {
+		return
+	}
+	if err := m.RecordCLIUpdate(a.Paths, u); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record CLI version: %v", err))
+	}
+}
+
 // brewUpgradeCLI refreshes a Homebrew-managed CLI by delegating to
 // `brew upgrade jentic`, streaming brew's output. brew swaps both binaries
 // (they ship in one cask) and its bookkeeping stays consistent.
@@ -387,20 +430,22 @@ func (a *app) recordStackBuild(ref string) {
 // brew can only install what the cask currently ships, and the cask bump lags
 // the GitHub release tag by a bit; inside that window `brew upgrade` is a
 // clean no-op, so success is only claimed after verifying the installed cask
-// actually reached latest.
-func (a *app) brewUpgradeCLI(ctx context.Context, latest string, latestKnown bool) error {
+// actually reached latest. It returns the installed cask version ("" when brew
+// cannot report it) so the caller records what brew actually installed.
+func (a *app) brewUpgradeCLI(ctx context.Context, latest string, latestKnown bool) (string, error) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Heading.Render("Updating CLI via Homebrew"))
 	fmt.Fprintln(a.Out, theme.Dimf("  running: %s", update.BrewUpgradeCommand))
-	if err := update.BrewUpgrade(ctx, a.Out, a.Err); err != nil {
-		return err
+	if err := brewUpgrade(ctx, a.Out, a.Err); err != nil {
+		return "", err
 	}
-	if caskVersion := update.BrewCaskVersion(ctx); latestKnown && caskVersion != "" && update.NewerAvailable(caskVersion, latest) {
+	caskVersion := brewCaskVersion(ctx)
+	if latestKnown && caskVersion != "" && update.NewerAvailable(caskVersion, latest) {
 		fmt.Fprintln(a.Out, theme.Warnf("Homebrew's jentic cask is still at %s (release %s not yet published to the tap) — re-run `%s` in a while.", caskVersion, latest, update.BrewUpgradeCommand))
-		return nil
+		return caskVersion, nil
 	}
 	fmt.Fprintln(a.Out, theme.Successf("CLI updated via Homebrew."))
-	return nil
+	return caskVersion, nil
 }
 
 // updateNeeded reports whether any requested update half is behind latest.
@@ -442,8 +487,11 @@ func resolveCtlTarget(manifest *config.Manifest) (string, error) {
 // copy. jenticctl update is the sole updater for both binaries; they are
 // assumed co-located (install.sh installs both into the same dir). ctlTarget
 // is the symlink-resolved jenticctl location (see resolveCtlTarget); callers
-// must have already ruled out package-manager-owned locations.
-func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error {
+// must have already ruled out package-manager-owned locations. It returns what
+// was installed so the caller can record it (see recordCLIUpdate) — on the
+// release-download path tools/install.sh never runs, so nothing else updates
+// the manifest's CLI fields.
+func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) (config.CLIUpdate, error) {
 	// The sibling jentic binary lives next to jenticctl (install.sh co-locates
 	// both in JENTIC_INSTALL_DIR).
 	installDir := filepath.Dir(ctlTarget)
@@ -451,17 +499,17 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 	// Prefer a DOWNLOAD-AND-SWAP when `ref` resolves to a real published release
 	// (no compiler, no clone). Fall back to the from-source rebuild for forks /
 	// dev refs / a tag without published assets — unchanged behaviour.
-	staged, cleanup, fromDownload, err := a.acquireCLIBinaries(ctx, repo, ref)
+	staged, cleanup, fromDownload, err := acquireCLI(a, ctx, repo, ref)
 	if cleanup != nil {
 		defer cleanup()
 	}
 	if err != nil {
-		return err
+		return config.CLIUpdate{}, err
 	}
 
 	newVersion, err := binaryVersion(staged[ctlBinaryName])
 	if err != nil {
-		return fmt.Errorf("verify built binary: %w", err)
+		return config.CLIUpdate{}, fmt.Errorf("verify built binary: %w", err)
 	}
 
 	// Swap each staged binary over its installed counterpart. jenticctl is
@@ -493,7 +541,7 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 		backup, err := update.ReplaceBinary(target, src)
 		if err != nil {
 			restore()
-			return fmt.Errorf("replace %s: %w", name, err)
+			return config.CLIUpdate{}, fmt.Errorf("replace %s: %w", name, err)
 		}
 		done = append(done, swap{target: target, backup: backup})
 		swapped = append(swapped, name)
@@ -503,14 +551,28 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 		}
 	}
 
-	a.refreshManifestBinaryPath(ctlTarget)
-
 	how := "built"
 	if fromDownload {
 		how = "downloaded"
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Updated %s -> %s (%s)", strings.Join(swapped, " + "), strings.TrimSpace(newVersion), how))
-	return nil
+	// The version recorded is the ref, matching what tools/install.sh writes
+	// for cli_version; the commit comes from the swapped binary itself.
+	return config.CLIUpdate{Ref: ref, Version: ref, Commit: commitFromVersionLine(newVersion), BinaryPath: ctlTarget}, nil
+}
+
+// versionLineCommit matches the "(commit <sha>" part of the root version
+// template ("jenticctl v0.28.0 (commit abc1234, built …)").
+var versionLineCommit = regexp.MustCompile(`\(commit ([0-9A-Za-z]+)`)
+
+// commitFromVersionLine extracts the commit from a `--version` line, or ""
+// when the binary was built without one ("none").
+func commitFromVersionLine(line string) string {
+	m := versionLineCommit.FindStringSubmatch(line)
+	if m == nil || m[1] == "none" {
+		return ""
+	}
+	return m[1]
 }
 
 // acquireCLIBinaries stages the two CLI binaries for `ref`, preferring a
@@ -651,19 +713,6 @@ func (a *app) stageCLIBuild(ctx context.Context, repo, ref string) (map[string]s
 		staged[name] = path
 	}
 	return staged, cleanup, nil
-}
-
-// refreshManifestBinaryPath corrects the binary path in the manifest after a
-// swap. The staged install.sh run rewrote install.json with the (now-correct)
-// ref/commit but a stage-relative binary path; point it back at the real
-// install location. Best-effort: a failure does not undo the update.
-func (a *app) refreshManifestBinaryPath(target string) {
-	m, _, err := config.LoadManifest(a.Paths)
-	if err != nil {
-		return
-	}
-	m.BinaryPath = target
-	_ = m.Save(a.Paths)
 }
 
 // binaryVersion runs `<path> --version` and returns its first output line.

@@ -197,28 +197,51 @@ func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
 // skill refresh, stack rebuild, port lookup) with recorders, so updateE runs
 // end to end without network, binaries, or Docker.
 type updateFakes struct {
-	cliSwaps     []string // refs the CLI swapper was asked for
+	cliSwaps     []string // refs the CLI half staged binaries for
 	stackBuilds  []string // refs the stack rebuild was asked for
 	preflighted  []bool   // the preflighted flag each stack rebuild received
+	skillRefresh int
 	stackErr     error
 	portHolders  []install.PortHolder
 	portLookups  int
 	portLookupEr error
 }
 
+// fakeCLIBinary writes an executable that answers `--version` like a real
+// release build of name at version.
+func fakeCLIBinary(t *testing.T, dir, name, version string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	script := fmt.Sprintf("#!/bin/sh\necho '%s %s (commit c0ffee1, built 2026-10-01)'\n", name, version)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// stubUpdateFlow fakes update's external effects. The CLI half fakes only the
+// binary acquisition (what a release download or source build would stage), so
+// the real swap and manifest recording in updateCLI run against the temp root.
 func stubUpdateFlow(t *testing.T, latest string) *updateFakes {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake CLI binaries are shell scripts")
+	}
 	f := &updateFakes{}
-	origLatest, origSwap, origSkills, origStack, origPorts := latestReleaseTag, swapCLI, refreshSkills, rebuildStack, foreignPortHolders
+	origLatest, origAcquire, origSkills, origStack, origPorts := latestReleaseTag, acquireCLI, refreshSkills, rebuildStack, foreignPortHolders
 	t.Cleanup(func() {
-		latestReleaseTag, swapCLI, refreshSkills, rebuildStack, foreignPortHolders = origLatest, origSwap, origSkills, origStack, origPorts
+		latestReleaseTag, acquireCLI, refreshSkills, rebuildStack, foreignPortHolders = origLatest, origAcquire, origSkills, origStack, origPorts
 	})
 	latestReleaseTag = func(context.Context, string, string) (string, error) { return latest, nil }
-	swapCLI = func(_ *app, _ context.Context, _, ref, _ string) error {
+	acquireCLI = func(_ *app, _ context.Context, _, ref string) (map[string]string, func(), bool, error) {
 		f.cliSwaps = append(f.cliSwaps, ref)
-		return nil
+		stage := t.TempDir()
+		return map[string]string{
+			ctlBinaryName: fakeCLIBinary(t, stage, ctlBinaryName, ref),
+			apiBinaryName: fakeCLIBinary(t, stage, apiBinaryName, ref),
+		}, nil, true, nil
 	}
-	refreshSkills = func(*app) {}
+	refreshSkills = func(*app) { f.skillRefresh++ }
 	rebuildStack = func(_ *app, _ context.Context, _, _, ref string, _, preflighted bool) error {
 		f.stackBuilds = append(f.stackBuilds, ref)
 		f.preflighted = append(f.preflighted, preflighted)
@@ -256,6 +279,165 @@ func recordedStackRef(t *testing.T, a *app) string {
 		t.Fatalf("load manifest: %v", err)
 	}
 	return m.StackRef
+}
+
+func loadManifest(t *testing.T, a *app) *config.Manifest {
+	t.Helper()
+	m, _, err := config.LoadManifest(a.Paths)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	return m
+}
+
+// stubBrew makes the install Homebrew-managed with brew "installing" the given
+// cask version, and counts the upgrades.
+func stubBrew(t *testing.T, caskVersion string) *int {
+	t.Helper()
+	origManaged, origUpgrade, origCask := isBrewManaged, brewUpgrade, brewCaskVersion
+	t.Cleanup(func() { isBrewManaged, brewUpgrade, brewCaskVersion = origManaged, origUpgrade, origCask })
+	upgrades := 0
+	isBrewManaged = func(string) bool { return true }
+	brewUpgrade = func(context.Context, io.Writer, io.Writer) error { upgrades++; return nil }
+	brewCaskVersion = func(context.Context) string { return caskVersion }
+	return &upgrades
+}
+
+// TestUpdateTwoStepDivergenceThenRerun drives the #976 sequence through the
+// real flow on the release-download path: run 1 swaps the CLI and the stack
+// fails; run 2 must see the CLI as current (it was recorded on swap), skip it,
+// and finish only the stack. Pins that the CLI half records its version — a
+// manifest still naming the old CLI would re-swap it and misreport the verdict.
+func TestUpdateTwoStepDivergenceThenRerun(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.26.0")
+	f := stubUpdateFlow(t, "v0.28.0")
+	f.stackErr = errors.New("migrations failed: exit status 1")
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err == nil {
+		t.Fatal("run 1: want the stack failure")
+	}
+	m := loadManifest(t, a)
+	if m.CLIVersion != "v0.28.0" || m.Ref != "v0.28.0" || m.Commit != "c0ffee1" || m.StackRef != "v0.26.0" {
+		t.Fatalf("after run 1: cli_version=%q ref=%q commit=%q stack_ref=%q, want v0.28.0/v0.28.0/c0ffee1/v0.26.0",
+			m.CLIVersion, m.Ref, m.Commit, m.StackRef)
+	}
+	if want := filepath.Join(a.Paths.Root, "bin", "jenticctl"); m.BinaryPath != want {
+		t.Errorf("binary_path = %q, want %q", m.BinaryPath, want)
+	}
+
+	a.Out.(*bytes.Buffer).Reset()
+	f.stackErr = nil
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	out := a.Out.(*bytes.Buffer).String()
+	if !strings.Contains(out, "Stack update available: v0.26.0 → v0.28.0 (the CLI is already at v0.28.0)") {
+		t.Errorf("run 2 verdict does not name the stale stack alone:\n%s", out)
+	}
+	if len(f.cliSwaps) != 1 {
+		t.Errorf("CLI swaps across both runs = %v, want only run 1's", f.cliSwaps)
+	}
+	if len(f.stackBuilds) != 2 || recordedStackRef(t, a) != "v0.28.0" {
+		t.Errorf("stack builds = %v, stack_ref = %q; want two builds and v0.28.0", f.stackBuilds, recordedStackRef(t, a))
+	}
+
+	// Run 3: both halves current — nothing to do.
+	a.Out.(*bytes.Buffer).Reset()
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("run 3: %v", err)
+	}
+	if out := a.Out.(*bytes.Buffer).String(); !strings.Contains(out, "Up to date (v0.28.0).") || len(f.cliSwaps) != 1 || len(f.stackBuilds) != 2 {
+		t.Errorf("run 3 rebuilt something (cli=%v stack=%v):\n%s", f.cliSwaps, f.stackBuilds, out)
+	}
+}
+
+// A legacy manifest (no stack_ref, stack installed) records its stack build
+// only in ref. The CLI half must backfill stack_ref before overwriting ref, or
+// a failed stack half would leave the stack looking current (#943).
+func TestUpdateCLISwapBackfillsLegacyStackRef(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeLocal, "v0.26.0", "")
+	f := stubUpdateFlow(t, "v0.28.0")
+	f.stackErr = errors.New("migrations failed: exit status 1")
+
+	_ = a.updateE(context.Background(), &updateOptions{yes: true})
+	m := loadManifest(t, a)
+	if m.StackRef != "v0.26.0" || m.ResolvedStackRef() != "v0.26.0" || m.Ref != "v0.28.0" {
+		t.Errorf("stack_ref=%q resolved=%q ref=%q, want v0.26.0/v0.26.0/v0.28.0", m.StackRef, m.ResolvedStackRef(), m.Ref)
+	}
+}
+
+// TestUpdateBrewRecordsCaskVersion covers the Homebrew CLI half: the manifest
+// records what brew actually installed, and a cask still lagging the release
+// is neither recorded as latest nor reported as a CLI update in the
+// divergence error.
+func TestUpdateBrewRecordsCaskVersion(t *testing.T) {
+	tests := []struct {
+		name, cask       string
+		wantCLI          string
+		wantDiverged     bool
+		wantSkillRefresh int
+	}{
+		{"cask reached latest", "0.28.0", "0.28.0", true, 1},
+		{"cask lags the release", "0.26.0", "v0.26.0", false, 0},
+		{"cask version unreadable", "", "v0.26.0", true, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t)
+			saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.26.0")
+			f := stubUpdateFlow(t, "v0.28.0")
+			f.stackErr = errors.New("migrations failed: exit status 1")
+			upgrades := stubBrew(t, tt.cask)
+
+			err := a.updateE(context.Background(), &updateOptions{yes: true})
+			if *upgrades != 1 || len(f.cliSwaps) != 0 {
+				t.Fatalf("brew upgrades = %d, in-place swaps = %v; want 1 and none", *upgrades, f.cliSwaps)
+			}
+			var diverged *stackDivergedError
+			if got := errors.As(err, &diverged); got != tt.wantDiverged {
+				t.Errorf("divergence error = %v (%v), want %v", got, err, tt.wantDiverged)
+			}
+			if m := loadManifest(t, a); m.CLIVersion != tt.wantCLI || m.StackRef != "v0.26.0" {
+				t.Errorf("cli_version=%q stack_ref=%q, want %q/v0.26.0", m.CLIVersion, m.StackRef, tt.wantCLI)
+			}
+			if f.skillRefresh != tt.wantSkillRefresh {
+				t.Errorf("skill refreshes = %d, want %d", f.skillRefresh, tt.wantSkillRefresh)
+			}
+		})
+	}
+}
+
+// A brew re-run whose cask already reached latest skips brew entirely.
+func TestUpdateBrewRerunSkipsCLIHalf(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.26.0")
+	f := stubUpdateFlow(t, "v0.28.0")
+	f.stackErr = errors.New("migrations failed: exit status 1")
+	upgrades := stubBrew(t, "0.28.0")
+
+	_ = a.updateE(context.Background(), &updateOptions{yes: true})
+	f.stackErr = nil
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if *upgrades != 1 || recordedStackRef(t, a) != "v0.28.0" {
+		t.Errorf("brew upgrades = %d, stack_ref = %q; want 1 and v0.28.0", *upgrades, recordedStackRef(t, a))
+	}
+}
+
+func TestCommitFromVersionLine(t *testing.T) {
+	tests := map[string]string{
+		"jenticctl v0.28.0 (commit 22344b5, built 2026-10-01)": "22344b5",
+		"jenticctl dev (commit none, built unknown)":           "",
+		"jenticctl v0.28.0": "",
+	}
+	for line, want := range tests {
+		if got := commitFromVersionLine(line); got != want {
+			t.Errorf("commitFromVersionLine(%q) = %q, want %q", line, got, want)
+		}
+	}
 }
 
 // runUpdateCmd drives `jenticctl update <args>` through core.Run, so the test
