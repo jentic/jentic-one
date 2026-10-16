@@ -13,9 +13,11 @@ from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
+from jentic_one.shared.ttl_cache import AsyncTTLCache
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
+    from jentic_one.registry.services.catalog.manifest_builder import PreviewProjection
     from jentic_one.shared.telemetry.sink import TelemetrySink
 
 logger = structlog.get_logger(__name__)
@@ -63,6 +65,7 @@ class Context:
         self._control_db: DatabaseSession | None = None
         self._update_sweep_lock: asyncio.Lock | None = None
         self._release_checker: ReleaseChecker | None = None
+        self._catalog_preview_cache: AsyncTTLCache[str, PreviewProjection] | None = None
         # Product telemetry (issue #446). Resolved + owned by the lifespan when
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
@@ -243,6 +246,25 @@ class Context:
         if self._release_checker is None:
             self._release_checker = ReleaseChecker(self._config)
         return self._release_checker
+
+    @property
+    def catalog_preview_cache(self) -> AsyncTTLCache[str, PreviewProjection]:
+        """Process-wide cache of catalog spec preview projections, keyed by spec URL.
+
+        ``CatalogService`` is built per request, so the cache lives here to be
+        shared across every ``GET /catalog/{id}/operations`` on this process.
+        Sized by ``catalog.preview_cache_*``; lazily constructed on first access.
+        It is per process only: ``POST /catalog:refresh`` clears this process's
+        copy, while other workers or replicas keep theirs until the TTL expires.
+        """
+        if self._catalog_preview_cache is None:
+            cfg = self._config.catalog
+            self._catalog_preview_cache = AsyncTTLCache(
+                max_entries=cfg.preview_cache_max_entries,
+                ttl_seconds=cfg.preview_cache_ttl_seconds,
+                failure_ttl_seconds=cfg.preview_cache_failure_ttl_seconds,
+            )
+        return self._catalog_preview_cache
 
     async def startup(self) -> None:
         """Connect allowed databases (validating the encryption keyset first)."""

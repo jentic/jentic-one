@@ -2109,7 +2109,7 @@
             "title": "Api Name"
           },
           "content": {
-            "description": "Raw OpenAPI or Arazzo document as a JSON or YAML string.",
+            "description": "Raw OpenAPI or Arazzo document as a JSON or YAML string. At most `ingest.max_spec_bytes` UTF-8 bytes (25 MiB by default); larger content is refused with 413.",
             "examples": [
               "{\"openapi\": \"3.1.0\", \"info\": {\"title\": \"Stripe API\", \"version\": \"2024-04-10\"}, \"paths\": {}}"
             ],
@@ -26416,7 +26416,7 @@
         ]
       },
       "post": {
-        "description": "Import OpenAPI/Arazzo content as new API revisions (async).",
+        "description": "Import OpenAPI/Arazzo content as new API revisions (async).\n\nThe whole request body is capped at `ingest.max_import_request_bytes`\n(twice `ingest.max_spec_bytes` unless configured) and each inline source's\ncontent at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the\nrequest is refused with 413 before any job is queued.",
         "operationId": "importApis",
         "requestBody": {
           "content": {
@@ -26500,6 +26500,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Import request body exceeds the size limit",
+                  "instance": "/example/path",
+                  "status": 413,
+                  "title": "Content Too Large",
+                  "type": "payload_too_large"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The request body exceeds `ingest.max_import_request_bytes`, or an inline source's content exceeds `ingest.max_spec_bytes` (type `payload_too_large`). Nothing was queued."
           },
           "422": {
             "content": {

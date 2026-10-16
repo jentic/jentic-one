@@ -11,6 +11,7 @@ import pytest
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.fetch import UrlSource, load_specification
 from jentic_one.shared.config import EgressConfig, IngestConfig
+from tests.harness.http_doubles import CHUNK_SIZE, CountingChunkedStream, chunked_client
 
 _SPEC: dict[str, Any] = {
     "openapi": "3.1.0",
@@ -271,3 +272,44 @@ async def test_metadata_ip_rejected_even_with_egress_allowlist() -> None:
         await load_specification(
             _url_source(url="http://169.254.169.254/latest/meta-data/"), config=cfg
         )
+
+
+# ── streamed body cap (chunked upstream, no Content-Length) ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_chunked_body_over_cap_stops_one_chunk_past_limit() -> None:
+    """A chunked spec larger than the cap is refused without being read in full."""
+    stream = CountingChunkedStream(n_chunks=1000)
+    cfg = IngestConfig(max_spec_bytes=4 * CHUNK_SIZE)
+    client = chunked_client(stream)  # built before patching httpx.AsyncClient
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = client
+        with pytest.raises(IngestStageError, match="size limit"):
+            await load_specification(_url_source(), config=cfg)
+    assert stream.served == 5
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_chunked_body_under_cap_succeeds() -> None:
+    stream = CountingChunkedStream(n_chunks=1, chunk=_SPEC_BYTES)
+    cfg = IngestConfig(max_spec_bytes=4 * CHUNK_SIZE)
+    client = chunked_client(stream)  # built before patching httpx.AsyncClient
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = client
+        result = await load_specification(_url_source(), config=cfg)
+    assert result.sha == hashlib.sha256(_SPEC_BYTES).hexdigest()
+    assert result.content == _SPEC
+
+
+@pytest.mark.asyncio
+async def test_content_length_precheck_reads_no_body() -> None:
+    stream = CountingChunkedStream(n_chunks=10)
+    cfg = IngestConfig(max_spec_bytes=4 * CHUNK_SIZE)
+    client = chunked_client(stream, headers={"content-length": str(10 * CHUNK_SIZE)})
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = client
+        with pytest.raises(IngestStageError, match="size limit"):
+            await load_specification(_url_source(), config=cfg)
+    assert stream.served == 0

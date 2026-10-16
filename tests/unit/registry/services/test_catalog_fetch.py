@@ -6,6 +6,7 @@ specs un-previewable with ``catalog spec unavailable: response exceeds size
 limit``; these tests pin the configured limit and the labelled error message.
 """
 
+import gzip
 import hashlib
 import json
 from typing import Any
@@ -21,6 +22,7 @@ from jentic_one.registry.services.catalog.fetch import (
 )
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import DnsPinningTransport
+from tests.harness.http_doubles import CHUNK_SIZE, CountingChunkedStream, chunked_client
 
 _SPEC: dict[str, Any] = {"openapi": "3.1.0", "info": {"title": "Big API", "version": "1.0.0"}}
 _SPEC_BYTES = json.dumps(_SPEC).encode()
@@ -329,3 +331,129 @@ async def test_fetch_no_pinning_transport_when_disabled() -> None:
     ):
         await fetch_bytes_conditional("https://example.com/openapi.json", config=cfg)
     assert captured["transport"] is None
+
+
+# ── streamed body cap (chunked upstream, no Content-Length) ─────────────────
+
+_SMALL_CAP = IngestConfig(max_spec_bytes=4 * CHUNK_SIZE)
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_chunked_over_cap_stops_one_chunk_past_limit() -> None:
+    """A chunked body larger than the cap is refused without being read in full."""
+    stream = CountingChunkedStream(n_chunks=1000)
+    with (
+        _patched(chunked_client(stream)),
+        pytest.raises(CatalogFetchError, match="size limit"),
+    ):
+        await fetch_json("https://example.com/openapi.json", config=_SMALL_CAP)
+    assert stream.served == 5
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_chunked_under_cap_succeeds() -> None:
+    stream = CountingChunkedStream(n_chunks=1, chunk=_SPEC_BYTES)
+    with _patched(chunked_client(stream, headers={"content-type": "application/json"})):
+        result = await fetch_json("https://example.com/openapi.json", config=_SMALL_CAP)
+    assert result == _SPEC
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_content_length_precheck_reads_no_body() -> None:
+    stream = CountingChunkedStream(n_chunks=10)
+    client = chunked_client(stream, headers={"content-length": str(10 * CHUNK_SIZE)})
+    with _patched(client), pytest.raises(CatalogFetchError, match="size limit"):
+        await fetch_json("https://example.com/openapi.json", config=_SMALL_CAP)
+    assert stream.served == 0
+
+
+@pytest.mark.asyncio
+async def test_conditional_chunked_over_cap_stops_one_chunk_past_limit() -> None:
+    stream = CountingChunkedStream(n_chunks=1000)
+    with (
+        _patched(chunked_client(stream)),
+        pytest.raises(CatalogFetchError, match="size limit"),
+    ):
+        await fetch_bytes_conditional("https://example.com/openapi.json", config=_SMALL_CAP)
+    assert stream.served == 5
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_conditional_chunked_under_cap_returns_bytes_and_digest() -> None:
+    stream = CountingChunkedStream(n_chunks=3)
+    with _patched(chunked_client(stream, headers={"etag": '"v3"'})):
+        result = await fetch_bytes_conditional(
+            "https://example.com/openapi.json", config=_SMALL_CAP
+        )
+    expected = b"x" * (3 * CHUNK_SIZE)
+    assert result.not_modified is False
+    assert result.content == expected
+    assert result.digest == hashlib.sha256(expected).hexdigest()
+    assert result.etag == '"v3"'
+
+
+@pytest.mark.asyncio
+async def test_conditional_304_reads_no_body() -> None:
+    """A 304 short-circuits before the body stream is touched."""
+    stream = CountingChunkedStream(n_chunks=10)
+    client = chunked_client(stream, status_code=304, headers={"etag": '"v1"'})
+    with _patched(client):
+        result = await fetch_bytes_conditional(
+            "https://example.com/openapi.json", config=_SMALL_CAP, etag='"v1"'
+        )
+    assert result.not_modified is True
+    assert result.content is None
+    assert stream.served == 0
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_gzip_bomb_rejected_as_oversize() -> None:
+    """A gzip body that inflates past the cap is refused with the size-limit error."""
+    bomb = gzip.compress(b"\0" * (8 * 1024 * 1024), compresslevel=9)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=bomb),
+            headers={"content-encoding": "gzip"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    cfg = IngestConfig(max_spec_bytes=1024 * 1024)
+    with _patched(client), pytest.raises(CatalogFetchError, match=r"size limit \(1 MB\)"):
+        await fetch_json("https://example.com/openapi.json", config=cfg)
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_unsupported_content_encoding_is_a_fetch_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=b"\x0b"),
+            headers={"content-encoding": "br"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client), pytest.raises(CatalogFetchError, match="unsupported content-encoding"):
+        await fetch_json("https://example.com/openapi.json", config=IngestConfig())
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_truncated_gzip_is_a_fetch_error() -> None:
+    """A gzip body cut off before its end-of-stream marker is a fetch error, not
+    the short JSON prefix it happened to decode to."""
+    truncated = gzip.compress(b'{"openapi": "3.1.0"}')[:-8]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=truncated),
+            headers={"content-encoding": "gzip"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client), pytest.raises(CatalogFetchError, match="truncated compressed body"):
+        await fetch_json("https://example.com/openapi.json", config=IngestConfig())

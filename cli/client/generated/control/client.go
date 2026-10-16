@@ -1899,7 +1899,7 @@ type ApiSourceInline struct {
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
-	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string.
+	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string. At most `ingest.max_spec_bytes` UTF-8 bytes (25 MiB by default); larger content is refused with 413.
 	//
 	// Examples: {"openapi": "3.1.0", "info": {"title": "Stripe API", "version": "2024-04-10"}, "paths": {}}
 	Content string `json:"content"`
@@ -10190,6 +10190,11 @@ type ClientInterface interface {
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /apis (the `ImportApis` operationId).
@@ -10198,6 +10203,11 @@ type ClientInterface interface {
 	// ImportApis Import Apis
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
+	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13459,6 +13469,11 @@ func (c *Client) ListApis(ctx context.Context, params *ListApisParams, reqEditor
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /apis (the `ImportApis` operationId).
@@ -13477,6 +13492,11 @@ func (c *Client) ImportApisWithBody(ctx context.Context, contentType string, bod
 // ImportApis Import Apis
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
+//
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -26588,6 +26608,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
 	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /apis (the `ImportApis` operationId).
@@ -26596,6 +26621,11 @@ type ClientWithResponsesInterface interface {
 	// ImportApisWithResponse Import Apis
 	//
 	// Import OpenAPI/Arazzo content as new API revisions (async).
+	//
+	// The whole request body is capped at `ingest.max_import_request_bytes`
+	// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+	// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+	// request is refused with 413 before any job is queued.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -32412,6 +32442,8 @@ type ImportApisHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -32440,6 +32472,11 @@ func (r ImportApisHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ImportApisHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r ImportApisHTTPResp) GetApplicationproblemJSON413() *ProblemDetail {
+	return r.ApplicationproblemJSON413
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -44629,6 +44666,11 @@ func (c *ClientWithResponses) ListApisWithResponse(ctx context.Context, params *
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
 //
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /apis (the `ImportApis` operationId).
@@ -44643,6 +44685,11 @@ func (c *ClientWithResponses) ImportApisWithBodyWithResponse(ctx context.Context
 // ImportApisWithResponse Import Apis
 //
 // Import OpenAPI/Arazzo content as new API revisions (async).
+//
+// The whole request body is capped at `ingest.max_import_request_bytes`
+// (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+// content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+// request is refused with 413 before any job is queued.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -50926,6 +50973,13 @@ func ParseImportApisHTTPResp(rsp *http.Response) (*ImportApisHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
