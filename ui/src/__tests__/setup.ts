@@ -4,6 +4,7 @@ import { worker } from '@/mocks/browser';
 import { clearAllToasts } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
+import { acknowledgeWorkerHandshakes, reactivateMocking } from '@/__tests__/msw-worker-lifetime';
 // Load the app stylesheet so Tailwind utilities resolve to real colours (e.g.
 // `body { @apply bg-background }`). Without it, axe colour-contrast checks see
 // white-on-white because the theme background is missing.
@@ -29,9 +30,15 @@ document.documentElement.dataset.theme = 'light';
 // observe single-mount behaviour can pass `reactStrictMode: false` to `render`.
 configure({ asyncUtilTimeout: 5_000, reactStrictMode: true });
 
+acknowledgeWorkerHandshakes();
+
 beforeAll(async () => {
 	await worker.start({ onUnhandledFrame: 'warn' });
 });
+
+// If Chromium restarts MSW's Service Worker while a file is running, the new
+// worker no longer knows that file turned mocking on. See msw-worker-lifetime.ts.
+beforeEach(reactivateMocking);
 
 afterEach(() => {
 	cleanup();
