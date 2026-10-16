@@ -272,7 +272,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
         "jentic_one.broker.web.routers.execute.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
-        await _persist_streaming_outcome(
+        persisted = await _persist_streaming_outcome(
             outcome,
             ctx=mock_ctx,
             ctx_req=_ctx_req(),
@@ -280,6 +280,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
+        assert persisted is True
 
         mock_persist.assert_called_once_with(
             mock_session,
@@ -317,7 +318,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
         "jentic_one.broker.web.routers.execute.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
-        await _persist_streaming_outcome(
+        persisted = await _persist_streaming_outcome(
             outcome,
             ctx=mock_ctx,
             ctx_req=_ctx_req(),
@@ -325,6 +326,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
+        assert persisted is True
 
         mock_persist.assert_called_once_with(
             mock_session,
@@ -352,7 +354,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
     mock_ctx.admin_db.transaction.side_effect = RuntimeError("DB down")
 
     with patch.object(_streaming_persist_failures, "add") as mock_counter:
-        await _persist_streaming_outcome(
+        persisted = await _persist_streaming_outcome(
             outcome,
             ctx=mock_ctx,
             ctx_req=_ctx_req(),
@@ -360,4 +362,5 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
+        assert persisted is False
         mock_counter.assert_called_once_with(1)

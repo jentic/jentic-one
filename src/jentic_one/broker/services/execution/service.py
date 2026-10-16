@@ -57,7 +57,13 @@ _executions_total = _meter.create_counter(
 _execution_duration = _meter.create_histogram(
     "broker.execution.duration_ms",
     unit="ms",
-    description="Duration of broker executions in milliseconds",
+    description=(
+        "Upstream time in milliseconds. Buffered: the final attempt as timed by the "
+        "HTTP runner, request send to response body read, excluding bulkhead waits, "
+        "earlier retry attempts and backoff. Streaming (never retried): stream open, "
+        "including any bulkhead wait, to body end, including client backpressure. "
+        "The broker's own work is broker.execution.overhead_ms"
+    ),
 )
 
 _circuit_event_last_emitted: dict[str, datetime] = {}
