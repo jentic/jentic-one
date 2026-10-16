@@ -135,12 +135,12 @@ def test_patch_oauth2_token_url_and_scopes_without_secret(
 
     resp = cred_writer_client.patch(
         f"/credentials/{cred_id}",
-        json={"type": "oauth2", "token_url": "https://other.example/t", "scopes": ["c", "d"]},
+        json={"type": "oauth2", "token_url": "https://auth.example/v2/t", "scopes": ["c", "d"]},
     )
     assert resp.status_code == 200, resp.text
     assert _parse_ts(resp.json()["updated_at"]) > _parse_ts(before["updated_at"])
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
-    assert got["details"]["token_url"] == "https://other.example/t"
+    assert got["details"]["token_url"] == "https://auth.example/v2/t"
     assert got["details"]["scopes"] == ["c", "d"]
 
     # Scopes alone apply too, and ``[]`` clears them; token_url is untouched.
@@ -149,7 +149,7 @@ def test_patch_oauth2_token_url_and_scopes_without_secret(
     )
     assert resp.status_code == 200, resp.text
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
-    assert got["details"]["token_url"] == "https://other.example/t"
+    assert got["details"]["token_url"] == "https://auth.example/v2/t"
     assert got["details"].get("scopes") is None
     assert "webtest-secret" not in resp.text
 
@@ -165,6 +165,53 @@ def test_patch_oauth2_unsafe_token_url_is_rejected(cred_writer_client: TestClien
     assert resp.status_code == 400, resp.text
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["details"]["token_url"] == "https://auth.example/token"
+
+
+def test_patch_oauth2_cross_origin_token_url_requires_secret(
+    cred_writer_client: TestClient,
+) -> None:
+    """Moving token_url to another origin must re-enter client_secret: the
+    stored secret is write-only, so a bare repoint would send it elsewhere."""
+    cred_id = _create_oauth2(cred_writer_client, grant_type="client_credentials", name="o-xo")
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={"type": "oauth2", "token_url": "https://other.example/t"},
+    )
+    assert resp.status_code == 400, resp.text
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["token_url"] == "https://auth.example/token"
+
+    resp = cred_writer_client.patch(
+        f"/credentials/{cred_id}",
+        json={
+            "type": "oauth2",
+            "token_url": "https://other.example/t",
+            "client_secret": "fresh-web-secret",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["details"]["token_url"] == "https://other.example/t"
+    assert "fresh-web-secret" not in resp.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "oauth2", "client_secret": "   "},
+        {"type": "oauth2", "scopes": ["ok", ""]},
+        {"type": "oauth2", "scopes": ["a b"]},
+    ],
+)
+def test_patch_blank_or_malformed_values_are_400(
+    cred_writer_client: TestClient, body: dict[str, object]
+) -> None:
+    """Whitespace-only secrets and non-token scope items never reach storage."""
+    cred_id = _create_oauth2(cred_writer_client, grant_type="client_credentials", name="o-blank")
+    before = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    resp = cred_writer_client.patch(f"/credentials/{cred_id}", json=body)
+    assert resp.status_code == 400, resp.text
+    assert cred_writer_client.get(f"/credentials/{cred_id}").json() == before
 
 
 def test_patch_no_auth_rename_and_deactivate(cred_writer_client: TestClient) -> None:

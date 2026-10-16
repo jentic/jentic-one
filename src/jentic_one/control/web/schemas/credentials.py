@@ -530,7 +530,11 @@ class OAuth2UpdateRequest(BaseModel):
     client_secret: str | None = Field(
         default=None,
         min_length=1,
-        description="Replacement client secret; omit to leave unchanged.",
+        description=(
+            "Replacement client secret; omit to leave unchanged. Required when `token_url` "
+            "moves to a different origin. Rejected with 400 on `device_code` credentials "
+            "(public client) and on credentials that use a shared app registration."
+        ),
         json_schema_extra=SENSITIVE,
         examples=["example-secret"],  # pragma: allowlist secret
     )
@@ -538,12 +542,24 @@ class OAuth2UpdateRequest(BaseModel):
         default=None,
         min_length=1,
         examples=["https://connect.stripe.com/oauth/token"],
-        description="Replacement token endpoint URL; omit to leave unchanged.",
+        description=(
+            "Replacement token endpoint URL; omit to leave unchanged. A change of origin "
+            "(scheme, host or port) requires `client_secret` in the same request and "
+            "disconnects the credential until it is reconnected; on `device_code` "
+            "credentials it is rejected with 400. Rejected with 400 on credentials that "
+            "use a shared app registration, and on `device_code` credentials while a "
+            "device flow is pending."
+        ),
     )
     scopes: list[str] | None = Field(
         default=None,
         examples=[["read_write"]],
-        description=("Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them."),
+        description=(
+            "Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. "
+            "Each item is a single non-empty scope token without whitespace. Rejected with "
+            "400 on credentials that use a shared app registration, and on `device_code` "
+            "credentials while a device flow is pending."
+        ),
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)

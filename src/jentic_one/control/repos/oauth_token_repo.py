@@ -94,6 +94,16 @@ class OAuthTokenRepository:
         return row
 
     @staticmethod
+    async def delete_by_credential(session: AsyncSession, credential_id: str) -> bool:
+        """Delete the credential's token row; ``True`` when one existed."""
+        row = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        if row is None:
+            return False
+        await session.delete(row)
+        await session.flush()
+        return True
+
+    @staticmethod
     async def mark_revoked(session: AsyncSession, credential_id: str) -> OAuthToken | None:
         row = await OAuthTokenRepository.get_by_credential(session, credential_id)
         if row is None:
