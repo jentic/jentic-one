@@ -207,7 +207,10 @@ fails partway through a streamed body, the status line has already been sent:
 the broker logs one `upstream_network_failure` (or `streaming_response_aborted`
 for a size-cap or transfer-deadline cut-off) and closes the connection without
 the final chunk, so an HTTP/1.1 chunked or HTTP/2 client sees a truncated body
-(an HTTP/1.0 client reads a close-delimited body and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
+(an HTTP/1.0 client reads a close-delimited body and cannot tell). A streaming
+call whose upstream fails before the response headers (connection refused, a
+TLS failure, an open circuit, a timeout) records one `FAILED` row with no HTTP
+status. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

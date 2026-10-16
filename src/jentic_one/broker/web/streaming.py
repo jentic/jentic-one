@@ -21,10 +21,12 @@ response: `OutcomeStreamingResponse` logs one structured event for it and ends
 the response without its final body frame, so the server closes the connection
 and the client sees a truncated body rather than a clean end. On every outcome
 it then hands the `StreamingOutcome` to the completion callback exactly once —
-the execution record is never lost to a body that raised. The callback must
-return promptly: the router's callback hands the record write to the app's
+the execution record is never lost to a body that raised. A stream that fails
+to open (before any response exists) hands the callback a FAILED outcome with
+no upstream status, then re-raises for the error handler to map. The callback
+must return promptly: the router's callback hands the record write to the app's
 background-task registry (`jentic_one.shared.web.background_tasks`), so neither
-a clean end nor an abort waits on the database.
+a clean end, an abort, nor an error response waits on the database.
 
 The truncation is detectable only where the downstream framing delimits the
 body: HTTP/1.1 chunked (the broker strips the upstream ``Content-Length``, so a
@@ -301,19 +303,50 @@ class OutcomeStreamingResponse(StreamingResponse):
                     (time.perf_counter() - self._outcome.started_at_perf) * 1000
                 )
                 self._outcome.error = self._outcome.error or "client_disconnect"
-            await self._hand_off()
+            await _deliver_outcome(self._outcome, self._on_complete)
 
-    async def _hand_off(self) -> None:
-        if self._on_complete is None:
-            return
-        try:
-            await self._on_complete(self._outcome)
-        except Exception:
-            logger.error(
-                "streaming_outcome_callback_failed",
-                execution_id=self._outcome.execution_id,
-                exc_info=True,
-            )
+
+async def _deliver_outcome(
+    outcome: StreamingOutcome,
+    on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
+) -> None:
+    """Hand ``outcome`` to the completion callback; a callback failure is logged, never raised."""
+    if on_complete is None:
+        return
+    try:
+        await on_complete(outcome)
+    except Exception:
+        logger.error(
+            "streaming_outcome_callback_failed",
+            execution_id=outcome.execution_id,
+            exc_info=True,
+        )
+
+
+async def _record_open_failure(
+    exc: Exception,
+    *,
+    execution_id: str,
+    started_at_perf: float,
+    on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
+) -> None:
+    """Settle the outcome of a stream that failed before any response existed.
+
+    No ``OutcomeStreamingResponse`` is built on this path, so its completion
+    step never runs: this is the outcome's only delivery. The record carries no
+    upstream status and names the failure by its problem ``type`` — the same
+    identifier the caller receives in the problem+json body — or, for an
+    unmapped exception, its class.
+    """
+    error_type = exc.type if isinstance(exc, BrokerError) else type(exc).__name__
+    outcome = StreamingOutcome(
+        execution_id=execution_id,
+        http_status=None,
+        started_at_perf=started_at_perf,
+        duration_ms=int((time.perf_counter() - started_at_perf) * 1000),
+        error=f"upstream_error: {error_type}",
+    )
+    await _deliver_outcome(outcome, on_complete)
 
 
 async def open_streaming_response(
@@ -335,10 +368,14 @@ async def open_streaming_response(
     When ``background_callback`` is provided, it is the response's completion
     callback: it receives the final ``StreamingOutcome`` exactly once after the
     response body ends, whatever the outcome (completed, failed mid-body,
-    client disconnect), before the response returns to the server. It must
-    return promptly — the router's callback only schedules the record write on
-    the app's background-task registry. (The parameter name is part of the
-    ``Broker.execute_streaming`` injection seam and stays stable.)
+    client disconnect), before the response returns to the server. A failure
+    opening the stream (connect/TLS failure, an open circuit, a timeout before
+    the response headers) delivers a FAILED outcome with no upstream status
+    instead, then propagates unchanged so the caller still gets the mapped
+    problem+json response. It must return promptly — the router's callback
+    only schedules the record write on the app's background-task registry.
+    (The parameter name is part of the ``Broker.execute_streaming`` injection
+    seam and stays stable.)
     """
     # Anchor the duration clock *before* the upstream stream is opened:
     # ``runner.stream()`` awaits connect + request send + response headers, and
@@ -349,6 +386,15 @@ async def open_streaming_response(
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
+    except Exception as exc:
+        await stack.aclose()
+        await _record_open_failure(
+            exc,
+            execution_id=execution_id,
+            started_at_perf=start_perf,
+            on_complete=background_callback,
+        )
+        raise
     except BaseException:
         await stack.aclose()
         raise

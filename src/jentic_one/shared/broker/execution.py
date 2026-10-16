@@ -106,10 +106,15 @@ class ExecutionOutcome:
 
 @dataclass
 class StreamingOutcome:
-    """Captures the final state of a streaming execution for persistence."""
+    """Captures the final state of a streaming execution for persistence.
+
+    ``http_status`` is the upstream status line, or ``None`` when the stream
+    failed to open (connect/TLS failure, open circuit, a timeout before the
+    response headers): no upstream response exists to attribute a status to.
+    """
 
     execution_id: str
-    http_status: int
+    http_status: int | None
     started_at_perf: float = field(default_factory=time.perf_counter)
     duration_ms: int = 0
     error: str | None = None

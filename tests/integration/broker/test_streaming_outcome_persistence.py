@@ -10,7 +10,11 @@ lifecycle event land in the real admin DB. Covered outcomes:
   ``upstream_network_failure`` log line bound to the request id, no
   ``unhandled_exception`` log, and a response the client sees as truncated;
 * the client disconnects mid-body → one record;
-* persisting the record fails → the failure is counted, nothing escapes.
+* persisting the record fails → the failure is counted, nothing escapes;
+* the upstream fails before the response headers — connection refused, a
+  timeout waiting for the headers, an open circuit (#1753) → the client gets
+  the unchanged problem+json error and exactly one FAILED record (no upstream
+  status) plus one ``execution.failed`` event are written before it.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.broker.adapters.runners.base import StreamingUpstreamRunner
+from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import JenticHeader
@@ -45,7 +51,9 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.logging import RequestIDMiddleware, install_server_log_filters
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state.backend import MemoryStateBackend
 from jentic_one.shared.web.background_tasks import (
     BackgroundTaskRegistry,
     get_background_tasks,
@@ -66,16 +74,27 @@ _IDENTITY = Identity(
 )
 
 
+def _free_port() -> int:
+    """A port nothing listens on once this returns (connection refused)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        return port
+
+
 @dataclass
 class _Upstream:
     """A chunked HTTP/1.1 upstream on a real socket.
 
     ``/ok`` sends a complete body; ``/drop`` sends one chunk then closes the
     socket without the terminating chunk; ``/hang`` sends one chunk then holds
-    the connection open until the broker closes it.
+    the connection open until the broker closes it; ``/silent`` reads the
+    request and never answers, so no response headers arrive. ``closed_port``
+    is a port nothing listens on (connection refused).
     """
 
     port: int
+    closed_port: int
 
 
 @pytest.fixture()
@@ -83,6 +102,12 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
     async def _serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         head = await reader.readuntil(b"\r\n\r\n")
         path = head.split(b" ", 2)[1].decode()
+        if path == "/silent":
+            # Hold the connection without a status line until the broker gives up.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(reader.read(), 10)
+            writer.close()
+            return
         writer.write(
             b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
             b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -102,13 +127,13 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
 
     server = await asyncio.start_server(_serve, "127.0.0.1", 0)
     try:
-        yield _Upstream(port=server.sockets[0].getsockname()[1])
+        yield _Upstream(port=server.sockets[0].getsockname()[1], closed_port=_free_port())
     finally:
         server.close()
         await server.wait_closed()
 
 
-def _app(ctx: Context, runner: HttpRunner, upstream_port: int) -> FastAPI:
+def _app(ctx: Context, runner: StreamingUpstreamRunner, upstream: _Upstream) -> FastAPI:
     """The streaming handler with the broker's request-id middleware + error handlers.
 
     Carries the app-owned background-task registry the record writes run on
@@ -122,8 +147,9 @@ def _app(ctx: Context, runner: HttpRunner, upstream_port: int) -> FastAPI:
 
     @app.get("/execute/{mode}")
     async def execute(mode: str, request: Request) -> Response:
+        port = upstream.closed_port if mode == "refused" else upstream.port
         ctx_req = ExecuteRequestContext(
-            upstream_url=f"http://127.0.0.1:{upstream_port}/{mode}",
+            upstream_url=f"http://127.0.0.1:{port}/{mode}",
             method=request.method,
             trace_id=_TRACE_ID,
             operation=OperationInfo(id="getStream", path="/stream", method="GET"),
@@ -157,17 +183,30 @@ class _Served:
     logs: list[MutableMapping[str, Any]]
     server_log: _Records
     background_tasks: BackgroundTaskRegistry
+    runner: StreamingUpstreamRunner
+    breaker: CircuitBreaker
 
 
 @pytest.fixture()
 async def served(
     request: pytest.FixtureRequest, integration_context: Context, upstream: _Upstream
 ) -> AsyncGenerator[_Served, None]:
-    """The app behind uvicorn; an indirect param sets the runner's response-size cap."""
+    """The app behind uvicorn; an indirect param sets the runner's response-size cap.
+
+    The ``HttpRunner`` sits behind a blocking ``CircuitBreakerRunner`` (as the
+    default broker's stack does) over an in-memory breaker a test can trip.
+    """
     max_response_bytes: int = getattr(request, "param", 0)
+    breaker = CircuitBreaker(
+        MemoryStateBackend(), failure_ratio=1.0, min_calls=1, window_s=30, cooldown_s=30
+    )
     async with httpx.AsyncClient() as upstream_client:
-        runner = HttpRunner(upstream_client, max_response_bytes=max_response_bytes)
-        app = _app(integration_context, runner, upstream.port)
+        runner = CircuitBreakerRunner(
+            HttpRunner(upstream_client, max_response_bytes=max_response_bytes),
+            breaker,
+            enforcement_mode="blocking",
+        )
+        app = _app(integration_context, runner, upstream)
         background_tasks = get_background_tasks(app)
         assert background_tasks is not None
         # Bound before uvicorn starts and handed over, so no other process can
@@ -189,7 +228,9 @@ async def served(
                     while not server.started:
                         assert not task.done(), "uvicorn exited before it started"
                         await asyncio.sleep(0.02)
-                yield _Served(f"http://127.0.0.1:{port}", logs, server_log, background_tasks)
+                yield _Served(
+                    f"http://127.0.0.1:{port}", logs, server_log, background_tasks, runner, breaker
+                )
             finally:
                 server.should_exit = True
                 await task
@@ -420,3 +461,60 @@ async def test_aborted_response_reaches_the_client_before_the_record_is_written(
     records = await _records(integration_context, execution_id)
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
+
+
+async def _trip_breaker(served: _Served, upstream: _Upstream) -> None:
+    await served.breaker.record(f"127.0.0.1:{upstream.port}", ok=False)
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "problem_type", "upstream_timeout_s", "prepare"),
+    [
+        # Connection refused: nothing listens on the port. The status and type
+        # are whatever the transport mapping answers; the record must match them.
+        pytest.param("refused", None, None, 30.0, None, id="connect-refused"),
+        pytest.param("silent", 504, "upstream_timeout", 0.3, None, id="pre-header-timeout"),
+        pytest.param("ok", 503, "circuit_open", 30.0, _trip_breaker, id="circuit-open"),
+    ],
+)
+async def test_stream_open_failure_persists_one_failed_record(
+    integration_context: Context,
+    served: _Served,
+    upstream: _Upstream,
+    execution_ids: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    status: int | None,
+    problem_type: str | None,
+    upstream_timeout_s: float,
+    prepare: Any,
+) -> None:
+    """Pins #1753: a stream that never opens still writes exactly one FAILED record."""
+    execution_id = f"exec_pr1753openfail{mode}"
+    execution_ids.append(execution_id)
+    monkeypatch.setattr(integration_context.config.broker, "upstream_timeout_s", upstream_timeout_s)
+    if prepare is not None:
+        await prepare(served, upstream)
+
+    with patch.object(execute_router, "mint_execution_id", return_value=execution_id):
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            resp = await client.get(f"/execute/{mode}")
+
+    problem = resp.json()
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert problem["status"] == resp.status_code
+    assert resp.status_code >= 500
+    if status is not None:
+        assert resp.status_code == status
+        assert problem["type"] == problem_type
+    records = await _wait_for_records(integration_context, execution_id)
+    assert len(records) == 1
+    record = records[0]
+    assert record.status == ExecutionStatus.FAILED
+    assert record.http_status is None
+    assert record.error == f"upstream_error: {problem['type']}"
+    assert record.actor_id == _IDENTITY.sub
+    assert record.trace_id == _TRACE_ID
+    events = await _events(integration_context, execution_id)
+    assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    assert _unhandled(served) == []

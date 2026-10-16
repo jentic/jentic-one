@@ -174,11 +174,12 @@ async def _persist_streaming_outcome(
     ``broker.streaming_persist_timeout_s``. A DB failure, or the write being
     abandoned (its timeout or the shutdown drain cancels it), is logged and
     counted on ``broker.streaming_execution.persist_failures``; the
-    cancellation itself propagates.
+    cancellation itself propagates. An outcome with no ``http_status`` (the
+    stream never opened) always carries an ``error`` and records as FAILED.
     """
     status = (
         ExecutionStatus.FAILED
-        if outcome.error or outcome.http_status >= 400
+        if outcome.error or (outcome.http_status is not None and outcome.http_status >= 400)
         else ExecutionStatus.COMPLETED
     )
     error_msg = outcome.error or (
@@ -772,11 +773,12 @@ async def _handle_streaming(
 
     Persistence is best-effort and never holds the response: once the
     streaming body ends — completed, failed mid-body, or cut off by a client
-    disconnect — the completion callback schedules ``_persist_streaming_outcome``
-    exactly once on the app's background-task registry and returns, so an
-    aborted response's connection closes without waiting on the database. A DB
+    disconnect — or the stream fails to open (a FAILED record with no upstream
+    status), the completion callback schedules ``_persist_streaming_outcome``
+    exactly once on the app's background-task registry and returns, so neither
+    an aborted response nor an error response waits on the database. A DB
     failure, timeout or shutdown cancellation is logged + counted and never
-    affects the already-sent response.
+    affects the response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
@@ -815,8 +817,15 @@ async def _handle_streaming(
 
     background_tasks = get_background_tasks(request.app)
     persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+    persisted = False
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
+        # One record per execution id, whichever path settles it first — the
+        # broker owns delivery, so the guard holds for an injected broker too.
+        nonlocal persisted
+        if persisted:
+            return
+        persisted = True
         persist = _persist_streaming_outcome(
             outcome,
             ctx,

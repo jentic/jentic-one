@@ -20,6 +20,8 @@ import structlog
 from jentic_one.broker.adapters.runners.base import RunnerRequest, StreamingResult
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
     UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
@@ -673,3 +675,151 @@ async def test_client_disconnect_under_spec_2_3_settles_outcome_once() -> None:
     (outcome,) = callback.await_args_list[0].args
     assert outcome.error == "client_disconnect"
     assert outcome.bytes_transferred > 0
+
+
+# --- A stream that fails to open settles a FAILED outcome once (#1753) ---
+
+
+class _FailingOpenRunner:
+    """A runner whose ``stream()`` raises before yielding a result (no headers)."""
+
+    def __init__(self, exc: Exception, *, delay_s: float = 0.0) -> None:
+        self._exc = exc
+        self._delay_s = delay_s
+        self.closed = False
+
+    @asynccontextmanager
+    async def stream(self, _req: RunnerRequest) -> AsyncIterator[StreamingResult]:
+        try:
+            await asyncio.sleep(self._delay_s)
+            raise self._exc
+            yield  # pragma: no cover - makes this an async generator
+        finally:
+            self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "expected_error"),
+    [
+        (
+            UpstreamTimeoutError(detail="no headers in time", type="upstream_timeout"),
+            "upstream_error: upstream_timeout",
+        ),
+        (
+            CircuitOpenError(detail="circuit open", type="circuit_open"),
+            "upstream_error: circuit_open",
+        ),
+        (
+            BrokerError(detail="connect refused", type="upstream_transport_error"),
+            "upstream_error: upstream_transport_error",
+        ),
+        (RuntimeError("defect"), "upstream_error: RuntimeError"),
+    ],
+)
+async def test_stream_open_failure_settles_failed_outcome_once_and_reraises(
+    exc: Exception, expected_error: str
+) -> None:
+    runner = _FailingOpenRunner(exc, delay_s=0.02)
+    callback = AsyncMock()
+
+    with pytest.raises(type(exc)) as raised:
+        await open_streaming_response(
+            runner,  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-1",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    assert raised.value is exc
+    assert runner.closed
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.execution_id == "exec-open-1"
+    assert outcome.http_status is None
+    assert outcome.error == expected_error
+    assert outcome.duration_ms >= 20
+    assert outcome.bytes_transferred == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_open_failure_with_failing_callback_still_reraises_the_cause() -> None:
+    exc = UpstreamTimeoutError(detail="no headers in time", type="upstream_timeout")
+    callback = AsyncMock(side_effect=RuntimeError("persist exploded"))
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamTimeoutError):
+        await open_streaming_response(
+            _FailingOpenRunner(exc),  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-2",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    callback.assert_awaited_once()
+    assert [e["event"] for e in logs].count("streaming_outcome_callback_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_open_cancellation_settles_no_outcome() -> None:
+    """A client gone before the upstream answered is not an upstream failure."""
+    callback = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await open_streaming_response(
+            _FailingOpenRunner(asyncio.CancelledError()),  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-3",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_outcome_without_upstream_status_records_failed() -> None:
+    outcome = StreamingOutcome(
+        execution_id="exec-p-4", http_status=None, error="upstream_error: circuit_open"
+    )
+    outcome.duration_ms = 3
+
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = MagicMock()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+    started_at = datetime.now(UTC)
+
+    with patch(
+        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        new_callable=AsyncMock,
+    ) as mock_persist:
+        await _persist_streaming_outcome(
+            outcome,
+            ctx=mock_ctx,
+            ctx_req=_ctx_req(),
+            started_at=started_at,
+            actor_id="agent-1",
+            actor_type="agent",
+        )
+
+    mock_persist.assert_called_once_with(
+        mock_session,
+        execution_id="exec-p-4",
+        started_at=started_at,
+        status=ExecutionStatus.FAILED,
+        http_status=None,
+        duration_ms=3,
+        error="upstream_error: circuit_open",
+        ctx_req=_ctx_req(),
+        actor_id="agent-1",
+        actor_type="agent",
+        origin=None,
+        security_config=mock_ctx.config.security,
+    )
