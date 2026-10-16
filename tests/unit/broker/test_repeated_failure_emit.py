@@ -88,13 +88,14 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 @contextlib.asynccontextmanager
 async def _rollback_on_error(session: AsyncSession) -> AsyncGenerator[AsyncSession, None]:
-    """Mirror the router's ``ctx.admin_db.transaction()`` rollback semantics.
+    """Mirror a caller-owned transaction's rollback semantics.
 
-    The real sync router wraps ``run_execution`` in a transaction that rolls
-    back on any exception (``shared/db/session.py``). We replicate just that
-    behaviour here so the test proves the manual ``session.commit()`` inside
-    ``run_execution`` persists the FAILED record + events *before* this outer
-    block tries to roll them away on the re-raised ``BrokerError``.
+    A caller that passes its own ``session`` (the async worker's job
+    transaction, ``shared/db/session.py``) rolls back on any exception. We
+    replicate just that behaviour here so the test proves the manual
+    ``session.commit()`` inside ``run_execution`` persists the FAILED record +
+    events *before* this outer block tries to roll them away on the re-raised
+    ``BrokerError``.
     """
     try:
         yield session

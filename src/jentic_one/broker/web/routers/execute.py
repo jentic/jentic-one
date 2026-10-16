@@ -705,21 +705,23 @@ async def _handle(
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
-    async with ctx.admin_db.transaction() as session:
-        broker = _resolve_broker(request, runner)
-        outcome = await run_execution(
-            ctx_req,
-            body=body,
-            headers=forwarded,
-            session=session,
-            timeout=ctx.config.broker.upstream_timeout_s,
-            broker=broker,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type.value,
-            origin=identity.origin.value,
-            security_config=ctx.config.security,
-            signing=injection.signing,
-        )
+    # ``run_execution`` opens the admin write transaction itself, only after
+    # the upstream call, so no connection or SQLite write lock is held across
+    # upstream I/O.
+    broker = _resolve_broker(request, runner)
+    outcome = await run_execution(
+        ctx_req,
+        body=body,
+        headers=forwarded,
+        transaction=ctx.admin_db.transaction,
+        timeout=ctx.config.broker.upstream_timeout_s,
+        broker=broker,
+        actor_id=identity.sub,
+        actor_type=identity.actor_type.value,
+        origin=identity.origin.value,
+        security_config=ctx.config.security,
+        signing=injection.signing,
+    )
 
     response = _assemble_response(outcome, ctx_req)
     if idempotency is not None and idem_key and fp is not None:

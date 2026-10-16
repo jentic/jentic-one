@@ -10,6 +10,8 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -117,12 +119,30 @@ def _api_reference(ctx_req: ExecuteRequestContext) -> APIReference | None:
     )
 
 
+#: Opens the write transaction an execution is persisted in (e.g.
+#: ``ctx.admin_db.transaction``): yields a session, commits on clean exit.
+TransactionFactory = Callable[[], AbstractAsyncContextManager[Any]]
+
+
+@asynccontextmanager
+async def _persistence_session(
+    session: Any | None, transaction: TransactionFactory | None
+) -> AsyncIterator[Any]:
+    """Yield the session to persist in: a fresh transaction, or the caller's session."""
+    if transaction is not None:
+        async with transaction() as txn_session:
+            yield txn_session
+    else:
+        yield session
+
+
 async def run_execution(
     ctx_req: ExecuteRequestContext,
     *,
     body: bytes | None,
     headers: dict[str, str] | None,
-    session: Any,
+    session: Any | None = None,
+    transaction: TransactionFactory | None = None,
     timeout: float = 30.0,
     broker: Broker,
     execution_id: str | None = None,
@@ -143,7 +163,16 @@ async def run_execution(
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
     ``executions`` row matches; the sync router omits it and a fresh id is minted.
+
+    Pass exactly one of ``transaction`` or ``session``. ``transaction`` (the sync
+    router passes ``ctx.admin_db.transaction``) is opened only *after* the
+    upstream call returns or raises, around the record + event writes, so no
+    connection or SQLite write lock is held across upstream I/O. ``session`` is
+    an already-open session the caller owns (the async worker's job
+    transaction); the writes join it.
     """
+    if (session is None) == (transaction is None):
+        raise TypeError("run_execution needs exactly one of 'session' or 'transaction'")
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
     t0 = time.perf_counter()
@@ -191,53 +220,56 @@ async def run_execution(
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
-        await _persist(
-            ctx_req,
-            session=session,
-            execution_id=execution_id,
-            started_at=started_at,
-            status=ExecutionStatus.FAILED,
-            http_status=None,
-            duration_ms=0,
-            error=exc.detail[:128],
-            actor_id=actor_id,
-            actor_type=actor_type,
-            origin=origin,
-        )
-        await _emit_execution_lifecycle(
-            session,
-            execution_id=execution_id,
-            status=ExecutionStatus.FAILED,
-            error_msg=exc.detail[:128],
-            trace_id=ctx_req.trace_id,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            toolkit_id=ctx_req.toolkit_id,
-            credential_id=ctx_req.credential_id,
-            operation=ctx_req.operation,
-            security_config=security_config,
-            origin=origin,
-        )
-        if isinstance(exc, CircuitOpenError):
-            host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-            if _should_emit_circuit_event(host):
-                try:
-                    await emit_event(
-                        session,
-                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                        severity=EventSeverity.WARNING,
-                        summary=f"Circuit breaker opened for upstream {host}",
-                        created_by=actor_id,
-                        actor_id=actor_id,
-                        actor_type=actor_type,
-                        data={"host": host},
-                    )
-                except Exception:
-                    logger.warning("emit_circuit_event_failed", host=host)
-        # The sync router wraps this call in ``ctx.admin_db.transaction()``,
-        # which rolls back on any exception. Commit the FAILED record + events
-        # now so they survive the re-raise that maps the BrokerError to HTTP.
-        await session.commit()  # arch-allow: manual-commit
+        async with _persistence_session(session, transaction) as persist_session:
+            await _persist(
+                ctx_req,
+                session=persist_session,
+                execution_id=execution_id,
+                started_at=started_at,
+                status=ExecutionStatus.FAILED,
+                http_status=None,
+                duration_ms=0,
+                error=exc.detail[:128],
+                actor_id=actor_id,
+                actor_type=actor_type,
+                origin=origin,
+            )
+            await _emit_execution_lifecycle(
+                persist_session,
+                execution_id=execution_id,
+                status=ExecutionStatus.FAILED,
+                error_msg=exc.detail[:128],
+                trace_id=ctx_req.trace_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                toolkit_id=ctx_req.toolkit_id,
+                credential_id=ctx_req.credential_id,
+                operation=ctx_req.operation,
+                security_config=security_config,
+                origin=origin,
+            )
+            if isinstance(exc, CircuitOpenError):
+                host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
+                if _should_emit_circuit_event(host):
+                    try:
+                        await emit_event(
+                            persist_session,
+                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
+                            severity=EventSeverity.WARNING,
+                            summary=f"Circuit breaker opened for upstream {host}",
+                            created_by=actor_id,
+                            actor_id=actor_id,
+                            actor_type=actor_type,
+                            data={"host": host},
+                        )
+                    except Exception:
+                        logger.warning("emit_circuit_event_failed", host=host)
+            if transaction is None:
+                # A caller-owned session may be rolled back when the BrokerError
+                # propagates. Commit the FAILED record + events now so they
+                # survive the re-raise. (An own ``transaction`` commits as its
+                # block exits, before the re-raise.)
+                await persist_session.commit()  # arch-allow: manual-commit
         raise
 
     result = outcome.result
@@ -257,20 +289,6 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
-    await _persist(
-        ctx_req,
-        session=session,
-        execution_id=execution_id,
-        started_at=started_at,
-        status=status,
-        http_status=result.status_code,
-        duration_ms=result.duration_ms,
-        error=error_msg,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-    )
-
     # Third-party auth failure: the upstream rejected the auth the user
     # configured (401/403). Only when a credential path was attempted
     # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
@@ -285,21 +303,35 @@ async def run_execution(
         {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
     )
 
-    await _emit_execution_lifecycle(
-        session,
-        execution_id=execution_id,
-        status=status,
-        error_msg=error_msg,
-        trace_id=ctx_req.trace_id,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        toolkit_id=ctx_req.toolkit_id,
-        credential_id=ctx_req.credential_id,
-        operation=ctx_req.operation,
-        security_config=security_config,
-        error_tags=error_tags,
-        origin=origin,
-    )
+    async with _persistence_session(session, transaction) as persist_session:
+        await _persist(
+            ctx_req,
+            session=persist_session,
+            execution_id=execution_id,
+            started_at=started_at,
+            status=status,
+            http_status=result.status_code,
+            duration_ms=result.duration_ms,
+            error=error_msg,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+        )
+        await _emit_execution_lifecycle(
+            persist_session,
+            execution_id=execution_id,
+            status=status,
+            error_msg=error_msg,
+            trace_id=ctx_req.trace_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            toolkit_id=ctx_req.toolkit_id,
+            credential_id=ctx_req.credential_id,
+            operation=ctx_req.operation,
+            security_config=security_config,
+            error_tags=error_tags,
+            origin=origin,
+        )
 
     return outcome
 
