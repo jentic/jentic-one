@@ -93,7 +93,6 @@ class WorkerLoop:
         db: DatabaseSession,
         handler_registry: JobHandlerRegistry,
         *,
-        poll_interval: float | None = None,
         worker_config: WorkerConfig | None = None,
         approved_result_retention_seconds: int = _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS,
         wakeup: JobWakeup | None = None,
@@ -101,10 +100,20 @@ class WorkerLoop:
         self._db = db
         self._handlers = handler_registry
         self._config = worker_config or WorkerConfig()
-        self._poll_interval = (
-            self._config.poll_interval_s if poll_interval is None else poll_interval
-        )
+        self._poll_interval = self._config.poll_interval_s
         self._concurrency = self._config.concurrency
+        if self._concurrency > 1 and db.backend.dialect_name == "sqlite":
+            # The handler's BEGIN IMMEDIATE transaction spans the upstream
+            # call, so a second slot's claim or outcome write waits on that
+            # lock past busy_timeout and fails — losing a finished job's
+            # outcome and re-running it on reclaim. AppConfig refuses this
+            # combination; the clamp covers a loop built without it.
+            logger.warning(
+                "worker_concurrency_clamped_sqlite",
+                requested=self._concurrency,
+                effective=1,
+            )
+            self._concurrency = 1
         self._approved_result_retention_seconds = approved_result_retention_seconds
         self._wakeup = wakeup or job_wakeup
         self._running = False
@@ -115,8 +124,10 @@ class WorkerLoop:
         # before the poll interval is up.
         self._wake = asyncio.Event()
         self._in_flight: set[asyncio.Task[None]] = set()
-        # Set while no claimed job is being processed, cleared while one is —
-        # so drain() can wait for in-flight jobs.
+        # Set while no claim is in flight and no claimed job is being
+        # processed — so drain() waits both for running jobs and for a claim
+        # that may yet hand it one.
+        self._claiming = False
         self._idle = asyncio.Event()
         self._idle.set()
 
@@ -204,6 +215,7 @@ class WorkerLoop:
                         await self._wait_for_wake()
         except asyncio.CancelledError:
             logger.info("worker_loop_cancelled")
+            raise
         finally:
             self._wakeup.unsubscribe(self._wake)
             self._running = False
@@ -227,12 +239,40 @@ class WorkerLoop:
         await self._maybe_sweep()
         started = 0
         while self._running and not self._draining and len(self._in_flight) < self._concurrency:
-            job = await self._claim_next()
+            job = await self._claim_tracked()
             if job is None:
                 return False
+            # Started even if drain()/stop() landed mid-claim: the job is
+            # already RUNNING with ``attempts`` bumped, so dropping it here
+            # would strand it until reclaim — and an approved execution is
+            # refused on reclaim, so its approved call would never run.
             self._start_job(tg, job)
             started += 1
         return started > 0
+
+    async def _claim_tracked(self) -> Any:
+        """Claim the next job with the loop marked busy for the whole claim.
+
+        ``_idle`` stays clear from before the claim's first ``await`` until a
+        claimed job is tracked in ``_in_flight`` (or the claim found nothing),
+        so :meth:`drain` cannot report idle while a claim is in flight.
+        """
+        self._claiming = True
+        self._idle.clear()
+        job = None
+        try:
+            job = await self._claim_next()
+            return job
+        finally:
+            self._claiming = False
+            # A claimed job keeps the loop busy until _start_job tracks it;
+            # setting _idle here, even briefly, would release a drain() waiter.
+            if job is None:
+                self._mark_idle_if_quiet()
+
+    def _mark_idle_if_quiet(self) -> None:
+        if not self._claiming and not self._in_flight:
+            self._idle.set()
 
     def _start_job(self, tg: asyncio.TaskGroup, job: Any) -> None:
         """Run ``job`` as a child task, tracked for the concurrency bound and drain."""
@@ -243,8 +283,7 @@ class WorkerLoop:
 
     def _on_job_done(self, task: asyncio.Task[None]) -> None:
         self._in_flight.discard(task)
-        if not self._in_flight:
-            self._idle.set()
+        self._mark_idle_if_quiet()
         # A freed slot is worth an immediate poll.
         self._wake.set()
 
@@ -279,18 +318,24 @@ class WorkerLoop:
                 await self._wake.wait()
 
     async def _maybe_sweep(self) -> None:
-        """Run the retention sweep once ``worker.sweep_interval_s`` has elapsed."""
+        """Run the retention sweep once ``worker.sweep_interval_s`` has elapsed.
+
+        The interval restarts only after a sweep returns: a sweep cut short by
+        a lost connection re-raises, and the next poll after recovery retries
+        it rather than waiting out a full interval.
+        """
         now = time.monotonic()
         if now - self._last_sweep < self._config.sweep_interval_s:
             return
-        self._last_sweep = now
         await self._sweep_expired()
+        self._last_sweep = now
 
     async def _tick(self) -> bool:
-        """Claim one job and process it inline. Returns True if a job was processed.
+        """Claim one job and process it inline. Returns True if a job was claimed.
 
-        A single synchronous step of the loop (no concurrency): useful to drive
-        the worker deterministically one job at a time.
+        A single synchronous step of the loop (no concurrency) that drives the
+        worker deterministically one job at a time. It shares the claim
+        bookkeeping and per-job error handling of :meth:`_poll`.
         """
         await self._maybe_sweep()
 
@@ -298,17 +343,14 @@ class WorkerLoop:
         if self._draining:
             return False
 
-        job = await self._claim_next()
+        job = await self._claim_tracked()
         if job is None:
             return False
-
-        self._idle.clear()
         try:
-            await self._process_job(job)
-            return True
+            await self._run_job(job)
         finally:
-            if not self._in_flight:
-                self._idle.set()
+            self._mark_idle_if_quiet()
+        return True
 
     async def _process_job(self, job: Any) -> None:
         """Dispatch a claimed job to its handler and record the outcome."""
@@ -642,19 +684,29 @@ class WorkerLoop:
         Flips into draining mode so the loop stops claiming immediately, then
         waits (bounded by ``timeout_s``, default ``WorkerConfig.drain_timeout_s``)
         for all jobs already being processed to reach a terminal/requeued state.
+        A claim already in flight when drain starts counts as busy: the job it
+        returns is started and waited for like any other in-flight job.
         Returns ``True`` if the worker is idle by the deadline. If the deadline
         passes with jobs still running, the caller stops the loop anyway — those
         jobs stay ``RUNNING`` and are reclaimed via their visibility timeout
-        after restart, so no work is dropped (just delayed).
+        after restart (an approved execution is failed on reclaim instead of
+        re-run), and their ids are logged with ``worker_drain_timeout``.
         """
         self._draining = True
         self._wake.set()
         budget = self._config.drain_timeout_s if timeout_s is None else timeout_s
         try:
-            await asyncio.wait_for(self._idle.wait(), timeout=budget)
+            async with asyncio.timeout(budget):
+                await self._idle.wait()
             drained = True
         except TimeoutError:
-            logger.warning("worker_drain_timeout", timeout_s=budget, in_flight=len(self._in_flight))
+            logger.warning(
+                "worker_drain_timeout",
+                timeout_s=budget,
+                in_flight=len(self._in_flight),
+                job_tasks=sorted(task.get_name() for task in self._in_flight),
+                claim_in_flight=self._claiming,
+            )
             drained = False
         self._running = False
         self._wake.set()

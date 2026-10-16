@@ -51,7 +51,7 @@ async def test_claim_next_returns_none_when_no_handlers() -> None:
     class _FakeDb:
         pass
 
-    worker = WorkerLoop(db=_FakeDb(), handler_registry=registry, poll_interval=0.0)  # type: ignore[arg-type]
+    worker = WorkerLoop(db=_FakeDb(), handler_registry=registry)  # type: ignore[arg-type]
     result = await worker._claim_next()
     assert result is None
 
@@ -75,10 +75,13 @@ async def test_run_survives_tick_exception() -> None:
                 self.stop()
             return None
 
+        async def _wait_for_wake(self) -> None:
+            # Poll again at once; the interval itself is not under test.
+            return None
+
     worker = _FlakyWorker(
         db=object(),  # type: ignore[arg-type]
         handler_registry=_registry_with(_FakeHandler()),
-        poll_interval=0.0,
         wakeup=JobWakeup(),
     )
     await asyncio.wait_for(worker.run(), timeout=2.0)
@@ -166,8 +169,7 @@ class _ScriptedWorker(WorkerLoop):
         super().__init__(
             db=object(),  # type: ignore[arg-type]
             handler_registry=JobHandlerRegistry(),
-            poll_interval=0.5,
-            worker_config=worker_config,
+            worker_config=worker_config or WorkerConfig(poll_interval_s=0.5),
             wakeup=JobWakeup(),
         )
         self._script = list(script)
@@ -219,7 +221,9 @@ def test_reconnect_backoff_uses_configured_base_and_cap() -> None:
 @pytest.mark.asyncio
 async def test_run_connection_loss_backoff_follows_worker_config() -> None:
     """The run loop's reconnect delays come from ``worker.reconnect_backoff_*``."""
-    cfg = WorkerConfig(reconnect_backoff_base_s=1.0, reconnect_backoff_max_s=4.0)
+    cfg = WorkerConfig(
+        reconnect_backoff_base_s=1.0, reconnect_backoff_max_s=4.0, poll_interval_s=0.5
+    )
     worker = _ScriptedWorker(
         [*(_connection_dropped() for _ in range(4)), True, False], worker_config=cfg
     )
@@ -308,8 +312,8 @@ async def test_run_propagates_cancellation_during_outage() -> None:
             raise asyncio.CancelledError
 
     worker = _CancelOnSleep([_connection_dropped(), True])
-    with structlog.testing.capture_logs() as logs:
-        await asyncio.wait_for(worker.run(), timeout=2.0)
+    with structlog.testing.capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await worker.run()
     assert _events(logs, "worker_loop_cancelled")
     assert worker._running is False
 
@@ -392,10 +396,19 @@ async def test_tick_mid_job_connection_loss_persists_generic_error_without_trace
 
 @pytest.mark.asyncio
 async def test_tick_mid_job_connection_loss_with_db_still_down_defers_to_run_loop() -> None:
-    """If the requeue also hits the dead connection, the error escapes to run()."""
+    """If the requeue also hits the dead connection, the outcome is logged as unrecorded.
+
+    The job stays ``RUNNING`` for visibility-timeout reclaim; the error does not
+    escape the job, so siblings and the loop are unaffected and the next poll
+    owns the outage warning and backoff.
+    """
     worker = _MidJobWorker(_connection_dropped(), requeue_exc=_connection_dropped())
-    with pytest.raises(DBAPIError):
-        await worker._tick()
+    with structlog.testing.capture_logs() as logs:
+        assert await worker._tick() is True
+    unrecorded = _events(logs, "job_outcome_unrecorded_db_connection_lost")
+    assert len(unrecorded) == 1
+    assert "exc_info" not in unrecorded[0]
+    assert not _events(logs, "job_processing_error")
     assert worker._idle.is_set()
 
 

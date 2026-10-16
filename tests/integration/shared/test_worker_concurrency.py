@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import structlog
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -142,10 +143,7 @@ async def test_concurrency_runs_n_jobs_in_parallel(
 ) -> None:
     """``worker.concurrency=N`` runs N handlers at once (they rendezvous on a barrier)."""
     if _is_sqlite(admin_db):
-        pytest.skip(
-            "SQLite serialises writers and the handler runs inside a write "
-            "transaction, so jobs cannot overlap on this backend"
-        )
+        pytest.skip("concurrency > 1 is clamped to 1 on SQLite (see the SQLite clamp test)")
     concurrency = 4
     ids = await _insert_jobs(admin_db, concurrency * 2)
     handler = _RecordingHandler(barrier=asyncio.Barrier(concurrency), expected=len(ids))
@@ -171,7 +169,7 @@ async def test_two_concurrent_loops_process_every_job_exactly_once(
     """Two multi-slot loops on separate pools (separate processes) share one queue safely."""
     ids = await _insert_jobs(admin_db, 24)
     handler = _RecordingHandler(expected=len(ids))
-    cfg = WorkerConfig(concurrency=3, poll_interval_s=0.05)
+    cfg = WorkerConfig(concurrency=3, poll_interval_s=0.25)
     loops = [
         WorkerLoop(db, _registry(handler), worker_config=cfg, wakeup=JobWakeup())
         for db in (admin_db, second_admin_db)
@@ -276,3 +274,67 @@ async def test_in_process_enqueue_starts_job_well_under_the_poll_interval(
         await _stop(worker, task)
 
     assert handler.seen == [job_id]
+
+
+class _SlowHandler:
+    """Holds its handler transaction (the SQLite write lock) for ``hold_s``."""
+
+    def __init__(self, *, hold_s: float, expected: int) -> None:
+        self.seen: list[str] = []
+        self.all_seen = asyncio.Event()
+        self._hold_s = hold_s
+        self._expected = expected
+
+    async def execute(self, job_id: str, session: Any, **_: Any) -> JobResultPayload:
+        # Stands in for the upstream call made while the handler's
+        # transaction is open.
+        await asyncio.sleep(self._hold_s)
+        self.seen.append(job_id)
+        if len(self.seen) >= self._expected:
+            self.all_seen.set()
+        return JobResultPayload(body={"ok": True})
+
+
+async def test_sqlite_concurrency_request_runs_slow_jobs_serially_without_failures(
+    integration_config: AppConfig, clean_jobs: None
+) -> None:
+    """``concurrency > 1`` on SQLite is clamped to 1, so slow handlers never collide.
+
+    Each handler holds the write lock for longer than ``busy_timeout``. With a
+    second slot, the next claim or a finished job's outcome write would wait on
+    that lock, time out and fail — losing the outcome and re-running the job.
+    """
+    if integration_config.databases.admin.backend != "sqlite":
+        pytest.skip("pins the SQLite write-lock clamp")
+    short_busy = integration_config.databases.admin.model_copy(update={"busy_timeout_ms": 100})
+    db = DatabaseSession(short_busy)
+    await db.connect()
+    try:
+        ids = await _insert_jobs(db, 3)
+        handler = _SlowHandler(hold_s=0.4, expected=len(ids))
+        with structlog.testing.capture_logs() as logs:
+            worker = WorkerLoop(
+                db,
+                _registry(handler),
+                worker_config=WorkerConfig(concurrency=2, poll_interval_s=60.0),
+                wakeup=JobWakeup(),
+            )
+            task = asyncio.create_task(worker.run())
+            try:
+                await asyncio.wait_for(handler.all_seen.wait(), timeout=_PROMPT_S)
+            finally:
+                await _stop(worker, task)
+
+        assert worker._concurrency == 1
+        assert Counter(handler.seen) == Counter(dict.fromkeys(ids, 1))
+        assert await _statuses(db, ids) == Counter({str(JobStatus.COMPLETED): len(ids)})
+        events = {e["event"] for e in logs}
+        assert "worker_concurrency_clamped_sqlite" in events
+        assert not events & {
+            "job_processing_error",
+            "job_failed",
+            "worker_loop_tick_error",
+            "transient_transaction_retrying",
+        }
+    finally:
+        await db.close()

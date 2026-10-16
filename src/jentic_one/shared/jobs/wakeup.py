@@ -49,12 +49,21 @@ class JobWakeup:
         self._subscribers.pop(wake, None)
 
     def notify(self) -> None:
-        """Set every subscribed event (best-effort; closed loops are skipped)."""
+        """Set every subscribed event (best-effort; never raises).
+
+        Runs inside a SQLAlchemy ``after_commit`` listener, whose exceptions
+        surface from ``commit()``: a failure here would fail a request whose
+        job is already committed. A subscriber whose loop is closed — checked
+        up front, or closing between that check and the call — is dropped.
+        """
         for wake, loop in list(self._subscribers.items()):
             if loop.is_closed():
                 self._subscribers.pop(wake, None)
                 continue
-            loop.call_soon_threadsafe(wake.set)
+            try:
+                loop.call_soon_threadsafe(wake.set)
+            except RuntimeError:
+                self._subscribers.pop(wake, None)
 
 
 # Process-wide instance: enqueuers and worker loops in one process meet here.

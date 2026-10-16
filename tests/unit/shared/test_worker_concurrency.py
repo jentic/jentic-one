@@ -12,9 +12,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
@@ -39,7 +41,8 @@ class _NoopHandler:
 
 
 class _FakeDb:
-    pass
+    def __init__(self, dialect_name: str = "postgresql") -> None:
+        self.backend = SimpleNamespace(dialect_name=dialect_name)
 
 
 class _ScriptedWorker(WorkerLoop):
@@ -52,11 +55,12 @@ class _ScriptedWorker(WorkerLoop):
         jobs: list[_Job] | None = None,
         config: WorkerConfig | None = None,
         wakeup: JobWakeup | None = None,
+        db: _FakeDb | None = None,
     ) -> None:
         registry = JobHandlerRegistry()
         registry.register(JobKind.EXECUTION, _NoopHandler())
         super().__init__(
-            db=_FakeDb(),  # type: ignore[arg-type]
+            db=db or _FakeDb(),  # type: ignore[arg-type]
             handler_registry=registry,
             worker_config=config or WorkerConfig(),
             wakeup=wakeup or JobWakeup(),
@@ -268,9 +272,14 @@ async def test_drain_timeout_then_cancel_cancels_in_flight_jobs() -> None:
     task = asyncio.create_task(worker.run())
     await asyncio.wait_for(tracker.full.wait(), timeout=_PROMPT_S)
 
-    assert await worker.drain(timeout_s=0.01) is False
+    with structlog.testing.capture_logs() as logs:
+        assert await worker.drain(timeout_s=0.01) is False
+    [timeout] = [e for e in logs if e["event"] == "worker_drain_timeout"]
+    assert timeout["job_tasks"] == ["job-a", "job-b"]
     task.cancel()
-    await asyncio.wait_for(task, timeout=_PROMPT_S)
+    # run() re-raises cancellation after logging it.
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=_PROMPT_S)
 
     assert sorted(tracker.cancelled) == ["a", "b"]
     assert tracker.done == []
@@ -357,3 +366,174 @@ async def test_retention_sweep_default_interval_is_120s(monkeypatch: pytest.Monk
     clock[0] = 120.0
     await worker._maybe_sweep()
     assert worker.sweeps == 1
+
+
+def test_concurrency_above_one_is_clamped_to_serial_on_sqlite() -> None:
+    """A SQLite admin DB runs one job at a time whatever ``concurrency`` asks for.
+
+    The handler's write transaction spans the upstream call, so a second slot
+    would wait on the SQLite write lock past ``busy_timeout``.
+    """
+    with structlog.testing.capture_logs() as logs:
+        worker = _ScriptedWorker(
+            _Tracker().body, config=WorkerConfig(concurrency=4), db=_FakeDb("sqlite")
+        )
+    assert worker._concurrency == 1
+    [clamped] = [e for e in logs if e["event"] == "worker_concurrency_clamped_sqlite"]
+    assert clamped["log_level"] == "warning"
+    assert clamped["requested"] == 4
+    assert clamped["effective"] == 1
+
+
+def test_serial_sqlite_worker_logs_no_clamp() -> None:
+    with structlog.testing.capture_logs() as logs:
+        worker = _ScriptedWorker(_Tracker().body, db=_FakeDb("sqlite"))
+    assert worker._concurrency == 1
+    assert not [e for e in logs if e["event"] == "worker_concurrency_clamped_sqlite"]
+
+
+class _BlockingClaimWorker(_ScriptedWorker):
+    """The first claim parks until released, standing in for a slow claim query."""
+
+    def __init__(self, body: Callable[[_Job], Awaitable[None]], **kwargs: Any) -> None:
+        super().__init__(body, **kwargs)
+        self.claim_started = asyncio.Event()
+        self.release_claim = asyncio.Event()
+        self.claim_error: BaseException | None = None
+
+    async def _claim_next(self) -> Any:
+        if not self.claim_started.is_set():
+            self.claim_started.set()
+            await self.release_claim.wait()
+            if self.claim_error is not None:
+                raise self.claim_error
+        return await super()._claim_next()
+
+
+async def test_drain_waits_for_a_job_whose_claim_was_in_flight() -> None:
+    """drain() mid-claim must not report idle; the claimed job runs to completion.
+
+    Reporting idle would let shutdown cancel the job right after it is claimed,
+    leaving it ``RUNNING`` with ``attempts`` bumped — and an approved execution
+    is failed on reclaim, so its approved call would never run.
+    """
+    tracker = _Tracker()
+    tracker.expected = 1
+    worker = _BlockingClaimWorker(
+        tracker.body,
+        jobs=[_Job(id="claimed"), _Job(id="queued")],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    task = asyncio.create_task(worker.run())
+    await asyncio.wait_for(worker.claim_started.wait(), timeout=_PROMPT_S)
+
+    drain = asyncio.create_task(worker.drain(timeout_s=_PROMPT_S))
+    await _yield_loop()
+    assert not drain.done(), "drain() must wait while a claim is in flight"
+
+    worker.release_claim.set()
+    await _yield_loop()
+    assert tracker.current == 1, "a job claimed during drain must still be started"
+    assert not drain.done(), "drain() must wait for the job claimed during drain"
+
+    tracker.gate.set()
+    assert await asyncio.wait_for(drain, timeout=_PROMPT_S) is True
+    await asyncio.wait_for(task, timeout=_PROMPT_S)
+    assert tracker.done == ["claimed"]
+    assert tracker.cancelled == []
+    # Draining stops further claims.
+    assert [j.id for j in worker.queue] == ["queued"]
+
+
+@pytest.mark.parametrize("outcome", ["empty", "error"])
+async def test_drain_returns_once_an_in_flight_claim_yields_no_job(outcome: str) -> None:
+    """A claim that finds nothing (or fails) during drain releases the drain."""
+    worker = _BlockingClaimWorker(_Tracker().body, config=WorkerConfig(poll_interval_s=60.0))
+    if outcome == "error":
+        worker.claim_error = RuntimeError("claim failed")
+    task = asyncio.create_task(worker.run())
+    await asyncio.wait_for(worker.claim_started.wait(), timeout=_PROMPT_S)
+
+    drain = asyncio.create_task(worker.drain(timeout_s=_PROMPT_S))
+    await _yield_loop()
+    assert not drain.done()
+
+    worker.release_claim.set()
+    assert await asyncio.wait_for(drain, timeout=_PROMPT_S) is True
+    await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+
+async def test_tick_keeps_worker_busy_for_the_whole_claim() -> None:
+    """The single-step ``_tick`` path shares the same claim bookkeeping."""
+    tracker = _Tracker()
+    tracker.expected = 1
+    tracker.gate.set()
+    worker = _BlockingClaimWorker(tracker.body, jobs=[_Job(id="a")])
+    tick = asyncio.create_task(worker._tick())
+    await asyncio.wait_for(worker.claim_started.wait(), timeout=_PROMPT_S)
+    assert not worker._idle.is_set()
+    worker.release_claim.set()
+    assert await asyncio.wait_for(tick, timeout=_PROMPT_S) is True
+    assert worker._idle.is_set()
+    assert tracker.done == ["a"]
+
+
+class _FlakySweepWorker(_ScriptedWorker):
+    def __init__(self, config: WorkerConfig, failures: int) -> None:
+        super().__init__(_Tracker().body, config=config)
+        self.attempts = 0
+        self._failures = failures
+
+    async def _sweep_expired(self) -> None:
+        self.attempts += 1
+        if self.attempts <= self._failures:
+            raise ConnectionResetError("database went away")
+
+
+async def test_failed_sweep_is_retried_on_the_next_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sweep that raises does not restart the interval, so recovery retries it at once."""
+    clock = [1000.0]
+    monkeypatch.setattr("jentic_one.shared.jobs.worker.time.monotonic", lambda: clock[0])
+    worker = _FlakySweepWorker(WorkerConfig(sweep_interval_s=30.0), failures=1)
+
+    clock[0] += 30.0
+    with pytest.raises(ConnectionResetError):
+        await worker._maybe_sweep()
+    clock[0] += 1.0
+    await worker._maybe_sweep()
+    assert worker.attempts == 2
+    # The successful sweep restarts the interval.
+    clock[0] += 29.0
+    await worker._maybe_sweep()
+    assert worker.attempts == 2
+
+
+class _ClosingLoop:
+    """A loop that closes between ``is_closed()`` and ``call_soon_threadsafe``."""
+
+    def is_closed(self) -> bool:
+        return False
+
+    def call_soon_threadsafe(self, *_: Any) -> None:
+        raise RuntimeError("Event loop is closed")
+
+
+def test_wakeup_notify_never_raises_for_a_loop_closing_mid_notify() -> None:
+    """notify() runs inside after_commit; raising would fail an already-committed request."""
+    wakeup = JobWakeup()
+    racing = asyncio.Event()
+    wakeup._subscribers[racing] = _ClosingLoop()  # type: ignore[assignment]
+    wakeup.notify()
+    assert racing not in wakeup._subscribers
+
+
+def test_wakeup_notify_drops_subscribers_from_closed_loops() -> None:
+    wakeup = JobWakeup()
+    wake = asyncio.Event()
+
+    async def subscribe() -> None:
+        wakeup.subscribe(wake)
+
+    asyncio.run(subscribe())  # the loop is closed once run() returns
+    wakeup.notify()
+    assert wake not in wakeup._subscribers
