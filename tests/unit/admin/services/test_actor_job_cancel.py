@@ -165,6 +165,7 @@ async def test_agent_enable_does_not_touch_jobs(agent_cancel: AsyncMock) -> None
 
 
 @pytest.mark.asyncio
+@patch(f"{_AGENT_SVC}.withdraw_pending_for_agent", new_callable=AsyncMock, return_value=0)
 @patch(f"{_AGENT_SVC}.revoke_active_grants_for_agent", new_callable=AsyncMock)
 @patch(f"{_AGENT_SVC}.AgentCredentialBindingRepository")
 @patch(f"{_AGENT_SVC}.ActorPermissionGrantRepository")
@@ -176,6 +177,7 @@ async def test_agent_archive_cancels_queued_jobs_in_the_archive_transaction(
     mock_grants: MagicMock,
     mock_bindings: MagicMock,
     mock_revoke: AsyncMock,
+    mock_withdraw: AsyncMock,
     agent_cancel: AsyncMock,
 ) -> None:
     ctx, session = _ctx_with_session()
@@ -191,6 +193,7 @@ async def test_agent_archive_cancels_queued_jobs_in_the_archive_transaction(
         await AgentService(ctx).archive("agnt_x", identity=identity)
 
     mock_repo.archive.assert_awaited_once_with(session, "agnt_x")
+    mock_withdraw.assert_awaited_once()
     agent_cancel.assert_awaited_once_with(
         session,
         actor_id="agnt_x",
