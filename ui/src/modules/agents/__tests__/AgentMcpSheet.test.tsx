@@ -16,6 +16,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	sheetSettled,
 	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
@@ -402,12 +403,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		const sheet = await openSheet(user);
 		await sheet.findByText('Connect via MCP');
 		await sheet.findByText('claude-desktop 1.5.2');
-		// Wait out the backdrop's opacity transition: axe measures contrast
-		// against the half-faded overlay otherwise and flags the page beneath.
-		await waitFor(() => {
-			const overlay = screen.getByTestId('sheet-backdrop');
-			expect(overlay && getComputedStyle(overlay).opacity).toBe('1');
-		});
+		await sheetSettled();
 		await checkA11y(document.body, { modal: true });
 	});
 

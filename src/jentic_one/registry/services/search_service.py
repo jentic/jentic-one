@@ -204,7 +204,7 @@ class SearchService:
 
         backend = self._ctx.registry_db.backend
         try:
-            strategy = resolve_strategy(backend, config)
+            strategy = resolve_strategy(backend, config, app_config=self._ctx.config)
         except SearchUnsupportedError as exc:
             raise SearchUnavailableError(str(exc)) from exc
 
@@ -222,14 +222,19 @@ class SearchService:
             if revision_pins:
                 resolved_pins = await _resolve_revision_pins(session, revision_pins)
 
-            hits = await strategy.search_operations(
-                session,
-                query=query,
-                api_filters=api_filters,
-                revision_pins=resolved_pins,
-                limit=limit + 1,
-                cursor=search_cursor,
-            )
+            # A strategy can also fail at query time (provider down,
+            # misconfiguration); map it like the resolve-time failure above.
+            try:
+                hits = await strategy.search_operations(
+                    session,
+                    query=query,
+                    api_filters=api_filters,
+                    revision_pins=resolved_pins,
+                    limit=limit + 1,
+                    cursor=search_cursor,
+                )
+            except SearchUnsupportedError as exc:
+                raise SearchUnavailableError(str(exc)) from exc
 
             if not hits:
                 return Page(data=[], has_more=False, next_cursor=None)

@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router';
-import { render, waitFor, type RenderOptions } from '@testing-library/react';
+import { render, screen, waitFor, type RenderOptions } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 
 interface Options extends Omit<RenderOptions, 'wrapper'> {
@@ -71,6 +71,36 @@ export async function settleAnimations(root: Element = document.body): Promise<v
 			});
 			if (moving.length > 0) {
 				throw new Error(`${moving.length} animation(s) still running under the root`);
+			}
+		},
+		{ timeout: 3000 },
+	);
+}
+
+/**
+ * Wait until the topmost sheet has finished entering, so axe measures contrast
+ * against the settled surface. The backdrop's opacity fade only starts once the
+ * sheet flips to `open` (a double rAF after mount), so `settleAnimations` alone
+ * can pass before it has begun; reading the computed opacity can't. `items`
+ * returns content that fades in on its own (a framer-motion stagger from
+ * opacity 0): each must reach opacity 1, and an empty list fails rather than
+ * passing vacuously. axe blends a translucent ancestor into the colours it
+ * measures, so auditing a half-faded row reads its text as low-contrast.
+ */
+export async function sheetSettled(items?: () => Element[]): Promise<void> {
+	await waitFor(
+		() => {
+			const backdrops = screen.getAllByTestId('sheet-backdrop');
+			const backdrop = backdrops[backdrops.length - 1];
+			if (getComputedStyle(backdrop).opacity !== '1') {
+				throw new Error('the sheet backdrop is still fading in');
+			}
+			if (!items) return;
+			const list = items();
+			if (list.length === 0) throw new Error('no sheet items to wait on');
+			const fading = list.filter((item) => getComputedStyle(item).opacity !== '1');
+			if (fading.length > 0) {
+				throw new Error(`${fading.length} sheet item(s) still fading in`);
 			}
 		},
 		{ timeout: 3000 },

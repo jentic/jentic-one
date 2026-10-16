@@ -7809,7 +7809,7 @@ type ListUsersParams struct {
 	// Limit Maximum number of users to return (1-200, default 50).
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// InviteState Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.
+	// InviteState Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.
 	InviteState *InviteState `form:"invite_state,omitempty" json:"invite_state,omitempty"`
 }
 

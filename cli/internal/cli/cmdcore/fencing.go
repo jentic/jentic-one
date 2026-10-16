@@ -52,8 +52,8 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge.
-		app.banner(cmd)
+		// The update nudge writes to stderr only, so it is safe in every mode. The
+		// banner (stdout) is drawn below, once the mode is known.
 		app.maybeNudgeUpdate(cmd)
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
@@ -173,14 +173,25 @@ func installInterceptor(app *App, root *cobra.Command) {
 		}
 
 		cmd.SetContext(ctx)
+
+		// The banner is human-only decoration on stdout. A machine mode or --json
+		// commits stdout to one JSON document, and agent harnesses often run on a
+		// PTY, so the TTY check inside banner alone is not enough.
+		if !state.IsMachine() && !boolFlag(cmd, "json") {
+			app.banner(cmd)
+		}
 		return nil
 	}
 }
 
-// flagValue returns the string value of a persistent flag if present and set,
-// else "". Safe to call for flags a given root may not define.
+// flagValue returns the string value of the ROOT's persistent session flag
+// (--context/--mode/--theme) if defined, else "". Safe to call for flags a given
+// root may not define. It deliberately skips cmd.Flags(): a subcommand-local
+// flag of the same name would resolve there instead, turning a command's own
+// option into session state (#1412). The api tree's no-shadowing test keeps
+// such a local flag from ever being registered.
 func flagValue(cmd *cobra.Command, name string) string {
-	if f := cmd.Flags().Lookup(name); f != nil {
+	if f := cmd.Root().PersistentFlags().Lookup(name); f != nil {
 		return f.Value.String()
 	}
 	return ""

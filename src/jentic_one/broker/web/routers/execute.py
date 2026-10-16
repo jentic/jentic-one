@@ -855,9 +855,9 @@ def _async_job_payload(
     ``REPLAY_HEADERS``) — without them a JSON body would reach the upstream
     with no ``Content-Type``.
 
-    Extracted from the enqueue path so the operation dual-write below is
-    unit-testable at the producer: the worker seams (handler forwarding,
-    executor rebuild) each have their own pins, and this is the third leg.
+    A standalone builder so the payload contract is unit-testable at the
+    producer: the worker seams (handler forwarding, executor rebuild) each
+    have their own pins, and this is the third leg.
     """
     payload: dict[str, Any] = {
         "execution_id": execution_id,
@@ -865,11 +865,6 @@ def _async_job_payload(
         "method": ctx_req.method,
         "trace_id": ctx_req.trace_id,
         "operation": ctx_req.operation.model_dump() if ctx_req.operation else None,
-        # Rolling-deploy shim (#1382): a pre-``operation``-dict worker draining
-        # this job reads only the flat key — without it the record would persist
-        # with operation_id NULL and the repeated-failure detector would skip
-        # it. Drop once no pre-operation-dict workers remain (#1382).
-        "operation_id": ctx_req.operation_id,
         "api_vendor": ctx_req.api_vendor,
         "api_name": ctx_req.api_name,
         "api_version": ctx_req.api_version,

@@ -25,6 +25,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_skill_drift.py`](test_skill_drift.py) — the served skill set stays in lockstep across its copies
 - [`test_permission_catalog.py`](test_permission_catalog.py) — the conceptual permission catalogue covers every permission in use
 - [`test_revision_pin_regex_matches_spec.py`](test_revision_pin_regex_matches_spec.py) — the broker revision-pin regex matches the OpenAPI spec
+- [`test_gateway_routes.py`](test_gateway_routes.py) — the split-deploy gateway (Docker + Helm) routes every backend path to a backend that serves it, carries no dead locations, and both configs share one map
 
 ## Module boundaries and layering
 
@@ -56,6 +57,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_no_db_mocking.py`](test_no_db_mocking.py) — tests never mock database internals
 - [`test_scoping_boundary.py`](test_scoping_boundary.py), [`test_scoping_coverage.py`](test_scoping_coverage.py) — repos stay auth-agnostic, every scoped model is registered, identity is mandatory in scoped surfaces
 - [`test_scoped_list_reads.py`](test_scoped_list_reads.py) — every admin/auth/control service list read takes and uses `identity`, or is allowlisted with a reason
+- [`test_route_identity_scoping.py`](test_route_identity_scoping.py) — every admin/auth/control/registry authenticated route passes the caller's identity to a service call (not just a helper), or is allowlisted with a reason
 
 ## Security, secrets, and audit
 

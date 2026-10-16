@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import time
 from typing import Any
 
 import pytest
 import yaml
 
+from jentic_one.registry.ingest import fetch
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.fetch import InlineSource, load_specification
 from jentic_one.shared.config import IngestConfig
@@ -294,3 +296,119 @@ async def test_inline_content_over_size_limit_is_rejected() -> None:
     oversized = _SPEC_JSON + " " * 200  # valid JSON, > 100 bytes
     with pytest.raises(IngestStageError, match="size limit"):
         await load_specification(_make_inline(oversized, filename="spec.json"), config=cfg)
+
+
+def _billion_laughs(levels: int = 9, fanout: int = 9) -> str:
+    """A ~1 KB YAML document whose alias expansion is ``fanout ** levels`` nodes."""
+    lines = ['openapi: "3.1.0"', "info: {title: Bomb, version: '1.0.0'}", "x-l0: &l0 lol"]
+    for i in range(1, levels + 1):
+        refs = ", ".join([f"*l{i - 1}"] * fanout)
+        lines.append(f"x-l{i}: &l{i} [{refs}]")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("filename", ["spec.yaml", "spec.json"])
+@pytest.mark.asyncio
+async def test_yaml_alias_bomb_is_rejected_quickly(filename: str) -> None:
+    """Pins #1436: a billion-laughs document (9**9 expanded nodes in ~1 KB) fails
+    as a clean parse error before construction, instead of expanding into a tree
+    that exhausts worker memory downstream. Both parse orders are covered."""
+    bomb = _billion_laughs()
+    assert len(bomb) < 2048
+
+    start = time.perf_counter()
+    with pytest.raises(IngestStageError, match="YAML alias expansion exceeds the limit"):
+        await load_specification(_make_inline(bomb, filename=filename))
+    assert time.perf_counter() - start < 2.0
+
+
+@pytest.mark.asyncio
+async def test_yaml_recursive_alias_is_rejected() -> None:
+    spec = 'openapi: "3.1.0"\ninfo: {title: Loop, version: "1.0.0"}\nx-loop: &loop [*loop]\n'
+    with pytest.raises(IngestStageError, match="recursive alias"):
+        await load_specification(_make_inline(spec, filename="spec.yaml"))
+
+
+_SPEC_YAML_WITH_ALIASES = """\
+openapi: "3.1.0"
+info:
+  title: Aliased API
+  version: "1.0.0"
+  x-vendor: acme
+x-common-responses: &errors
+  "404": {description: Not found}
+  "500": {description: Server error}
+paths:
+  /pets:
+    get:
+      responses: *errors
+  /owners:
+    get:
+      responses:
+        <<: *errors
+        "200": {description: OK}
+"""
+
+
+@pytest.mark.asyncio
+async def test_yaml_spec_with_legitimate_aliases_still_parses() -> None:
+    """Anchor reuse (including ``<<`` merge keys) is legitimate YAML and stays
+    supported within the expansion budget."""
+    result = await load_specification(_make_inline(_SPEC_YAML_WITH_ALIASES, filename="spec.yaml"))
+    assert result.content is not None
+    paths = result.content["paths"]
+    assert paths["/pets"]["get"]["responses"]["404"] == {"description": "Not found"}
+    assert set(paths["/owners"]["get"]["responses"]) == {"200", "404", "500"}
+    json.dumps(result.content)
+
+
+@pytest.mark.asyncio
+async def test_yaml_alias_expansion_limit_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The budget counts fully expanded nodes: a document exactly at the limit
+    loads, one node more is rejected."""
+    spec = (
+        'openapi: "3.1.0"\ninfo: {title: A, version: "1", x-vendor: acme}\n'
+        "x-a: &a [1, 2]\nx-b: *a\n"
+    )
+    # Root mapping (1) + four keys (4) + "3.1.0" (1) + info mapping with three
+    # pairs (7) + the x-a sequence (3) + x-b's alias, expanded again (3) = 19.
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_NODES", 19)
+    result = await load_specification(_make_inline(spec, filename="spec.yaml"))
+    assert result.content is not None
+    assert result.content["x-b"] == [1, 2]
+
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_NODES", 18)
+    with pytest.raises(IngestStageError, match="limit of 18 nodes"):
+        await load_specification(_make_inline(spec, filename="spec.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_yaml_deep_alias_chain_is_rejected() -> None:
+    """A linear alias chain (``&a1 [*a0]``, ``&a2 [*a1]``, …) has shallow source text
+    and a modest node count, yet expands into a tree far deeper than literal YAML
+    can express; it is rejected on depth before downstream recursive walkers run."""
+    lines = [
+        'openapi: "3.1.0"',
+        "info: {title: Chain, version: '1.0.0', x-vendor: acme}",
+        "x-0: &a0 [1]",
+    ]
+    lines += [f"x-{k}: &a{k} [*a{k - 1}]" for k in range(1, 1501)]
+    with pytest.raises(IngestStageError, match="nesting limit of 256 levels"):
+        await load_specification(_make_inline("\n".join(lines) + "\n", filename="spec.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_yaml_alias_depth_limit_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Depth counts levels of the expanded tree: at the limit loads, one more is rejected."""
+    # Root mapping (1) > x-b's value: the aliased [[1]] (2 more) > the scalar 1 = 4.
+    spec = (
+        'openapi: "3.1.0"\ninfo: {title: A, version: "1", x-vendor: acme}\nx-a: &a [[1]]\nx-b: *a\n'
+    )
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_DEPTH", 4)
+    result = await load_specification(_make_inline(spec, filename="spec.yaml"))
+    assert result.content is not None
+    assert result.content["x-b"] == [[1]]
+
+    monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_DEPTH", 3)
+    with pytest.raises(IngestStageError, match="nesting limit of 3 levels"):
+        await load_specification(_make_inline(spec, filename="spec.yaml"))

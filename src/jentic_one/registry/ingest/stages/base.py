@@ -56,8 +56,17 @@ class BasePipelineStage(abc.ABC):
                 status = "error"
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
-                log.error("stage_unexpected_error", stage=self.name, error=str(exc))
-                raise IngestStageError(f"Stage '{self.name}' failed: {exc}") from exc
+                log.error(
+                    "stage_unexpected_error",
+                    stage=self.name,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+                # The raised message lands in operator-visible job error records, so
+                # it never echoes the raw exception text (DB/driver internals); the
+                # detail stays in the server-side log and span above.
+                raise IngestStageError(f"Stage '{self.name}' failed unexpectedly") from exc
             else:
                 log.info("stage_complete")
             finally:

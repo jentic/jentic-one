@@ -108,12 +108,9 @@ class UserService:
         """List users, scoped to the caller (``build_access_filters`` on ``User``).
 
         ``org:admin`` sees every user; anyone else sees only themselves.
+        ``invite_state`` filters on the derived state, so ``expired`` matches
+        pending users whose invite has lapsed and ``pending`` excludes them.
         """
-        # NOTE: the `invite_state` filter matches the STORED column, so it can't
-        # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
-        # returns nothing and `PENDING` may return rows that render as expired.
-        # If filtering by expired is ever needed, translate it to
-        # `PENDING AND user_id NOT IN (active)` here.
         cursor_dt = None
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)
@@ -127,25 +124,27 @@ class UserService:
                 invite_state=invite_state,
                 filters=access_filters,
             )
+            has_more = len(users) > limit
+            if has_more:
+                users = users[:limit]
 
-        has_more = len(users) > limit
-        if has_more:
-            users = users[:limit]
+            # Derive the EXPIRED invite state at read time (never persisted): a
+            # still-pending user with no unredeemed, unexpired token has a lapsed
+            # invite. A PENDING/EXPIRED filter already decided this in SQL, so
+            # reuse that verdict rather than re-checking against a later clock
+            # (a token lapsing in between would contradict the filter).
+            pending_ids = [u.id for u in users if u.invite_state == InviteState.PENDING]
+            active_invite_ids: set[str] = set()
+            if invite_state == InviteState.PENDING:
+                active_invite_ids = set(pending_ids)
+            elif invite_state is None and pending_ids:
+                active_invite_ids = await InviteTokenRepository.user_ids_with_active_invite(
+                    session, pending_ids
+                )
 
         user_ids = [u.id for u in users]
         perm_service = PermissionService(self._ctx)
         perms_map = await perm_service.project_for_users(user_ids)
-
-        # Derive the EXPIRED invite state at read time (never persisted): a
-        # still-pending user with no unredeemed,
-        # unexpired token has a lapsed invite. One batch query — no N+1.
-        pending_ids = [u.id for u in users if u.invite_state == InviteState.PENDING]
-        active_invite_ids: set[str] = set()
-        if pending_ids:
-            async with self._ctx.admin_db.session() as session:
-                active_invite_ids = await InviteTokenRepository.user_ids_with_active_invite(
-                    session, pending_ids
-                )
 
         views = [
             UserView(

@@ -111,7 +111,7 @@ func TestApisPromoteHitsEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisLifecycle(activeCtx(srv.URL), "stripe.com/api/v1", "r2", lifecyclePromote); err != nil {
+	if err := app.apisLifecycle(activeCtx(srv.URL), "stripe.com/api/v1", "r2", lifecyclePromote, false); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	if method != http.MethodPost || !strings.HasSuffix(path, "/revisions/r2:promote") {

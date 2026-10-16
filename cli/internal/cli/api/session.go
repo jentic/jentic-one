@@ -162,5 +162,8 @@ func contextAuthErr(err error, st *clictx.ActiveState) error {
 		Msg: fmt.Sprintf("could not authenticate identity %q with environment %q: %v (run `jentic doctor` to check your setup)",
 			st.IdentityName, st.EnvironmentName, err),
 		Actionable: "jentic register",
+		// A token mint against a stopped local instance lands here; Cause keeps
+		// the refused dial classifiable (agentops.LoopbackConnRefused).
+		Cause: err,
 	}
 }

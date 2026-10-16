@@ -61,12 +61,12 @@ class ExtractServersStage(BasePipelineStage):
                 if not op_servers:
                     continue
 
-                op_id: str | None = None
+                # (path, method) is unique per revision; a spec operationId is
+                # not (#1437), so it is only a fallback.
+                op_id: str | None = op_by_path_method.get((path, method.upper()))
                 spec_op_id = operation.get("operationId")
-                if spec_op_id and spec_op_id in op_by_spec_id:
-                    op_id = op_by_spec_id[spec_op_id]
-                else:
-                    op_id = op_by_path_method.get((path, method.upper()))
+                if op_id is None and isinstance(spec_op_id, str):
+                    op_id = op_by_spec_id.get(spec_op_id)
 
                 if op_id:
                     ids = await ServerRepository.store_servers(

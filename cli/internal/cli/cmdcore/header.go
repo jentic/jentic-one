@@ -90,6 +90,10 @@ func (a *App) probeServer(baseURL string) serverinfo.Info {
 	return serverinfo.Probe(baseURL, serverinfo.DefaultTimeout)
 }
 
+// stdoutIsTTY is the banner's terminal probe; a var so tests can simulate the
+// PTY an agent harness runs on.
+var stdoutIsTTY = func() bool { return term.IsTerminal(os.Stdout.Fd()) }
+
 // banner prints the jentic wordmark before a command runs, so the brand mark is
 // present across the whole CLI. It is installed once as the root's
 // PersistentPreRun and is deliberately conservative: it stays silent for
@@ -107,7 +111,7 @@ func (a *App) banner(cmd *cobra.Command) {
 	if bannerSkip(cmd) {
 		return
 	}
-	if !term.IsTerminal(os.Stdout.Fd()) {
+	if !stdoutIsTTY() {
 		return
 	}
 	fmt.Fprint(a.Out, theme.LogoForContext(cmd.Context()))

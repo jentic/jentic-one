@@ -19,7 +19,9 @@ import (
 // this CLI understands (tools/endpoint_tree.py and endpoint_reference.py emit it).
 const endpointReferenceSchema = "jentic.endpoint-permission-tree/v1"
 
-// endpointsOptions holds flags for `jentic endpoints`.
+// endpointsOptions holds flags for `jentic endpoints`. json is the resolved
+// output decision: RunE folds --json through cmdcore.JSONOrPretty so agent
+// mode emits the JSON envelope without needing --json.
 type endpointsOptions struct {
 	json       bool
 	permission string
@@ -39,6 +41,7 @@ func newEndpointsCmd(app *app) *cobra.Command {
 			"Filter with --permission or --actor, or use --json for a machine-readable dump.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.endpointsE(cmd.Context(), o)
 		},
 	}
@@ -126,6 +129,16 @@ func parseEndpoints(body []byte) ([]endpoint, error) {
 		}
 	}
 	eps := doc.Endpoints
+	// Public endpoints omit actor_types/required_permissions; emit [] so a JSON
+	// consumer can iterate them without a null check.
+	for i := range eps {
+		if eps[i].ActorTypes == nil {
+			eps[i].ActorTypes = []string{}
+		}
+		if eps[i].Permissions == nil {
+			eps[i].Permissions = []string{}
+		}
+	}
 	sort.Slice(eps, func(i, j int) bool {
 		if eps[i].Path != eps[j].Path {
 			return eps[i].Path < eps[j].Path

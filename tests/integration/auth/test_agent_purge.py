@@ -457,10 +457,14 @@ async def test_purge_removes_authority_and_sessions_and_keeps_history(
             ),
         )
         assert grant_revokes == 1
-    archive, purge = await _agent_audits(ctx, target)
-    assert (archive.action, purge.action) == ("archive", "delete")
+    archive, purge, revoke = await _agent_audits(ctx, target)
+    assert (archive.action, purge.action, revoke.action) == ("archive", "delete", "revoke")
     assert {archive.reason, purge.reason} == {_PURGE_REASON}
-    assert {archive.actor_id, purge.actor_id} == {purge_env.admin_id}
+    assert {archive.actor_id, purge.actor_id, revoke.actor_id} == {purge_env.admin_id}
+    # The inline archive step audits the permission-grant wipe.
+    assert revoke.before == {"permissions": ["apis:read"]}
+    assert revoke.after == {"permissions": []}
+    assert revoke.reason == "permissions revoked: agent was deleted"
     assert purge.before == {
         "name": "purge-target",
         "owner_id": purge_env.owner_id,
@@ -487,7 +491,7 @@ async def test_purge_allowed_from_any_status_by_owner(
 
     async with ctx.admin_db.session() as session:
         assert await AgentRepository.get_by_id(session, agent_id) is None
-    expected = ["delete"] if status == ActorStatus.ARCHIVED else ["archive", "delete"]
+    expected = ["delete"] if status == ActorStatus.ARCHIVED else ["archive", "delete", "revoke"]
     assert [a.action for a in await _agent_audits(ctx, agent_id)] == expected
 
 
@@ -546,12 +550,16 @@ async def test_failed_control_sweep_leaves_agent_archived_and_retry_finishes(
         assert agent is not None and agent.status == ActorStatus.ARCHIVED
     left = await _swept(ctx, agent_id, seeded)
     assert left["rules"] == 1 and left["sessions"] == 2 and left["active_jobs"] == 2
-    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive"]
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "revoke"]
 
     await AgentService(ctx).purge(agent_id, identity=_admin_identity(purge_env.admin_id))
 
     assert all(count == 0 for count in (await _swept(ctx, agent_id, seeded)).values())
-    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "delete"]
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == [
+        "archive",
+        "delete",
+        "revoke",
+    ]
 
 
 async def test_purge_refuses_up_front_without_control_db(
@@ -598,4 +606,8 @@ async def test_concurrent_purges_delete_once(
     )
 
     assert sorted(type(r).__name__ for r in results) == ["ActorNotFoundError", "NoneType"]
-    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "delete"]
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == [
+        "archive",
+        "delete",
+        "revoke",
+    ]

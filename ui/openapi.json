@@ -47780,7 +47780,7 @@
             }
           },
           {
-            "description": "Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.",
+            "description": "Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.",
             "examples": {
               "example": {
                 "summary": "Example query value for `invite_state`",
@@ -47799,7 +47799,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.",
+              "description": "Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.",
               "examples": [
                 "pending"
               ],
