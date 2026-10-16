@@ -41,12 +41,20 @@ class BackendKind(StrEnum):
     REDIS = "redis"
 
 
-# Built-in budget for the broker's ``Idempotency-Key`` records (``idem:``
-# keys): a DONE record carries the stored response body (up to
-# ``broker.idempotency.max_response_bytes``) for ``broker.idempotency.ttl_s``,
-# so it needs far more room than the small claim and replay markers.
+# Built-in budgets for the broker's ``Idempotency-Key`` entries. ``idem``
+# holds one small record per key (status, fingerprint, headers capped at
+# 512 bytes: about 0.9 KiB budgeted each); ``idem-body`` holds the stored
+# response bodies, so a full body budget only drops bodies from replays and
+# never refuses a claim. Each caller may hold at most a tenth of either, so
+# one caller cannot lock every other caller out.
+IDEM_OWNER_SHARE = 0.1
 _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
-    "idem": NamespaceBudget(max_entries=1_000_000, max_bytes=256 * 1024 * 1024),
+    "idem": NamespaceBudget(
+        max_entries=1_000_000, max_bytes=256 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
+    ),
+    "idem-body": NamespaceBudget(
+        max_entries=1_000_000, max_bytes=128 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
+    ),
 }
 
 
@@ -57,8 +65,20 @@ class MemoryNamespaceBudgetConfig(BaseModel):
     max_bytes: int = Field(
         ge=1,
         description=(
-            "Most approximate bytes (key + value + a fixed per-entry overhead) "
-            "the namespace may hold."
+            "Most approximate bytes (key + value + about 400 bytes of per-entry "
+            "overhead) the namespace may hold."
+        ),
+    )
+    max_owner_share: float | None = Field(
+        default=None,
+        gt=0,
+        le=1,
+        description=(
+            "Most of max_entries and max_bytes that one owner (the key's second "
+            "``:`` segment, for idem and idem-body the calling actor) may hold; "
+            "an owner over its share is refused without affecting the others. "
+            "Unset, it is 0.1 for idem and idem-body and unlimited elsewhere; "
+            "1.0 lets one owner use the whole namespace."
         ),
     )
 
@@ -67,12 +87,13 @@ class MemoryBackendConfig(BaseModel):
     """Bounds for the in-process (``memory``) shared-state backend.
 
     Every key belongs to a namespace, its prefix up to the first ``:``
-    (``idem`` for Idempotency-Key records, ``auth`` for JWT-bearer jti replay
-    records, ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker
-    counters, and so on). Each namespace has its own budget, so one key kind
-    filling up never starves another. A namespace that is full of live entries
-    refuses new writes (the request that needed it gets a 503) rather than
-    evicting a live entry. Ignored by the redis backend.
+    (``idem`` for Idempotency-Key records, ``idem-body`` for their stored
+    response bodies, ``auth`` for JWT-bearer jti replay records,
+    ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,
+    and so on). Each namespace has its own budget, so one key kind filling up
+    never starves another. A namespace that is full of live entries refuses
+    new writes (the request that needed it gets a 503) rather than evicting a
+    live entry. Ignored by the redis backend.
     """
 
     max_entries_per_namespace: int = Field(
@@ -86,28 +107,40 @@ class MemoryBackendConfig(BaseModel):
         default=DEFAULT_MEMORY_MAX_BYTES,
         ge=1,
         description=(
-            "Default most approximate bytes (key + value + a fixed per-entry "
-            "overhead) one key namespace may hold before its writes are refused."
+            "Default most approximate bytes (key + value + about 400 bytes of "
+            "per-entry overhead) one key namespace may hold before its writes are refused."
         ),
     )
     namespaces: dict[str, MemoryNamespaceBudgetConfig] = Field(
         default_factory=dict,
         description=(
             "Per-namespace budget overrides, keyed by namespace (the key prefix "
-            "before the first ``:``). ``idem`` defaults to 1000000 entries and "
-            "268435456 bytes (256 MiB) unless overridden here. At most "
-            "max_entries / broker.idempotency.ttl_s idempotent requests per "
-            "second can be held, so size it (or lower the TTL) for your load."
+            "before the first ``:``). Unless overridden here, idem (Idempotency-Key "
+            "records) is 1000000 entries / 268435456 bytes (256 MiB) and idem-body "
+            "(their stored response bodies) 1000000 entries / 134217728 bytes "
+            "(128 MiB), each with a 0.1 per-caller share. The sustained idempotent "
+            "request rate idem can hold is min(max_entries, max_bytes / record_bytes) "
+            "/ broker.idempotency.ttl_s, where record_bytes is about 500 bytes plus "
+            "the response headers (capped at 512 bytes): about 80 req/s at the "
+            "defaults and a 1 h TTL, and a tenth of that per caller. Above it, "
+            "Idempotency-Key requests get 503 idempotency_unavailable; bodies "
+            "(about 500 bytes + body length each) stop being stored for replay "
+            "sooner, about 25 req/s of 1 KiB bodies, without refusing requests."
         ),
     )
 
     def budgets(self) -> dict[str, NamespaceBudget]:
-        """The per-namespace overrides: built-in defaults, then configured ones."""
-        configured = {
-            name: NamespaceBudget(max_entries=b.max_entries, max_bytes=b.max_bytes)
-            for name, b in self.namespaces.items()
-        }
-        return {**_BUILTIN_NAMESPACE_BUDGETS, **configured}
+        """The per-namespace budgets: built-in defaults, then configured overrides."""
+        budgets = dict(_BUILTIN_NAMESPACE_BUDGETS)
+        for name, b in self.namespaces.items():
+            builtin = _BUILTIN_NAMESPACE_BUDGETS.get(name)
+            share = b.max_owner_share
+            if share is None and builtin is not None:
+                share = builtin.max_owner_share
+            budgets[name] = NamespaceBudget(
+                max_entries=b.max_entries, max_bytes=b.max_bytes, max_owner_share=share
+            )
+        return budgets
 
 
 class StateBackendConfig(BaseModel):

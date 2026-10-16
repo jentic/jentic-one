@@ -445,6 +445,37 @@ later rollback still decrypts what was written under the new key)
 
 ## Scaling and HA
 
+> **Warning: the default `memory` shared-state backend is bounded and fails
+> closed. Use `redis` in production.**
+> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> records, rate-limit buckets, circuit-breaker counters and the auth
+> surface's single-use markers in the process, with a fixed budget per key
+> namespace. It never evicts a live entry. When a namespace (or one caller's
+> share of it) is full, the request that needed the write gets a **503**
+> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
+> `Retry-After` of when its earliest entry expires.
+>
+> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
+> window on memory and 24 h on redis; the `idem` budget of 256 MiB; about
+> 0.9 KiB per record with typical response headers), one broker process
+> sustains about **80 idempotent requests per second**, and about **8 per
+> second per caller**, because each caller may hold at most 10% of the
+> budget. Above that, `Idempotency-Key` requests get 503. Stored response
+> bodies have their own 128 MiB `idem-body` budget. Past about 25 req/s of
+> 1 KiB bodies, replays omit the body (`Jentic-Idempotency-Body-Omitted:
+> true`) but requests are not refused. The ceiling is
+> `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
+> `record_bytes` is about 500 bytes plus the response headers (capped at
+> 512 bytes).
+>
+> To raise it: switch to `redis` (`broker.resilience.backend.redis_url`;
+> the published images lack the `[redis]` extra, see #1786), raise
+> `broker.resilience.backend.memory.namespaces.idem` (and its
+> `max_owner_share`), or lower `broker.idempotency.ttl_s`. The two `idem`
+> budgets alone can reach about 384 MiB, more than the broker chart's
+> default 256Mi memory limit, so raise the container memory limit together
+> with the budgets.
+
 Every subchart exposes `replicas` and `resources` in its values
 (`--set broker.replicas=3`). The defaults are sized for evaluation, not
 load: broker/registry/control request 100m/128Mi with a 500m/256Mi limit,
