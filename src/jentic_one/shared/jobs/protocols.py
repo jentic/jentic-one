@@ -148,17 +148,32 @@ class ExecutionAuthorizer(Protocol):
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict: ...
 
 
-class ActorStatusReader(Protocol):
-    """Reads whether the actor that queued a job is active right now.
+@dataclass(frozen=True, slots=True)
+class ActorAuthority:
+    """What one live read of the enqueuing actor says it may do right now.
 
-    The worker holds no token for the enqueuing actor, so it builds the
-    identity it injects credentials for from this live read (agent ``status``
-    / user ``active`` on the actor row; a missing row or any other actor type
-    is inactive). Implemented broker-side by ``ActorStatusResolver`` and
-    injected at worker startup.
+    ``active`` — the actor row exists and is active. ``holds_permission`` — the
+    actor still effectively holds the permission asked about. Both are
+    ``False`` for a missing actor or an actor type that is no longer issued.
     """
 
-    async def is_active(self, *, actor_id: str, actor_type: str) -> bool: ...
+    active: bool
+    holds_permission: bool
+
+
+class ActorStatusReader(Protocol):
+    """Reads, in one round-trip, whether the enqueuing actor may still execute.
+
+    The worker holds no token for the enqueuing actor, so both run-time
+    checks — the authorizer's up-front gate and the handler's final check
+    right before credential injection — answer "is the actor active, and does
+    it still hold the execute permission?" from the actor's rows. Implemented
+    broker-side by ``ActorStatusResolver`` and injected at worker startup.
+    """
+
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str
+    ) -> ActorAuthority: ...
 
 
 @dataclass(frozen=True, slots=True)
