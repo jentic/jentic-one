@@ -13,7 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.services.errors import UserNotFoundError
+from jentic_one.admin.services.errors import UserDeletedError, UserNotFoundError
 from jentic_one.shared.models import AuthProvider, InviteState
 
 
@@ -119,10 +119,63 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_id_for_update(session: AsyncSession, user_id: str) -> User | None:
+        """Read the user row under a row lock, refreshing any cached copy.
+
+        Callers that guard a write on ``deleted_at`` lock the row first, so a
+        concurrent delete either commits before the read (and is seen) or
+        waits for this transaction. Lock ``users`` before ``invite_tokens``,
+        as delete does, so the two never deadlock. The lock is Postgres'
+        ``FOR NO KEY UPDATE`` (the one an ``UPDATE`` of non-key columns
+        takes): it conflicts with delete's write but not with the key-share
+        lock a foreign-key insert (a new invite token) takes on the row.
+        SQLite ignores the clause; its single-writer transactions already
+        serialise the writes.
+        """
+        stmt = (
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_by_email(session: AsyncSession, email: str) -> User | None:
         stmt = select(User).where(sa_func.lower(User.email) == email.lower())
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def _update_live(
+        session: AsyncSession, user_id: str, values: dict[str, object], *, action: str
+    ) -> User:
+        """Write ``values`` to the user row only while it is not deleted.
+
+        The ``deleted_at IS NULL`` condition is part of the ``UPDATE`` itself:
+        on Postgres a write that waits on a concurrent delete's row lock
+        re-checks it once the delete commits and matches nothing, so the
+        guard holds without a lock taken up front. A missing row raises
+        :class:`UserNotFoundError`, a deleted one :class:`UserDeletedError`.
+        """
+        if values:
+            stmt = (
+                update(User)
+                .where(User.id == user_id, User.deleted_at.is_(None))
+                .values(**values)
+                .execution_options(synchronize_session="fetch")
+            )
+            result = await session.execute(stmt)
+            matched = bool(result.rowcount)  # type: ignore[attr-defined]
+        else:
+            matched = False
+        user = await session.get(User, user_id, populate_existing=True)
+        if user is None:
+            raise UserNotFoundError(user_id)
+        if not matched and user.deleted_at is not None:
+            raise UserDeletedError(action)
+        return user
 
     @staticmethod
     async def update(
@@ -138,29 +191,19 @@ class UserRepository:
         must_change_password: bool | None = None,
         invite_state: str | None = None,
     ) -> User:
-        user = await session.get(User, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
-
-        if email is not None:
-            user.email = email
-        if first_name is not None:
-            user.first_name = first_name
-        if last_name is not None:
-            user.last_name = last_name
-        if active is not None:
-            user.active = active
-        if auth_provider is not None:
-            user.auth_provider = auth_provider
-        if external_subject_id is not None:
-            user.external_subject_id = external_subject_id
-        if must_change_password is not None:
-            user.must_change_password = must_change_password
-        if invite_state is not None:
-            user.invite_state = invite_state
-
-        await session.flush()
-        return user
+        """Set the given fields; refuses a deleted row (see :meth:`_update_live`)."""
+        fields: dict[str, object | None] = {
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "active": active,
+            "auth_provider": auth_provider,
+            "external_subject_id": external_subject_id,
+            "must_change_password": must_change_password,
+            "invite_state": invite_state,
+        }
+        values = {name: value for name, value in fields.items() if value is not None}
+        return await UserRepository._update_live(session, user_id, values, action="update")
 
     @staticmethod
     async def list_all(
@@ -184,12 +227,10 @@ class UserRepository:
 
     @staticmethod
     async def disable(session: AsyncSession, user_id: str) -> User:
-        user = await session.get(User, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
-        user.active = False
-        await session.flush()
-        return user
+        """Deactivate the user; refuses a deleted row (see :meth:`_update_live`)."""
+        return await UserRepository._update_live(
+            session, user_id, {"active": False}, action="disable"
+        )
 
     @staticmethod
     async def revoke_login_sessions(session: AsyncSession, user_id: str) -> User:
@@ -229,9 +270,12 @@ class UserRepository:
 
     @staticmethod
     async def enable(session: AsyncSession, user_id: str) -> User:
-        user = await session.get(User, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
-        user.active = True
-        await session.flush()
-        return user
+        """Reactivate the user; refuses a deleted row (see :meth:`_update_live`).
+
+        A delete that commits while this write waits on its row lock leaves
+        the row inactive: the conditional ``UPDATE`` matches nothing and
+        raises :class:`UserDeletedError`.
+        """
+        return await UserRepository._update_live(
+            session, user_id, {"active": True}, action="enable"
+        )

@@ -11,7 +11,6 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import InviteTokenRepository, UserRepository
-from jentic_one.admin.services.errors import InviteTokenNotFoundError
 from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
@@ -91,15 +90,27 @@ async def test_redeem(admin_db: DatabaseSession, test_user: str) -> None:
         token_id = token.id
 
     async with admin_db.session() as session:
-        redeemed = await InviteTokenRepository.redeem(session, token_id)
+        assert await InviteTokenRepository.redeem(session, token_id) is True
         await session.commit()
-        assert redeemed.redeemed_at is not None
+
+    async with admin_db.session() as session:
+        first = await InviteTokenRepository.get_by_token_hash(session, "redeem_hash_001")
+        assert first is not None and first.redeemed_at is not None
+        first_redeemed_at = first.redeemed_at
+
+    # A second redeem matches nothing and keeps the first timestamp.
+    async with admin_db.session() as session:
+        assert await InviteTokenRepository.redeem(session, token_id) is False
+        await session.commit()
+
+    async with admin_db.session() as session:
+        again = await InviteTokenRepository.get_by_token_hash(session, "redeem_hash_001")
+        assert again is not None and again.redeemed_at == first_redeemed_at
 
 
 async def test_redeem_not_found(admin_db: DatabaseSession, clean_invite_tokens: None) -> None:
     async with admin_db.session() as session:
-        with pytest.raises(InviteTokenNotFoundError):
-            await InviteTokenRepository.redeem(session, "inv_nonexistent0000000000")
+        assert await InviteTokenRepository.redeem(session, "inv_nonexistent0000000000") is False
 
 
 async def test_get_active_for_user(admin_db: DatabaseSession, test_user: str) -> None:

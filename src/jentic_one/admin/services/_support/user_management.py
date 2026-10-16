@@ -13,8 +13,8 @@ from jentic_one.admin.core.permissions import ORG_ADMIN, compute_effective
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
 from jentic_one.admin.services.errors import (
-    ConflictError,
     LastActiveAdminError,
+    UserDeletedError,
     UserManagementForbiddenError,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -28,7 +28,7 @@ def ensure_not_deleted(user: User, action: str) -> None:
     409 only reaches a caller who may already read the row.
     """
     if user.deleted_at is not None:
-        raise ConflictError(f"Cannot {action} a deleted user")
+        raise UserDeletedError(action)
 
 
 def ensure_can_manage(
