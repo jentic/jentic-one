@@ -167,6 +167,7 @@ def test_import_request_and_preview_cache_limits(
     assert config.ingest.import_request_cap_bytes == 2 * config.ingest.max_spec_bytes
     assert config.catalog.preview_cache_ttl_seconds == 300
     assert config.catalog.preview_cache_max_entries == 16
+    assert config.catalog.preview_cache_failure_ttl_seconds == 30
     # The default import cap tracks a raised per-spec cap.
     assert IngestConfig(max_spec_bytes=1000).import_request_cap_bytes == 2000
 
@@ -174,12 +175,14 @@ def test_import_request_and_preview_cache_limits(
         "JENTIC__INGEST__MAX_IMPORT_REQUEST_BYTES": "1500",
         "JENTIC__CATALOG__PREVIEW_CACHE_TTL_SECONDS": "0",
         "JENTIC__CATALOG__PREVIEW_CACHE_MAX_ENTRIES": "4",
+        "JENTIC__CATALOG__PREVIEW_CACHE_FAILURE_TTL_SECONDS": "0",
     }
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.ingest.import_request_cap_bytes == 1500
     assert config.catalog.preview_cache_ttl_seconds == 0
     assert config.catalog.preview_cache_max_entries == 4
+    assert config.catalog.preview_cache_failure_ttl_seconds == 0
 
     from_yaml = tmp_path / "limits.yaml"
     from_yaml.write_text(

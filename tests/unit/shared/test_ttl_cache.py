@@ -151,3 +151,123 @@ async def test_clear_evicts_and_discards_in_flight_load() -> None:
     # The caller still gets its value, but the pre-clear result is not stored.
     assert task.result() == "stale"
     assert len(cache) == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_misses_share_one_failure() -> None:
+    """Every waiter of a failing load gets its exception; the loader runs once."""
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(max_entries=4, ttl_seconds=60, clock=_Clock())
+    release = asyncio.Event()
+    calls = 0
+
+    async def failing_loader() -> str:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        raise RuntimeError("upstream down")
+
+    tasks = [asyncio.create_task(cache.get_or_load("a", failing_loader)) for _ in range(5)]
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert calls == 1
+    assert all(isinstance(r, RuntimeError) for r in results)
+    # Failures are not remembered by default, so the next call reloads.
+    with pytest.raises(RuntimeError):
+        await cache.get_or_load("a", failing_loader)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelling_one_waiter_does_not_cancel_the_shared_load() -> None:
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(max_entries=4, ttl_seconds=60, clock=_Clock())
+    release = asyncio.Event()
+
+    async def slow_loader() -> str:
+        await release.wait()
+        return "doc"
+
+    first = asyncio.create_task(cache.get_or_load("a", slow_loader))
+    second = asyncio.create_task(cache.get_or_load("a", slow_loader))
+    await asyncio.sleep(0)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    release.set()
+
+    assert await second == "doc"
+    assert len(cache) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_last_waiter_cancels_the_load() -> None:
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(max_entries=4, ttl_seconds=60, clock=_Clock())
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_loader() -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "never"
+
+    waiter = asyncio.create_task(cache.get_or_load("a", slow_loader))
+    await started.wait()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+    # A later caller starts a fresh load instead of joining the cancelled one.
+    assert await cache.get_or_load("a", _Loader()) == "v1"
+
+
+@pytest.mark.asyncio
+async def test_failure_ttl_remembers_the_error_until_it_expires() -> None:
+    clock = _Clock()
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=4, ttl_seconds=60, failure_ttl_seconds=30, clock=clock
+    )
+    calls = 0
+
+    async def flaky() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("upstream down")
+        return "ok"
+
+    with pytest.raises(RuntimeError):
+        await cache.get_or_load("a", flaky)
+    clock.now += 29
+    with pytest.raises(RuntimeError, match="upstream down"):
+        await cache.get_or_load("a", flaky)
+    assert calls == 1
+    clock.now += 1
+    assert await cache.get_or_load("a", flaky) == "ok"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_clear_detaches_in_flight_load_from_later_callers() -> None:
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(max_entries=4, ttl_seconds=60, clock=_Clock())
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_loader() -> str:
+        started.set()
+        await release.wait()
+        return "stale"
+
+    old = asyncio.create_task(cache.get_or_load("a", stale_loader))
+    await started.wait()
+    cache.clear()
+    # A caller after clear() must not join the pre-clear load.
+    assert await cache.get_or_load("a", _Loader("fresh")) == "fresh1"
+    release.set()
+    assert await old == "stale"
+    assert await cache.get_or_load("a", _Loader("other")) == "fresh1"

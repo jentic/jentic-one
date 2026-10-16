@@ -1845,14 +1845,18 @@ class IngestConfig(BaseModel):
     max_spec_bytes: int = 25 * 1024 * 1024
     # Enforced before the body is parsed, so an oversized batch never reaches
     # the job queue. The 2x default leaves room for one maximum-size inline spec
-    # plus JSON-string escaping, and scales when ``max_spec_bytes`` is raised.
+    # plus typical JSON-string escaping, and scales when ``max_spec_bytes`` is
+    # raised. It is not a guarantee: control characters, or encoders that write
+    # non-ASCII as ``\uXXXX`` or HTML-escape ``<>&``, expand a byte to six.
     max_import_request_bytes: int | None = Field(
         default=None,
         gt=0,
         description=(
             "Cap on the raw `POST /apis` request body (all sources together). "
-            "Unset means twice `max_spec_bytes`. Each inline source's content is "
-            "separately capped at `max_spec_bytes`."
+            "Unset means twice `max_spec_bytes`, which covers one maximum-size "
+            "inline spec with typical JSON-string escaping; raise it for batches "
+            "of heavily escaped specs (`\\uXXXX` or HTML-escaped content). Each "
+            "inline source's content is separately capped at `max_spec_bytes`."
         ),
     )
     fetch_timeout_s: float = 30.0
@@ -1915,12 +1919,28 @@ class CatalogConfig(BaseModel):
     # kept in-process so repeated previews of the same spec within the TTL cost
     # one upstream fetch. Entries are bounded by count, not bytes, so keep the
     # count small: a projection of a very large spec can itself be several MB.
+    # The cache is per process: ``POST /catalog:refresh`` clears only the
+    # serving process's copy, and other workers/replicas refetch after the TTL.
     preview_cache_ttl_seconds: int = Field(
         default=300,
         ge=0,
         description=(
             "How long a catalog preview's upstream spec projection is reused before "
-            "refetching. Zero disables the cache."
+            "refetching. Zero disables the cache. The cache is per process: "
+            "`POST /catalog:refresh` clears it only on the process that serves the "
+            "refresh, so other workers or replicas can serve the previous projection "
+            "until this TTL expires."
+        ),
+    )
+    preview_cache_failure_ttl_seconds: int = Field(
+        default=30,
+        ge=0,
+        description=(
+            "How long a failed catalog preview fetch (upstream unavailable, oversized "
+            "or unparseable spec) is remembered per spec URL before it is retried, so "
+            "repeated previews of a broken spec do not refetch it on every request. "
+            "Zero retries on the next request. Ignored when the preview cache is "
+            "disabled."
         ),
     )
     preview_cache_max_entries: int = Field(
