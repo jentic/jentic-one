@@ -436,8 +436,11 @@ async def test_open_event_stream_ends_when_user_disabled(
         request = asyncio.create_task(_get(client, "/events/stream", token))
         await asyncio.sleep(0.3)
         assert not request.done(), "the stream must stay open while the user is active"
-        await UserService(ctx).disable(actors.user_id, identity=_operator(actors))
-        resp = await asyncio.wait_for(request, timeout=10)
+        with structlog.testing.capture_logs() as logs:
+            await UserService(ctx).disable(actors.user_id, identity=_operator(actors))
+            resp = await asyncio.wait_for(request, timeout=10)
 
     assert resp.status_code == 200
     assert "event: heartbeat" in resp.text
+    closed = [e for e in logs if e["event"] == "sse_stream_credential_unverified"]
+    assert [e["reason"] for e in closed] == ["refused"]

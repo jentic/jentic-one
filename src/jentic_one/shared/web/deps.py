@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from enum import StrEnum
 from typing import Any
 
 from fastapi import Depends, Request
@@ -82,7 +83,18 @@ async def resolve_identity(request: Request) -> Identity:
     return identity
 
 
-CredentialRecheck = Callable[[], Coroutine[Any, Any, bool]]
+class CredentialRecheckResult(StrEnum):
+    """The outcome of re-verifying a request's credential mid-response."""
+
+    #: The credential still verifies.
+    VALID = "valid"
+    #: The verifier refused it: expired, revoked, or its actor disabled or deleted.
+    REFUSED = "refused"
+    #: The verifier could not answer (the database is unavailable).
+    UNAVAILABLE = "unavailable"
+
+
+CredentialRecheck = Callable[[], Coroutine[Any, Any, CredentialRecheckResult]]
 
 
 def get_credential_recheck(request: Request) -> CredentialRecheck:
@@ -90,20 +102,21 @@ def get_credential_recheck(request: Request) -> CredentialRecheck:
 
     A streaming response (``/events/stream``) authenticates once, then stays
     open far longer than any single verification. The returned callable runs
-    the presented credential back through the app's verifier and answers
-    whether it is still good — ``False`` once the token has expired, been
-    revoked, or its actor disabled or deleted (#1139). Any failure, including
-    a database that cannot answer, reads as ``False``: the stream fails closed
-    and a reconnect gets the precise 401/503.
+    the presented credential back through the app's verifier and reports
+    whether it still verifies (#1139). A database that cannot answer reads as
+    ``UNAVAILABLE`` and any other failure as ``REFUSED``; the caller treats
+    both as not valid (fail closed), and a reconnect gets the precise 401/503.
     """
 
-    async def _recheck() -> bool:
+    async def _recheck() -> CredentialRecheckResult:
         verify_token: TokenVerifier = request.app.state.verify_token
         try:
             await verify_token(extract_credential(request), request)
+        except DatabaseUnavailableError:
+            return CredentialRecheckResult.UNAVAILABLE
         except Exception:
-            return False
-        return True
+            return CredentialRecheckResult.REFUSED
+        return CredentialRecheckResult.VALID
 
     return _recheck
 
