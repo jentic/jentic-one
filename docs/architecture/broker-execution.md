@@ -196,7 +196,10 @@ before the response; on the streaming fast path it is a post-response
 background task and **best-effort** — a database failure there is logged and
 counted (`broker.streaming_execution.persist_failures`,
 [monitoring.md](../operations/monitoring.md)) but does not fail the call, so
-a completed call can, rarely, lack its record. Lifecycle events (`EXECUTION_COMPLETED` /
+a completed call can, rarely, lack its record. Concurrent streaming persists
+are capped per process (`broker.streaming_persist_max_concurrency`, clamped
+below `databases.admin.pool_max`); excess persists queue rather than drop, and
+the queue is visible as `broker.streaming_execution.persist_backlog`. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

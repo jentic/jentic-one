@@ -226,6 +226,7 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
+| `broker.streaming_persist_max_concurrency` | integer (> 0) | `5` | `JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY` | Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot — none are dropped — and the waiting + in-flight count is exported as `broker.streaming_execution.persist_backlog`. The effective cap is clamped to `databases.admin.pool_max - 1` (minimum 1) so a burst never takes the whole admin pool; the default (half the default admin pool of 10) leaves headroom for credential-access audit writes and the buffered path. |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |
