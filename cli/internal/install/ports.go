@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,21 +37,30 @@ func (h PortHolder) String() string {
 const dockerPublishLookupTimeout = 10 * time.Second
 
 // dockerPublishers lists the running containers publishing hostPort, one
-// "<name>\t<compose project>" line per container. A package-level seam so
-// tests can simulate holders without a real Docker daemon.
+// "<name>\t<compose project>\t<ports>" line per container, where <ports> is
+// docker's published-ports column ("127.0.0.1:5432->5432/tcp, …"). A
+// package-level seam so tests can simulate holders without a real Docker
+// daemon.
 var dockerPublishers = func(ctx context.Context, hostPort string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, dockerPublishLookupTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "ps", //nolint:gosec // hostPort is a digits-only port parsed from the CLI-generated compose file.
 		"--filter", "publish="+hostPort,
-		"--format", `{{.Names}}`+"\t"+`{{.Label "com.docker.compose.project"}}`).Output()
+		"--format", `{{.Names}}`+"\t"+`{{.Label "com.docker.compose.project"}}`+"\t"+`{{.Ports}}`).Output()
 	return string(out), err
 }
 
 // ForeignPortHolders reports the running containers from OTHER compose
 // projects (or bare containers) that already publish a host port the compose
-// file at composePath publishes. The jentic project's own containers are
-// excluded: the update recreates them, so their bindings are not a conflict.
+// file at composePath publishes, on a host address that overlaps the stack's
+// own bind address. The jentic project's own containers are excluded: the
+// update recreates them, so their bindings are not a conflict.
+//
+// `docker ps --filter publish=N` matches port N on any host address, so each
+// holder's published bindings are compared against the compose bind host: a
+// wildcard address (0.0.0.0, ::, or none) on either side overlaps everything,
+// otherwise only the same address conflicts. A holder whose bindings cannot be
+// read is reported, since docker already said it publishes the port.
 //
 // It sees Docker-held ports only — a non-container host process bound to the
 // port is not detected here and still surfaces when compose starts the stack
@@ -58,19 +68,30 @@ var dockerPublishers = func(ctx context.Context, hostPort string) (string, error
 // file or a failing `docker ps` returns the error so the caller can skip the
 // check rather than block the update on it.
 func ForeignPortHolders(ctx context.Context, composePath string) ([]PortHolder, error) {
-	ports, err := composeHostPorts(composePath)
+	bindings, err := composeHostBindings(composePath)
 	if err != nil {
 		return nil, err
 	}
 	var holders []PortHolder
-	for _, port := range ports {
+	for _, port := range distinctPorts(bindings) {
 		out, err := dockerPublishers(ctx, port)
 		if err != nil {
 			return nil, fmt.Errorf("list containers publishing port %s: %w", port, err)
 		}
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			name, project, _ := strings.Cut(strings.TrimSpace(line), "\t")
+			fields := strings.SplitN(strings.TrimSpace(line), "\t", 3)
+			name := fields[0]
+			project, published := "", ""
+			if len(fields) > 1 {
+				project = fields[1]
+			}
+			if len(fields) > 2 {
+				published = fields[2]
+			}
 			if name == "" || project == composeProjectName {
+				continue
+			}
+			if !holderOverlaps(published, port, hostsFor(bindings, port)) {
 				continue
 			}
 			holders = append(holders, PortHolder{Port: port, Container: name, Project: project})
@@ -79,9 +100,15 @@ func ForeignPortHolders(ctx context.Context, composePath string) ([]PortHolder, 
 	return holders, nil
 }
 
-// composeHostPorts returns the distinct host ports published by the services
-// in the compose file, in file order.
-func composeHostPorts(composePath string) ([]string, error) {
+// hostBinding is one published host address:port from the compose file.
+type hostBinding struct {
+	host string // "" when the mapping has no bind host (all interfaces)
+	port string
+}
+
+// composeHostBindings returns the distinct host bindings published by the
+// services in the compose file, in file order.
+func composeHostBindings(composePath string) ([]hostBinding, error) {
 	raw, err := os.ReadFile(composePath) //nolint:gosec // composePath is the CLI-managed ~/.jentic compose file.
 	if err != nil {
 		return nil, fmt.Errorf("read compose file: %w", err)
@@ -92,8 +119,8 @@ func composeHostPorts(composePath string) ([]string, error) {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("parse compose file: %w", err)
 	}
-	var ports []string
-	seen := map[string]bool{}
+	var bindings []hostBinding
+	seen := map[hostBinding]bool{}
 	// Walk the mapping node rather than decoding into a Go map so the order is
 	// the file's (deterministic messages and tests).
 	svcs := doc.Services.Content
@@ -105,35 +132,124 @@ func composeHostPorts(composePath string) ([]string, error) {
 			return nil, fmt.Errorf("parse compose service ports: %w", err)
 		}
 		for _, mapping := range svc.Ports {
-			if p := hostPortOf(mapping); p != "" && !seen[p] {
-				seen[p] = true
-				ports = append(ports, p)
+			if b, ok := hostBindingOf(mapping); ok && !seen[b] {
+				seen[b] = true
+				bindings = append(bindings, b)
 			}
 		}
 	}
-	return ports, nil
+	return bindings, nil
+}
+
+// distinctPorts returns the distinct ports of bindings, in order.
+func distinctPorts(bindings []hostBinding) []string {
+	var ports []string
+	seen := map[string]bool{}
+	for _, b := range bindings {
+		if !seen[b.port] {
+			seen[b.port] = true
+			ports = append(ports, b.port)
+		}
+	}
+	return ports
+}
+
+// hostsFor returns the compose bind hosts that publish port.
+func hostsFor(bindings []hostBinding, port string) []string {
+	var hosts []string
+	for _, b := range bindings {
+		if b.port == port {
+			hosts = append(hosts, b.host)
+		}
+	}
+	return hosts
 }
 
 // digitsOnly matches a single numeric port (ranges are not used by the
 // generated compose file and are skipped).
 var digitsOnly = regexp.MustCompile(`^[0-9]+$`)
 
-// hostPortOf extracts the published host port from a short-syntax compose
-// port mapping: "[host:]hostPort:containerPort[/proto]". The host port is the
-// second-to-last colon-separated field, which also holds for a bracketed IPv6
-// bind host ("[::1]:8000:8000"). A bare "containerPort" publishes nothing
-// fixed and yields "".
-func hostPortOf(mapping string) string {
+// hostBindingOf parses a short-syntax compose port mapping
+// "[host:]hostPort:containerPort[/proto]". The host port is the second-to-last
+// colon-separated field and the bind host is everything before it, which also
+// holds for a bracketed IPv6 bind host ("[::1]:8000:8000"). A bare
+// "containerPort" publishes nothing fixed and yields ok=false.
+func hostBindingOf(mapping string) (hostBinding, bool) {
 	mapping, _, _ = strings.Cut(strings.TrimSpace(mapping), "/")
 	parts := strings.Split(mapping, ":")
 	if len(parts) < 2 {
-		return ""
+		return hostBinding{}, false
 	}
 	port := parts[len(parts)-2]
 	if !digitsOnly.MatchString(port) {
-		return ""
+		return hostBinding{}, false
 	}
-	return port
+	host := strings.Join(parts[:len(parts)-2], ":")
+	return hostBinding{host: strings.Trim(host, "[]"), port: port}, true
+}
+
+// holderOverlaps reports whether a container whose published-ports column is
+// published binds port on an address overlapping any of the stack's hosts.
+// An unparseable column (no binding for port found) counts as overlapping.
+func holderOverlaps(published, port string, stackHosts []string) bool {
+	holderHosts := publishedHosts(published, port)
+	if len(holderHosts) == 0 {
+		return true
+	}
+	for _, h := range holderHosts {
+		for _, s := range stackHosts {
+			if bindHostsOverlap(h, s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publishedHosts extracts the host addresses binding port from docker's
+// published-ports column, e.g. "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp".
+// Entries without "->" (exposed, not published) are ignored.
+func publishedHosts(published, port string) []string {
+	var hosts []string
+	for _, entry := range strings.Split(published, ",") {
+		left, _, ok := strings.Cut(strings.TrimSpace(entry), "->")
+		if !ok {
+			continue
+		}
+		i := strings.LastIndex(left, ":")
+		if i < 0 {
+			continue
+		}
+		if portInSpec(port, left[i+1:]) {
+			hosts = append(hosts, strings.Trim(left[:i], "[]"))
+		}
+	}
+	return hosts
+}
+
+// portInSpec reports whether port equals spec or falls in a "lo-hi" range.
+func portInSpec(port, spec string) bool {
+	lo, hi, isRange := strings.Cut(spec, "-")
+	if !isRange {
+		return spec == port
+	}
+	p, errP := strconv.Atoi(port)
+	l, errL := strconv.Atoi(lo)
+	h, errH := strconv.Atoi(hi)
+	return errP == nil && errL == nil && errH == nil && l <= p && p <= h
+}
+
+// bindHostsOverlap reports whether two host bind addresses can collide: a
+// wildcard on either side covers every address, otherwise they must match.
+func bindHostsOverlap(a, b string) bool {
+	if isWildcardHost(a) || isWildcardHost(b) {
+		return true
+	}
+	return a == b
+}
+
+func isWildcardHost(h string) bool {
+	return h == "" || h == "0.0.0.0" || h == "::"
 }
 
 // portConflictPatterns match the Docker daemon / Docker Desktop errors for a

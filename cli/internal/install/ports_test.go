@@ -9,19 +9,20 @@ import (
 	"testing"
 )
 
-func TestHostPortOf(t *testing.T) {
-	tests := map[string]string{
-		"127.0.0.1:5432:5432": "5432",
-		"0.0.0.0:8000:8000":   "8000",
-		"8900:8900":           "8900",
-		"[::1]:8000:8000":     "8000",
-		"8000:8000/tcp":       "8000",
-		"5432":                "",
-		"8000-8001:8000-8001": "",
+func TestHostBindingOf(t *testing.T) {
+	tests := map[string]hostBinding{
+		"127.0.0.1:5432:5432": {host: "127.0.0.1", port: "5432"},
+		"0.0.0.0:8000:8000":   {host: "0.0.0.0", port: "8000"},
+		"8900:8900":           {port: "8900"},
+		"[::1]:8000:8000":     {host: "::1", port: "8000"},
+		"8000:8000/tcp":       {port: "8000"},
+		"5432":                {},
+		"8000-8001:8000-8001": {},
 	}
 	for mapping, want := range tests {
-		if got := hostPortOf(mapping); got != want {
-			t.Errorf("hostPortOf(%q) = %q, want %q", mapping, got, want)
+		got, ok := hostBindingOf(mapping)
+		if got != want || ok != (want.port != "") {
+			t.Errorf("hostBindingOf(%q) = (%+v, %v), want %+v", mapping, got, ok, want)
 		}
 	}
 }
@@ -47,13 +48,14 @@ func writeRenderedCompose(t *testing.T) string {
 	return path
 }
 
-func TestComposeHostPortsFromRenderedCompose(t *testing.T) {
-	got, err := composeHostPorts(writeRenderedCompose(t))
+func TestComposeHostBindingsFromRenderedCompose(t *testing.T) {
+	got, err := composeHostBindings(writeRenderedCompose(t))
 	if err != nil {
-		t.Fatalf("composeHostPorts: %v", err)
+		t.Fatalf("composeHostBindings: %v", err)
 	}
-	if want := []string{"5432", "8000", "8900"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("composeHostPorts = %v, want %v", got, want)
+	want := []hostBinding{{"127.0.0.1", "5432"}, {"127.0.0.1", "8000"}, {"127.0.0.1", "8900"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("composeHostBindings = %v, want %v", got, want)
 	}
 }
 
@@ -66,9 +68,9 @@ func TestForeignPortHoldersExcludesOwnProject(t *testing.T) {
 	dockerPublishers = func(_ context.Context, port string) (string, error) {
 		switch port {
 		case "5432":
-			return "jentic-db-1\tjentic\ndev-db-1\tjentic-dev\n", nil
+			return "jentic-db-1\tjentic\t127.0.0.1:5432->5432/tcp\ndev-db-1\tjentic-dev\t0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp\n", nil
 		case "8000":
-			return "stray\t\n", nil
+			return "stray\t\t127.0.0.1:8000->80/tcp\n", nil
 		}
 		return "", nil
 	}
@@ -86,6 +88,40 @@ func TestForeignPortHoldersExcludesOwnProject(t *testing.T) {
 	}
 	if s := got[0].String(); s != `host port 5432 is already allocated by container dev-db-1 (compose project "jentic-dev")` {
 		t.Errorf("holder string = %q", s)
+	}
+}
+
+// ForeignPortHolders compares the holder's published bind address with the
+// stack's: a holder on a different, specific address does not conflict with
+// the stack's 127.0.0.1 binding; a wildcard holder or an unreadable binding
+// does.
+func TestForeignPortHoldersComparesBindAddress(t *testing.T) {
+	path := writeRenderedCompose(t)
+	orig := dockerPublishers
+	t.Cleanup(func() { dockerPublishers = orig })
+	dockerPublishers = func(_ context.Context, port string) (string, error) {
+		switch port {
+		case "5432":
+			return "lan-db\tother\t192.168.1.10:5432->5432/tcp\nv6-db\tother\t[::1]:5432->5432/tcp\n", nil
+		case "8000":
+			return "wild\tother\t[::]:8000->8000/tcp\n", nil
+		case "8900":
+			return "ranged\tother\t127.0.0.1:8890-8910->8890-8910/tcp\nopaque\tother\t\n", nil
+		}
+		return "", nil
+	}
+
+	got, err := ForeignPortHolders(context.Background(), path)
+	if err != nil {
+		t.Fatalf("ForeignPortHolders: %v", err)
+	}
+	want := []PortHolder{
+		{Port: "8000", Container: "wild", Project: "other"},
+		{Port: "8900", Container: "ranged", Project: "other"},
+		{Port: "8900", Container: "opaque", Project: "other"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ForeignPortHolders = %+v, want %+v", got, want)
 	}
 }
 
