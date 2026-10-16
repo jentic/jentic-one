@@ -1543,6 +1543,13 @@ class IdempotencyConfig(BaseModel):
     ``max_response_bytes`` are recorded without their body (replay still prevents
     a duplicate side-effect; only byte-for-byte body replay is dropped).
 
+    A failed request settles its claim by whether the upstream may have acted: a
+    failure that never reached the upstream (connect-phase, open circuit, an
+    error before the upstream call) releases the claim at once; a failure after
+    the request may have been sent stores the error (or the unrecorded upstream
+    answer) on ``ttl_s`` for replay; a cancellation mid-call holds the claim
+    until ``pending_ttl_s``.
+
     Compliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,
     async same-``job_id`` replay, and at-rest encryption are future work.
     """

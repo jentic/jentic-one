@@ -92,6 +92,11 @@ class BrokerError(Exception):
         # after send) is only safe to retry for idempotent methods / with an
         # Idempotency-Key. Defaults to False (assume bytes were sent).
         self.pre_send = pre_send
+        # Set by the ``RetryRunner`` on the error it finally re-raises when an
+        # *earlier* attempt of the same call may have reached the upstream, so
+        # ``pre_send`` on this last error never reads as "the call never left
+        # the broker" (see :func:`upstream_contact_ruled_out`).
+        self.prior_attempt_sent = False
 
 
 class OperationNotFoundError(BrokerError):
@@ -300,6 +305,29 @@ class RunnerUnavailableError(BrokerError):
     agent can retry — distinct from :class:`RunnerSchemeUnsupportedError` (501,
     no such runner at all).
     """
+
+
+# Raised by the envelope before the transport is asked to send anything.
+_RAISED_BEFORE_DISPATCH: tuple[type[BrokerError], ...] = (
+    CircuitOpenError,
+    RunnerSchemeUnsupportedError,
+    RunnerUnavailableError,
+)
+
+
+def upstream_contact_ruled_out(exc: BaseException) -> bool:
+    """Whether *exc* proves no attempt of the call put request bytes on the wire.
+
+    True only for a ``BrokerError`` that is connect-phase (``pre_send``) or one
+    the envelope raises before dispatch (open circuit, no/unavailable runner),
+    and only when no earlier retry attempt may have reached the upstream. Any
+    other failure — a read timeout, a dropped connection, an oversized
+    response, a blown deadline, a non-``BrokerError`` — may have been acted on
+    upstream, so it fails closed.
+    """
+    if not isinstance(exc, BrokerError) or exc.prior_attempt_sent:
+        return False
+    return exc.pre_send or isinstance(exc, _RAISED_BEFORE_DISPATCH)
 
 
 def switch_toolkit_directive(status: int) -> AgentDirective:
