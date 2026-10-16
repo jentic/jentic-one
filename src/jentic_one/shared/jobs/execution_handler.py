@@ -29,7 +29,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import structlog
@@ -38,7 +38,6 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.connectivity import redact_sql
-from jentic_one.shared.db.errors import DATABASE_WRITE_ERRORS
 from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
@@ -59,6 +58,7 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecRequest,
     UpstreamExecutor,
 )
+from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType as ActorTypeEnum
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
@@ -67,7 +67,31 @@ from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
+if TYPE_CHECKING:
+    from opentelemetry.metrics import Counter
+
 logger = structlog.get_logger(__name__)
+
+#: Suffix that marks a job result whose ``executions`` record was not written.
+_RECORD_NOT_PERSISTED = "execution record not persisted"
+
+# Created once on first increment, so the instrument identity is stable.
+_write_failures: Counter | None = None
+
+
+def _record_write_failure(write: str) -> None:
+    """Count a failed post-outcome write; ``write`` is ``record`` or ``lifecycle``."""
+    global _write_failures
+    if _write_failures is None:
+        _write_failures = get_meter("jentic_one.jobs").create_counter(
+            "jentic_one.jobs.execution_write_failed",
+            description=(
+                "Queued-execution writes that failed after the job's outcome was "
+                "settled; the job still completed with its real result."
+            ),
+        )
+    _write_failures.add(1, {"write": write})
+
 
 #: Result problem of a held payload this worker has no keyset to decrypt.
 _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
@@ -129,10 +153,12 @@ class ExecutionHandler:
         transaction on it, after the upstream call, so the call is never awaited
         while an admin connection (or, on SQLite, the write lock) is held.
 
-        Once the upstream call has run, a database failure does not raise: a
-        raise would requeue the job and send the upstream request again. A
-        failed record write is reported with the real upstream result, and the
-        lifecycle write is best-effort.
+        Once the upstream call is dispatched nothing raises: a raise would
+        requeue the job and send the upstream request again. The executor
+        reports a lost record with the real upstream result, the lifecycle
+        write is best-effort, and either failure is logged and counted.
+        Failures before dispatch (credential resolution and its audit write)
+        propagate, so the job is retried with nothing sent.
         """
         if not created_by or not actor_type:
             raise ValueError("created_by and actor_type are required for execution jobs")
@@ -298,6 +324,7 @@ class ExecutionHandler:
                 error_msg = f"Upstream returned {http_status}"
         except ExecutionRecordNotPersistedError as exc:
             cause = exc.__cause__
+            _record_write_failure("record")
             logger.error(
                 "queued_execution_record_not_persisted",
                 job_id=job_id,
@@ -307,7 +334,11 @@ class ExecutionHandler:
             )
             if exc.result is None:
                 status = ExecutionStatus.FAILED
-                error_msg = "Execution record not persisted"
+                error_msg = (
+                    f"{exc.upstream_error} ({_RECORD_NOT_PERSISTED})"
+                    if exc.upstream_error
+                    else _RECORD_NOT_PERSISTED.capitalize()
+                )[:MAX_EVENT_SUMMARY_FIELD_LEN]
             else:
                 http_status = exc.result.status_code
                 response_body = exc.result.body
@@ -315,7 +346,7 @@ class ExecutionHandler:
                 duration_ms = exc.result.duration_ms
                 if http_status >= 400:
                     status = ExecutionStatus.FAILED
-                    error_msg = f"Upstream returned {http_status}"
+                    error_msg = f"Upstream returned {http_status} ({_RECORD_NOT_PERSISTED})"
         except (OSError, TimeoutError) as exc:
             status = ExecutionStatus.FAILED
             error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
@@ -428,9 +459,11 @@ class ExecutionHandler:
         """Write the lifecycle events in their own transaction, best-effort.
 
         They are written after the job's outcome is settled (the upstream call
-        has run, or the job was denied). A failure here is logged and the job
-        still completes with its real result rather than being requeued, which
-        would re-send the upstream request.
+        was dispatched, or the job was denied). Whatever the write fails with
+        (a mapped database error, a pool checkout timeout, a lost connection,
+        a driver error, or a bug), the failure is logged and counted, and the
+        job still completes with its real result: a raise would requeue the
+        job and re-send the upstream request.
         """
         try:
             async with db.transaction() as session:
@@ -448,7 +481,8 @@ class ExecutionHandler:
                     operation=operation,
                     origin=origin,
                 )
-        except DATABASE_WRITE_ERRORS as exc:
+        except Exception as exc:
+            _record_write_failure("lifecycle")
             logger.warning(
                 "queued_execution_lifecycle_write_failed",
                 job_id=job_id,

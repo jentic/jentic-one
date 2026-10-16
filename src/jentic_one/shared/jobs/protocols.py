@@ -188,18 +188,25 @@ class UpstreamExecResult:
 
 
 class ExecutionRecordNotPersistedError(Exception):
-    """The upstream call ran but its ``executions`` record could not be written.
+    """The upstream call was dispatched but its ``executions`` record was not written.
 
-    Raised by an ``UpstreamExecutor`` when the record transaction fails after the
-    call returned (``result`` is the verbatim upstream result) or after it raised
-    (``result`` is ``None``). It is distinct from a pipeline failure so the worker
-    reports what the upstream actually did, and does not requeue a job whose
-    upstream side effect has already happened.
+    An ``UpstreamExecutor`` raises it for **any** failure after the call was
+    dispatched other than the broker's own failure with its record committed:
+    the record write failing for any reason (pool checkout timeout, lost
+    connection, driver error, a bug), or the call dying without a record.
+    ``result`` is the verbatim upstream result when the call returned one, and
+    ``None`` otherwise; ``upstream_error`` is then the broker's failure reason.
+    It is distinct from a pipeline failure so the worker reports what the
+    upstream actually did, and never requeues a job whose upstream side effect
+    may already have happened.
     """
 
-    def __init__(self, result: UpstreamExecResult | None) -> None:
+    def __init__(
+        self, result: UpstreamExecResult | None, *, upstream_error: str | None = None
+    ) -> None:
         super().__init__("execution record not persisted")
         self.result = result
+        self.upstream_error = upstream_error
 
 
 class UpstreamExecutor(Protocol):
@@ -217,8 +224,11 @@ class UpstreamExecutor(Protocol):
     Implementations own the ``executions`` record write (the pipeline persists
     it); the worker keeps only the job-result + lifecycle-event persistence.
     ``db`` is the worker's database: the record is written in a transaction
-    opened on it after the upstream call, never one held across the call. A
-    failed record write raises :class:`ExecutionRecordNotPersistedError`.
+    opened on it after the upstream call, never one held across the call.
+    Once the call is dispatched, the only exceptions an implementation raises
+    are the broker's own failure (its record committed) and
+    :class:`ExecutionRecordNotPersistedError`; anything raised before dispatch
+    propagates as itself.
     """
 
     async def execute(

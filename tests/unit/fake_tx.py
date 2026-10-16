@@ -14,6 +14,36 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import asyncpg
+import pytest
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+from jentic_one.shared.db.errors import DatabaseUnavailableError
+
+
+def post_upstream_write_failures() -> list[Any]:
+    """Failures a write after the upstream call can hit, as ``pytest.param``s.
+
+    A mapped error, a pool checkout timeout, a connection-invalidated
+    ``DBAPIError``, a bare driver error, and a programming error: once the
+    upstream call ran, none of them may requeue the job or drop its result.
+    """
+    return [
+        pytest.param(DatabaseUnavailableError("connection lost"), id="mapped"),
+        pytest.param(
+            PoolTimeoutError("QueuePool limit of size 5 overflow 10 reached"), id="pool-timeout"
+        ),
+        pytest.param(
+            DBAPIError(
+                "SELECT 1", {}, Exception("connection is closed"), connection_invalidated=True
+            ),
+            id="dbapi-invalidated",
+        ),
+        pytest.param(asyncpg.exceptions.ConnectionDoesNotExistError("closed"), id="raw-driver"),
+        pytest.param(TypeError("bad argument"), id="programming"),
+    ]
+
 
 class SessionScope:
     """Yield ``session`` from every ``transaction()``; count how many were opened.

@@ -33,7 +33,7 @@ from jentic_one.shared.jobs.protocols import (
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
-from tests.unit.fake_tx import FailingTransactions, SessionScope
+from tests.unit.fake_tx import FailingTransactions, SessionScope, post_upstream_write_failures
 
 
 class _FakeSession:
@@ -866,14 +866,15 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "error", [DatabaseUnavailableError("connection lost"), DatabaseIntegrityError("dup")]
+    "error",
+    [pytest.param(DatabaseIntegrityError("dup"), id="integrity"), *post_upstream_write_failures()],
 )
 async def test_handler_lifecycle_write_failure_still_returns_the_upstream_result(
     error: Exception,
 ) -> None:
-    """The lifecycle transaction runs after the upstream call. If it fails the job
-    still completes with the real result: raising would requeue the job and
-    send the upstream request a second time."""
+    """The lifecycle transaction runs after the upstream call. Whatever it fails
+    with, the job still completes with the real result: raising would requeue
+    the job and send the upstream request a second time."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=201, body=b"made", content_type="text/plain", duration_ms=4)
     )
@@ -968,10 +969,24 @@ async def test_handler_unpersisted_record_reports_the_real_upstream_result() -> 
 
 
 @pytest.mark.asyncio
-async def test_handler_unpersisted_record_without_a_result_fails_without_raising() -> None:
+@pytest.mark.parametrize(
+    ("upstream_error", "reason"),
+    [
+        (None, "Execution record not persisted"),
+        ("circuit open", "circuit open (execution record not persisted)"),
+    ],
+)
+async def test_handler_unpersisted_record_without_a_result_fails_without_raising(
+    upstream_error: str | None, reason: str
+) -> None:
     """A record write that fails after the upstream raised completes the job as
-    failed (never requeued) with a reason that names the lost record."""
-    handler = ExecutionHandler(executor=_RaisingExecutor(ExecutionRecordNotPersistedError(None)))
+    failed (never requeued). The reason keeps the broker's failure and names
+    the lost record."""
+    handler = ExecutionHandler(
+        executor=_RaisingExecutor(
+            ExecutionRecordNotPersistedError(None, upstream_error=upstream_error)
+        )
+    )
 
     with patch(
         "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
@@ -987,4 +1002,33 @@ async def test_handler_unpersisted_record_without_a_result_fails_without_raising
     assert result.body["status"] == "failed"
     assert result.body["http_status"] is None
     assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_FAILED
-    assert "Execution record not persisted" in mock_emit.call_args.kwargs["summary"]
+    assert mock_emit.call_args.kwargs["summary"] == f"Execution failed: {reason}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", post_upstream_write_failures())
+async def test_handler_audit_failure_before_dispatch_propagates(error: Exception) -> None:
+    """A credential-audit failure happens before the upstream call, so it
+    propagates (the worker requeues the job) and nothing is dispatched."""
+    executor = _RaisingExecutor(AssertionError("must not dispatch"))
+
+    class _FailingInjector(_FakeInjector):
+        async def inject(self, **_kwargs: Any) -> InjectedAuth:
+            raise error
+
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FailingInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=_FakeAuthorizer(),
+    )
+
+    with pytest.raises(type(error)):
+        await handler.execute(
+            "job-audit-failed",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert executor.called is False

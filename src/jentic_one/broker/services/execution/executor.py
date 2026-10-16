@@ -24,6 +24,7 @@ from fastapi import Response
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
+from jentic_one.broker.core.exceptions import BrokerError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.broker.broker import Broker
@@ -34,7 +35,6 @@ from jentic_one.shared.broker.execution import (
     StreamingOutcome,
     StreamingUpstreamRunner,
 )
-from jentic_one.shared.db.errors import DATABASE_WRITE_ERRORS
 from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import valid_trace_id_or_minted
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -44,6 +44,9 @@ from jentic_one.shared.jobs.protocols import (
     UpstreamExecResult,
     UpstreamExecutor,
 )
+
+#: Same cap ``run_execution`` applies to the error it persists on the record.
+_FAILURE_REASON_MAX_LEN = 128
 
 
 class PipelineExecutor(UpstreamExecutor):
@@ -74,14 +77,17 @@ class PipelineExecutor(UpstreamExecutor):
     ) -> UpstreamExecResult:
         """Run the call and persist its record.
 
-        ``run_execution`` writes the record only after the upstream call, so a
-        database error from it means the call already happened. That surfaces as
-        :class:`ExecutionRecordNotPersistedError` carrying the upstream result
-        when there is one, never as a retryable failure.
+        Failures are classified by whether the broker call was dispatched, not
+        by exception type. Before dispatch nothing was sent, so an error
+        propagates as itself. After dispatch, the broker's own ``BrokerError``
+        propagates once its failed record is committed; anything else (the
+        record write failing for any reason, or the call dying without a
+        record) raises :class:`ExecutionRecordNotPersistedError` with the
+        upstream result when there is one, so the worker never retries it.
         """
         ctx_req = _ctx_from_metadata(request)
         runner = self._registry.select(request.url)
-        broker = _OutcomeKeepingBroker(self._broker_factory(runner))
+        broker = _DispatchTrackingBroker(self._broker_factory(runner))
         try:
             outcome = await run_execution(
                 ctx_req,
@@ -96,23 +102,35 @@ class PipelineExecutor(UpstreamExecutor):
                 origin=request.metadata.get("origin"),
                 signing=request.signing,
             )
-        except DATABASE_WRITE_ERRORS as exc:
+        except Exception as exc:
+            if not broker.dispatched:
+                raise
+            if exc is broker.error and isinstance(exc, BrokerError):
+                raise
             kept = broker.outcome
             raise ExecutionRecordNotPersistedError(
-                _exec_result(kept) if kept is not None else None
+                _exec_result(kept) if kept is not None else None,
+                upstream_error=_failure_reason(broker.error),
             ) from exc
         return _exec_result(outcome)
 
 
-class _OutcomeKeepingBroker:
-    """Delegates to ``inner`` and keeps the buffered outcome it returned."""
+class _DispatchTrackingBroker:
+    """Delegates to ``inner``, recording the dispatch and what it returned or raised."""
 
     def __init__(self, inner: Broker) -> None:
         self._inner = inner
+        self.dispatched = False
         self.outcome: ExecutionOutcome | None = None
+        self.error: Exception | None = None
 
     async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
-        self.outcome = await self._inner.execute(request, context)
+        self.dispatched = True
+        try:
+            self.outcome = await self._inner.execute(request, context)
+        except Exception as exc:
+            self.error = exc
+            raise
         return self.outcome
 
     async def execute_streaming(
@@ -133,6 +151,19 @@ class _OutcomeKeepingBroker:
             transfer_deadline_s=transfer_deadline_s,
             background_callback=background_callback,
         )
+
+
+def _failure_reason(error: Exception | None) -> str | None:
+    """The broker failure to report when its record is lost.
+
+    A ``BrokerError`` detail is the same text the record would have carried;
+    any other error is named by type only, since its message is unvetted.
+    """
+    if error is None:
+        return None
+    if isinstance(error, BrokerError):
+        return error.detail[:_FAILURE_REASON_MAX_LEN]
+    return type(error).__name__
 
 
 def _exec_result(outcome: ExecutionOutcome) -> UpstreamExecResult:
