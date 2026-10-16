@@ -91,6 +91,23 @@ async def test_set_if_absent_first_wins(backend: MemoryStateBackend, clock: Fake
     assert await backend.set_if_absent("claim", b"c", ttl_s=10.0) is True
 
 
+async def test_delete_if_equals_only_deletes_the_matching_value(
+    backend: MemoryStateBackend, clock: FakeClock
+) -> None:
+    """Compare-and-delete: a mismatched or expired value is left alone."""
+    assert await backend.set_if_absent("claim", b"mine", ttl_s=10.0) is True
+    assert await backend.delete_if_equals("claim", b"someone-else") is False
+    assert await backend.get("claim") == b"mine"
+
+    assert await backend.delete_if_equals("claim", b"mine") is True
+    assert await backend.get("claim") is None
+    assert await backend.delete_if_equals("claim", b"mine") is False
+
+    await backend.set("claim", b"mine", ttl_s=1.0)
+    clock.advance(1.1)
+    assert await backend.delete_if_equals("claim", b"mine") is False
+
+
 async def test_get_set_ttl_eviction(backend: MemoryStateBackend, clock: FakeClock) -> None:
     """``get`` returns the stored value until the TTL elapses, then ``None``."""
     await backend.set("k", b"v", ttl_s=5.0)
