@@ -284,3 +284,126 @@ def test_budgets_must_be_positive() -> None:
         MemoryStateBackend(max_bytes=0)
     with pytest.raises(ValueError, match="idem"):
         MemoryStateBackend(namespace_budgets={"idem": NamespaceBudget(max_entries=0, max_bytes=1)})
+
+
+async def test_a_refused_write_does_not_scan_live_entries(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full namespace with nothing expired refuses in O(1), not O(entries)."""
+    backend = MemoryStateBackend(clock=clock, max_entries=10_000)
+    for i in range(10_000):
+        await backend.set(f"ns:{i}", b"v", ttl_s=600.0)
+    checked = 0
+    is_current = backend._is_current
+
+    def counting(item: tuple[float, int, str]) -> bool:
+        nonlocal checked
+        checked += 1
+        return is_current(item)
+
+    monkeypatch.setattr(backend, "_is_current", counting)
+    for i in range(100):
+        clock.advance(1.0)
+        with pytest.raises(StateBackendCapacityError):
+            await backend.set(f"ns:new-{i}", b"v", ttl_s=600.0)
+    assert checked <= 100 * 4
+
+
+async def test_a_sweep_touches_only_expired_entries(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = MemoryStateBackend(clock=clock, sweep_interval_s=1.0)
+    for i in range(5_000):
+        await backend.set(f"live:{i}", b"v", ttl_s=600.0)
+    for i in range(10):
+        await backend.set(f"short:{i}", b"v", ttl_s=0.5)
+    deleted: list[str] = []
+    delete = backend._delete
+
+    def recording(key: str) -> None:
+        deleted.append(key)
+        delete(key)
+
+    monkeypatch.setattr(backend, "_delete", recording)
+    clock.advance(1.0)
+    await backend.set("tick:x", b"v", ttl_s=600.0)
+    assert sorted(deleted) == sorted(f"short:{i}" for i in range(10))
+    assert len(backend._kv) == 5_001
+
+
+async def test_retry_after_is_when_the_earliest_entry_expires(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=2)
+    await backend.set("ns:a", b"v", ttl_s=500.0)
+    await backend.set("ns:b", b"v", ttl_s=90.0)
+    clock.advance(10.0)
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set("ns:c", b"v", ttl_s=60.0)
+    assert refused.value.retry_after_s == 80
+
+
+async def test_retry_after_is_clamped_to_an_hour(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1)
+    await backend.set("ns:a", b"v", ttl_s=86_400.0)
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set("ns:b", b"v", ttl_s=60.0)
+    assert refused.value.retry_after_s == 3600
+
+
+async def test_owner_share_refuses_only_that_owner(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(
+        clock=clock,
+        namespace_budgets={
+            "idem": NamespaceBudget(max_entries=30, max_bytes=10**9, max_owner_share=0.1)
+        },
+    )
+    for i in range(3):
+        await backend.set(f"idem:alice:{i}", b"v", ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set("idem:alice:3", b"v", ttl_s=60.0)
+    assert refused.value.owner == "alice"
+    assert refused.value.retry_after_s == 60
+    await backend.set("idem:bob:0", b"v", ttl_s=60.0)
+
+    # An expired share entry is reclaimed for its owner.
+    clock.advance(61.0)
+    await backend.set("idem:alice:3", b"v", ttl_s=60.0)
+
+
+async def test_owner_share_bounds_bytes(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(
+        clock=clock,
+        namespace_budgets={
+            "idem-body": NamespaceBudget(max_entries=1_000, max_bytes=100_000, max_owner_share=0.1)
+        },
+    )
+    await backend.set("idem-body:alice:a", b"x" * 8_000, ttl_s=60.0)
+    with pytest.raises(StateBackendCapacityError):
+        await backend.set("idem-body:alice:b", b"x" * 8_000, ttl_s=60.0)
+    await backend.set("idem-body:bob:a", b"x" * 8_000, ttl_s=60.0)
+
+
+async def test_an_overwrite_no_larger_than_the_entry_fits_a_full_namespace(
+    clock: FakeClock,
+) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1, max_bytes=500)
+    await backend.set("ns:a", b"x" * 50, ttl_s=10.0)
+    await backend.set("ns:a", b"y" * 50, ttl_s=3_600.0)
+    clock.advance(20.0)
+    assert await backend.get("ns:a") == b"y" * 50
+
+
+async def test_overwrites_do_not_grow_the_expiry_index(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock)
+    for i in range(10_000):
+        await backend.set("ns:a", b"v", ttl_s=60.0 + i)
+        await backend.incr_with_ttl("ns:counter", ttl_s=60.0)
+    assert len(backend._usage["ns"].index) <= 2 * 2 + 64 + 1
+
+
+def test_owner_share_must_be_a_fraction() -> None:
+    with pytest.raises(ValueError, match="max_owner_share"):
+        MemoryStateBackend(
+            namespace_budgets={
+                "idem": NamespaceBudget(max_entries=1, max_bytes=1, max_owner_share=1.5)
+            }
+        )
