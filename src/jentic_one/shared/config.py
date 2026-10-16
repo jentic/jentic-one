@@ -26,6 +26,7 @@ from pydantic import (
     Field,
     SecretStr,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -1574,15 +1575,44 @@ class TrustedIssuerConfig(BaseModel):
     """
 
     issuer: str
-    jwks_url: str
+    jwks_url: str = Field(
+        description=(
+            "URL of the issuer's published JWKS. Must be https:// when "
+            "JENTIC_ENV=production; plain http:// is accepted outside production "
+            "(local/CI stacks) and logs a warning at config load."
+        ),
+    )
     algorithms: list[str] = Field(default_factory=lambda: ["RS256", "ES256"])
 
     @field_validator("jwks_url")
     @classmethod
-    def _https_only(cls, value: str) -> str:
-        # A plaintext JWKS endpoint is MITM-able into trusting attacker keys.
-        if not value.startswith("https://"):
-            raise ValueError(f"jwks_url must be https://: {value!r}")
+    def _https_in_production(cls, value: str, info: ValidationInfo) -> str:
+        # Only http(s) is a JWKS endpoint: the fetcher (urllib) would also open
+        # file:// and ftp:// URLs.
+        if value.startswith("https://"):
+            return value
+        if not value.startswith("http://"):
+            raise ValueError(
+                f"jwks_url must be https:// (or http:// outside production): {value!r}"
+            )
+        issuer = info.data.get("issuer")
+        # A plaintext JWKS endpoint is MITM-able into trusting attacker keys, so
+        # production (the same JENTIC_ENV gate as the secret guards; unset is
+        # development) keeps https mandatory.
+        if os.environ.get("JENTIC_ENV", "development") == "production":
+            raise ValueError(
+                f"jwks_url must be https:// in production (JENTIC_ENV=production) "
+                f"for trusted issuer {issuer!r}; http:// is only allowed outside production"
+            )
+        _logger.warning(
+            "trusted_issuer_jwks_url_plain_http",
+            issuer=issuer,
+            detail=(
+                "this trusted issuer's JWKS is fetched over plain http, so its signing "
+                "keys are not integrity-protected in transit; use https:// outside "
+                "local/CI stacks (required when JENTIC_ENV=production)"
+            ),
+        )
         return value
 
     @field_validator("algorithms")

@@ -2590,7 +2590,9 @@ type TrustedIssuerConfig struct {
 	// Issuer corresponds to the JSON schema field "issuer".
 	Issuer string `json:"issuer" yaml:"issuer" mapstructure:"issuer"`
 
-	// JwksUrl corresponds to the JSON schema field "jwks_url".
+	// URL of the issuer's published JWKS. Must be https:// when
+	// JENTIC_ENV=production; plain http:// is accepted outside production (local/CI
+	// stacks) and logs a warning at config load.
 	JwksUrl string `json:"jwks_url" yaml:"jwks_url" mapstructure:"jwks_url"`
 }
 

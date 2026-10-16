@@ -1689,6 +1689,7 @@
           "type": "string"
         },
         "jwks_url": {
+          "description": "URL of the issuer's published JWKS. Must be https:// when JENTIC_ENV=production; plain http:// is accepted outside production (local/CI stacks) and logs a warning at config load.",
           "title": "Jwks Url",
           "type": "string"
         }

@@ -232,7 +232,7 @@ Broker surface configuration.
 | `broker.jwt_verification.leeway_s` | number | `60.0` | `JENTIC__BROKER__JWT_VERIFICATION__LEEWAY_S` |  |
 | `broker.jwt_verification.trusted_issuers` | list of TrustedIssuerConfig | — | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS` |  |
 | `broker.jwt_verification.trusted_issuers.<n>.issuer` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__ISSUER` |  |
-| `broker.jwt_verification.trusted_issuers.<n>.jwks_url` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__JWKS_URL` |  |
+| `broker.jwt_verification.trusted_issuers.<n>.jwks_url` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__JWKS_URL` | URL of the issuer's published JWKS. Must be https:// when JENTIC_ENV=production; plain http:// is accepted outside production (local/CI stacks) and logs a warning at config load. |
 | `broker.jwt_verification.trusted_issuers.<n>.algorithms` | list of string | — | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__ALGORITHMS` |  |
 | `broker.resilience.max_in_flight` | integer | `200` | `JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` | Hard admission cap on concurrently executing brokered calls, **per broker process** — replicas multiply it. At the cap, new requests are shed with 429 + `Retry-After: shed_retry_after_s`. |
 | `broker.resilience.shed_retry_after_s` | integer | `5` | `JENTIC__BROKER__RESILIENCE__SHED_RETRY_AFTER_S` | `Retry-After` (seconds) returned with the 429 when admission sheds at `max_in_flight`. |
