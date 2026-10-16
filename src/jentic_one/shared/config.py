@@ -1727,11 +1727,11 @@ class BrokerConfig(BaseModel):
             "``streaming_execution_persist_abandoned`` and counted on "
             "``broker.streaming_execution.persist_failures`` "
             "(``reason=backlog_timeout``). The wait runs after the response is "
-            "complete, and a request no longer holds its admission slot once "
-            "its response is complete, so the wait delays neither the client "
-            "nor ``/ready``; the timeout bounds how long a stalled admin "
-            "database can keep records queued in memory and how long shutdown "
-            "waits on them."
+            "complete or the client has disconnected, when the request no "
+            "longer holds its admission slot, so the wait delays neither the "
+            "client nor ``/ready``. The timeout bounds how long a stalled "
+            "admin database can keep records queued in memory, including at "
+            "shutdown; it does not bound the write itself once a slot is held."
         ),
     )
     # Absolute public base URL of the admin jobs API, used to build the 202

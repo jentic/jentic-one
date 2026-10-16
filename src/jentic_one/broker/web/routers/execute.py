@@ -314,8 +314,9 @@ async def _persist_streaming_outcome(
     ``_streaming_persist_gate``: an excess call waits for a slot before opening
     the admin transaction, for at most
     ``broker.streaming_persist_acquire_timeout_s``. Callers run it once the
-    response is complete, when the request no longer holds its admission slot,
-    so the wait delays neither the client nor ``/ready``. Never raises except
+    response is complete or the client has disconnected, when the request no
+    longer holds its admission slot, so the wait delays neither the client nor
+    ``/ready``. Never raises except
     ``CancelledError``: a write error, a slot timeout and a cancellation (e.g.
     shutdown) are each logged and counted on
     ``broker.streaming_execution.persist_failures`` by ``reason``.
@@ -914,9 +915,9 @@ async def _handle_streaming(
     ``open_streaming_response``.
 
     Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors), once the request has released its
-    admission slot. A DB failure is logged + counted but does not affect the
-    already-sent response.
+    streaming body completes, errors or is cut short by a client disconnect,
+    once the request has released its admission slot. A DB failure is logged +
+    counted but does not affect the already-sent response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
