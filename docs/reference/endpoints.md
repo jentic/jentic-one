@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **170**._
+_Total endpoints: **171**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -209,7 +209,7 @@ _Total endpoints: **170**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (78)
+## Any authenticated actor (79)
 
 
 ### `actors`
@@ -309,6 +309,12 @@ _Total endpoints: **170**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/integrations:connect` | `credentials:connect`, `credentials:write` | any | Start an integration connect session |
+
+### `integrations:edit-connection`
+
+| Method | Path | Permission(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/integrations:edit-connection` | `credentials:connect`, `credentials:write` | any | Ask to change a credential binding |
 
 ### `jobs`
 

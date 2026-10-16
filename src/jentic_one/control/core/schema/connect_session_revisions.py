@@ -9,6 +9,7 @@ approval can only apply to the exact ask it was shown.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -58,9 +59,9 @@ class ConnectSessionRevision(ControlBase):
     # The ask as the initiator sent it: ``permission_rules``, ``scopes`` and
     # ``reason`` for a create session; ``rules``, ``scopes``, ``resume`` and
     # ``reason`` for an edit.
-    proposal: Mapped[dict[str, object]] = mapped_column(json_variant(), nullable=False)
+    proposal: Mapped[dict[str, Any]] = mapped_column(json_variant(), nullable=False)
     # The ask resolved into what confirming it would leave in place:
     # ``{rules, scopes}`` for a create, plus ``suspended`` for an edit.
-    result: Mapped[dict[str, object]] = mapped_column(json_variant(), nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(json_variant(), nullable=False)
     # SHA-256 over the session's baseline, ``result`` and ``reason``.
     digest: Mapped[str] = mapped_column(String(64), nullable=False)

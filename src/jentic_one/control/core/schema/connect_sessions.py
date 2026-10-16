@@ -7,6 +7,8 @@ Flow-specific transient state lives on auxiliary tables keyed by
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -182,7 +184,7 @@ class ConnectSession(AuditableMixin, ControlBase):
     # Edit sessions: the binding as it was when the session opened (rules
     # with their ids, rule set, ``suspended``, granted scopes). Every
     # revision of the edit resolves against it. NULL for create sessions.
-    baseline: Mapped[dict[str, object] | None] = mapped_column(json_variant(), nullable=True)
+    baseline: Mapped[dict[str, Any] | None] = mapped_column(json_variant(), nullable=True)
     # The live revision (``connect_session_revisions.id``). FK-less: the two
     # tables would otherwise reference each other. NULL only on rows written
     # before revisions existed.

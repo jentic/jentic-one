@@ -6,11 +6,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.connect_sessions import (
+    INTENT_CREATE,
+    INTENT_EDIT,
     TARGET_KIND_API,
     TARGET_KIND_VENDOR,
     ConnectSession,
@@ -51,8 +53,12 @@ class ConnectSessionRepository:
         preferred_flow: str | None = None,
         reason: str | None = None,
         created_by: str | None = None,
+        intent: str = INTENT_CREATE,
+        baseline: dict[str, Any] | None = None,
     ) -> ConnectSession:
         row = ConnectSession(
+            intent=intent,
+            baseline=baseline,
             credential_id=credential_id,
             target_kind=target_kind,
             vendor=vendor,
@@ -131,11 +137,14 @@ class ConnectSessionRepository:
         Used by the connect-poll scanner to dispatch: a candidate credential
         with a live session takes the session-mode advancement path, one
         without takes the raw-credential path. Only sessions in
-        ``LIVE_STATES`` count (terminal states are already frozen).
+        ``LIVE_STATES`` count (terminal states are already frozen), and only
+        create sessions: an edit session wraps a live credential it never
+        connects.
         """
         stmt = select(ConnectSession).where(
             ConnectSession.credential_id == credential_id,
             ConnectSession.state.in_(LIVE_STATES),
+            ConnectSession.intent == INTENT_CREATE,
         )
         result = await session.execute(stmt)
         return result.scalars().first()
@@ -165,6 +174,30 @@ class ConnectSessionRepository:
                 ConnectSession.state.in_(from_states),
             )
             .values(state=to_state, **fields)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def transition_edit(
+        session: AsyncSession, session_id: str, *, revision_id: str, to_state: str
+    ) -> bool:
+        """Compare-and-swap an edit session out of ``created`` on its current revision.
+
+        The revision check rides the same UPDATE, so an amend that lands
+        between the caller's read and this write makes it lose: an approval
+        only ever applies to the revision its reviewer saw.
+        """
+        stmt = (
+            update(ConnectSession)
+            .where(
+                ConnectSession.id == session_id,
+                ConnectSession.intent == INTENT_EDIT,
+                ConnectSession.state == "created",
+                ConnectSession.current_revision_id == revision_id,
+            )
+            .values(state=to_state)
         )
         result = await session.execute(stmt)
         await session.flush()
@@ -260,6 +293,26 @@ class ConnectSessionRepository:
         )
         result = await session.execute(stmt)
         return result.scalars().first()
+
+    @staticmethod
+    async def get_open_edit(
+        session: AsyncSession, *, agent_id: str, credential_id: str
+    ) -> ConnectSession | None:
+        """The open edit session for one binding (the open-edit index's key)."""
+        stmt = select(ConnectSession).where(
+            ConnectSession.intent == INTENT_EDIT,
+            ConnectSession.state.in_(LIVE_STATES),
+            ConnectSession.agent_id == agent_id,
+            ConnectSession.credential_id == credential_id,
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
+    async def delete(session: AsyncSession, session_id: str) -> None:
+        """Delete one session row; its revisions cascade with it."""
+        await session.execute(delete(ConnectSession).where(ConnectSession.id == session_id))
+        await session.flush()
 
     @staticmethod
     async def rotate_poll_token(

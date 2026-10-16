@@ -22,23 +22,28 @@ from urllib.parse import urlsplit
 import structlog
 from pydantic import SecretStr
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.connect_session_outcomes import (
+    OUTCOME_APPLIED,
     OUTCOME_CANCELLED,
     OUTCOME_CONNECTED,
     OUTCOME_REJECTED,
     ConnectSessionOutcome,
 )
 from jentic_one.control.core.schema.connect_sessions import (
+    INTENT_EDIT,
     TARGET_KIND_API,
     TARGET_KIND_VENDOR,
     ConnectSession,
 )
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSetRule
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
     CredentialRepository,
     OAuthTokenRepository,
+    PermissionRuleSetRepository,
 )
 from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
@@ -51,7 +56,10 @@ from jentic_one.control.repos.effects_repo import AgentOwnerRow, EffectsReposito
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
-from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.repos.prerequisite_repo import (
+    AgentCredentialBindingRow,
+    PrerequisiteRepository,
+)
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.mapping import to_wire
@@ -74,12 +82,25 @@ from jentic_one.control.services.integrations.api_targets import (
     select_scheme,
 )
 from jentic_one.control.services.integrations.dedupe import oauth_dedupe_key
+from jentic_one.control.services.integrations.edits import (
+    EditRequest,
+    baseline_matches,
+    require_change,
+    resolve_edit,
+    rule_content,
+    rule_to_write,
+    target_rules,
+    widens_access,
+)
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    BaselineChangedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     CredentialMissingCreatorError,
+    EditBindingNotFoundError,
+    EditOpenError,
     ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidOAuthAppRegistrationError,
@@ -92,6 +113,8 @@ from jentic_one.control.services.integrations.errors import (
     ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReviewStaleError,
+    RevisionChangedError,
+    RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
@@ -122,7 +145,7 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     manual_handler_for_scheme,
 )
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
-from jentic_one.control.services.integrations.revisions import create_revision
+from jentic_one.control.services.integrations.revisions import create_revision, revision_digest
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
     ResolvedScope,
@@ -217,6 +240,36 @@ class CreatedSession:
 
 
 @dataclass(slots=True, frozen=True)
+class CreatedEditSession:
+    """An opened edit session: what the initiator relays and polls with."""
+
+    session_id: str
+    approval_url: str
+    poll_token: str
+    revision_id: str
+    resolved_flow: str = "edit"
+
+
+@dataclass(slots=True, frozen=True)
+class EditReview:
+    """What an edit session's reviewer decides on.
+
+    ``current`` is the binding as the session's baseline recorded it,
+    ``result`` what confirming the current revision would leave in place.
+    """
+
+    agent_id: str
+    credential_id: str
+    credential_name: str | None
+    revision_id: str
+    revision_number: int
+    current: dict[str, Any]
+    result: dict[str, Any]
+    widens_access: bool
+    other_bound_agents: list[AgentView]
+
+
+@dataclass(slots=True, frozen=True)
 class ScopeView:
     name: str
     classification: str
@@ -259,6 +312,8 @@ class ReviewData:
     # Credentials the viewer already holds for the target, with the
     # granted-scope comparison.
     existing_credentials: list[ExistingCredentialView] = field(default_factory=list)
+    # Edit sessions only: the binding change under review.
+    edit: EditReview | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -444,11 +499,12 @@ CONFIRM_KIND_OAUTH = "oauth"
 CONFIRM_KIND_OWN_CLIENT = "own_oauth_client"
 CONFIRM_KIND_EXISTING = "existing_credential"
 CONFIRM_KIND_REAUTHORIZE = "reauthorize"
+CONFIRM_KIND_EDIT = "edit"
 
 
 @dataclass(slots=True, frozen=True)
 class StatusResult:
-    status: str  # "pending" | "polling" | "connected" | "failed" | "expired"
+    status: str  # "pending" | "polling" | "connected" | "applied" | "failed" | "expired"
     connected_as: str | None = None
     credential_id: str | None = None
     bound_scopes: list[str] | None = None
@@ -473,6 +529,9 @@ _OUTCOME_RETENTION = timedelta(days=30)
 
 #: ``resolved_flow`` / ``state`` of an OAuth API target with no OAuth app yet.
 AWAITING_APP = "awaiting_app"
+
+#: ``resolved_flow`` of an edit session: no vendor conversation.
+EDIT_FLOW = "edit"
 
 #: ``error_code`` of a session a human explicitly rejected.
 ERROR_REJECTED = "rejected"
@@ -654,6 +713,8 @@ def _variant_kind(variant: ConfirmVariant) -> str:
 
 def _allowed_confirm_kinds(row: ConnectSession) -> list[str]:
     """Confirm ``kind`` values that apply to the session's state and flow."""
+    if row.intent == INTENT_EDIT:
+        return [CONFIRM_KIND_EDIT]
     if row.state == AWAITING_APP:
         primary = CONFIRM_KIND_OWN_CLIENT
     else:
@@ -732,6 +793,19 @@ def _require_api_own_client(row: ConnectSession) -> None:
     """Only an ``api`` target finishing on the approver's own client has no source key."""
     if row.target_kind != TARGET_KIND_API or row.resolved_flow != AuthCodeFlowHandler.kind:
         raise UnsupportedTargetKindError(row.id, row.target_kind, "finalise")
+
+
+def _rule_snapshot(rule: AgentPermissionRule | PermissionRuleSetRule) -> dict[str, Any]:
+    """A stored rule as an edit baseline records it: its id plus its content."""
+    return {
+        "id": rule.id,
+        "effect": rule.effect,
+        "methods": rule.methods,
+        "path": rule.path,
+        "match_mode": rule.match_mode,
+        "operations": rule.operations,
+        "comment": rule.comment,
+    }
 
 
 def _is_oauth_type(credential_type: str) -> bool:
@@ -1498,6 +1572,470 @@ class ConnectSessionService:
         """
         return connect_approval_url(self._ctx.config, session_id)
 
+    # ---- edit sessions ----------------------------------------------------
+
+    async def create_edit_session(
+        self,
+        *,
+        credential_id: str,
+        agent_id: str,
+        identity: Identity,
+        request: EditRequest,
+    ) -> CreatedEditSession:
+        """Open a session that edits an existing ``(agent, credential)`` binding.
+
+        An agent edits its own binding (the router injects its id); a human
+        names the agent and must be its approver (``org:admin``, or its owner
+        with ``credentials:write`` and ``agents:write``). A binding that does
+        not exist, one the caller may not edit, and an agent's suspended
+        binding all answer :class:`EditBindingNotFoundError`.
+
+        The binding is snapshot as the session's baseline and the request is
+        resolved against it as revision 1. A request that changes nothing is
+        :class:`NothingToChangeError`; one naming a rule the binding does not
+        hold is :class:`UnknownRuleError`; a binding with an open edit is
+        :class:`EditOpenError` naming that session. Nothing is written to the
+        binding until a human confirms.
+        """
+        binding = await self._require_editable_binding(credential_id, agent_id, identity)
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            open_edit = await ConnectSessionRepository.get_open_edit(
+                session, agent_id=agent_id, credential_id=credential_id
+            )
+        if credential is None or credential.state == "pending":
+            raise EditBindingNotFoundError(credential_id)
+        if open_edit is not None:
+            raise EditOpenError(open_edit.id)
+        baseline = await self._binding_snapshot(agent_id, credential_id, binding.rule_set_id)
+        baseline["suspended"] = binding.suspended
+        result, _ = resolve_edit(baseline, request)
+        require_change(baseline, result)
+
+        cap_scope = await self._check_open_session_caps(agent_id, identity.sub)
+        poll_token = secrets.token_urlsafe(32)
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                await self._enforce_open_session_caps(session, cap_scope)
+                row = await ConnectSessionRepository.create(
+                    session,
+                    intent=INTENT_EDIT,
+                    baseline=baseline,
+                    credential_id=credential_id,
+                    vendor=credential.api_vendor or credential.catalog_api_id or credential.name,
+                    agent_id=agent_id,
+                    initiator_actor_id=identity.sub,
+                    state="created",
+                    resolved_flow=EDIT_FLOW,
+                    poll_token_hash=hash_secret(poll_token),
+                    reason=request.reason,
+                    created_by=identity.sub,
+                )
+                revision = await ConnectSessionRevisionRepository.append(
+                    session,
+                    session_id=row.id,
+                    proposal=request.as_proposal(),
+                    result=result,
+                    digest=revision_digest(baseline=baseline, result=result, reason=request.reason),
+                    created_by=identity.sub,
+                )
+        except DatabaseIntegrityError:
+            # A concurrent edit of the same binding won the open-edit index.
+            async with self._ctx.control_db.session() as session:
+                winner = await ConnectSessionRepository.get_open_edit(
+                    session, agent_id=agent_id, credential_id=credential_id
+                )
+            if winner is None:
+                raise
+            raise EditOpenError(winner.id) from None
+
+        _logger.info(
+            "connect_session.edit_created",
+            session_id=row.id,
+            agent_id=agent_id,
+            credential_id=credential_id,
+            initiator_actor_id=identity.sub,
+        )
+        _sessions_created.add(1, {"vendor": row.vendor, "flow": EDIT_FLOW})
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.CREATE,
+            target_type=AuditTargetType.SESSION,
+            target_id=row.id,
+            actor_type=identity.actor_type.value,
+            actor_id=identity.sub,
+            origin=identity.origin.value,
+            after={
+                "intent": INTENT_EDIT,
+                "agent_id": agent_id,
+                "credential_id": credential_id,
+                "revision_id": revision.id,
+                "widens_access": widens_access(baseline, result),
+            },
+        )
+        await self._emit_edit_requested(row, credential_name=credential.name)
+        return CreatedEditSession(
+            session_id=row.id,
+            approval_url=self._approval_url_for(row.id),
+            poll_token=poll_token,
+            revision_id=revision.id,
+        )
+
+    async def confirm_edit(
+        self,
+        session_id: str,
+        *,
+        poll_token: str | None,
+        identity: Identity,
+        revision_id: str,
+        permission_rules: list[dict[str, object]],
+        resume: bool,
+    ) -> ConnectedConfirmResult:
+        """Apply an edit session's change as the reviewer submitted it.
+
+        ``revision_id`` must be the session's current revision
+        (:class:`RevisionChangedError` otherwise), and the binding must still
+        match the session's baseline: when it changed since the session
+        opened, the session is rebased onto it as a new revision and the
+        confirm is :class:`BaselineChangedError`. The reviewer's
+        ``permission_rules`` and ``resume`` are what gets applied, never the
+        initiator's proposal.
+
+        While the binding points at a shared rule set, the rules replace that
+        set's rules, and only the set's owner or an org admin may confirm. A
+        curated set is never changed: the rules become the binding's own and
+        the set is detached from this binding only.
+        """
+        async with self._ctx.control_db.session() as read_session:
+            row = await ConnectSessionRepository.get_by_id(read_session, session_id)
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        _require_confirm_kind(row, CONFIRM_KIND_EDIT)
+        if identity.actor_type == ActorType.AGENT:
+            raise ConfirmationForbiddenError("edit sessions are confirmed by a human")
+        _require_state(row, expected="created", action="confirm")
+        assert row.agent_id is not None and row.baseline is not None
+        await self._require_agent_binding_allowed(row.agent_id, identity)
+        if row.current_revision_id != revision_id:
+            raise RevisionChangedError(row.id, row.current_revision_id)
+
+        live = await self._live_binding_snapshot(row)
+        if live is None:
+            await self._mark_terminal(
+                row.id, "failed", "binding removed during edit", error_code="binding_removed"
+            )
+            raise EditBindingNotFoundError(row.credential_id)
+        if not baseline_matches(row.baseline, live):
+            raise BaselineChangedError(row.id, await self._rebase_edit(row, live))
+
+        rule_set = row.baseline.get("rule_set")
+        copy_curated = rule_set is not None and bool(rule_set["curated"])
+        if rule_set is not None and not copy_curated:
+            owner = rule_set.get("created_by")
+            if ORG_ADMIN not in identity.permissions and owner != identity.sub:
+                raise RuleSetConfirmForbiddenError(rule_set["id"])
+        rules = [rule_to_write(r) for r in permission_rules]
+        resumed = resume and bool(row.baseline["suspended"])
+
+        async with self._ctx.control_db.transaction() as session:
+            won = await ConnectSessionRepository.transition_edit(
+                session, row.id, revision_id=revision_id, to_state=OUTCOME_APPLIED
+            )
+            if not won:
+                current = await ConnectSessionRepository.get_by_id(session, row.id)
+                if current is not None and current.state == "created":
+                    raise RevisionChangedError(row.id, current.current_revision_id)
+                raise InvalidStateTransitionError(row.id, row.state, "confirm")
+            if rule_set is not None and not copy_curated:
+                await PermissionRuleSetRepository.replace_user_rules(
+                    session, rule_set["id"], rules, created_by=identity.sub
+                )
+            else:
+                await AgentPermissionRuleRepository.replace_user_rules(
+                    session, row.agent_id, row.credential_id, rules, created_by=identity.sub
+                )
+            await ConnectSessionOutcomeRepository.record(
+                session,
+                row=row,
+                outcome=OUTCOME_APPLIED,
+                error_code=None,
+                ended_at=datetime.now(UTC),
+                credential_id=row.credential_id,
+            )
+            await ConnectSessionRepository.delete(session, row.id)
+        if copy_curated or resumed:
+            async with self._ctx.admin_db.transaction() as admin_session:
+                if copy_curated:
+                    await PrerequisiteRepository.set_binding_rule_set(
+                        admin_session,
+                        agent_id=row.agent_id,
+                        credential_id=row.credential_id,
+                        rule_set_id=None,
+                    )
+                if resumed:
+                    await PrerequisiteRepository.resume_binding(
+                        admin_session, agent_id=row.agent_id, credential_id=row.credential_id
+                    )
+
+        _, before = target_rules(row.baseline)
+        before_content = [rule_content(r) for r in before]
+        after_content = [rule_content(r) for r in rules]
+        _logger.info(
+            "connect_session.edit_applied",
+            session_id=row.id,
+            agent_id=row.agent_id,
+            credential_id=row.credential_id,
+            revision_id=revision_id,
+        )
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.CONFIRM,
+            target_type=AuditTargetType.SESSION,
+            target_id=row.id,
+            actor_type=identity.actor_type.value,
+            actor_id=identity.sub,
+            origin=identity.origin.value,
+            after={
+                "intent": INTENT_EDIT,
+                "agent_id": row.agent_id,
+                "credential_id": row.credential_id,
+                "revision_id": revision_id,
+                "rule_set_id": rule_set["id"]
+                if rule_set is not None and not copy_curated
+                else None,
+                "rules_added": sum(1 for r in after_content if r not in before_content),
+                "rules_removed": sum(1 for r in before_content if r not in after_content),
+                "resumed": resumed,
+            },
+        )
+        await self._emit_edit_applied(row, identity, resumed=resumed)
+        return ConnectedConfirmResult(credential_id=row.credential_id)
+
+    async def _rebase_edit(self, row: ConnectSession, live: dict[str, Any]) -> str:
+        """Re-resolve the edit's latest ask onto the binding as it is now.
+
+        The live binding becomes the baseline and the current revision's
+        proposal is resolved against it as a new revision; any rule it named
+        that no longer exists is dropped and listed in the proposal's
+        ``dropped``. Returns the new current revision id.
+        """
+        async with self._ctx.control_db.transaction() as session:
+            current = await ConnectSessionRevisionRepository.get_by_id(
+                session, row.current_revision_id or ""
+            )
+            if current is None:
+                raise SessionNotFoundError(row.id)
+            request = EditRequest.from_proposal(current.proposal)
+            result, dropped = resolve_edit(live, request, lenient=True)
+            proposal = {**request.as_proposal(), "rebased_from": current.number, "dropped": dropped}
+            revision = await ConnectSessionRevisionRepository.append(
+                session,
+                session_id=row.id,
+                proposal=proposal,
+                result=result,
+                digest=revision_digest(baseline=live, result=result, reason=request.reason),
+                created_by=None,
+            )
+            await ConnectSessionRepository.update_fields(session, row.id, baseline=live)
+        _logger.info(
+            "connect_session.edit_rebased",
+            session_id=row.id,
+            revision_id=revision.id,
+            dropped=len(dropped),
+        )
+        return revision.id
+
+    async def _emit_edit_applied(
+        self, row: ConnectSession, identity: Identity, *, resumed: bool
+    ) -> None:
+        """``credential.permission_rule_set`` (and ``credential.bound_to_agent`` on resume)."""
+        assert row.agent_id is not None
+        events = [EventType.CREDENTIAL_PERMISSION_RULE_SET]
+        if resumed:
+            events.append(EventType.CREDENTIAL_BOUND_TO_AGENT)
+        for event_type in events:
+            try:
+                async with self._ctx.admin_db.transaction() as session:
+                    await emit_event_best_effort(
+                        session,
+                        type=event_type,
+                        severity=EventSeverity.INFO,
+                        summary=(
+                            f"Access of agent {row.agent_id} to credential {row.credential_id} "
+                            "changed by an approved edit"
+                        ),
+                        data={
+                            "agent_id": row.agent_id,
+                            "credential_id": row.credential_id,
+                            "session_id": row.id,
+                        },
+                        created_by=row.agent_id,
+                        actor_id=identity.sub,
+                        actor_type=identity.actor_type.value,
+                    )
+            except Exception:
+                _logger.warning("telemetry_emit_failed", event_type=event_type, exc_info=True)
+
+    async def _require_editable_binding(
+        self, credential_id: str, agent_id: str, identity: Identity
+    ) -> AgentCredentialBindingRow:
+        """The binding an edit opens on, refusing callers who may not edit it.
+
+        An agent may edit only its own active binding. A human must be the
+        agent's approver. Every refusal is the same not-found error.
+        """
+        if identity.actor_type == ActorType.AGENT:
+            if agent_id != identity.sub:
+                raise EditBindingNotFoundError(credential_id)
+        elif not await self._is_approver_for_agent(agent_id, identity):
+            raise EditBindingNotFoundError(credential_id)
+        async with self._ctx.admin_db.session() as admin_session:
+            binding = await PrerequisiteRepository.get_agent_credential_binding(
+                admin_session, agent_id=agent_id, credential_id=credential_id
+            )
+        if binding is None or (binding.suspended and identity.actor_type == ActorType.AGENT):
+            raise EditBindingNotFoundError(credential_id)
+        return binding
+
+    async def _binding_snapshot(
+        self, agent_id: str, credential_id: str, rule_set_id: str | None
+    ) -> dict[str, Any]:
+        """The binding's rules, rule set and granted scopes (``suspended`` is the caller's).
+
+        System rules are left out: an edit never touches them.
+        """
+        async with self._ctx.control_db.session() as session:
+            rules = await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+            rule_set: dict[str, Any] | None = None
+            if rule_set_id is not None:
+                found = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+                if found is not None:
+                    set_rules = await PermissionRuleSetRepository.list_rules(session, rule_set_id)
+                    rule_set = {
+                        "id": found.id,
+                        "name": found.name,
+                        "curated": found.curated,
+                        "created_by": found.created_by,
+                        "rules": [_rule_snapshot(r) for r in set_rules if not r.is_system],
+                    }
+            token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        return {
+            "rules": [_rule_snapshot(r) for r in rules if not r.is_system],
+            "rule_set": rule_set,
+            "suspended": False,
+            "granted_scopes": token.scope.split() if token is not None and token.scope else None,
+        }
+
+    async def _live_binding_snapshot(self, row: ConnectSession) -> dict[str, Any] | None:
+        """The edit session's binding as it is now; ``None`` when it is gone."""
+        assert row.agent_id is not None
+        async with self._ctx.admin_db.session() as admin_session:
+            binding = await PrerequisiteRepository.get_agent_credential_binding(
+                admin_session, agent_id=row.agent_id, credential_id=row.credential_id
+            )
+        if binding is None:
+            return None
+        snapshot = await self._binding_snapshot(
+            row.agent_id, row.credential_id, binding.rule_set_id
+        )
+        snapshot["suspended"] = binding.suspended
+        return snapshot
+
+    async def _edit_review(self, row: ConnectSession) -> EditReview:
+        """The review block of an edit session: baseline, current revision and reach."""
+        assert row.agent_id is not None and row.baseline is not None
+        async with self._ctx.control_db.session() as session:
+            revision = (
+                await ConnectSessionRevisionRepository.get_by_id(session, row.current_revision_id)
+                if row.current_revision_id is not None
+                else None
+            )
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        if revision is None:
+            raise SessionNotFoundError(row.id)
+        others: list[AgentView] = []
+        for other_id in await self._other_bound_agent_ids(row.credential_id, row.agent_id):
+            view = await self._agent_view(other_id)
+            if view is not None:
+                others.append(view)
+        return EditReview(
+            agent_id=row.agent_id,
+            credential_id=row.credential_id,
+            credential_name=credential.name if credential is not None else None,
+            revision_id=revision.id,
+            revision_number=revision.number,
+            current=dict(row.baseline),
+            result=dict(revision.result),
+            widens_access=widens_access(row.baseline, revision.result),
+            other_bound_agents=others,
+        )
+
+    async def _edit_review_data(self, row: ConnectSession, identity: Identity) -> ReviewData:
+        """``get_review_data`` for an edit session."""
+        edit = await self._edit_review(row)
+        agent = await self._agent_view(row.agent_id)
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+            revision = await ConnectSessionRevisionRepository.get_by_id(session, edit.revision_id)
+        assert revision is not None
+        return ReviewData(
+            session_id=row.id,
+            state=row.state,
+            vendor_key=row.vendor,
+            vendor_display_name=(credential.name if credential is not None else None) or row.vendor,
+            resolved_flow=row.resolved_flow,
+            reason=row.reason,
+            requested_by_actor_id=row.initiator_actor_id,
+            scopes=[],
+            requested_permission_rules=[],
+            api_vendor=(credential.api_vendor or "") if credential is not None else "",
+            api_name=credential.api_name if credential is not None else None,
+            api_version=credential.api_version if credential is not None else None,
+            agent=agent,
+            digest=revision.digest,
+            can_confirm=await self._can_confirm(row, identity, agent),
+            edit=edit,
+        )
+
+    async def _emit_edit_requested(self, row: ConnectSession, *, credential_name: str) -> None:
+        """Emit the ``connect_session.edit_requested`` rail event for an agent's edit.
+
+        Like ``connect_session.created``: only when the agent itself asked,
+        ``created_by`` is the agent so its owner sees the row, and the data
+        never carries the poll token.
+        """
+        if row.agent_id is None or row.initiator_actor_id != row.agent_id:
+            return
+        try:
+            async with self._ctx.admin_db.session() as admin_session:
+                agent = await EffectsRepository.get_agent_owner(admin_session, row.agent_id)
+            agent_name = agent.name if agent is not None else None
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CONNECT_SESSION_EDIT_REQUESTED,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Agent {summary_label(agent_name, row.agent_id)} asked to change its "
+                        f"access to {summary_label(credential_name, row.credential_id)}"
+                    ),
+                    requires_action=False,
+                    data={
+                        "session_id": row.id,
+                        "agent_id": row.agent_id,
+                        "credential_id": row.credential_id,
+                    },
+                    created_by=row.agent_id,
+                    actor_id=row.initiator_actor_id,
+                    actor_type=ActorType.AGENT.value,
+                )
+        except Exception:
+            _logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CONNECT_SESSION_EDIT_REQUESTED,
+                session_id=row.id,
+                exc_info=True,
+            )
+
     # ---- review data ------------------------------------------------------
 
     async def get_review_data(
@@ -1530,6 +2068,8 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        if row.intent == INTENT_EDIT:
+            return await self._edit_review_data(row, identity)
         if row.state == AWAITING_APP:
             row = await self._try_leave_awaiting_app(row)
         async with self._ctx.control_db.session() as session:
@@ -2870,6 +3410,8 @@ class ConnectSessionService:
         )
         if not token_ok and not await self._is_approver_for_agent(outcome.agent_id, identity):
             raise InvalidPollTokenError("invalid poll_token")
+        if outcome.outcome == OUTCOME_APPLIED:
+            return StatusResult(status=OUTCOME_APPLIED, credential_id=outcome.credential_id)
         if outcome.outcome == OUTCOME_CONNECTED:
             bound: list[str] | None = None
             if outcome.credential_id is not None:
@@ -3405,6 +3947,9 @@ class ConnectSessionService:
     ) -> bool:
         """Log the terminal outcome, then delete the credential + session.
 
+        An edit session never touches its credential or binding: only the
+        session row is deleted, and its outcome recorded.
+
         A failed / expired / cancelled session leaves an unusable
         ``pending`` credential behind, which shows up in the credentials
         list as a stale row the user then has to hand-delete. We take
@@ -3447,7 +3992,12 @@ class ConnectSessionService:
                     error_code=error_code,
                     ended_at=datetime.now(UTC),
                 )
-                await CredentialRepository.delete(session, row.credential_id)
+                if row.intent == INTENT_EDIT:
+                    # An edit's credential is the live one the binding uses:
+                    # only the session goes, its outcome stays.
+                    await ConnectSessionRepository.delete(session, row.id)
+                else:
+                    await CredentialRepository.delete(session, row.credential_id)
         if not won:
             _logger.info(
                 "connect_session.terminal_skipped",
@@ -3508,7 +4058,7 @@ class ConnectSessionService:
                 "outcome": state,
             },
         )
-        if row.agent_id is not None:
+        if row.agent_id is not None and row.intent != INTENT_EDIT:
             # The control-side ``agent_permission_rules`` rows cascade with
             # the credential; the admin-DB binding row is cross-DB (no FK)
             # and must be swept explicitly so no ghost binding outlives the

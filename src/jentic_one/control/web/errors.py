@@ -27,9 +27,12 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BaselineChangedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectSessionServiceError,
+    EditBindingNotFoundError,
+    EditOpenError,
     ExistingCredentialNotFoundError,
     InsufficientGrantedScopesError,
     InvalidOAuthAppRegistrationError,
@@ -38,12 +41,15 @@ from jentic_one.control.services.integrations.errors import (
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
     NoOpForFlowError,
+    NothingToChangeError,
     OAuthAppChangedError,
     OwnClientInvalidError,
     ReauthorizeUnavailableError,
     RecentlyRejectedError,
     ReservedAuthFieldError,
     ReviewStaleError,
+    RevisionChangedError,
+    RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SchemeChangedError,
     ScopeValidationError,
@@ -52,6 +58,7 @@ from jentic_one.control.services.integrations.errors import (
     SessionNotFoundError,
     TooManyOpenSessionsError,
     UnknownApiError,
+    UnknownRuleError,
     UnpinnedServerHostError,
 )
 from jentic_one.control.services.oauth_app_registrations.errors import (
@@ -142,6 +149,13 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
     ReauthorizeUnavailableError: (409, "reauthorize_unavailable"),
     OwnClientInvalidError: (400, "own_oauth_client_invalid"),
+    EditBindingNotFoundError: (404, "agent_binding_not_found"),
+    NothingToChangeError: (422, "nothing_to_change"),
+    UnknownRuleError: (422, "unknown_rule"),
+    EditOpenError: (409, "edit_open"),
+    RevisionChangedError: (409, "revision_changed"),
+    BaselineChangedError: (409, "baseline_changed"),
+    RuleSetConfirmForbiddenError: (403, "rule_set_confirm_forbidden"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -172,6 +186,10 @@ def _connect_session_response_hook(
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):
         headers["Retry-After"] = str(exc.retry_after_seconds)
+    elif isinstance(exc, EditOpenError):
+        extra["session_id"] = exc.session_id
+    elif isinstance(exc, RevisionChangedError | BaselineChangedError):
+        extra["current_revision_id"] = exc.current_revision_id
     if not extra and not headers:
         return response
     content: dict[str, object] = json.loads(bytes(response.body))

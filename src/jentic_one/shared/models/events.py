@@ -103,6 +103,13 @@ class EventType:
     # the event row deep-links to its approval page. ``created_by`` is the
     # agent, so its owner sees the row under owner-scoped event reads.
     CONNECT_SESSION_CREATED = "connect_session.created"
+    # An agent opened an edit session asking its owner to change one of its
+    # credential bindings (rules, rule set, suspension). Informational like
+    # ``CONNECT_SESSION_CREATED``: the open session is the live signal.
+    CONNECT_SESSION_EDIT_REQUESTED = "connect_session.edit_requested"
+    # The initiator amended an open session's ask (a new revision). The
+    # reviewer re-reads the combined diff before approving.
+    CONNECT_SESSION_AMENDED = "connect_session.amended"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
     # Emitted once per MCP session UUID on the first authenticated request
@@ -195,6 +202,8 @@ class EventType:
             PBAC_DENIED,
             CREDENTIAL_BINDING_UNSERVED,
             CONNECT_SESSION_CREATED,
+            CONNECT_SESSION_EDIT_REQUESTED,
+            CONNECT_SESSION_AMENDED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,
@@ -444,6 +453,8 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_EXPIRED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.CONNECT_SESSION_EDIT_REQUESTED: frozenset({EventSeverity.INFO}),
+    EventType.CONNECT_SESSION_AMENDED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),

@@ -1485,3 +1485,82 @@ def test_owner_delegation_reads_but_cannot_write_owner_credential(
     resp = plain_writer_client.patch(path, json={"type": "api_key", "name": "owner-renamed"})
     assert resp.status_code == 200, resp.text
     assert plain_writer_client.delete(path).status_code == 204
+
+
+# --- Editing a binding through a connect session ---
+
+
+def test_edit_connection_round_trip(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """Begin an edit, read its review, confirm the revision, and see it applied."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    read = {"effect": "allow", "methods": ["GET"], "path": "/v1/.*"}
+    assert cred_writer_client.put(base, json=[read]).status_code == 200
+    [rule_id] = [r["id"] for r in cred_writer_client.get(base).json()["data"]]
+
+    # A human names the agent; set is not combined with add/remove.
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection", json={"credential_id": credential_id}
+    )
+    assert resp.status_code == 400, resp.text
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={
+            "credential_id": credential_id,
+            "agent_id": agent_id,
+            "rules": {"set": [read], "remove": [rule_id]},
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={"credential_id": credential_id, "agent_id": agent_id, "rules": {"remove": ["apr_x"]}},
+    )
+    assert (resp.status_code, resp.json()["type"]) == (422, "unknown_rule"), resp.text
+
+    send = {"effect": "allow", "methods": ["POST"], "path": "/v1/send"}
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={
+            "credential_id": credential_id,
+            "agent_id": agent_id,
+            "rules": {"add": [{"rule": send, "before": rule_id}]},
+            "reason": "needs to send",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    assert created["resolved_flow"] == "edit"
+    assert created["revision_id"].startswith("csr_")
+
+    resp = cred_writer_client.post(
+        "/integrations:edit-connection",
+        json={"credential_id": credential_id, "agent_id": agent_id, "rules": {"remove": [rule_id]}},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["session_id"] == created["session_id"]
+
+    review = cred_writer_client.get(f"/connect-sessions/{created['session_id']}").json()
+    edit = review["edit"]
+    assert edit["revision"] == {"id": created["revision_id"], "number": 1}
+    assert [r["path"] for r in edit["result"]["rules"]] == ["/v1/send", "/v1/.*"]
+    assert edit["widens_access"] is True
+
+    resp = cred_writer_client.post(
+        f"/connect-sessions/{created['session_id']}:confirm",
+        json={
+            "kind": "edit",
+            "revision_id": created["revision_id"],
+            "permission_rules": [send, read],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"kind": "connected", "credential_id": credential_id}
+    assert [r["path"] for r in cred_writer_client.get(base).json()["data"]] == [
+        "/v1/send",
+        "/v1/.*",
+    ]
+    status = cred_writer_client.get(f"/connect-sessions/{created['session_id']}/status").json()
+    assert status["status"] == "applied"

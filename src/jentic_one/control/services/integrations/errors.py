@@ -308,3 +308,70 @@ class OwnClientInvalidError(ConnectSessionServiceError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(f"own OAuth client is not usable: {detail}")
+
+
+class EditBindingNotFoundError(ConnectSessionServiceError):
+    """The edit names a binding that does not exist, or one the caller may not edit.
+
+    An agent's suspended binding answers the same: suspension hides the
+    credential from its agent.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"no credential binding for {credential_id!r} that the caller may edit")
+        self.credential_id = credential_id
+
+
+class NothingToChangeError(ConnectSessionServiceError):
+    """The edit would leave the binding exactly as it is."""
+
+    def __init__(self) -> None:
+        super().__init__("the requested change is already in place; nothing to change")
+
+
+class UnknownRuleError(ConnectSessionServiceError):
+    """A ``remove`` or ``before`` names a rule the binding does not hold."""
+
+    def __init__(self, rule_id: str) -> None:
+        super().__init__(f"rule {rule_id!r} is not on this binding")
+        self.rule_id = rule_id
+
+
+class EditOpenError(ConnectSessionServiceError):
+    """The binding already has an open edit session; amend that one instead."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"an edit for this binding is already open ({session_id}); amend it")
+        self.session_id = session_id
+
+
+class RevisionChangedError(ConnectSessionServiceError):
+    """The confirm names a revision that is no longer the session's current one."""
+
+    def __init__(self, session_id: str, current_revision_id: str | None) -> None:
+        super().__init__(f"session {session_id!r} changed since it was reviewed; review it again")
+        self.session_id = session_id
+        self.current_revision_id = current_revision_id
+
+
+class BaselineChangedError(ConnectSessionServiceError):
+    """The binding changed after the edit opened; the session was rebased onto it."""
+
+    def __init__(self, session_id: str, current_revision_id: str) -> None:
+        super().__init__(
+            f"the binding changed since session {session_id!r} opened; "
+            "review the rebased request again"
+        )
+        self.session_id = session_id
+        self.current_revision_id = current_revision_id
+
+
+class RuleSetConfirmForbiddenError(ConnectSessionServiceError):
+    """The edit changes a shared rule set the confirming caller does not own."""
+
+    def __init__(self, rule_set_id: str) -> None:
+        super().__init__(
+            f"the edit changes shared rule set {rule_set_id!r}; only its owner or an "
+            "org admin may confirm it"
+        )
+        self.rule_set_id = rule_set_id

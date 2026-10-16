@@ -125,10 +125,15 @@ func (DenyRequest) RequiredFields() []string                { return []string{"r
 func (DeviceAuthorizationRegistrationCreateRequest) RequiredFields() []string {
 	return []string{"api_vendor", "authorization_endpoint", "catalog_api_id", "client_id", "display_name", "flow_kind", "name", "token_endpoint"}
 }
-func (EffectivePermission) RequiredFields() []string { return []string{"name"} }
-func (ErrorItem) RequiredFields() []string           { return []string{"detail"} }
-func (EventLinks) RequiredFields() []string          { return []string{"self"} }
-func (EventListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
+func (EditConfirmSessionRequest) RequiredFields() []string {
+	return []string{"kind", "permission_rules", "revision_id"}
+}
+func (EditConnectionRequest) RequiredFields() []string { return []string{"credential_id"} }
+func (EditRuleAdd) RequiredFields() []string           { return []string{"rule"} }
+func (EffectivePermission) RequiredFields() []string   { return []string{"name"} }
+func (ErrorItem) RequiredFields() []string             { return []string{"detail"} }
+func (EventLinks) RequiredFields() []string            { return []string{"self"} }
+func (EventListResponse) RequiredFields() []string     { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
 	return []string{"_links", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
 }

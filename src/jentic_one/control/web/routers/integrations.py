@@ -13,21 +13,24 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
-from jentic.problem_details import Forbidden, TooManyRequests
+from jentic.problem_details import BadRequest, Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
     ConfirmChecks,
+    ConfirmResult,
     ConfirmVariant,
     ConnectedConfirmResult,
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
+    EditReview,
     ExistingCredentialConfirm,
     OwnClientConfirm,
     ReviewData,
     SecretConfirm,
 )
+from jentic_one.control.services.integrations.edits import EditRequest, RuleAdd
 from jentic_one.control.services.integrations.flow_handlers.manual import (
     ApiKeySecret,
     BasicSecret,
@@ -48,6 +51,17 @@ from jentic_one.control.web.schemas.integrations import (
     ConnectSessionState,
     ConnectSessionSummaryResponse,
     DeviceAuthorizationConfirmSessionResponse,
+    EditAgentRef,
+    EditBindingRef,
+    EditConfirmSessionRequest,
+    EditConnectionRequest,
+    EditConnectionResponse,
+    EditCurrentAccess,
+    EditResultAccess,
+    EditRevisionRef,
+    EditRuleSetView,
+    EditRulesRequest,
+    EditRuleView,
     ExistingCredentialConfirmSessionRequest,
     ExistingCredentialResponse,
     IntegrationsConnectRequest,
@@ -57,6 +71,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReauthorizeConfirmSessionRequest,
     ReauthorizeConfirmSessionResponse,
     ReviewAgentResponse,
+    ReviewEditResponse,
     ReviewProvenanceResponse,
     ReviewSchemeResponse,
     ReviewScopeResponse,
@@ -201,6 +216,88 @@ async def integrations_connect(
         session_id=created.session_id,
         approval_url=created.approval_url,
         poll_token=created.poll_token,
+        resolved_flow=created.resolved_flow,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /integrations:edit-connection — begin an edit of an existing binding
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/integrations:edit-connection",
+    status_code=201,
+    summary="Ask to change a credential binding",
+    response_model=None,
+    responses=with_responses(
+        not_found("No binding the caller may edit for this credential"),
+        conflict("The binding already has an open edit; amend it"),
+        too_many_requests("Rate limit or open-session cap"),
+    ),
+)
+async def integrations_edit_connection(
+    body: EditConnectionRequest,
+    request: Request,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> EditConnectionResponse:
+    """Open a connect session that edits an existing binding instead of creating one.
+
+    The change (rules to add, remove or replace, and resuming a suspended
+    binding) is resolved against the binding as it is now, and a human
+    approves it on the review page; nothing changes until then. An agent
+    edits its own binding and must omit `agent_id`; a human names the agent
+    and must be its owner or an org admin. A change that is already in place
+    is 422 `nothing_to_change`, a rule id the binding does not hold is 422
+    `unknown_rule`, and a binding with an open edit is 409 `edit_open` with
+    that session's `session_id`.
+    """
+    await _enforce_connect_rate_limit(request, identity)
+
+    if identity.actor_type == ActorType.AGENT:
+        if body.agent_id is not None:
+            raise Forbidden(
+                detail="agent callers must not pass agent_id — the caller's identity is used",
+                instance="/integrations:edit-connection",
+            )
+        agent_id = identity.sub
+    elif body.agent_id is None:
+        raise BadRequest(
+            detail="agent_id is required: name the agent whose binding to change",
+            type="agent_id_required",
+            instance="/integrations:edit-connection",
+        )
+    else:
+        agent_id = body.agent_id
+
+    rules = body.rules or EditRulesRequest()
+    created = await svc.create_edit_session(
+        credential_id=body.credential_id,
+        agent_id=agent_id,
+        identity=identity,
+        request=EditRequest(
+            add=[
+                RuleAdd(rule=a.rule.model_dump(exclude_none=True), before=a.before)
+                for a in rules.add
+            ],
+            remove=list(rules.remove),
+            set_rules=(
+                [r.model_dump(exclude_none=True) for r in rules.set_rules]
+                if rules.set_rules is not None
+                else None
+            ),
+            resume=body.resume,
+            reason=body.reason,
+        ),
+    )
+    return EditConnectionResponse(
+        session_id=created.session_id,
+        approval_url=created.approval_url,
+        poll_token=created.poll_token,
+        revision_id=created.revision_id,
         resolved_flow=created.resolved_flow,
     )
 
@@ -397,6 +494,31 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
             )
             for c in data.existing_credentials
         ],
+        edit=_edit_response(data.edit) if data.edit is not None else None,
+    )
+
+
+def _edit_response(edit: EditReview) -> ReviewEditResponse:
+    current = edit.current
+    rule_set = current.get("rule_set")
+    return ReviewEditResponse(
+        binding=EditBindingRef(
+            agent_id=edit.agent_id,
+            credential_id=edit.credential_id,
+            credential_name=edit.credential_name,
+        ),
+        revision=EditRevisionRef(id=edit.revision_id, number=edit.revision_number),
+        current=EditCurrentAccess(
+            rules=[EditRuleView.model_validate(r) for r in current["rules"]],
+            rule_set=EditRuleSetView.model_validate(rule_set) if rule_set is not None else None,
+            suspended=current["suspended"],
+            granted_scopes=current.get("granted_scopes"),
+        ),
+        result=EditResultAccess.model_validate(edit.result),
+        widens_access=edit.widens_access,
+        other_bound_agents=[
+            EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
+        ],
     )
 
 
@@ -449,7 +571,8 @@ async def confirm_connect_session(
     variant): OAuth scopes, a secret for a ``manual_*`` session
     (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
     for an ``awaiting_app`` session, or a credential the approver already
-    holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+    holds (``existing_credential``, ``reauthorize``), or an edit session's
+    final rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:
     they never appear in a response, audit entry or log.
 
     Shares the ``:connect`` per-actor rate bucket — this is the endpoint
@@ -460,7 +583,17 @@ async def confirm_connect_session(
     """
     await _enforce_connect_rate_limit(request, identity)
 
-    if isinstance(body, OAuthConfirmSessionRequest):
+    result: ConfirmResult
+    if isinstance(body, EditConfirmSessionRequest):
+        result = await svc.confirm_edit(
+            session_id,
+            poll_token=poll_token,
+            identity=identity,
+            revision_id=body.revision_id,
+            permission_rules=[r.model_dump(exclude_none=True) for r in body.permission_rules],
+            resume=body.resume,
+        )
+    elif isinstance(body, OAuthConfirmSessionRequest):
         result = await svc.confirm(
             session_id,
             poll_token=poll_token,

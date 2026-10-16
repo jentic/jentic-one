@@ -2465,6 +2465,33 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "integrationsEditConnection",
+      "path": "/integrations:edit-connection",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Ask to change a credential binding",
+      "surface": "integrations:edit-connection",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Agent-facing (typically an agent)",
       "implied_permissions": {
         "jobs:read": []
@@ -4751,5 +4778,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 170
+  "total": 171
 }
