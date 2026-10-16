@@ -159,8 +159,9 @@ the `problem_type` the caller was shown. That log line is how an operator
 finds a host to review. On the synchronous runner path an egress refusal is
 never retried and never counts against the upstream's circuit; a queued
 execution fails terminally with the same problem in its job result, never
-requeued. A host the pinning transport cannot resolve at connect time is an
-`upstream_connect_failed` connect failure (`504`).
+requeued. A host the pinning transport cannot resolve at connect time is a
+`502` `upstream_connect_failed` connect failure (`pre_send`, so a retry is safe
+for any method), like a refused connection.
 
 ## Credential injection
 

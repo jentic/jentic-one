@@ -15,7 +15,7 @@ raises the domain ``UpstreamTimeoutError`` (timeout) or a generic ``BrokerError`
 raises a web/HTTP exception. A connect-time egress refusal from the DNS-pinning
 transport (``shared/egress``) maps to the same ``UpstreamUrlNotAllowedError``
 the pre-flight check raises, and a host that transport cannot resolve maps to
-the ``upstream_connect_failed`` connect failure.
+the ``upstream_connect_failed`` connect failure (``UpstreamTransportError``, 502).
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from jentic_one.broker.core.exceptions import (
     BrokerError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
     UpstreamUrlNotAllowedError,
     switch_toolkit_directive,
     upstream_url_not_allowed,
@@ -73,10 +74,14 @@ def _egress_refusal(
     return refusal
 
 
-def _unresolved_host_error() -> UpstreamTimeoutError:
-    """The connect-failure problem for an upstream host the pinning transport could not resolve."""
-    return UpstreamTimeoutError(
-        detail="The upstream host could not be resolved.",
+def _unresolved_host_error() -> UpstreamTransportError:
+    """The 502 connect failure for an upstream host the pinning transport could not resolve.
+
+    No request bytes were sent, so it is ``pre_send`` (retry-safe for any
+    method) and reads like a refused connection.
+    """
+    return UpstreamTransportError(
+        detail="The upstream connection could not be established.",
         type="upstream_connect_failed",
         pre_send=True,
     )
