@@ -8,6 +8,7 @@ import weakref
 
 import pytest
 
+from jentic_one.shared import ttl_cache
 from jentic_one.shared.ttl_cache import AsyncTTLCache
 
 
@@ -317,6 +318,24 @@ async def test_remembered_failure_drops_non_scalar_args() -> None:
     with pytest.raises(RuntimeError) as hit:
         await cache.get_or_load("a", failing)
     assert hit.value.args == (str(_RichError(b"body", 502)),)
+
+
+@pytest.mark.asyncio
+async def test_remembered_failure_caps_long_string_args() -> None:
+    """A long ``str`` arg is truncated in the remembered failure; other scalars
+    are kept as they are."""
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=4, ttl_seconds=60, failure_ttl_seconds=30, clock=_Clock()
+    )
+
+    async def failing() -> str:
+        raise ValueError("x" * 10_000, 502)
+
+    with pytest.raises(ValueError):
+        await cache.get_or_load("a", failing)
+    with pytest.raises(ValueError) as hit:
+        await cache.get_or_load("a", failing)
+    assert hit.value.args == ("x" * ttl_cache._MAX_FALLBACK_MESSAGE, 502)
 
 
 @pytest.mark.asyncio
