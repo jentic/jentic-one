@@ -202,7 +202,10 @@ async def _persist_streaming_outcome(
             )
     except asyncio.CancelledError:
         _streaming_persist_failures.add(1)
-        logger.error(
+        # The registry logs the error-level line for this incident
+        # (background_task_timed_out / background_task_cancelled) with kind and
+        # budget; this one only ties the abandoned write to its execution.
+        logger.warning(
             "streaming_execution_persist_abandoned",
             execution_id=outcome.execution_id,
             trace_id=ctx_req.trace_id,

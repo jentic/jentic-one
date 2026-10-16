@@ -445,6 +445,9 @@ async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() ->
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["execution_id"] == "exec-p-4"
     assert abandoned["trace_id"] == "trace-1"
+    # The registry's supervisor owns the single error-level line for this incident.
+    assert abandoned["log_level"] == "warning"
+    assert not [e for e in logs if e["log_level"] == "error"]
 
 
 # --- OutcomeStreamingResponse: every exit path settles the outcome once ---
