@@ -5,8 +5,8 @@ whatever the envelope is awaiting when the overall budget runs out: a queued
 per-host bulkhead permit, a retry backoff, or a send in progress. Only the
 transport can tell those apart, so it records each send here. The deadline then
 reports "nothing reached the upstream" (``pre_send``) only when the transport
-took part in the call and every send it started was ruled out (a connect-phase
-failure). A send the deadline cuts off mid-flight counts as sent, since the
+took part in the call and every send it started was ruled out (``client.send``
+itself failed to connect). A send the deadline cuts off mid-flight counts as sent, since the
 request may already be on the wire. A call whose transport never reports here
 (another scheme's runner, or a deadline that fires before the transport is
 reached) also counts as sent, so the probe can only ever fail closed.
@@ -29,22 +29,24 @@ class DispatchProbe:
 
     reporting: bool = False
     """The transport has taken part in this call and reports its sends."""
-    may_have_sent: bool = False
-    """A send was started whose request bytes may have reached the upstream."""
+    unresolved_sends: int = 0
+    """Sends started and not ruled out: their request bytes may have reached the upstream.
 
-    def begin_send(self) -> bool:
-        """Mark a send as started; return the prior state for :meth:`send_ruled_out`."""
-        prior = self.may_have_sent
-        self.may_have_sent = True
-        return prior
+    A count rather than a flag, so a send ruled out while another one is in
+    flight (or after another one completed) never hides the other send.
+    """
 
-    def send_ruled_out(self, prior: bool) -> None:
-        """The send started by :meth:`begin_send` failed before sending any bytes."""
-        self.may_have_sent = prior
+    def begin_send(self) -> None:
+        """Count a send as started; it stays counted unless :meth:`send_ruled_out` follows."""
+        self.unresolved_sends += 1
+
+    def send_ruled_out(self) -> None:
+        """One send counted by :meth:`begin_send` failed before sending any bytes."""
+        self.unresolved_sends -= 1
 
     def nothing_sent(self) -> bool:
         """Whether the call provably never put request bytes on the wire."""
-        return self.reporting and not self.may_have_sent
+        return self.reporting and self.unresolved_sends == 0
 
 
 _current: ContextVar[DispatchProbe | None] = ContextVar("broker_dispatch_probe", default=None)

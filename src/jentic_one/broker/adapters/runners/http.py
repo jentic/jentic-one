@@ -55,6 +55,9 @@ _tracer = trace.get_tracer("broker.runner")
 #: the latter before httpx's own transport runs, so httpx never wraps it.
 _TransportFailure = httpx.HTTPError | UpstreamHostUnresolvedError
 _TRANSPORT_FAILURES = (httpx.HTTPError, UpstreamHostUnresolvedError)
+#: The connect-phase subset: raised by ``client.send`` before any request byte
+#: reached the upstream (``ConnectTimeout`` subclasses ``ConnectError``).
+_CONNECT_PHASE_FAILURES = (httpx.ConnectError, UpstreamHostUnresolvedError)
 
 
 def _transport_error_detail(exc: _TransportFailure) -> str:
@@ -90,7 +93,7 @@ def _record_transport_error(span: Span, exc: _TransportFailure) -> None:
 _UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
 
 
-def _map_transport_error(exc: _TransportFailure) -> BrokerError:
+def _map_transport_error(exc: _TransportFailure, *, sent: bool = False) -> BrokerError:
     """The domain error for a transport failure on either runner path.
 
     - ``ConnectTimeout`` → :class:`UpstreamTimeoutError` (504),
@@ -106,10 +109,14 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
       (500), ``upstream_transport_error``.
 
     ``pre_send`` marks a connect-phase failure: no request bytes reached the
-    upstream, so a retry is safe for any method. The caller-facing detail never
-    carries the exception message (see :func:`_transport_error_detail`).
+    upstream, so a retry is safe for any method. ``sent=True`` says the
+    upstream already answered (the error came while reading the body), so a
+    connect-class error there is mapped as the post-send failure it is: a
+    ``ConnectTimeout`` as ``upstream_timeout`` and a ``ConnectError`` as
+    ``upstream_transport_error``, never ``pre_send``. The caller-facing detail
+    never carries the exception message (see :func:`_transport_error_detail`).
     """
-    if isinstance(exc, httpx.ConnectTimeout):
+    if not sent and isinstance(exc, httpx.ConnectTimeout):
         return UpstreamTimeoutError(
             detail="The upstream connection could not be established in time.",
             type="upstream_connect_failed",
@@ -120,7 +127,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
             detail="The upstream did not respond within the deadline.",
             type="upstream_timeout",
         )
-    if isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
+    if not sent and isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
         return UpstreamTransportError(
             detail="The upstream connection could not be established.",
             type="upstream_connect_failed",
@@ -250,7 +257,6 @@ class HttpRunner(UpstreamRunner):
         start = time.perf_counter()
         with _tracer.start_as_current_span("broker.upstream_request") as span:
             span.set_attribute("http.url_host", host)
-            sent_before = False
             try:
                 req = self._client.build_request(
                     method=request.method,
@@ -260,26 +266,38 @@ class HttpRunner(UpstreamRunner):
                     timeout=request.timeout_s,
                 )
                 if probe is not None:
-                    sent_before = probe.begin_send()
-                resp = await self._client.send(req, stream=True)
+                    probe.begin_send()
+                try:
+                    resp = await self._client.send(req, stream=True)
+                except _CONNECT_PHASE_FAILURES as exc:
+                    # Connect-phase failure: no request bytes reached the upstream,
+                    # so a retry is safe for ANY method. Only ``client.send`` is
+                    # covered: once a response exists the request was sent, so a
+                    # connect-class error while reading the body falls through to
+                    # the post-send branch below. ``_map_transport_error`` maps
+                    # every one of these as ``pre_send``.
+                    if probe is not None:
+                        probe.send_ruled_out()
+                    _record_transport_error(span, exc)
+                    logger.error(
+                        "upstream_network_failure", host=host, error_type=type(exc).__name__
+                    )
+                    # ``from None``: see the post-send branch below.
+                    raise _map_transport_error(exc) from None
                 try:
                     body = await self._read_capped(resp)
                 finally:
                     await resp.aclose()
             except _TRANSPORT_FAILURES as exc:
-                # One mapping for every transport failure (see
-                # ``_map_transport_error``); a connect-phase failure is
-                # ``pre_send`` so the retry decorator may retry it for any method.
-                if probe is not None and isinstance(
-                    exc, (httpx.ConnectError, UpstreamHostUnresolvedError)
-                ):
-                    # Connect-phase failure: nothing reached the upstream.
-                    probe.send_ruled_out(sent_before)
+                # Every other transport failure (see ``_map_transport_error``).
+                # Connect-phase failures of ``client.send`` were handled above,
+                # so whatever lands here may have reached the upstream: never
+                # ``pre_send``, even for a connect-class error read off the body.
                 _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 # ``from None``: a chained cause would put the raw message back
                 # into any traceback rendered from this error (span, log).
-                raise _map_transport_error(exc) from None
+                raise _map_transport_error(exc, sent=True) from None
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         return RunnerResult(

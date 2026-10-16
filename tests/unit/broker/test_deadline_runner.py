@@ -22,11 +22,13 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
 )
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
+from jentic_one.broker.adapters.runners.dispatch import track_dispatch
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner
 from jentic_one.broker.core.exceptions import (
     DeadlineExceededError,
     ErrorOrigin,
+    UpstreamTransportError,
     upstream_contact_ruled_out,
 )
 from jentic_one.broker.services.execution.pipeline import build_runner
@@ -240,6 +242,74 @@ async def test_deadline_after_a_read_timeout_attempt_is_not_pre_send() -> None:
     assert calls == 2
     assert caught.value.pre_send is False
     assert not upstream_contact_ruled_out(caught.value)
+
+
+class _BodyRaises(httpx.AsyncByteStream):
+    """A response body that fails with a connect-class error after the upstream answered."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise httpx.ConnectError("connection reset")
+
+
+@pytest.mark.asyncio
+async def test_deadline_after_a_connect_error_mid_body_is_not_pre_send() -> None:
+    """A send whose body read failed reached the upstream; a later backoff deadline is stored."""
+    calls = 0
+
+    def _answer_then_refuse(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, stream=_BodyRaises())
+        raise httpx.ConnectError("connection refused", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_answer_then_refuse)) as client:
+        runner = DeadlineRunner(
+            RetryRunner(HttpRunner(client), max_attempts=5, base_backoff_s=0.0, max_backoff_s=0.0),
+            deadline_s=0.05,
+        )
+        with (
+            mock.patch("random.uniform", side_effect=[0.0, 10.0, 10.0, 10.0]),
+            pytest.raises(DeadlineExceededError) as caught,
+        ):
+            await runner.run(_post())
+
+    assert calls == 2
+    assert caught.value.pre_send is False
+    assert not upstream_contact_ruled_out(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_ruled_out_send_does_not_hide_a_concurrent_send() -> None:
+    """Two sends share one call's probe: ruling one out leaves the in-flight one counted."""
+    refuse = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/refused":
+            await refuse.wait()
+            raise httpx.ConnectError("connection refused", request=request)
+        await release.wait()
+        return httpx.Response(201, stream=httpx.ByteStream(b"ok"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handle)) as client:
+        http = HttpRunner(client)
+        with track_dispatch() as probe:
+            # The refused send starts first, so it is ruled out while the other is in flight.
+            refused = asyncio.create_task(http.run(_post("https://a.example.com/refused")))
+            await asyncio.sleep(0)
+            in_flight = asyncio.create_task(http.run(_post("https://b.example.com/ok")))
+            await asyncio.sleep(0.01)
+            refuse.set()
+            with pytest.raises(UpstreamTransportError):
+                await refused
+            try:
+                assert probe.nothing_sent() is False
+            finally:
+                release.set()
+                await in_flight
+        assert probe.nothing_sent() is False
 
 
 @pytest.mark.asyncio
