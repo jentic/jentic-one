@@ -2,16 +2,80 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload, raiseload
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.credentials import StoredCredentialType
+
+# Secret-material child relationships on ``Credential`` (one row per credential).
+_CHILD_RELATIONSHIPS: tuple[str, ...] = (
+    "customer_api_key",
+    "oauth_client_credential",
+    "basic_credential",
+    "token_value_credential",
+    "oauth_token",
+    "sigv4_credential",
+    "device_authorization_credential",
+)
+
+# The child relationship the broker resolver reads for each stored type.
+# ``NO_AUTH`` carries no material; OAuth client/device-flow rows are not read
+# at resolution time.
+_MATERIAL_RELATIONSHIP: Mapping[str, str] = {
+    StoredCredentialType.API_KEY: "customer_api_key",  # pragma: allowlist secret
+    StoredCredentialType.BASIC_AUTH: "basic_credential",
+    StoredCredentialType.STATIC_BEARER_TOKEN: "token_value_credential",
+    StoredCredentialType.SESSION_TOKEN: "token_value_credential",
+    StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS: "oauth_token",
+    StoredCredentialType.OAUTH2_AUTHORIZATION_CODE: "oauth_token",
+    StoredCredentialType.OAUTH2_DEVICE_CODE: "oauth_token",
+    StoredCredentialType.OAUTH2_IMPLICIT: "oauth_token",
+    StoredCredentialType.AWS_SIGV4: "sigv4_credential",
+}
+
+
+async def _load_material(session: AsyncSession, credentials: Sequence[Credential]) -> None:
+    """Populate each credential's type-matching child with one query per relationship.
+
+    Credentials without a child row get ``None`` (as the ``selectin`` default
+    would). With duplicate child rows the first one wins, mirroring the
+    ``uselist=False`` selectin behaviour.
+    """
+    owners_by_rel: dict[str, list[Credential]] = defaultdict(list)
+    for credential in credentials:
+        rel = _MATERIAL_RELATIONSHIP.get(credential.type)
+        if rel is not None:
+            owners_by_rel[rel].append(credential)
+
+    for rel, owners in owners_by_rel.items():
+        prop = Credential.__mapper__.relationships[rel]
+        child_cls: Any = prop.mapper.class_
+        back = prop.back_populates
+        stmt = select(child_cls).where(child_cls.credential_id.in_([c.id for c in owners]))
+        if back:
+            # The parent is already in the identity map; set it below rather
+            # than letting the child's own ``selectin`` back-reference query.
+            stmt = stmt.options(lazyload(getattr(child_cls, back)))
+        rows = await session.execute(stmt)
+        child_by_owner: dict[str, Any] = {}
+        for child in rows.scalars():
+            child_by_owner.setdefault(child.credential_id, child)
+        for owner in owners:
+            child = child_by_owner.get(owner.id)
+            set_committed_value(owner, rel, child)
+            if child is not None and back:
+                set_committed_value(child, back, owner)
 
 
 class CredentialRepository:
@@ -69,7 +133,12 @@ class CredentialRepository:
 
     @staticmethod
     async def list_by_vendor(session: AsyncSession, api_vendor: str) -> list[Credential]:
-        """Fetch candidates for a vendor.
+        """Fetch candidates for a vendor — the broker's per-call resolution query.
+
+        Only the secret-material child matching each candidate's ``type`` is
+        loaded (one query per distinct type present, none for ``NO_AUTH``)
+        instead of the model's default ``selectin`` fan-out over every child
+        table. The other child relationships ``raise`` on access.
 
         Widen the prefilter to also match the caller's raw (un-slugified) input so
         historical rows persisted before vendor normalization still surface as
@@ -77,9 +146,13 @@ class CredentialRepository:
         """
         normalized = slugify_api_field(api_vendor)
         result = await session.execute(
-            select(Credential).where(Credential.api_vendor.in_({api_vendor, normalized}))
+            select(Credential)
+            .where(Credential.api_vendor.in_({api_vendor, normalized}))
+            .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
         )
-        return list(result.scalars().all())
+        credentials = list(result.scalars().all())
+        await _load_material(session, credentials)
+        return credentials
 
     @staticmethod
     async def list_all(
