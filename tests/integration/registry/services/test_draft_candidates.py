@@ -8,7 +8,9 @@ capped statement. These pin its precedence and its overflow rule:
 - more matching rows than the cap yields no candidates (the generic 404),
   never a truncated, possibly wrong, ranking;
 - only drafts the caller may be told about are read, so other principals'
-  drafts neither appear nor count toward the cap.
+  drafts neither appear nor count toward the cap;
+- ``RegistryService.find_draft_match`` reads drafts held for server-host
+  review only for a caller with ``credentials:write``.
 """
 
 from __future__ import annotations
@@ -30,7 +32,9 @@ from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.services.inspect import url_lookup
+from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -170,3 +174,26 @@ async def test_drafts_held_for_host_review_are_read_only_for_operators(env: Cont
 
     assert await _candidates(env) == []
     assert await _candidates(env, include_origin_drafts=True) == [held]
+
+
+async def test_find_draft_match_reads_held_drafts_only_for_operators(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = await _import_draft(env, _source("own", "https://api.draft-candidates.example"))
+    held = await _import_draft(env, _source("held", "https://api.draft-candidates.example"))
+    await _set_revision(env, held, submitted_by="agnt_someone_else", origin="url_import")
+    monkeypatch.setattr(url_lookup, "MAX_CANDIDATES", 1)
+
+    async def _match(*permissions: str) -> uuid.UUID | None:
+        identity = Identity(sub=SUBMITTER, permissions=list(permissions))
+        async with env.registry_db.session() as session:
+            match = await RegistryService(session, ctx=env).find_draft_match(
+                method="GET", url=URL, identity=identity
+            )
+        return None if match is None else match.revision_id
+
+    # Without ``credentials:write`` the held draft is not read, so the caller's
+    # own draft stays under the cap of 1 and its hint survives.
+    assert await _match() == own
+    # With it, both drafts are read and exceed the cap: the generic 404.
+    assert await _match("credentials:write") is None
