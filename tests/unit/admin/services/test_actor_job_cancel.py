@@ -221,6 +221,7 @@ def user_deps() -> Iterator[dict[str, MagicMock]]:
         users.disable = AsyncMock()
         users.enable = AsyncMock()
         users.update = AsyncMock()
+        users.revoke_login_sessions = AsyncMock()
         grants.get_permission_sets = AsyncMock(return_value={})
         external.delete_for_user = AsyncMock()
         audit.record = AsyncMock()

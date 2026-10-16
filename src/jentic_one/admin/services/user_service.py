@@ -45,6 +45,11 @@ from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 
+def _tombstone_email(user_id: str) -> str:
+    """The anonymized email a deleted user's retained row carries — its delete marker."""
+    return f"deleted-{user_id}@local"
+
+
 def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[str]) -> str:
     """Overlay the read-time EXPIRED invite state (never persisted).
 
@@ -382,9 +387,10 @@ class UserService:
             await UserRepository.update(
                 session,
                 user_id,
-                email=f"deleted-{user_id}@local",
+                email=_tombstone_email(user_id),
                 active=False,
             )
+            await UserRepository.revoke_login_sessions(session, user_id)
             await ExternalIdentityRepository.delete_for_user(session, user_id)
             await cancel_queued_executions_for_actor(
                 session,
@@ -411,6 +417,9 @@ class UserService:
             await self._load_manageable(session, user_id, identity)
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
+            # Ends every login JWT issued so far for good: re-enabling the
+            # user restores the account, not the sessions it had (#1139).
+            await UserRepository.revoke_login_sessions(session, user_id)
             # A queued execution job runs with its creator's authority, so
             # one left queued would run for a user who can no longer act
             # (#1674). Re-enabling does not requeue it.
@@ -436,7 +445,11 @@ class UserService:
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
-            await self._load_manageable(session, user_id, identity)
+            user = await self._load_manageable(session, user_id, identity)
+            # Delete is terminal: the tombstoned row is kept for history and
+            # audit references, never brought back to an active account.
+            if user.email == _tombstone_email(user_id):
+                raise ConflictError("Cannot enable a deleted user")
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,

@@ -38788,7 +38788,7 @@
     "/events/stream": {
       "description": "`GET`: Stream Events.",
       "get": {
-        "description": "Stream events as Server-Sent Events.",
+        "description": "Stream events as Server-Sent Events.\n\nThe stream ends once the caller's credential stops verifying (expired,\nrevoked, or its user disabled or deleted); reconnecting then returns 401.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -51635,7 +51635,7 @@
     "/users/{user_id}:enable": {
       "description": "`POST`: Enable User.",
       "post": {
-        "description": "Enable a user account.",
+        "description": "Enable a disabled user account.\n\nA deleted user cannot be re-enabled (409). Login sessions issued before the\naccount was disabled stay revoked; the user signs in again.",
         "operationId": "enableUser",
         "parameters": [
           {
@@ -51713,6 +51713,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The user has been deleted"
           },
           "422": {
             "content": {

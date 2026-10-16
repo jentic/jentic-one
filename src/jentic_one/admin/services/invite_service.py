@@ -29,6 +29,7 @@ from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.auth import TokenBundle
 from jentic_one.admin.services.schemas.invites import InviteIssued
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, InviteState
@@ -181,6 +182,7 @@ class InviteService:
             # Redeeming an invite sets the password — a fresh credential proof,
             # so the absolute session window (see AuthService.refresh) starts now.
             "auth_time": int(datetime.now(UTC).timestamp()),
+            SESSION_GENERATION_CLAIM: user.session_generation,
         }
         jwt_token = issue_jwt(
             claims, config.auth.jwt_secret.get_secret_value(), config.auth.jwt_ttl_seconds

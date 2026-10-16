@@ -205,7 +205,11 @@ async def disable_user(
     return Response(status_code=204)
 
 
-@router.post("/users/{user_id}:enable", status_code=204)
+@router.post(
+    "/users/{user_id}:enable",
+    status_code=204,
+    responses=with_responses(not_found(), conflict("The user has been deleted")),
+)
 async def enable_user(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
@@ -213,7 +217,11 @@ async def enable_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
-    """Enable a user account."""
+    """Enable a disabled user account.
+
+    A deleted user cannot be re-enabled (409). Login sessions issued before the
+    account was disabled stay revoked; the user signs in again.
+    """
     await user_svc.enable(user_id, identity=identity)
     return Response(status_code=204)
 
