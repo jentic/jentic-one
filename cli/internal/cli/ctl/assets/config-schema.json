@@ -12,6 +12,7 @@
         "failed_login_lockout_threshold": {
           "default": 5,
           "description": "Consecutive failed logins after which an admin account is locked.",
+          "minimum": 1,
           "title": "Failed Login Lockout Threshold",
           "type": "integer"
         },
@@ -32,7 +33,7 @@
         },
         "login_rate_limit": {
           "$ref": "#/$defs/AdminLoginRateLimitConfig",
-          "description": "Per-IP and per-email rate limits on ``POST /auth/login``."
+          "description": "Per-IP and per-email rate limits on the password logins (``POST /auth/login`` and the ``/authorize`` local-login form)."
         },
         "session_ttl_seconds": {
           "default": 43200,
@@ -78,7 +79,7 @@
       "type": "object"
     },
     "AdminLoginRateLimitConfig": {
-      "description": "Pre-auth rate limits on ``POST /auth/login``.\n\nTwo token buckets guard every attempt: one per caller IP (bounds password\nspraying from one host) and one per normalised email (bounds a distributed\nguessing burst against one account, on top of the failed-login lockout).\nThe caller IP honours ``auth.oauth_rate_limit.trusted_proxies``. Buckets\nlive on the shared-state backend (``broker.resilience.backend``): per\nprocess for ``memory``, cluster-wide for ``redis``.",
+      "description": "Pre-auth rate limits on the password logins.\n\nApplies to both doors that verify an account password: ``POST /auth/login``\nand the local-login form submit on the ``/authorize`` flow (one shared set\nof buckets). Two token buckets guard every attempt: one per caller IP\n(bounds password spraying from one host; IPv6 callers are bucketed per\n``/64``) and one per normalised email (bounds a distributed guessing burst\nagainst one account, on top of the failed-login lockout). The caller IP\nhonours ``auth.oauth_rate_limit.trusted_proxies``. Buckets live on the\nshared-state backend (``broker.resilience.backend``): per process for\n``memory``, cluster-wide for ``redis``.",
       "properties": {
         "email_burst": {
           "default": 10,
@@ -96,7 +97,7 @@
         },
         "enabled": {
           "default": true,
-          "description": "Enforce the ``POST /auth/login`` rate limits (429 when exhausted).",
+          "description": "Enforce the password-login rate limits (``POST /auth/login`` answers 429, the local-login form re-renders with 429, when exhausted).",
           "title": "Enabled",
           "type": "boolean"
         },
@@ -1400,7 +1401,7 @@
           "type": "integer"
         },
         "trusted_proxies": {
-          "description": "Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit identity: IP addresses or CIDR networks (e.g. ``10.0.0.0/8``, ``fd00::/8``), matched against the socket address and each forwarded hop by network membership. Accepts a YAML list or a comma-separated string. Invalid entries fail config load. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR when deploying behind one. Only list ranges your proxies alone hold: any host inside a trusted network can choose its own rate-limit identity.",
+          "description": "Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit identity — for the OAuth endpoints and for the password logins (``POST /auth/login``, see ``admin.auth.login_rate_limit``, and the local-login form): IP addresses or CIDR networks (e.g. ``10.0.0.0/8``, ``fd00::/8``), matched against the socket address and each forwarded hop by network membership. Accepts a YAML list or a comma-separated string. Invalid entries fail config load. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR when deploying behind one. Only list ranges your proxies alone hold: any host inside a trusted network can choose its own rate-limit identity.",
           "items": {
             "type": "string"
           },
