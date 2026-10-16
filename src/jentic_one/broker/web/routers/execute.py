@@ -719,6 +719,7 @@ async def _handle(
             origin=identity.origin.value,
             security_config=ctx.config.security,
             signing=injection.signing,
+            has_idempotency_key=bool(idem_key),
         )
 
     response = _assemble_response(outcome, ctx_req)
@@ -788,6 +789,7 @@ async def _handle_streaming(
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
         signing=injection.signing,
+        has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:

@@ -63,14 +63,16 @@ _IDEMPOTENT_METHODS: frozenset[str] = frozenset(
     {"GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"}
 )
 
-_IDEMPOTENCY_KEY_HEADER = "idempotency-key"
-
 
 def _is_idempotent(request: RunnerRequest) -> bool:
-    """Whether a *post-send* retry is safe for this request (method or key)."""
-    if request.method.upper() in _IDEMPOTENT_METHODS:
-        return True
-    return any(name.lower() == _IDEMPOTENCY_KEY_HEADER for name in request.headers)
+    """Whether a *post-send* retry is safe for this request (method or key).
+
+    The key signal is ``RunnerRequest.has_idempotency_key``, set by the handler
+    that read the inbound request: the ``Idempotency-Key`` header is
+    broker-consumed and stripped before the runner request is built, so it is
+    never in ``request.headers``.
+    """
+    return request.method.upper() in _IDEMPOTENT_METHODS or request.has_idempotency_key
 
 
 class RetryRunner:
