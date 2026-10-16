@@ -148,6 +148,19 @@ class ExecutionAuthorizer(Protocol):
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict: ...
 
 
+class ActorStatusReader(Protocol):
+    """Reads whether the actor that queued a job is active right now.
+
+    The worker holds no token for the enqueuing actor, so it builds the
+    identity it injects credentials for from this live read (agent ``status``
+    / user ``active`` on the actor row; a missing row or any other actor type
+    is inactive). Implemented broker-side by ``ActorStatusResolver`` and
+    injected at worker startup.
+    """
+
+    async def is_active(self, *, actor_id: str, actor_type: str) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class UpstreamExecRequest:
     """The upstream call the worker hands to the shared execution pipeline.

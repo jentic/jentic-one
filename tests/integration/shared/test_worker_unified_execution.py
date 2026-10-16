@@ -79,6 +79,13 @@ class _StaticAuthorizer:
         return self._verdict
 
 
+class _ActiveActor:
+    """Stands in for the broker's live actor-status read: the actor is active."""
+
+    async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
+        return True
+
+
 def _registry(handler: Any) -> JobHandlerRegistry:
     reg = JobHandlerRegistry()
     reg.register(JobKind.EXECUTION, handler)
@@ -143,6 +150,7 @@ async def test_async_job_dispatches_through_executor(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
         execution_authorizer=_StaticAuthorizer(QueuedExecutionVerdict(allowed=True)),
+        actor_status=_ActiveActor(),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 
@@ -225,6 +233,7 @@ async def test_async_job_denied_at_run_time_records_failed_result(
         execution_authorizer=_StaticAuthorizer(
             QueuedExecutionVerdict(allowed=False, problem=problem)
         ),
+        actor_status=_ActiveActor(),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 

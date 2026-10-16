@@ -185,6 +185,7 @@ def _start_worker(
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
     execution_authorizer: Any | None = None,
+    actor_status: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -211,7 +212,9 @@ def _start_worker(
     ``execution_authorizer`` is the broker's run-time re-authorizer: every
     queued execution is re-checked with the sync route's policy before any
     credential is resolved (the handler refuses a credential injector without
-    one).
+    one). ``actor_status`` is the broker's ``ActorStatusResolver``: the handler
+    builds the identity it injects for from a live read of the actor row (and
+    likewise refuses an injector without it).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -233,6 +236,7 @@ def _start_worker(
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
                 execution_authorizer=execution_authorizer,
+                actor_status=actor_status,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
                 # Same predicate the broker's hold path files under, so a held
@@ -553,6 +557,7 @@ def create_surface_app(
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
                 execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
+                actor_status=getattr(app.state, "broker_actor_status", None),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
