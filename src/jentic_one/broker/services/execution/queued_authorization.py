@@ -7,9 +7,10 @@ before any credential is resolved:
 
 1. the enqueuing actor must still be active (the sync path's token-resolution
    check, answered from the actor row since the worker holds no token);
-2. an agent must still hold the execute permission (the sync path's
-   ``require_execute_permission``, answered from the live grant rows an agent's
-   credentials resolve their scopes from);
+2. the actor must still hold the execute permission (the sync path's
+   ``require_execute_permission``, answered from the live grant rows — an
+   agent's ``actor_permission_grants``, a user's implication-expanded
+   ``user_permission_grants``); both come from one read;
 3. the actor's bindings for the API are re-derived, so a removed or
    suspended binding (or a disabled credential) no longer resolves;
 4. the binding's permission rules are re-evaluated for the operation.
@@ -39,6 +40,7 @@ from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
+    insufficient_scope_problem,
     queued_execution_instance,
 )
 from jentic_one.shared.models import ActorType
@@ -46,17 +48,6 @@ from jentic_one.shared.permissions.evaluation import rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
-
-
-def _insufficient_scope_problem(instance: str) -> dict[str, object]:
-    """Mirrors the sync edge's 403 from ``require_execute_permission``."""
-    return {
-        "type": "insufficient_scope",
-        "title": "Forbidden",
-        "status": 403,
-        "detail": f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
-        "instance": instance,
-    }
 
 
 class QueuedExecutionAuthorizer:
@@ -80,9 +71,14 @@ class QueuedExecutionAuthorizer:
         """Allow (with the current injection boundary) or deny (with a problem body)."""
         instance = queued_execution_instance(request.upstream_url)
 
-        if not await self._actor_status.is_active(
-            actor_id=request.actor_id, actor_type=request.actor_type
-        ):
+        # One read answers both gates (liveness, then the execute permission),
+        # in the sync edge's order: authentication before scope.
+        authority = await self._actor_status.authority(
+            actor_id=request.actor_id,
+            actor_type=request.actor_type,
+            permission=BROKER_EXECUTE_PERMISSION,
+        )
+        if not authority.active:
             logger.info(
                 "queued_execution_denied",
                 reason="actor_inactive",
@@ -91,11 +87,7 @@ class QueuedExecutionAuthorizer:
             )
             return QueuedExecutionVerdict(allowed=False, problem=inactive_actor_problem(instance))
 
-        if not await self._actor_status.holds_permission(
-            actor_id=request.actor_id,
-            actor_type=request.actor_type,
-            permission=BROKER_EXECUTE_PERMISSION,
-        ):
+        if not authority.holds_permission:
             logger.info(
                 "queued_execution_denied",
                 reason="insufficient_scope",
@@ -103,7 +95,7 @@ class QueuedExecutionAuthorizer:
                 actor_type=request.actor_type,
             )
             return QueuedExecutionVerdict(
-                allowed=False, problem=_insufficient_scope_problem(instance)
+                allowed=False, problem=insufficient_scope_problem(instance)
             )
 
         if not (request.api_vendor and request.api_name and request.api_version):
