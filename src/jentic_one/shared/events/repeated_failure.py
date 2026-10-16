@@ -81,11 +81,11 @@ class RepeatedFailureCounter:
     **Counting.** Each failure increments a time bucket of width
     ``execution_repeated_failure_window_s`` (``floor(now / window)``) with an
     atomic increment whose key expires two windows after it is created. The
-    estimate for
-    the scan's window ``[now - window, now]`` is *current + previous* bucket —
-    that span always covers the window, so the estimate is an upper bound on the
-    failures the scan can count. A record's ``started_at`` precedes its failure,
-    so a record the scan counts was also counted here inside the covered span.
+    estimate for the scan's window ``[now - window, now]`` is *current +
+    previous* bucket — that span always covers the window, so the estimate is
+    an upper bound on the failures the scan can count. A record's
+    ``started_at`` precedes its failure, so a record the scan counts was also
+    counted here inside the covered span.
 
     **Gating rule.** The scan runs only when the estimate reaches
     ``execution_repeated_failure_threshold`` — below that the scan's own count is
@@ -133,11 +133,10 @@ class RepeatedFailureCounter:
     counter. A caller that passes none adds records the scan counts but the
     buckets don't, so the gated callers could skip a due scan
     (``tests/arch/test_repeated_failure_counter_threading.py`` pins the call
-    sites). For the same
-    reason, a Redis whose ``maxmemory-policy`` evicts keys (any ``allkeys-*`` or
-    ``volatile-*`` policy — every bucket key carries a TTL) breaks the bound
-    without raising; under ``noeviction`` a full Redis rejects the write, which
-    fails open below.
+    sites). For the same reason, a Redis whose ``maxmemory-policy`` evicts keys
+    (any ``allkeys-*`` or ``volatile-*`` policy — every bucket key carries a
+    TTL) breaks the bound without raising; under ``noeviction`` a full Redis
+    rejects the write, which fails open below.
 
     **Failure.** Any backend error (Redis down, a bounded memory store full)
     fails open: the scan runs exactly as without a counter. An error can drop an
