@@ -245,7 +245,7 @@ export class IntegrationsService {
          */
         sessionId: string,
         /**
-         * Request payload for the `confirmConnectSession` operation.
+         * How to complete the session, selected by `kind`. A body without `kind` is the `oauth` variant.
          */
         requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest),
         /**

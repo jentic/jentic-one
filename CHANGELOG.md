@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.43.0](https://github.com/jentic/jentic-one/compare/v0.42.2...v0.43.0) (2026-10-14)
+
+
+### Features
+
+* **agents:** hard-delete agents with DELETE /agents/{id}?purge=true ([#1606](https://github.com/jentic/jentic-one/issues/1606)) ([f0183ca](https://github.com/jentic/jentic-one/commit/f0183ca8faa846c46143b0e9d5a49ddb60daa251))
+* **broker:** version the broker OpenAPI spec with the release and raise its scorecard ([#1626](https://github.com/jentic/jentic-one/issues/1626)) ([669bf51](https://github.com/jentic/jentic-one/commit/669bf514386514abd6fe37ad3071746e879e4e72))
+* **deploy:** add single-container quickstart Dockerfile ([#1621](https://github.com/jentic/jentic-one/issues/1621)) ([be7d2c2](https://github.com/jentic/jentic-one/commit/be7d2c2c5fa664ea50269407b22a42616d1d718c))
+* **deploy:** replace quickstart Dockerfile with a compose file ([#1622](https://github.com/jentic/jentic-one/issues/1622)) ([61617cf](https://github.com/jentic/jentic-one/commit/61617cfad4e15e26cf5a997be8419501fa50459a))
+* **openapi:** add an example to every control-plane parameter ([#1613](https://github.com/jentic/jentic-one/issues/1613)) ([609963e](https://github.com/jentic/jentic-one/commit/609963e3e14850bdba50721c2989ed04ec334f74))
+* **openapi:** declare the OAuth2 authorization-code scheme alongside BearerAuth ([#1624](https://github.com/jentic/jentic-one/issues/1624)) ([b12a974](https://github.com/jentic/jentic-one/commit/b12a974fd89e7e1f98dd85611234fa211cafedbf))
+* **openapi:** document a default Problem Details response on every operation ([#1623](https://github.com/jentic/jentic-one/issues/1623)) ([a973824](https://github.com/jentic/jentic-one/commit/a973824f6cd91ef585d3c690aa0b29d9ddabc0a6))
+* **openapi:** fix invalid examples and undocumented error bodies in the control spec ([#1611](https://github.com/jentic/jentic-one/issues/1611)) ([5f6c0d7](https://github.com/jentic/jentic-one/commit/5f6c0d7fb72014acfac40e463de977539498316f))
+
+
+### Bug Fixes
+
+* **admin:** scope user, actor-directory and OAuth grant listings to the caller ([#1608](https://github.com/jentic/jentic-one/issues/1608)) ([259f045](https://github.com/jentic/jentic-one/commit/259f045214b6f196642dc80dc594f93e59715cfe))
+* **migrations:** map the retired owner:access-requests:read onto credentials:connect ([#1612](https://github.com/jentic/jentic-one/issues/1612)) ([c9fb863](https://github.com/jentic/jentic-one/commit/c9fb863de0934356959788831b262200134eadbc))
+
+
+### Documentation
+
+* **broker:** add schema-level and request-body examples to the broker spec ([#1630](https://github.com/jentic/jentic-one/issues/1630)) ([d94a4f9](https://github.com/jentic/jentic-one/commit/d94a4f9f4bd10fddf1e8383630901854a477b387))
+* **openapi:** declare the confirm discriminator and mirror examples onto schemas and media ([#1627](https://github.com/jentic/jentic-one/issues/1627)) ([65dacae](https://github.com/jentic/jentic-one/commit/65dacae3f45d5be1c4f3ff4f5ad275580ee9cadd))
+* **openapi:** describe every parameter, model field, path item and request body ([#1617](https://github.com/jentic/jentic-one/issues/1617)) ([3828354](https://github.com/jentic/jentic-one/commit/38283540ebc906048ba265398e7487f14f4dce94))
+* **openapi:** give every model field and component a realistic example ([#1625](https://github.com/jentic/jentic-one/issues/1625)) ([39e67d3](https://github.com/jentic/jentic-one/commit/39e67d3867c531ea0e1da3d7368b2904a368f95a))
+* **openapi:** hide well-known documents, browser pages and duplicate probes from the control spec ([#1629](https://github.com/jentic/jentic-one/issues/1629)) ([a8ef9d8](https://github.com/jentic/jentic-one/commit/a8ef9d87deacd5c124039049a94888f27ada1d2b))
+* **openapi:** rewrite summaries and descriptions for 34 operations ([#1614](https://github.com/jentic/jentic-one/issues/1614)) ([b238928](https://github.com/jentic/jentic-one/commit/b2389282ecc3596edf1f25613342475e7caae00f))
+* **openapi:** summarise every parameter example and path item ([#1616](https://github.com/jentic/jentic-one/issues/1616)) ([65710df](https://github.com/jentic/jentic-one/commit/65710df0019c30f19bcd4136b401a881cce85408))
+* **readme:** add Open Source Alternatives badge ([#1615](https://github.com/jentic/jentic-one/issues/1615)) ([6ea3067](https://github.com/jentic/jentic-one/commit/6ea3067ad3112fc5e069987ba9e50302bf3b0c11))
+
 ## [0.42.2](https://github.com/jentic/jentic-one/compare/v0.42.1...v0.42.2) (2026-10-13)
 
 

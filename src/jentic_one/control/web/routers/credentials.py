@@ -285,7 +285,7 @@ def _oauth_callback_error() -> RedirectResponse:
     return RedirectResponse(f"{_CONNECT_RETURN_PATH}?status=error", status_code=303)
 
 
-@router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback")
+@router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback", include_in_schema=False)
 async def oauth_callback(
     code: str | None = Query(
         default=None,
@@ -1049,12 +1049,9 @@ async def connect_credential(
         challenge = await svc.begin(
             credential_id,
             connect_req,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type,
+            identity=identity,
             redirect_uri=redirect_uri,
         )
-    except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:

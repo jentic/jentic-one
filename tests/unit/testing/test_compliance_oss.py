@@ -23,6 +23,7 @@ from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStr
 from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrategy
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.config import AppConfig, SearchConfig
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 from jentic_one.testing import (
     BaseBrokerComplianceTest,
@@ -69,6 +70,69 @@ def test_oss_search_strategies_comply(compliance: BaseSearchStrategyComplianceTe
     compliance.test_has_required_attrs()
     compliance.test_dialect_is_resolvable()
     compliance.test_search_operations_signature()
+    compliance.test_from_config_signature()
+
+
+class _ConfigurableLexical(SqliteLexicalStrategy):
+    """A strategy built through the ``from_config`` hook (needs a ctor arg)."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+
+    @classmethod
+    def from_config(
+        cls, config: SearchConfig, *, app_config: AppConfig | None = None
+    ) -> _ConfigurableLexical:
+        return cls(config.search_mode)
+
+
+class _ConfigurableCompliance(BaseSearchStrategyComplianceTest):
+    strategy_cls = _ConfigurableLexical
+
+    def strategy_factory(self) -> _ConfigurableLexical:
+        return _ConfigurableLexical.from_config(SearchConfig())
+
+
+class _DriftedFromConfig(SqliteLexicalStrategy):
+    @classmethod
+    def from_config(cls, cfg: SearchConfig) -> _DriftedFromConfig:  # wrong name, no kw
+        return cls()
+
+
+class _InstanceFromConfig(SqliteLexicalStrategy):
+    def from_config(self, config: SearchConfig, *, app_config: AppConfig | None = None) -> None:
+        return None
+
+
+class _DriftedCompliance(BaseSearchStrategyComplianceTest):
+    strategy_cls = _DriftedFromConfig
+
+
+class _InstanceMethodCompliance(BaseSearchStrategyComplianceTest):
+    strategy_cls = _InstanceFromConfig
+
+
+def test_configurable_strategy_complies_via_factory() -> None:
+    compliance = _ConfigurableCompliance()
+    compliance.test_is_search_strategy()
+    compliance.test_has_required_attrs()
+    compliance.test_dialect_is_resolvable()
+    compliance.test_search_operations_signature()
+    compliance.test_from_config_signature()
+
+
+@pytest.mark.parametrize(
+    ("compliance", "match"),
+    [
+        (_DriftedCompliance(), "parameters diverge"),
+        (_InstanceMethodCompliance(), "must be a classmethod"),
+    ],
+)
+def test_from_config_drift_fails_compliance(
+    compliance: BaseSearchStrategyComplianceTest, match: str
+) -> None:
+    with pytest.raises(AssertionError, match=match):
+        compliance.test_from_config_signature()
 
 
 def test_oss_default_broker_complies() -> None:

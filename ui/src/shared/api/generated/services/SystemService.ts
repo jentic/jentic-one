@@ -29,50 +29,6 @@ export class SystemService {
         });
     }
     /**
-     * Auth health
-     * Return service health status for this surface.
-     *
-     * Unauthenticated liveness probe. In combined mode this is served under
-     * the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-     * the canonical platform probe is the root ``GET /health``.
-     * @returns string Successful Response
-     * @throws ApiError
-     */
-    public static authHealth(): CancelablePromise<Record<string, string>> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/auth/health',
-            errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Control health
-     * Return service health status for this surface.
-     *
-     * Unauthenticated liveness probe. In combined mode this is served under
-     * the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-     * the canonical platform probe is the root ``GET /health``.
-     * @returns string Successful Response
-     * @throws ApiError
-     */
-    public static controlHealth(): CancelablePromise<Record<string, string>> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/control/health',
-            errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
      * Health
      * Liveness probe for the combined control-plane app.
      *
@@ -101,28 +57,6 @@ export class SystemService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/instance',
-        });
-    }
-    /**
-     * Registry health
-     * Return service health status for this surface.
-     *
-     * Unauthenticated liveness probe. In combined mode this is served under
-     * the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-     * the canonical platform probe is the root ``GET /health``.
-     * @returns string Successful Response
-     * @throws ApiError
-     */
-    public static registryHealth(): CancelablePromise<Record<string, string>> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/registry/health',
-            errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
         });
     }
     /**

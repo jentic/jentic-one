@@ -16,21 +16,66 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AgentDirectiveStrategy.
+const (
+	Fatal         AgentDirectiveStrategy = "fatal"
+	ModifyHeaders AgentDirectiveStrategy = "modify_headers"
+	PromptHuman   AgentDirectiveStrategy = "prompt_human"
+	Retry         AgentDirectiveStrategy = "retry"
+	SwitchToolkit AgentDirectiveStrategy = "switch_toolkit"
+	Wait          AgentDirectiveStrategy = "wait"
+)
+
+// Valid indicates whether the value is a known member of the AgentDirectiveStrategy enum.
+func (e AgentDirectiveStrategy) Valid() bool {
+	switch e {
+	case Fatal:
+		return true
+	case ModifyHeaders:
+		return true
+	case PromptHuman:
+		return true
+	case Retry:
+		return true
+	case SwitchToolkit:
+		return true
+	case Wait:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrokerProblemErrorOrigin.
+const (
+	Broker   BrokerProblemErrorOrigin = "broker"
+	Upstream BrokerProblemErrorOrigin = "upstream"
+)
+
+// Valid indicates whether the value is a known member of the BrokerProblemErrorOrigin enum.
+func (e BrokerProblemErrorOrigin) Valid() bool {
+	switch e {
+	case Broker:
+		return true
+	case Upstream:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
-	Fail HealthResponseStatus = "fail"
-	Pass HealthResponseStatus = "pass"
-	Warn HealthResponseStatus = "warn"
+	NotEntitled HealthResponseStatus = "not_entitled"
+	Ok          HealthResponseStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the HealthResponseStatus enum.
 func (e HealthResponseStatus) Valid() bool {
 	switch e {
-	case Fail:
+	case NotEntitled:
 		return true
-	case Pass:
-		return true
-	case Warn:
+	case Ok:
 		return true
 	default:
 		return false
@@ -46,6 +91,24 @@ const (
 func (e HeldExecutionAcceptedResponseStatus) Valid() bool {
 	switch e {
 	case Held:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReadinessResponseReason.
+const (
+	Draining  ReadinessResponseReason = "draining"
+	Saturated ReadinessResponseReason = "saturated"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseReason enum.
+func (e ReadinessResponseReason) Valid() bool {
+	switch e {
+	case Draining:
+		return true
+	case Saturated:
 		return true
 	default:
 		return false
@@ -70,6 +133,39 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// AgentDirective Machine-actionable recovery instruction embedded in a Broker
+// problem body. The fixed `strategy` vocabulary lets an agent
+// hard-code its recovery loop — e.g. on `wait` sleep
+// `parameters.retry_after_seconds`; on `modify_headers` add
+// `parameters.headers` and retry once; on `prompt_human` stop and
+// relay `human_readable_instruction` to the user.
+//
+// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
+type AgentDirective struct {
+	// HumanReadableInstruction Plain-language instruction an agent can relay to a human or follow itself.
+	//
+	// Examples: Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates.
+	HumanReadableInstruction string `json:"human_readable_instruction"`
+
+	// Parameters Strategy-specific inputs (e.g. `headers` for `modify_headers`,
+	// `retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`
+	// for `prompt_human`). Empty when the strategy needs none.
+	//
+	//
+	// Examples: {"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}}
+	Parameters map[string]interface{} `json:"parameters"`
+
+	// Strategy Recovery strategy the agent should apply.
+	//
+	// Examples: modify_headers
+	Strategy AgentDirectiveStrategy `json:"strategy"`
+}
+
+// AgentDirectiveStrategy Recovery strategy the agent should apply.
+//
+// Examples: modify_headers
+type AgentDirectiveStrategy string
+
 // AsyncQueuedResponse Returned as the `202` body on async executions. The Broker
 // does not expose a polling surface of its own; `_links.self`
 // is an absolute URL into the platform's control plane, where
@@ -77,10 +173,15 @@ func (e ReadinessResponseStatus) Valid() bool {
 // that URL for status, and follow its `_links.result` to
 // collect the upstream response body once `status` is
 // `completed`.
+//
+// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123"}
 type AsyncQueuedResponse struct {
 	// UnderscoreLinks HAL-style link relations for the queued job. `self` always
 	// points at the control-plane job record; the broker does
 	// not expose its own polling surface.
+	//
+	//
+	// Examples: {"self":"https://control.your-instance.example/jobs/job_abc123"}
 	UnderscoreLinks struct {
 		// Self Absolute URL of the control-plane job record. Poll this for status and result links.
 		//
@@ -94,36 +195,164 @@ type AsyncQueuedResponse struct {
 	JobId string `json:"job_id"`
 }
 
-// HealthResponse Body returned by `GET /health` when the Broker is ready to
-// accept traffic. Shape follows the IETF [Health Check Response
-// Format for HTTP APIs](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check)
-// draft (`application/health+json`). Intentionally minimal —
-// clients treat `200` + `status: pass` as the green signal; the
-// body is informational.
+// BrokerProblem RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+type BrokerProblem struct {
+	// AgentDirective Machine-actionable recovery instruction embedded in a Broker
+	// problem body. The fixed `strategy` vocabulary lets an agent
+	// hard-code its recovery loop — e.g. on `wait` sleep
+	// `parameters.retry_after_seconds`; on `modify_headers` add
+	// `parameters.headers` and retry once; on `prompt_human` stop and
+	// relay `human_readable_instruction` to the user.
+	//
+	//
+	// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
+	AgentDirective *AgentDirective `json:"agent_directive,omitempty"`
+
+	// Candidates The caller's own credentials that matched ambiguously
+	// (`ambiguous_credential_binding`, `ambiguous_credential`) or
+	// that a credential-selection header failed to match
+	// (`credential_id_not_found`, `credential_name_not_found`).
+	// Pick one and resend with `Jentic-Credential-Id`.
+	//
+	//
+	// Examples: [{"created_at":"2026-09-01T00:00:00Z","id":"cred_01HXAMPLE7Q2","last4":"7Q2a","name":"github-work"}]
+	Candidates *[]CredentialCandidate `json:"candidates,omitempty"`
+
+	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+	Code *string `json:"code,omitempty"`
+
+	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+	Detail string `json:"detail"`
+
+	// ErrorOrigin Who failed: `broker` (the Broker itself — overloaded,
+	// misconfigured, or rejecting the request shape) or
+	// `upstream` (the external API — down, rate-limited, or
+	// returning an error). Mirrored in the `Jentic-Error-Origin`
+	// response header. Absent on authentication errors.
+	//
+	//
+	// Examples: broker
+	ErrorOrigin *BrokerProblemErrorOrigin `json:"error_origin,omitempty"`
+
+	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+	Errors *[]struct {
+		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
+		Code *string `json:"code,omitempty"`
+
+		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
+		Detail string `json:"detail"`
+
+		// Header The name of the request header that is the source of this error.
+		Header *string `json:"header,omitempty"`
+
+		// Parameter The name of the query or path parameter that is the source of this error.
+		Parameter *string `json:"parameter,omitempty"`
+
+		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
+		Pointer *string `json:"pointer,omitempty"`
+	} `json:"errors,omitempty"`
+
+	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+	Instance *string `json:"instance,omitempty"`
+
+	// IntentId Correlation id for a `credential_not_provisioned` denial,
+	// also carried in `agent_directive.parameters.intent_id`, so
+	// the human hand-off can be tied back to this request.
+	//
+	//
+	// Examples: intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
+	IntentId *string `json:"intent_id,omitempty"`
+
+	// Status The HTTP status code for this occurrence of the problem.
+	Status *int32 `json:"status,omitempty"`
+
+	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+	Title *string `json:"title,omitempty"`
+
+	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+	Type *string `json:"type,omitempty"`
+}
+
+// BrokerProblemErrorOrigin Who failed: `broker` (the Broker itself — overloaded,
+// misconfigured, or rejecting the request shape) or
+// `upstream` (the external API — down, rate-limited, or
+// returning an error). Mirrored in the `Jentic-Error-Origin`
+// response header. Absent on authentication errors.
+//
+// Examples: broker
+type BrokerProblemErrorOrigin string
+
+// CredentialCandidate One of the caller's own credentials, distinguishable even when names
+// collide. Holds no secret material — `last4` is the last four
+// characters of the credential **id**.
+//
+// Examples: {"created_at":"2026-09-01T00:00:00Z","id":"cred_01HXAMPLE7Q2","last4":"7Q2a","name":"github-work"}
+type CredentialCandidate struct {
+	// CreatedAt When the credential was created, to tell same-named candidates apart.
+	//
+	// Examples: 2026-09-01T00:00:00Z
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// Id Stable credential id; send it as `Jentic-Credential-Id` to pick this credential.
+	//
+	// Examples: cred_01HXAMPLE7Q2
+	Id string `json:"id"`
+
+	// Last4 Last four characters of the credential id, as a display hint.
+	//
+	// Examples: 7Q2a
+	Last4 string `json:"last4"`
+
+	// Name Credential display name (not guaranteed unique).
+	//
+	// Examples: github-work
+	Name string `json:"name"`
+}
+
+// HealthResponse Body returned by `GET /health` while the Broker process is
+// serving requests. Intentionally minimal — clients treat `200` +
+// `status: ok` as the green signal; the body is informational.
+//
+// Examples: {"status":"ok","surface":"broker","version":"0.43.0"}
 type HealthResponse struct {
-	// Status Health indicator per the IETF Health Check draft.
-	// `pass` — service is healthy. `fail` — service is unhealthy.
-	// `warn` — service is healthy but with concerns. The Broker
-	// returns `pass` on every `200`; `fail` / `warn` are reserved
-	// for future degraded-mode reporting.
+	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
+	//
+	// Examples: Subscription for this deployment is not active.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status `ok` while the process is serving requests. A metered
+	// marketplace deployment whose entitlement lapsed answers
+	// `not_entitled` (still HTTP `200`, so orchestrators don't
+	// restart it).
 	//
 	//
-	// Examples: pass
+	// Examples: ok
 	Status HealthResponseStatus `json:"status"`
 
-	// Version Service build version, mirrors `info.version` in this spec.
+	// Surface Name of the surface reporting health; always `broker`. Absent on the `not_entitled` body.
 	//
-	// Examples: beta.1
+	// Examples: broker
+	Surface *string `json:"surface,omitempty"`
+
+	// Version Running Jentic One release (the same version as `info.version`
+	// in this spec). Absent on the `not_entitled` body.
+	//
+	//
+	// Examples: 0.43.0
 	Version *string `json:"version,omitempty"`
 }
 
-// HealthResponseStatus Health indicator per the IETF Health Check draft.
-// `pass` — service is healthy. `fail` — service is unhealthy.
-// `warn` — service is healthy but with concerns. The Broker
-// returns `pass` on every `200`; `fail` / `warn` are reserved
-// for future degraded-mode reporting.
+// HealthResponseStatus `ok` while the process is serving requests. A metered
+// marketplace deployment whose entitlement lapsed answers
+// `not_entitled` (still HTTP `200`, so orchestrators don't
+// restart it).
 //
-// Examples: pass
+// Examples: ok
 type HealthResponseStatus string
 
 // HeldExecutionAcceptedResponse Returned as the `202` body when the call matches a permission rule
@@ -184,22 +413,41 @@ type HeldExecutionAcceptedResponseStatus string
 // `503`) means in-flight load is at/near the admission cap and the load
 // balancer should drain this instance. `saturation` is the current
 // in-flight count as a fraction of the configured cap.
+//
+// Examples: {"saturation":0.12,"status":"ready"}
 type ReadinessResponse struct {
 	// Reason Why the instance is unready (present only on `unready`).
 	//
 	// Examples: saturated
-	Reason *string `json:"reason,omitempty"`
+	Reason *ReadinessResponseReason `json:"reason,omitempty"`
 
-	// Saturation In-flight requests as a fraction of the admission cap.
+	// Saturation In-flight requests as a fraction of the admission cap (`0`–`1`,
+	// briefly above `1` at the cap edge). Omitted when the instance is
+	// `draining`.
+	//
 	//
 	// Examples: 0.12
 	Saturation *float32 `json:"saturation,omitempty"`
 
-	// Status Examples: ready
+	// Status `ready` while in-flight load is below the saturation threshold
+	// (HTTP `200`); `unready` once it nears the admission cap (HTTP
+	// `503`) and the load balancer should drain this instance.
+	//
+	//
+	// Examples: ready
 	Status ReadinessResponseStatus `json:"status"`
 }
 
-// ReadinessResponseStatus Examples: ready
+// ReadinessResponseReason Why the instance is unready (present only on `unready`).
+//
+// Examples: saturated
+type ReadinessResponseReason string
+
+// ReadinessResponseStatus `ready` while in-flight load is below the saturation threshold
+// (HTTP `200`); `unready` once it nears the admission cap (HTTP
+// `503`) and the load balancer should drain this instance.
+//
+// Examples: ready
 type ReadinessResponseStatus string
 
 // IdempotencyKey Examples: 5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b
@@ -222,478 +470,130 @@ type Prefer = string
 // Examples: api.spotify.com/v1/tracks/3n3Ppam7vgaVa1iaRUc9Lp, petstore.swagger.io/v2/pet/12345
 type UpstreamUrl = string
 
-// BadRequest Jentic Problem Details error schema (RFC 9457)
-type BadRequest struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
+// BadRequest RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type BadRequest = BrokerProblem
 
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
+// Conflict RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type Conflict = BrokerProblem
 
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
+// CredentialNotProvisioned RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type CredentialNotProvisioned = BrokerProblem
 
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// Conflict Jentic Problem Details error schema (RFC 9457)
-type Conflict struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// CredentialNotProvisioned Jentic Problem Details error schema (RFC 9457)
-type CredentialNotProvisioned struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// Default Jentic Problem Details error schema (RFC 9457)
-type Default struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
+// Default RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type Default = BrokerProblem
 
 // ExecuteAsync defines model for ExecuteAsync.
 type ExecuteAsync struct {
 	union json.RawMessage
 }
 
-// Forbidden Jentic Problem Details error schema (RFC 9457)
-type Forbidden struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// NotFound Jentic Problem Details error schema (RFC 9457)
-type NotFound struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// PayloadTooLarge Jentic Problem Details error schema (RFC 9457)
-type PayloadTooLarge struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// ServerError Jentic Problem Details error schema (RFC 9457)
-type ServerError struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// ServiceUnavailable Jentic Problem Details error schema (RFC 9457)
-type ServiceUnavailable struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// TooManyRequests Jentic Problem Details error schema (RFC 9457)
-type TooManyRequests struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// Unauthorized Jentic Problem Details error schema (RFC 9457)
-type Unauthorized struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
-
-// ValidationError Jentic Problem Details error schema (RFC 9457)
-type ValidationError struct {
-	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
-	Code *string `json:"code,omitempty"`
-
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-	Detail string `json:"detail"`
-
-	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-	Errors *[]struct {
-		// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
-		Code *string `json:"code,omitempty"`
-
-		// Detail A human-readable explanation of this specific error. Be precise — name the field, parameter, or header involved.
-		Detail string `json:"detail"`
-
-		// Header The name of the request header that is the source of this error.
-		Header *string `json:"header,omitempty"`
-
-		// Parameter The name of the query or path parameter that is the source of this error.
-		Parameter *string `json:"parameter,omitempty"`
-
-		// Pointer A JSON Pointer (RFC 6901) to the specific request body property that is the source of this error.
-		Pointer *string `json:"pointer,omitempty"`
-	} `json:"errors,omitempty"`
-
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
-	Instance *string `json:"instance,omitempty"`
-
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
-
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
-
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
-}
+// Forbidden RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type Forbidden = BrokerProblem
+
+// NotFound RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type NotFound = BrokerProblem
+
+// PayloadTooLarge RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type PayloadTooLarge = BrokerProblem
+
+// ServerError RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type ServerError = BrokerProblem
+
+// ServiceUnavailable RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type ServiceUnavailable = BrokerProblem
+
+// TooManyRequests RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type TooManyRequests = BrokerProblem
+
+// Unauthorized RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type Unauthorized = BrokerProblem
+
+// ValidationError RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type ValidationError = BrokerProblem
 
 // ExecuteDeleteParams defines parameters for ExecuteDelete.
 type ExecuteDeleteParams struct {
@@ -1267,12 +1167,12 @@ type ClientInterface interface {
 
 	// GetHealth Service health probe
 	//
-	// Liveness / readiness probe for the Broker service. Returns `200`
-	// with a small `application/health+json` body (IETF Health Check
-	// Response Format draft) when the broker can accept traffic.
+	// Unauthenticated liveness probe for the Broker service. Returns `200`
+	// with a small JSON body while the process is serving requests,
+	// reporting the surface name and the running Jentic One release.
 	// Intended for load balancers, container orchestrators, and uptime
 	// monitors — not for human or agent consumption beyond green/red
-	// signalling.
+	// signalling. Use `/ready` for saturation-aware readiness.
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1365,12 +1265,12 @@ type ClientInterface interface {
 
 // GetHealth Service health probe
 //
-// Liveness / readiness probe for the Broker service. Returns `200`
-// with a small `application/health+json` body (IETF Health Check
-// Response Format draft) when the broker can accept traffic.
+// Unauthenticated liveness probe for the Broker service. Returns `200`
+// with a small JSON body while the process is serving requests,
+// reporting the surface name and the running Jentic One release.
 // Intended for load balancers, container orchestrators, and uptime
 // monitors — not for human or agent consumption beyond green/red
-// signalling.
+// signalling. Use `/ready` for saturation-aware readiness.
 //
 // Corresponds with GET /health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2309,12 +2209,12 @@ type ClientWithResponsesInterface interface {
 
 	// GetHealthWithResponse Service health probe
 	//
-	// Liveness / readiness probe for the Broker service. Returns `200`
-	// with a small `application/health+json` body (IETF Health Check
-	// Response Format draft) when the broker can accept traffic.
+	// Unauthenticated liveness probe for the Broker service. Returns `200`
+	// with a small JSON body while the process is serving requests,
+	// reporting the surface name and the running Jentic One release.
 	// Intended for load balancers, container orchestrators, and uptime
 	// monitors — not for human or agent consumption beyond green/red
-	// signalling.
+	// signalling. Use `/ready` for saturation-aware readiness.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2430,8 +2330,8 @@ type GetHealthHTTPResp503Headers struct {
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// ApplicationhealthJSON200 the response for an HTTP 200 `application/health+json` response
-	ApplicationhealthJSON200 *HealthResponse
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HealthResponse
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
 	ApplicationproblemJSON429 *TooManyRequests
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -2446,9 +2346,9 @@ type GetHealthHTTPResp struct {
 	Headers503 *GetHealthHTTPResp503Headers
 }
 
-// GetApplicationhealthJSON200 returns the response for an HTTP 200 `application/health+json` response
-func (r GetHealthHTTPResp) GetApplicationhealthJSON200() *HealthResponse {
-	return r.ApplicationhealthJSON200
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetHealthHTTPResp) GetJSON200() *HealthResponse {
+	return r.JSON200
 }
 
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
@@ -3754,12 +3654,12 @@ func (r ExecutePutHTTPResp) ContentType() string {
 
 // GetHealthWithResponse Service health probe
 //
-// Liveness / readiness probe for the Broker service. Returns `200`
-// with a small `application/health+json` body (IETF Health Check
-// Response Format draft) when the broker can accept traffic.
+// Unauthenticated liveness probe for the Broker service. Returns `200`
+// with a small JSON body while the process is serving requests,
+// reporting the surface name and the running Jentic One release.
 // Intended for load balancers, container orchestrators, and uptime
 // monitors — not for human or agent consumption beyond green/red
-// signalling.
+// signalling. Use `/ready` for saturation-aware readiness.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3932,7 +3832,7 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationhealthJSON200 = &dest
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest TooManyRequests

@@ -11,9 +11,13 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 
 1. Merge feature/fix PRs to `main` as usual (Conventional Commits, squash-merge).
 2. release-please keeps a standing **Release PR** titled `chore(main): release X.Y.Z`.
-   Its diff bumps the version in lockstep across `pyproject.toml`, `uv.lock`, and
-   every Helm `Chart.yaml`, and updates `CHANGELOG.md`. You may edit the
-   changelog directly in that PR (optional).
+   Its diff bumps the version in lockstep across `pyproject.toml`, `uv.lock`,
+   every Helm `Chart.yaml`, and the hand-curated broker OpenAPI spec
+   (`openapi/broker/broker.openapi.yaml`, via its `x-release-please-version`
+   markers), and updates `CHANGELOG.md`. The release-please workflow then
+   regenerates the derived artifacts on the PR branch (control spec, UI and Go
+   CLI clients, and the docs-SPA broker JSON) so the PR passes the drift gates.
+   You may edit the changelog directly in that PR (optional).
 3. **Merging the Release PR is the release.** release-please then tags `vX.Y.Z`,
    creates the GitHub Release, and (because the tag is pushed with the release
    App token) triggers [`release.yml`](../../.github/workflows/release.yml):

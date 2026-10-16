@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -29,7 +30,7 @@ func newApisCmd(app *app) *cobra.Command {
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.apisBrowse(cmd.Context())
+			return app.apisBrowse(cmd.Context(), cmdcore.JSONOrPretty(cmd, false))
 		},
 	}
 
@@ -56,6 +57,7 @@ func newApisListCmd(app *app) *cobra.Command {
 		Short:   "List locally registered APIs",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisList(cmd.Context(), o)
 		},
 	}
@@ -73,6 +75,7 @@ func newApisShowCmd(app *app) *cobra.Command {
 		Short: "Show an API and preview its operations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisShow(cmd.Context(), o, args[0])
 		},
 	}
@@ -89,6 +92,7 @@ func newApisRevisionsCmd(app *app) *cobra.Command {
 		Short:   "List the revisions of an API",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisRevisions(cmd.Context(), o, args[0])
 		},
 	}
@@ -107,6 +111,7 @@ func newApisOperationsCmd(app *app) *cobra.Command {
 		Short:   "List the operations of an API (current revision by default)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisOperations(cmd.Context(), o, args[0])
 		},
 	}
@@ -124,34 +129,52 @@ func newApisInspectCmd(app *app) *cobra.Command {
 		Short: "Inspect an operation's structural detail",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Same seam as `jentic inspect`: an explicit --format wins, --json pins
+			// json, otherwise the mode/TTY ladder picks json or markdown.
+			if o.json {
+				o.format = "json"
+			}
+			if o.format == "" {
+				o.format = "markdown"
+				if cmdcore.JSONOrPretty(cmd, false) {
+					o.format = "json"
+				}
+			}
 			return app.apisInspect(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&o.revision, "revision", "", "pin to a specific revision id")
-	cmd.Flags().StringVar(&o.format, "format", "markdown", "output format: markdown, json, or openapi")
+	cmd.Flags().StringVar(&o.format, "format", "", "output format: markdown, json, or openapi (default: json in agent mode or when piped, else markdown)")
+	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON (shorthand for --format json)")
 	return cmd
 }
 
 func newApisPromoteCmd(app *app) *cobra.Command {
-	return &cobra.Command{
+	var jsonFlag bool
+	cmd := &cobra.Command{
 		Use:   "promote <vendor/name/version> <revision_id>",
 		Short: "Promote a draft revision to live",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecyclePromote)
+			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecyclePromote, cmdcore.JSONOrPretty(cmd, jsonFlag))
 		},
 	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "emit JSON instead of formatted output")
+	return cmd
 }
 
 func newApisArchiveCmd(app *app) *cobra.Command {
-	return &cobra.Command{
+	var jsonFlag bool
+	cmd := &cobra.Command{
 		Use:   "archive <vendor/name/version> <revision_id>",
 		Short: "Archive a draft revision",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecycleArchive)
+			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecycleArchive, cmdcore.JSONOrPretty(cmd, jsonFlag))
 		},
 	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "emit JSON instead of formatted output")
+	return cmd
 }
 
 func newApisRmCmd(app *app) *cobra.Command {
@@ -166,10 +189,12 @@ func newApisRmCmd(app *app) *cobra.Command {
 			if len(args) == 2 {
 				revisionID = args[1]
 			}
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.apisRemove(cmd.Context(), o, args[0], revisionID)
 		},
 	}
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
 	return cmd
 }
 
@@ -180,6 +205,9 @@ func newApisSpecCmd(app *app) *cobra.Command {
 		Short: "Download the OpenAPI spec for an API",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The spec body is the data either way; the mode only decides how the
+			// --out confirmation is reported.
+			o.json = cmdcore.JSONOrPretty(cmd, false)
 			return app.apisSpec(cmd.Context(), o, args[0])
 		},
 	}
@@ -190,6 +218,10 @@ func newApisSpecCmd(app *app) *cobra.Command {
 }
 
 // ── option structs ───────────────────────────────────────────────────────────
+//
+// Each json field is the resolved output decision, not the raw flag: RunE
+// folds --json through cmdcore.JSONOrPretty so agent mode (and a piped stdout
+// in default mode) emits the JSON envelope without needing --json.
 
 type apisListOptions struct {
 	vendor string
@@ -220,16 +252,19 @@ type apisOperationsOptions struct {
 type apisInspectOptions struct {
 	revision string
 	format   string
+	json     bool
 }
 
 type apisRmOptions struct {
-	yes bool
+	yes  bool
+	json bool
 }
 
 type apisSpecOptions struct {
 	revision string
 	yaml     bool
 	out      string
+	json     bool
 }
 
 type lifecycleAction int
@@ -246,9 +281,12 @@ const (
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
-func (a *app) apisBrowse(ctx context.Context) error {
-	if !term.IsTerminal(os.Stdin.Fd()) {
-		return a.apisList(ctx, &apisListOptions{limit: 50})
+// apisBrowse opens the interactive browser only for a person at a terminal. A
+// machine-output decision (agent mode, --json, piped stdout) or a non-interactive
+// stdin falls back to the list, so an agent on a PTY never lands in a TUI.
+func (a *app) apisBrowse(ctx context.Context, asJSON bool) error {
+	if asJSON || !browserInteractive() {
+		return a.apisList(ctx, &apisListOptions{limit: 50, json: asJSON})
 	}
 	return a.runApisBrowser(ctx)
 }
@@ -313,9 +351,15 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 	ops, operr := client.Operations(ctx, vendor, name, version, "", "", limit)
 
 	if o.json {
-		out := map[string]any{"api": api}
+		out := map[string]any{"schema_version": apiEnvelopeSchemaVersion, "api": api}
 		if operr == nil {
 			out["operations"] = ops.Data
+			// The preview is one page; surface the cursor so a JSON consumer
+			// can tell a truncated preview from the full set.
+			out["operations_has_more"] = ops.HasMore
+			if ops.HasMore && ops.NextCursor != "" {
+				out["operations_next_cursor"] = ops.NextCursor
+			}
 		}
 		return cmdcore.WriteJSON(a.Out, out)
 	}
@@ -439,7 +483,7 @@ func (a *app) apisInspect(ctx context.Context, o *apisInspectOptions, operationI
 
 // ── lifecycle (promote / archive) ────────────────────────────────────────────
 
-func (a *app) apisLifecycle(ctx context.Context, ref, revisionID string, action lifecycleAction) error {
+func (a *app) apisLifecycle(ctx context.Context, ref, revisionID string, action lifecycleAction, asJSON bool) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
@@ -448,19 +492,37 @@ func (a *app) apisLifecycle(ctx context.Context, ref, revisionID string, action 
 	if err != nil {
 		return err
 	}
+	var msg string
 	switch action {
 	case lifecyclePromote:
 		if err := client.Promote(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Promoted %s revision %s to live", ref, revisionID))
+		msg = fmt.Sprintf("Promoted %s revision %s to live", ref, revisionID)
 	case lifecycleArchive:
 		if err := client.Archive(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Archived %s revision %s", ref, revisionID))
+		msg = fmt.Sprintf("Archived %s revision %s", ref, revisionID)
 	}
+	if asJSON {
+		return a.writeAPIResult(ux.StatusUpdated, "api-revision", ref, revisionID, msg)
+	}
+	fmt.Fprintln(a.Out, theme.Successf("%s", msg))
 	return nil
+}
+
+// writeAPIResult emits the versioned ux.Result envelope for a state-changing
+// apis command, so agent mode gets one JSON document instead of a styled line.
+func (a *app) writeAPIResult(status, resource, name, id, msg string) error {
+	return cmdcore.WriteJSON(a.Out, ux.Result{
+		SchemaVersion: apiEnvelopeSchemaVersion,
+		Status:        status,
+		Resource:      resource,
+		Name:          name,
+		ID:            id,
+		Message:       msg,
+	})
 }
 
 // ── rm (delete) ──────────────────────────────────────────────────────────────
@@ -476,16 +538,27 @@ func (a *app) apisRemove(ctx context.Context, o *apisRmOptions, ref, revisionID 
 		target = fmt.Sprintf("archived revision %s of %s", revisionID, ref)
 	}
 	if !o.yes {
-		if !term.IsTerminal(os.Stdin.Fd()) {
-			return fmt.Errorf("refusing to delete %s without confirmation; pass --yes", target)
-		}
-		ok, err := confirmDelete(target)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
-			return nil
+		// A machine mode never prompts: route through the Audience, which fails
+		// closed with INTERACTIVE_CONFIRM_BLOCKED (a PTY must not open a TUI).
+		if st := clictx.FromContext(ctx); st != nil && st.IsMachine() {
+			if _, err := ux.FromContext(ctx).AskConfirm(fmt.Sprintf("Delete %s?", target)); err != nil {
+				return err
+			}
+		} else if !browserInteractive() {
+			return &ux.CodedError{
+				Code:       ux.CodeConfirmBlocked,
+				Msg:        fmt.Sprintf("refusing to delete %s without confirmation", target),
+				Actionable: "Re-run with --yes to authorize the delete.",
+			}
+		} else {
+			ok, err := confirmDelete(target)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+				return nil
+			}
 		}
 	}
 
@@ -497,13 +570,21 @@ func (a *app) apisRemove(ctx context.Context, o *apisRmOptions, ref, revisionID 
 		if err := client.DeleteRevision(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Deleted revision %s of %s", revisionID, ref))
+		msg := fmt.Sprintf("Deleted revision %s of %s", revisionID, ref)
+		if o.json {
+			return a.writeAPIResult(ux.StatusDeleted, "api-revision", ref, revisionID, msg)
+		}
+		fmt.Fprintln(a.Out, theme.Successf("%s", msg))
 		return nil
 	}
 	if err := client.DeleteAPI(ctx, vendor, name, version); err != nil {
 		return apiNotFoundErr(err, ref)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Deleted API %s", ref))
+	msg := "Deleted API " + ref
+	if o.json {
+		return a.writeAPIResult(ux.StatusDeleted, "api", ref, "", msg)
+	}
+	fmt.Fprintln(a.Out, theme.Successf("%s", msg))
 	return nil
 }
 
@@ -547,7 +628,18 @@ func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) erro
 		if err := os.WriteFile(o.out, ux.RedactBytes(body), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", o.out, err)
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Wrote %s spec to %s", ref, o.out))
+		msg := fmt.Sprintf("Wrote %s spec to %s", ref, o.out)
+		if o.json {
+			return cmdcore.WriteJSON(a.Out, ux.Result{
+				SchemaVersion: apiEnvelopeSchemaVersion,
+				Status:        ux.StatusCreated,
+				Resource:      "api-spec",
+				Name:          ref,
+				Message:       msg,
+				Fields:        map[string]any{"path": o.out},
+			})
+		}
+		fmt.Fprintln(a.Out, theme.Successf("%s", msg))
 		return nil
 	}
 	redacted := ux.RedactBytes(body)
@@ -561,6 +653,13 @@ func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) erro
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// browserInteractive reports whether stdin can drive a BubbleTea browser: a
+// real terminal that isn't TERM=dumb (the same test ux uses for prompting).
+// A var so tests can simulate the PTY an agent harness runs on.
+var browserInteractive = func() bool {
+	return os.Getenv("TERM") != "dumb" && term.IsTerminal(os.Stdin.Fd())
+}
 
 // parseAPIRef splits a "vendor/name/version" identity into its three parts.
 // Local API identities never contain slashes within a segment, so an exact

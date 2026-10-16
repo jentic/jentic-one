@@ -6,11 +6,13 @@ import datetime as dt
 
 import structlog
 
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import (
     CredentialRepository,
     OAuthTokenRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
@@ -23,6 +25,7 @@ from jentic_one.control.services.credentials.state import (
     consume_callback_state,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
@@ -50,13 +53,24 @@ class ConnectService:
         credential_id: str,
         request: ConnectRequest,
         *,
-        actor_id: str | None = None,
-        actor_type: ActorType | None = None,
+        identity: Identity,
         redirect_uri: str | None = None,
+        sole_agent_id: str | None = None,
     ) -> ConnectChallenge:
-        """Load credential, resolve provider, initiate connect flow."""
+        """Load the caller's credential, resolve provider, initiate connect flow.
+
+        Connecting writes tokens onto the credential, so it is scoped like any
+        other credential write: a credential the caller cannot see is a 404.
+
+        ``sole_agent_id`` marks a re-authorize that must stay sole-bound; it is
+        only honoured from this keyword, never from ``request.extra``, so an
+        HTTP caller cannot inject it through the request body.
+        """
+        access_filters = build_access_filters(identity, Credential)
         async with self._ctx.control_db.session() as session:
-            credential = await CredentialRepository.get_by_id(session, credential_id)
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
 
@@ -69,14 +83,17 @@ class ConnectService:
 
         provider = self._ctx.providers.get(provider_name)
 
+        extra = {k: v for k, v in request.extra.items() if k != "sole_agent_id"}
+        extra.update(
+            credential_id=credential_id,
+            actor_id=identity.sub,
+            actor_type=str(identity.actor_type),
+        )
+        if sole_agent_id is not None:
+            extra["sole_agent_id"] = sole_agent_id
         enriched_request = ConnectRequest(
             scopes=request.scopes,
-            extra={
-                **request.extra,
-                "credential_id": credential_id,
-                "actor_id": actor_id or "",
-                "actor_type": str(actor_type) if actor_type else "",
-            },
+            extra=extra,
             redirect_uri=redirect_uri,
         )
 

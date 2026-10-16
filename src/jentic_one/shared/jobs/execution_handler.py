@@ -154,8 +154,7 @@ class ExecutionHandler:
         api_version = payload.get("api_version")
         origin = payload.get("origin")
         # The repeated-failure detector keys on the operation id and renders the
-        # human identity; fold the payload's dual-written keys (the dict wins;
-        # legacy in-flight jobs carry only the flat id).
+        # human identity; fold the payload's ``operation`` dict once.
         operation = operation_from_job_payload(payload)
         server_variables = _str_map(payload.get("server_variables"))
         server_variable_defaults = _str_map(payload.get("server_variable_defaults"))
@@ -258,11 +257,8 @@ class ExecutionHandler:
                         "toolkit_id": payload.get("toolkit_id"),
                         # The resolved operation (id + path template + method)
                         # as one dict — the already-folded value, so a malformed
-                        # payload dict is validated (and warned about) once;
-                        # ``operation_id`` rides alongside for legacy in-flight
-                        # jobs that carry only the flat id.
+                        # payload dict is validated (and warned about) once.
                         "operation": operation.model_dump() if operation else None,
-                        "operation_id": payload.get("operation_id"),
                         "api_vendor": api_vendor,
                         "api_name": api_name,
                         "api_version": api_version,

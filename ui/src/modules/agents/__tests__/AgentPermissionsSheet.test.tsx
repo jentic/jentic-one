@@ -13,6 +13,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	sheetSettled,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
@@ -176,12 +177,7 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
 		await sheet.findByRole('list', { name: 'Granted permissions' });
-		// Wait out the backdrop's opacity transition: axe measures contrast
-		// against the half-faded overlay otherwise and flags the page beneath.
-		await waitFor(() => {
-			const overlay = screen.getByTestId('sheet-backdrop');
-			expect(overlay && getComputedStyle(overlay).opacity).toBe('1');
-		});
+		await sheetSettled();
 		await checkA11y(document.body, { modal: true });
 	});
 

@@ -148,3 +148,27 @@ def make_service_error_handler(
         )
 
     return handler
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Answer an exception no other handler claimed with a generic 500 Problem Details.
+
+    Without this, Starlette's ``ServerErrorMiddleware`` answers ``text/plain``
+    ``Internal Server Error`` — breaking the RFC 9457 contract every operation's
+    ``500``/``default`` response documents. The body is static (``str(exc)`` may
+    carry internals, CWE-209); the exception is logged here, and Starlette still
+    re-raises it afterwards so the server's own traceback logging is unchanged.
+    """
+    structlog.get_logger("jentic_one.shared.web.errors").error(
+        "unhandled_exception", path=request.url.path, exc_info=exc
+    )
+    problem = ProblemDetailException(
+        status_code=500,
+        detail="An unexpected error occurred.",
+        type="server_error",
+        title="Internal Server Error",
+        instance=request.url.path,
+    )
+    return JSONResponse(
+        status_code=500, content=problem.detail, media_type="application/problem+json"
+    )

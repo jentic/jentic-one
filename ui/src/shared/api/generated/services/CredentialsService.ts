@@ -101,65 +101,6 @@ export class CredentialsService {
         });
     }
     /**
-     * OAuth connect callback
-     * Handle the OAuth callback from the IdP.
-     *
-     * This endpoint is intentionally unauthenticated — it receives redirects
-     * from external IdPs where the user has no session cookie. Security
-     * binding is provided by the signed, time-limited state JWT which ties
-     * the callback to a specific credential and caller.
-     *
-     * Redirects the popup the SPA opened to a public SPA route
-     * (``/app/oauth/connected``) that owns the user-facing "you can close this"
-     * experience and self-closes. Two variants, distinguished only by a coarse
-     * ``status`` query param:
-     *
-     * * Success: ``?status=ok``.
-     * * Failure: ``?status=error`` — no protocol or provider detail is
-     * exposed in the redirect URL.
-     *
-     * The parent SPA still learns the real outcome by polling
-     * ``GET /credentials/{id}`` — never from this redirect. The actual cause
-     * (missing state, connect failure, provider error, etc.) is recorded via
-     * structured logging for operators.
-     * @returns any Successful Response
-     * @throws ApiError
-     */
-    public static oauthCallback({
-        code,
-        state,
-        error,
-    }: {
-        /**
-         * Authorization code issued by the identity provider.
-         */
-        code?: (string | null),
-        /**
-         * Signed state value issued when the connect flow began.
-         */
-        state?: (string | null),
-        /**
-         * OAuth error code from the identity provider when authorization failed.
-         */
-        error?: (string | null),
-    }): CancelablePromise<any> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/credentials/oauth/callback',
-            query: {
-                'code': code,
-                'state': state,
-                'error': error,
-            },
-            errors: {
-                400: `Bad Request`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
      * List credential providers
      * Return discovery metadata for all configured credential providers.
      * @returns ProviderDiscoveryResponse Successful Response

@@ -1,12 +1,15 @@
 openapi: 3.1.0
 info:
   title: Broker API
-  version: beta.1
+  version: "0.43.0" # x-release-please-version
   summary: Secure execution proxy for upstream APIs — credentials never leave the Broker.
   contact:
     name: Jentic Platform Team
     url: https://jentic.com
     email: support@jentic.com
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
   description: |
     ## Overview
 
@@ -94,6 +97,7 @@ tags:
       observability — not part of the brokered execution surface.
 security:
   - BearerAuth: []
+  - OAuth2: [capabilities:execute]
 paths:
   /health:
     get:
@@ -101,26 +105,32 @@ paths:
       operationId: getHealth
       summary: Service health probe
       description: |
-        Liveness / readiness probe for the Broker service. Returns `200`
-        with a small `application/health+json` body (IETF Health Check
-        Response Format draft) when the broker can accept traffic.
+        Unauthenticated liveness probe for the Broker service. Returns `200`
+        with a small JSON body while the process is serving requests,
+        reporting the surface name and the running Jentic One release.
         Intended for load balancers, container orchestrators, and uptime
         monitors — not for human or agent consumption beyond green/red
-        signalling.
+        signalling. Use `/ready` for saturation-aware readiness.
       security: []
       responses:
         "200":
-          description: Service is healthy and ready to accept traffic.
+          description: Service is up and serving requests.
           content:
-            application/health+json:
+            application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
               examples:
                 healthy:
                   summary: Broker reporting healthy.
                   value:
-                    status: pass
-                    version: beta.1
+                    status: ok
+                    surface: broker
+                    version: "0.43.0" # x-release-please-version
+                notEntitled:
+                  summary: Metered marketplace deployment whose entitlement lapsed.
+                  value:
+                    status: not_entitled
+                    reason: Subscription for this deployment is not active.
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         "429":
@@ -323,6 +333,14 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              create_pet:
+                summary: JSON body for the upstream's create operation, forwarded as-is.
+                value:
+                  name: Rex
+                  photoUrls:
+                    - https://example.com/rex.jpg
+                  status: available
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -365,6 +383,15 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              replace_pet:
+                summary: Full replacement body for the upstream resource, forwarded as-is.
+                value:
+                  id: 10
+                  name: Rex
+                  photoUrls:
+                    - https://example.com/rex.jpg
+                  status: sold
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -407,6 +434,12 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              update_issue:
+                summary: Partial-update body for the upstream resource, forwarded as-is.
+                value:
+                  state: closed
+                  state_reason: completed
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -451,6 +484,11 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              delete_reason:
+                summary: Optional body some upstreams accept on delete, forwarded as-is.
+                value:
+                  reason: duplicate
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -735,6 +773,147 @@ components:
         examples:
           - cred_abc123
   schemas:
+    BrokerProblem:
+      title: BrokerProblem
+      description: |
+        RFC 9457 Problem Details body for every Broker error. Extends the
+        shared Jentic `ProblemDetails` schema with the Broker's
+        agent-recovery members: `error_origin` says *who* failed, and
+        `agent_directive` (when present) is a machine-actionable recovery
+        instruction an agent can follow without parsing prose. `title`
+        repeats `detail` on Broker-originated errors.
+      examples:
+        - type: no_credential_binding
+          title: No credential binding for this API
+          status: 403
+          detail: No credential binding for this API
+          error_origin: broker
+          instance: /api.example.com/v1/users
+      allOf:
+        - $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+        - type: object
+          properties:
+            error_origin:
+              type: string
+              enum: [broker, upstream]
+              description: |
+                Who failed: `broker` (the Broker itself — overloaded,
+                misconfigured, or rejecting the request shape) or
+                `upstream` (the external API — down, rate-limited, or
+                returning an error). Mirrored in the `Jentic-Error-Origin`
+                response header. Absent on authentication errors.
+              examples:
+                - broker
+            agent_directive:
+              $ref: "#/components/schemas/AgentDirective"
+            candidates:
+              type: array
+              description: |
+                The caller's own credentials that matched ambiguously
+                (`ambiguous_credential_binding`, `ambiguous_credential`) or
+                that a credential-selection header failed to match
+                (`credential_id_not_found`, `credential_name_not_found`).
+                Pick one and resend with `Jentic-Credential-Id`.
+              examples:
+                - - id: cred_01HXAMPLE7Q2
+                    name: github-work
+                    last4: 7Q2a
+                    created_at: "2026-09-01T00:00:00Z"
+              items:
+                $ref: "#/components/schemas/CredentialCandidate"
+            intent_id:
+              type: string
+              description: |
+                Correlation id for a `credential_not_provisioned` denial,
+                also carried in `agent_directive.parameters.intent_id`, so
+                the human hand-off can be tied back to this request.
+              examples:
+                - intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
+    AgentDirective:
+      type: object
+      title: AgentDirective
+      description: |
+        Machine-actionable recovery instruction embedded in a Broker
+        problem body. The fixed `strategy` vocabulary lets an agent
+        hard-code its recovery loop — e.g. on `wait` sleep
+        `parameters.retry_after_seconds`; on `modify_headers` add
+        `parameters.headers` and retry once; on `prompt_human` stop and
+        relay `human_readable_instruction` to the user.
+      examples:
+        - strategy: modify_headers
+          parameters:
+            candidates: [cred_01HXAMPLE7Q2, cred_01HXAMPLE9K4]
+            headers:
+              Jentic-Credential-Id: cred_01HXAMPLE7Q2
+          human_readable_instruction: >-
+            Multiple bound credentials cover this API. Resend the same request
+            with the Jentic-Credential-Id header set to one of the ids in
+            parameters.candidates (Jentic-Credential-Name also works when names
+            are unique).
+      required:
+        - strategy
+        - parameters
+        - human_readable_instruction
+      properties:
+        strategy:
+          type: string
+          enum: [wait, retry, modify_headers, prompt_human, switch_toolkit, fatal]
+          description: Recovery strategy the agent should apply.
+          examples:
+            - modify_headers
+        parameters:
+          type: object
+          additionalProperties: true
+          description: |
+            Strategy-specific inputs (e.g. `headers` for `modify_headers`,
+            `retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`
+            for `prompt_human`). Empty when the strategy needs none.
+          examples:
+            - headers:
+                Jentic-Credential-Id: cred_01HXAMPLE7Q2
+        human_readable_instruction:
+          type: string
+          description: Plain-language instruction an agent can relay to a human or follow itself.
+          examples:
+            - Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates.
+    CredentialCandidate:
+      type: object
+      title: CredentialCandidate
+      description: |
+        One of the caller's own credentials, distinguishable even when names
+        collide. Holds no secret material — `last4` is the last four
+        characters of the credential **id**.
+      examples:
+        - id: cred_01HXAMPLE7Q2
+          name: github-work
+          last4: 7Q2a
+          created_at: "2026-09-01T00:00:00Z"
+      required:
+        - id
+        - name
+        - last4
+      properties:
+        id:
+          type: string
+          description: Stable credential id; send it as `Jentic-Credential-Id` to pick this credential.
+          examples:
+            - cred_01HXAMPLE7Q2
+        name:
+          type: string
+          description: Credential display name (not guaranteed unique).
+          examples:
+            - github-work
+        last4:
+          type: string
+          description: Last four characters of the credential id, as a display hint.
+          examples:
+            - 7Q2a
+        created_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the credential was created, to tell same-named candidates apart.
+          examples:
+            - "2026-09-01T00:00:00Z"
     AsyncQueuedResponse:
       type: object
       title: AsyncQueuedResponse
@@ -747,6 +926,10 @@ components:
         that URL for status, and follow its `_links.result` to
         collect the upstream response body once `status` is
         `completed`.
+      examples:
+        - job_id: job_abc123
+          _links:
+            self: https://control.your-instance.example/jobs/job_abc123
       required:
         - job_id
         - _links
@@ -765,6 +948,8 @@ components:
             HAL-style link relations for the queued job. `self` always
             points at the control-plane job record; the broker does
             not expose its own polling surface.
+          examples:
+            - self: https://control.your-instance.example/jobs/job_abc123
           required:
             - self
           properties:
@@ -845,31 +1030,43 @@ components:
       title: HealthResponse
       summary: Service health probe response.
       description: |
-        Body returned by `GET /health` when the Broker is ready to
-        accept traffic. Shape follows the IETF [Health Check Response
-        Format for HTTP APIs](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check)
-        draft (`application/health+json`). Intentionally minimal —
-        clients treat `200` + `status: pass` as the green signal; the
-        body is informational.
+        Body returned by `GET /health` while the Broker process is
+        serving requests. Intentionally minimal — clients treat `200` +
+        `status: ok` as the green signal; the body is informational.
+      examples:
+        - status: ok
+          surface: broker
+          version: "0.43.0" # x-release-please-version
       required:
         - status
       properties:
         status:
           type: string
           description: |
-            Health indicator per the IETF Health Check draft.
-            `pass` — service is healthy. `fail` — service is unhealthy.
-            `warn` — service is healthy but with concerns. The Broker
-            returns `pass` on every `200`; `fail` / `warn` are reserved
-            for future degraded-mode reporting.
-          enum: [pass, fail, warn]
+            `ok` while the process is serving requests. A metered
+            marketplace deployment whose entitlement lapsed answers
+            `not_entitled` (still HTTP `200`, so orchestrators don't
+            restart it).
+          enum: [ok, not_entitled]
           examples:
-            - pass
+            - ok
+        surface:
+          type: string
+          description: Name of the surface reporting health; always `broker`. Absent on the `not_entitled` body.
+          examples:
+            - broker
         version:
           type: string
-          description: Service build version, mirrors `info.version` in this spec.
+          description: |
+            Running Jentic One release (the same version as `info.version`
+            in this spec). Absent on the `not_entitled` body.
           examples:
-            - beta.1
+            - "0.43.0" # x-release-please-version
+        reason:
+          type: string
+          description: Why the deployment is not entitled. Present only on the `not_entitled` body.
+          examples:
+            - Subscription for this deployment is not active.
     ReadinessResponse:
       type: object
       title: ReadinessResponse
@@ -880,23 +1077,35 @@ components:
         `503`) means in-flight load is at/near the admission cap and the load
         balancer should drain this instance. `saturation` is the current
         in-flight count as a fraction of the configured cap.
+      examples:
+        - status: ready
+          saturation: 0.12
       required:
         - status
       properties:
         status:
           type: string
+          description: |
+            `ready` while in-flight load is below the saturation threshold
+            (HTTP `200`); `unready` once it nears the admission cap (HTTP
+            `503`) and the load balancer should drain this instance.
           enum: [ready, unready]
           examples:
             - ready
         reason:
           type: string
           description: Why the instance is unready (present only on `unready`).
+          enum: [saturated, draining]
           examples:
             - saturated
         saturation:
           type: number
           format: float
-          description: In-flight requests as a fraction of the admission cap.
+          minimum: 0
+          description: |
+            In-flight requests as a fraction of the admission cap (`0`–`1`,
+            briefly above `1` at the cap edge). Omitted when the instance is
+            `draining`.
           examples:
             - 0.12
   responses:
@@ -923,6 +1132,8 @@ components:
           schema:
             type: string
             enum: ["true"]
+            examples:
+              - "true"
         Jentic-Api-Vendor:
           description: API vendor hostname that was called.
           schema:
@@ -992,6 +1203,8 @@ components:
           schema:
             type: string
             enum: ["true"]
+            examples:
+              - "true"
         Jentic-Api-Vendor:
           description: API vendor hostname that was called.
           schema:
@@ -1050,7 +1263,17 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            invalid_upstream_url:
+              summary: Upstream URL rejected by the broker's egress policy.
+              value:
+                type: invalid_upstream_url
+                title: upstream URL resolves to a blocked address range
+                status: 400
+                detail: upstream URL resolves to a blocked address range
+                error_origin: broker
+                instance: /169.254.169.254/latest/meta-data
     Unauthorized:
       description: |
         Authentication missing or invalid — the `Authorization: Bearer
@@ -1060,7 +1283,16 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            invalid_token:
+              summary: Token missing, unknown, revoked, or expired.
+              value:
+                type: unauthorized
+                title: Unauthorized
+                status: 401
+                detail: Invalid or expired access token
+                instance: /api.example.com/v1/users
     Forbidden:
       description: |
         Caller authenticated but not entitled to execute — most often a
@@ -1072,7 +1304,39 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            insufficient_scope:
+              summary: Token lacks the `capabilities:execute` permission.
+              value:
+                type: insufficient_scope
+                title: Forbidden
+                status: 403
+                detail: "Insufficient scope: 'capabilities:execute' required"
+                instance: /api.example.com/v1/users
+            no_credential_binding:
+              summary: Caller is not bound to any credential covering this API.
+              value:
+                type: no_credential_binding
+                title: No credential binding for this API
+                status: 403
+                detail: No credential binding for this API
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                    api_served: true
+                  human_readable_instruction: >-
+                    You have no credential binding for 'api.example.com/main', but a
+                    credential already serves it. Ask your operator to bind this agent
+                    to that credential (in the dashboard, or via POST
+                    /agents/{agent_id}/credentials) — only a human can grant the
+                    binding. Once bound, retry this call.
     NotFound:
       description: |
         Upstream URL doesn't resolve to a registered API operation, or
@@ -1082,7 +1346,17 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            operation_not_found:
+              summary: Upstream URL does not match any registered API operation.
+              value:
+                type: operation_not_found
+                title: Operation not found — unregistered upstream URL.
+                status: 404
+                detail: Operation not found — unregistered upstream URL.
+                error_origin: broker
+                instance: /api.example.com/v1/unknown
     Conflict:
       description: |
         Conflict (RFC 9457 `application/problem+json`), distinguished by
@@ -1103,7 +1377,46 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            ambiguous_credential_binding:
+              summary: Two bound credentials cover the API; pick one with a header.
+              value:
+                type: ambiguous_credential_binding
+                title: "Ambiguous: 2 active credentials match api (api.github.com, main, 1.1.4)"
+                status: 409
+                detail: "Ambiguous: 2 active credentials match api (api.github.com, main, 1.1.4)"
+                error_origin: broker
+                instance: /api.github.com/user/repos
+                candidates:
+                  - id: cred_01HXAMPLE7Q2
+                    name: github-work
+                    last4: 7Q2a
+                    created_at: "2026-09-01T00:00:00Z"
+                  - id: cred_01HXAMPLE9K4
+                    name: github-personal
+                    last4: 9K4b
+                    created_at: "2026-09-12T00:00:00Z"
+                agent_directive:
+                  strategy: modify_headers
+                  parameters:
+                    candidates: [cred_01HXAMPLE7Q2, cred_01HXAMPLE9K4]
+                    headers:
+                      Jentic-Credential-Id: cred_01HXAMPLE7Q2
+                  human_readable_instruction: >-
+                    Multiple bound credentials cover this API. Resend the same request
+                    with the Jentic-Credential-Id header set to one of the ids in
+                    parameters.candidates (Jentic-Credential-Name also works when names
+                    are unique).
+            idempotency_conflict:
+              summary: Idempotency-Key reused with a different request.
+              value:
+                type: idempotency_conflict
+                title: Idempotency-Key reused with a different request.
+                status: 409
+                detail: Idempotency-Key reused with a different request.
+                error_origin: broker
+                instance: /api.example.com/v1/orders
     CredentialNotProvisioned:
       description: |
         A bound credential is an unusable dependency, so the broker cannot
@@ -1128,7 +1441,26 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            credential_not_provisioned:
+              summary: No credential connected for the API; ask a human to connect one.
+              value:
+                type: credential_not_provisioned
+                title: No credential provisioned for 'api.example.com'.
+                status: 424
+                detail: No credential provisioned for 'api.example.com'.
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                intent_id: intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    intent_id: intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
+                    vendor: api.example.com
+                  human_readable_instruction: >-
+                    No credential is connected for 'api.example.com'; ask the user to
+                    connect the account before retrying.
     ValidationError:
       description: |
         Request well-formed but semantically invalid — e.g. unknown
@@ -1139,7 +1471,17 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            unknown_revision_pin:
+              summary: Jentic-Revision pins a revision that does not exist.
+              value:
+                type: unknown_revision_pin
+                title: "Unknown revision pin: api.example.com/main/9.9.9"
+                status: 422
+                detail: "Unknown revision pin: api.example.com/main/9.9.9"
+                error_origin: broker
+                instance: /api.example.com/v1/users
     TooManyRequests:
       description: |
         Caller exceeded their rate-limit window. Retry after the
@@ -1171,7 +1513,16 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            rate_limit_exceeded:
+              summary: Caller exhausted their per-actor rate-limit window.
+              value:
+                type: rate_limit_exceeded
+                title: Rate limit exceeded; slow down and retry after the indicated delay.
+                status: 429
+                detail: Rate limit exceeded; slow down and retry after the indicated delay.
+                error_origin: broker
     ServerError:
       description: |
         Unexpected broker-side failure — bug, panic, or unhandled
@@ -1181,7 +1532,16 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            server_error:
+              summary: Unhandled broker-side failure (details are logged, never echoed).
+              value:
+                type: server_error
+                title: Internal Server Error
+                status: 500
+                detail: An unexpected error occurred.
+                instance: /api.example.com/v1/users
     ServiceUnavailable:
       description: |
         Broker temporarily unable to serve traffic — startup,
@@ -1200,7 +1560,24 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            server_at_capacity:
+              summary: Instance shed the request at its in-flight admission cap.
+              value:
+                type: server_at_capacity
+                title: Server at capacity; retry shortly.
+                status: 503
+                detail: Server at capacity; retry shortly.
+                error_origin: broker
+            circuit_open:
+              summary: Upstream circuit breaker is open; the broker is fast-failing.
+              value:
+                type: circuit_open
+                title: Upstream circuit open; the broker is fast-failing to let it recover.
+                status: 503
+                detail: Upstream circuit open; the broker is fast-failing to let it recover.
+                error_origin: broker
     PayloadTooLarge:
       description: |
         Request body exceeded the broker's per-`Content-Type` size cap
@@ -1211,13 +1588,33 @@ components:
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            payload_too_large:
+              summary: Request body exceeded the per-Content-Type size cap.
+              value:
+                type: payload_too_large
+                title: Request body exceeds the 10485760-byte cap.
+                status: 413
+                detail: Request body exceeds the 10485760-byte cap.
+                error_origin: broker
+                instance: /api.example.com/v1/uploads
     Default:
       description: Catch-all problem+json response for any status not enumerated on this operation.
       content:
         application/problem+json:
           schema:
-            $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            upstream_timeout:
+              summary: Upstream did not respond within the broker's deadline.
+              value:
+                type: about:blank
+                title: The upstream did not respond within the deadline.
+                status: 504
+                detail: The upstream did not respond within the deadline.
+                error_origin: upstream
+                instance: /api.example.com/v1/reports
   securitySchemes:
     BearerAuth:
       type: http
@@ -1254,3 +1651,24 @@ components:
         whatever the credential format. Authorization beyond "may execute"
         (agent-credential bindings, permission rules, revision pinning) is
         enforced per-request and is not modelled here.
+    OAuth2:
+      type: oauth2
+      description: |
+        OAuth 2.0 authorization code flow with PKCE (`S256` only), run by the
+        control plane's authorization server. The resulting access token is
+        the same opaque `at_…` bearer token `BearerAuth` describes — the
+        Broker and control plane share one token store — sent as
+        `Authorization: Bearer <token>`.
+
+        Scopes are permission names; executing through the Broker requires
+        `capabilities:execute`. A scope only narrows a grant to a subset of
+        the actor's permissions, never widens it. Agents normally
+        authenticate with an agent API key or the control plane's
+        JWT-bearer grant instead — see `BearerAuth`.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://control.your-instance.example/authorize
+          tokenUrl: https://control.your-instance.example/oauth/token
+          refreshUrl: https://control.your-instance.example/oauth/token
+          scopes:
+            capabilities:execute: Execute capabilities via the broker.

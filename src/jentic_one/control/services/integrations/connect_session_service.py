@@ -2427,10 +2427,10 @@ class ConnectSessionService:
             # the approver is at the vendor's consent screen cannot widen.
             challenge = await ConnectService(self._ctx).begin(
                 chosen.credential_id,
-                ConnectRequest(scopes=scopes, extra={"sole_agent_id": agent_id}),
-                actor_id=identity.sub,
-                actor_type=identity.actor_type,
+                ConnectRequest(scopes=scopes),
+                identity=identity,
                 redirect_uri=platform_redirect_uri(self._ctx),
+                sole_agent_id=agent_id,
             )
             if not isinstance(challenge, AuthCodeChallenge):
                 raise ReauthorizeUnavailableError(

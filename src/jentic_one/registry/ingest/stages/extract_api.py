@@ -23,6 +23,8 @@ from jentic_one.registry.repos import (
     OverlayRepository,
     ServerRepository,
 )
+from jentic_one.registry.repos.revision_repo import is_duplicate_revision_conflict
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionSourceType
 
 
@@ -74,6 +76,19 @@ class CreateRevisionStage(BasePipelineStage):
     _produces: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
+        try:
+            await self._create_revision(ctx)
+        except DatabaseIntegrityError as exc:
+            # A concurrent import of the same API can pass the digest pre-check
+            # below and still lose the insert race on a duplicate-revision
+            # constraint; that is the same "already exists" outcome, so it must
+            # surface as DuplicateRevisionError rather than as an unexpected
+            # stage failure (the /mcp import tools key on its message).
+            if is_duplicate_revision_conflict(exc):
+                raise DuplicateRevisionError() from exc
+            raise
+
+    async def _create_revision(self, ctx: PipelineContext) -> None:
         api_id = ctx.require("api_id", uuid.UUID)
         spec = ctx.specification
         # Domain invariant: every production IngestSpecification comes through

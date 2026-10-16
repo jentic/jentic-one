@@ -32,7 +32,10 @@ SYSTEM_VERSION_PATH = "/system/version"
 class VersionResponse(BaseModel):
     """The running app version and the latest release known to this backend."""
 
-    current: str = Field(description="The version of jentic-one currently running on this backend.")
+    current: str = Field(
+        description="The version of jentic-one currently running on this backend.",
+        examples=["0.42.2"],
+    )
     latest: str | None = Field(
         default=None,
         description=(
@@ -40,12 +43,14 @@ class VersionResponse(BaseModel):
             "Null when the backend can't determine it (update check disabled, "
             "air-gapped, a remote backend, or GitHub was unreachable)."
         ),
+        examples=["0.43.0"],
     )
     update_available: bool = Field(
         description=(
             "True when `latest` is a newer release than `current`. Matches the "
             "verdict `jenticctl update` would print."
-        )
+        ),
+        examples=[True],
     )
 
 

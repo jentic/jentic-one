@@ -7,15 +7,23 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
+
+_EX_JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
 
 class RegisterRequest(BaseModel):
     """POST /register request body."""
 
-    client_name: str = Field(min_length=1, max_length=255, description="Name for the new agent.")
+    client_name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Name for the new agent.",
+        examples=["invoice-reconciler"],
+    )
     jwks: dict[str, Any] = Field(
         description="A JSON Web Key Set containing at least one Ed25519 public key"
         " (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.",
@@ -40,17 +48,20 @@ class RegisterRequest(BaseModel):
         description=(
             "Accepted for RFC 7591 compatibility and ignored; the agent uses the JWT-bearer grant."
         ),
+        examples=[[_EX_JWT_BEARER_GRANT]],
     )
     token_endpoint_auth_method: str | None = Field(
         default=None,
         description=(
             "Accepted for RFC 7591 compatibility and ignored; the agent uses `private_key_jwt`."
         ),
+        examples=["private_key_jwt"],
     )
     scope: str | None = Field(
         default=None,
         max_length=6500,
         description="Space-separated permissions requested for the agent (at most 100 tokens).",
+        examples=["apis:read capabilities:execute"],
     )
 
     @field_validator("scope")
@@ -75,25 +86,34 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     """POST /register 201 response."""
 
-    client_id: str = Field(description="ID of the new agent, used as its OAuth client_id.")
+    client_id: str = Field(
+        description="ID of the new agent, used as its OAuth client_id.", examples=[ex.AGENT_ID]
+    )
     registration_access_token: str = Field(
         json_schema_extra=SENSITIVE,
         description=(
             "Bearer token for polling `registration_client_uri`; shown once and expires"
             " after a configured time."
         ),
+        examples=["rat_example-secret"],  # pragma: allowlist secret
     )
-    registration_client_uri: str = Field(description="URL to poll for the registration status.")
+    registration_client_uri: str = Field(
+        description="URL to poll for the registration status.",
+        examples=[f"https://jentic.example.com/register/{ex.AGENT_ID}"],
+    )
     status: str = Field(
-        description="Lifecycle status of the new agent; `pending` until an operator approves it."
+        description="Lifecycle status of the new agent; `pending` until an operator approves it.",
+        examples=["pending"],
     )
     grant_types: list[str] = Field(
         default=["urn:ietf:params:oauth:grant-type:jwt-bearer"],
         description="Grant types the agent may use; always the JWT-bearer grant.",
+        examples=[[_EX_JWT_BEARER_GRANT]],
     )
     token_endpoint_auth_method: str = Field(
         default="private_key_jwt",
         description="How the agent authenticates at the token endpoint; always `private_key_jwt`.",
+        examples=["private_key_jwt"],
     )
     # Opaque, single-use ownership-claim token. Present only when the deployment
     # installs a claim-token minter (multi-user deployments); the registering
@@ -107,24 +127,30 @@ class RegisterResponse(BaseModel):
             "Single-use token a human presents to `POST /agents/{agent_id}:claim` to take"
             " ownership; omitted when the deployment does not issue claim tokens."
         ),
+        examples=[ex.OPAQUE_TOKEN],
     )
 
 
 class RegistrationStatusResponse(BaseModel):
     """GET /register/{agent_id} response."""
 
-    client_id: str = Field(description="ID of the agent, used as its OAuth client_id.")
+    client_id: str = Field(
+        description="ID of the agent, used as its OAuth client_id.", examples=[ex.AGENT_ID]
+    )
     status: str = Field(
         description=(
             "Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled`"
             " or `archived`."
-        )
+        ),
+        examples=["active"],
     )
     grant_types: list[str] = Field(
         default=["urn:ietf:params:oauth:grant-type:jwt-bearer"],
         description="Grant types the agent may use; always the JWT-bearer grant.",
+        examples=[[_EX_JWT_BEARER_GRANT]],
     )
     token_endpoint_auth_method: str = Field(
         default="private_key_jwt",
         description="How the agent authenticates at the token endpoint; always `private_key_jwt`.",
+        examples=["private_key_jwt"],
     )

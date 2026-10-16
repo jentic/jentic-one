@@ -1161,56 +1161,92 @@ func (e InspectOperationParamsDetail) Valid() bool {
 // APIReference Identifies a target API — the strict (all-required) variant.
 //
 // Used in responses and as the canonical identity tuple.
+//
+// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type APIReference struct {
 	// Name Name of the API within the vendor.
+	//
+	// Examples: stripe
 	Name string `json:"name"`
 
 	// Vendor Vendor of the API (for example `stripe.com`).
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version Version of the API.
+	//
+	// Examples: 2024-04-10
 	Version string `json:"version"`
 }
 
 // APIReferenceRequest Relaxed variant for request bodies where partial identification is allowed.
+//
+// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type APIReferenceRequest struct {
 	// CatalogApiId Catalog identity of the API (`domain[/sub-api]`, for example `nytimes.com/article_search`), when known; used for display only, not for matching.
+	//
+	// Examples: stripe.com
 	CatalogApiId *string `json:"catalog_api_id,omitempty"`
 
 	// Name Name of the API within the vendor; empty to cover every API of the vendor.
+	//
+	// Examples: stripe
 	Name *string `json:"name,omitempty"`
 
 	// Vendor Vendor of the API (for example `stripe.com`).
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version Version of the API; empty to cover every version.
+	//
+	// Examples: 2024-04-10
 	Version *string `json:"version,omitempty"`
 }
 
 // ActorListResponse Paginated list of actors.
+//
+// Examples: {"data":[{"active":true,"actor_type":"user","created_at":"2026-01-15T09:30:00Z","id":"usr_6968b3987ee4c3ec0b4ee3b9","name":"Ada Lovelace"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ActorListResponse struct {
 	// Data The page of actors.
+	//
+	// Examples: [{"active":true,"actor_type":"user","created_at":"2026-01-15T09:30:00Z","id":"usr_6968b3987ee4c3ec0b4ee3b9","name":"Ada Lovelace"}]
 	Data []ActorSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ActorLookupEntryResponse Display fields of one actor resolved by id.
+//
+// Examples: {"active":true,"actor_type":"user","id":"usr_6968b3987ee4c3ec0b4ee3b9","name":"Ada Lovelace"}
 type ActorLookupEntryResponse struct {
 	// Active False for a disabled user or a non-active agent.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// ActorType Whether the actor is a user or an agent.
+	//
+	// Examples: user
 	ActorType ActorType `json:"actor_type"`
 
 	// Id Actor id (`usr_…` or `agnt_…`).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	Id string `json:"id"`
 
 	// Name Display name: a user's full name or an agent's name.
+	//
+	// Examples: Ada Lovelace
 	Name string `json:"name"`
 }
 
@@ -1219,27 +1255,41 @@ type ActorLookupEntryResponse struct {
 // Examples: {"data":[{"active":true,"actor_type":"user","id":"usr_2abc","name":"Ada Lovelace"}]}
 type ActorLookupResponse struct {
 	// Data The resolved actors; ids that match no visible actor are omitted.
+	//
+	// Examples: [{"active":true,"actor_type":"user","id":"usr_6968b3987ee4c3ec0b4ee3b9","name":"Ada Lovelace"}]
 	Data []ActorLookupEntryResponse `json:"data"`
 }
 
 // ActorSummaryResponse Single actor entry in the actors list.
+//
+// Examples: {"active":true,"actor_type":"user","created_at":"2026-01-15T09:30:00Z","id":"usr_6968b3987ee4c3ec0b4ee3b9","name":"Ada Lovelace"}
 type ActorSummaryResponse struct {
 	// Active False for a disabled user or a non-active agent.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// ActorType Type of authenticated actor: a human user or an agent.
 	//
 	// Historical records may carry older actor-type values that are no longer
 	// issued; treat unrecognised values as opaque labels.
+	//
+	// Examples: user
 	ActorType ActorType `json:"actor_type"`
 
 	// CreatedAt When the actor was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Id Actor id (`usr_…` or `agnt_…`).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	Id string `json:"id"`
 
 	// Name Display name: a user's full name or an agent's name.
+	//
+	// Examples: Ada Lovelace
 	Name string `json:"name"`
 }
 
@@ -1250,104 +1300,172 @@ type ActorSummaryResponse struct {
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
+//
+// Examples: {"description":"Reconciles Stripe invoices against the ledger every night.","name":"invoice-reconciler","permissions":["apis:read","capabilities:execute"]}
 type AgentCreateRequest struct {
 	// Description Optional free-text description of the agent.
+	//
+	// Examples: Reconciles Stripe invoices against the ledger every night.
 	Description *string `json:"description,omitempty"`
 
 	// Name Human-readable name of the agent.
+	//
+	// Examples: invoice-reconciler
 	Name string `json:"name"`
 
 	// Permissions Permissions to grant the agent; each must be grantable by the caller. Omit to grant the default agent permission set.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Permissions *[]string `json:"permissions,omitempty"`
 }
 
 // AgentListResponse List of agents.
+//
+// Examples: {"data":[{"approved_at":"2026-01-15T09:45:00Z","approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","created_at":"2026-01-15T09:30:00Z","denial_reason":"Requested permissions exceed the agent's stated purpose.","denied_by":"usr_6968b3987ee4c3ec0b4ee3b9","description":"Reconciles Stripe invoices against the ledger every night.","has_api_key":true,"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","registered_by":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type AgentListResponse struct {
 	// Data The page of agents.
+	//
+	// Examples: [{"approved_at":"2026-01-15T09:45:00Z","approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","created_at":"2026-01-15T09:30:00Z","denial_reason":"Requested permissions exceed the agent's stated purpose.","denied_by":"usr_6968b3987ee4c3ec0b4ee3b9","description":"Reconciles Stripe invoices against the ledger every night.","has_api_key":true,"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","registered_by":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}]
 	Data []AgentResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // AgentPatchRequest Request body for partially updating an agent.
+//
+// Examples: {"description":"Reconciles Stripe invoices against the ledger every night.","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9"}
 type AgentPatchRequest struct {
 	// Description New description for the agent.
+	//
+	// Examples: Reconciles Stripe invoices against the ledger every night.
 	Description *string `json:"description,omitempty"`
 
 	// Name New name for the agent.
+	//
+	// Examples: invoice-reconciler
 	Name *string `json:"name,omitempty"`
 
 	// OwnerId ID of the user to transfer ownership to; `org:admin` only.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	OwnerId *string `json:"owner_id,omitempty"`
 }
 
 // AgentPermissionsRequest Request body for replacing an agent's permissions.
+//
+// Examples: {"permissions":["apis:read","capabilities:execute"]}
 type AgentPermissionsRequest struct {
 	// Permissions The full set of permissions the agent should hold.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Permissions []string `json:"permissions"`
 }
 
 // AgentPermissionsResponse Response containing an agent's current permissions.
+//
+// Examples: {"permissions":["apis:read","capabilities:execute"]}
 type AgentPermissionsResponse struct {
 	// Permissions Permissions currently granted to the agent.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Permissions []string `json:"permissions"`
 }
 
 // AgentResponse Agent representation in API responses.
+//
+// Examples: {"approved_at":"2026-01-15T09:45:00Z","approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","created_at":"2026-01-15T09:30:00Z","denial_reason":"Requested permissions exceed the agent's stated purpose.","denied_by":"usr_6968b3987ee4c3ec0b4ee3b9","description":"Reconciles Stripe invoices against the ledger every night.","has_api_key":true,"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","registered_by":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}
 type AgentResponse struct {
 	// ApprovedAt When the agent was approved (RFC 3339); null if not approved.
+	//
+	// Examples: 2026-01-15T09:45:00Z
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 
 	// ApprovedBy ID of the user who approved the agent; null if not approved.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	ApprovedBy *string `json:"approved_by,omitempty"`
 
 	// CreatedAt When the agent was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// DenialReason Reason given when the agent was denied; null if not denied.
+	//
+	// Examples: Requested permissions exceed the agent's stated purpose.
 	DenialReason *string `json:"denial_reason,omitempty"`
 
 	// DeniedBy ID of the actor that denied the agent; null if not denied.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	DeniedBy *string `json:"denied_by,omitempty"`
 
 	// Description Free-text description of the agent; null if not set.
+	//
+	// Examples: Reconciles Stripe invoices against the ledger every night.
 	Description *string `json:"description,omitempty"`
 
 	// HasApiKey Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.
+	//
+	// Examples: true
 	HasApiKey *bool `json:"has_api_key,omitempty"`
 
 	// Id Unique ID of the agent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	Id string `json:"id"`
 
 	// Name Human-readable name of the agent.
+	//
+	// Examples: invoice-reconciler
 	Name string `json:"name"`
 
 	// OwnerId ID of the user who owns the agent; null for an unclaimed self-registration.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	OwnerId *string `json:"owner_id,omitempty"`
 
 	// ParentAgentId ID of the parent agent; null when the agent has no parent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ParentAgentId *string `json:"parent_agent_id,omitempty"`
 
 	// RegisteredBy ID of the actor that registered the agent, or `self` for a self-registration.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	RegisteredBy string `json:"registered_by"`
 
 	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	//
+	// Examples: active
 	Status string `json:"status"`
 }
 
 // ApiImportLinksResponse Hypermedia links for an import response.
+//
+// Examples: {"self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
 type ApiImportLinksResponse struct {
 	// Self URL of the import job to poll for progress.
+	//
+	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb
 	Self string `json:"self"`
 }
 
 // ApiImportRequest Wrapper for a batch of import sources.
+//
+// Examples: {"sources":[{"api_name":"stripe","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9","type":"url","url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","vendor":"stripe.com","version":"2024-04-10"}]}
 type ApiImportRequest struct {
 	// Sources Documents to import, between 1 and 100 per request.
+	//
+	// Examples: [{"api_name":"stripe","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9","type":"url","url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","vendor":"stripe.com","version":"2024-04-10"}]
 	Sources []ApiImportRequest_Sources_Item `json:"sources"`
 }
 
@@ -1357,54 +1475,88 @@ type ApiImportRequest_Sources_Item struct {
 }
 
 // ApiImportResponse Acknowledgement payload for an asynchronous import job.
+//
+// Examples: {"_links":{"self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"},"job_id":"job_6968b3985e8c9902207afaeb","status":"queued"}
 type ApiImportResponse struct {
 	// UnderscoreLinks Hypermedia links for an import response.
+	//
+	// Examples: {"self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
 	UnderscoreLinks ApiImportLinksResponse `json:"_links"`
 
 	// JobId ID of the import job.
+	//
+	// Examples: job_6968b3985e8c9902207afaeb
 	JobId string `json:"job_id"`
 
 	// Status Status of the job when accepted; `queued`.
+	//
+	// Examples: queued
 	Status string `json:"status"`
 }
 
 // ApiInfoResponse API identification information.
+//
+// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type ApiInfoResponse struct {
 	// Host Upstream host called; null if unknown.
+	//
+	// Examples: api.stripe.com
 	Host *string `json:"host,omitempty"`
 
 	// Name Name of the API that was called.
+	//
+	// Examples: stripe
 	Name string `json:"name"`
 
 	// Vendor Vendor of the API that was called.
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version Version of the API that was called.
+	//
+	// Examples: 2024-04-10
 	Version string `json:"version"`
 }
 
 // ApiKeyConfirmSessionRequest Confirm a “manual_api_key“ session with the API key to store.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","key":"example-secret","kind":"api_key","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ApiKeyConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Key API key to store; write-only.
+	//
+	// Examples: example-secret
 	Key *string `json:"key,omitempty"`
 
 	// Kind Confirm variant; always `api_key`.
+	//
+	// Examples: api_key
 	Kind ApiKeyConfirmSessionRequestKind `json:"kind"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
 // ApiKeyConfirmSessionRequestKind Confirm variant; always `api_key`.
+//
+// Examples: api_key
 type ApiKeyConfirmSessionRequestKind string
 
 // ApiKeyCreateRequest Create request for api_key credentials.
@@ -1412,150 +1564,248 @@ type ApiKeyConfirmSessionRequestKind string
 // Examples: {"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"field_name":"Authorization","key":"sk_live_…","location":"header","name":"Stripe live key","provider":"static","type":"api_key"}
 type ApiKeyCreateRequest struct {
 	// Api Loose (vendor, name, version) API identity tuple.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// FieldName Header or query-parameter name carrying the key.
+	//
+	// Examples: Authorization
 	FieldName string `json:"field_name"`
 
 	// Key The API key secret. Stored encrypted; never returned after create.
+	//
+	// Examples: example-secret
 	Key string `json:"key"`
 
 	// Location Where to inject the key on upstream calls.
+	//
+	// Examples: header
 	Location CredentialLocation `json:"location"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential type; always `api_key`.
+	//
+	// Examples: api_key
 	Type ApiKeyCreateRequestType `json:"type"`
 }
 
 // ApiKeyCreateRequestType Credential type; always `api_key`.
+//
+// Examples: api_key
 type ApiKeyCreateRequestType string
 
 // ApiKeyHistoryEntryResponse A single event in the API key audit trail.
+//
+// Examples: {"action":"rotate","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","id":"aud_6968b3984275d71e90f7f09f","occurred_at":"2026-01-20T14:00:00Z","reason":"api_key_rotated"}
 type ApiKeyHistoryEntryResponse struct {
 	// Action Audited action, for example `rotate` or `revoke`.
+	//
+	// Examples: rotate
 	Action string `json:"action"`
 
 	// ActorId ID of the actor that performed the action.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	ActorId *string `json:"actor_id,omitempty"`
 
 	// Id Unique ID of the audit entry.
+	//
+	// Examples: aud_6968b3984275d71e90f7f09f
 	Id string `json:"id"`
 
 	// OccurredAt When the action occurred (RFC 3339).
+	//
+	// Examples: 2026-01-20T14:00:00Z
 	OccurredAt time.Time `json:"occurred_at"`
 
 	// Reason Structured reason: `api_key_rotated` or `api_key_revoked`.
+	//
+	// Examples: api_key_rotated
 	Reason *string `json:"reason,omitempty"`
 }
 
 // ApiKeyHistoryResponse Audit trail of API key operations.
+//
+// Examples: {"data":[{"action":"rotate","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","id":"aud_6968b3984275d71e90f7f09f","occurred_at":"2026-01-20T14:00:00Z","reason":"api_key_rotated"}]}
 type ApiKeyHistoryResponse struct {
 	// Data API key events, newest first.
+	//
+	// Examples: [{"action":"rotate","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","id":"aud_6968b3984275d71e90f7f09f","occurred_at":"2026-01-20T14:00:00Z","reason":"api_key_rotated"}]
 	Data []ApiKeyHistoryEntryResponse `json:"data"`
 }
 
 // ApiKeyInfoResponse API key metadata — retrievable even after revocation.
+//
+// Examples: {"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","id":"agc_6968b398c1d2e3f4a5b6c7d8","rotated_at":"2026-01-20T14:00:00Z","status":"active"}
 type ApiKeyInfoResponse struct {
 	// CreatedAt When the API key was first created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the API key.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by,omitempty"`
 
 	// Id Unique ID of the API key record.
+	//
+	// Examples: agc_6968b398c1d2e3f4a5b6c7d8
 	Id string `json:"id"`
 
 	// RotatedAt When the API key was last rotated (RFC 3339); null if never rotated.
+	//
+	// Examples: 2026-01-20T14:00:00Z
 	RotatedAt *time.Time `json:"rotated_at,omitempty"`
 
 	// Status Key status: `active`, or `revoked` once revoked.
+	//
+	// Examples: active
 	Status string `json:"status"`
 }
 
 // ApiKeyResponse Response containing a plaintext API key (shown once).
+//
+// Examples: {"key":"jak_example-secret"}
 type ApiKeyResponse struct {
 	// Key The plaintext API key; shown only once, store it securely.
+	//
+	// Examples: jak_example-secret
 	Key string `json:"key"`
 }
 
 // ApiKeyUpdateRequest Update request for api_key credentials.
+//
+// Examples: {"active":true,"field_name":"Authorization","key":"example-secret","location":"header","name":"Stripe live key","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"api_key"}
 type ApiKeyUpdateRequest struct {
 	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// FieldName Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the parameter name.
+	//
+	// Examples: Authorization
 	FieldName *string `json:"field_name,omitempty"`
 
 	// Key Replacement API key; omit to leave unchanged.
+	//
+	// Examples: example-secret
 	Key *string `json:"key,omitempty"`
 
 	// Location Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the injection binding.
+	//
+	// Examples: header
 	Location *CredentialLocation `json:"location,omitempty"`
 
 	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Stripe live key
 	Name *string `json:"name,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential type; always `api_key`.
+	//
+	// Examples: api_key
 	Type ApiKeyUpdateRequestType `json:"type"`
 }
 
 // ApiKeyUpdateRequestType Credential type; always `api_key`.
+//
+// Examples: api_key
 type ApiKeyUpdateRequestType string
 
 // ApiLinksResponse Hypermedia links for a (local) API resource.
+//
+// Examples: {"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"}
 type ApiLinksResponse struct {
 	// CurrentRevision URL of the API's current revision; null when it has no live revision.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	CurrentRevision *string `json:"current_revision,omitempty"`
 
 	// Revisions URL of the API's revision list.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions
 	Revisions string `json:"revisions"`
 
 	// Self URL of this API.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10
 	Self string `json:"self"`
 }
 
 // ApiListResponse Cursor-paginated list of APIs.
+//
+// Examples: {"data":[{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ApiListResponse struct {
 	// Data The page of APIs.
+	//
+	// Examples: [{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}]
 	Data []ApiResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ApiReferenceResponse Core API identifier triple plus derived host.
+//
+// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type ApiReferenceResponse struct {
 	// Host Host the API is served from, derived from its spec; null if it declares none.
+	//
+	// Examples: api.stripe.com
 	Host *string `json:"host"`
 
 	// Name Registry name of the API.
+	//
+	// Examples: stripe
 	Name string `json:"name"`
 
 	// Vendor Registry vendor of the API.
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version Registry version of the API.
+	//
+	// Examples: 2024-04-10
 	Version string `json:"version"`
 }
 
@@ -1564,125 +1814,207 @@ type ApiReferenceResponse struct {
 // “GET /apis“ is the local registry — every item is an API imported into
 // this deployment. The public catalog of importable-but-not-yet-imported APIs
 // is a separate surface (“GET /catalog“); the two are not blended.
+//
+// Examples: {"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}
 type ApiResponse struct {
 	// UnderscoreLinks Hypermedia links for a (local) API resource.
+	//
+	// Examples: {"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"}
 	UnderscoreLinks ApiLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
+	//
+	// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api ApiReferenceResponse `json:"api"`
 
 	// CatalogApiId Catalog identity the API was imported from (`domain[/sub-api]`, for example `nytimes.com/article_search`); null for manual imports.
+	//
+	// Examples: stripe.com
 	CatalogApiId *string `json:"catalog_api_id"`
 
 	// CreatedAt When the API was created (RFC 3339).
+	//
+	// Examples: 2026-01-10T08:00:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CurrentRevisionId ID of the revision the API currently serves; null when it has no live revision.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	CurrentRevisionId *string `json:"current_revision_id"`
 
 	// Description Free-text description of the API; null if not set.
+	//
+	// Examples: Online payments platform: charges, customers, subscriptions and payouts.
 	Description *string `json:"description"`
 
 	// DisplayName Human-readable name to show for the API; null if not set.
+	//
+	// Examples: Stripe
 	DisplayName *string `json:"display_name"`
 
 	// IconUrl URL of an icon image for the API; null if not set.
+	//
+	// Examples: https://stripe.com/favicon.ico
 	IconUrl *string `json:"icon_url"`
 
 	// OperationCount Number of operations the API exposes.
+	//
+	// Examples: 412
 	OperationCount int `json:"operation_count"`
 
 	// Origin Provenance of the current revision: `catalog` (imported from the public catalog), `overlay` (materialized from a confirmed overlay), or null (manual import).
+	//
+	// Examples: catalog
 	Origin *string `json:"origin,omitempty"`
 
 	// RevisionCount Number of revisions recorded for the API.
+	//
+	// Examples: 2
 	RevisionCount int `json:"revision_count"`
 
 	// SecuritySchemes Distinct security scheme types declared by the current revision.
+	//
+	// Examples: ["http"]
 	SecuritySchemes []string `json:"security_schemes"`
 
 	// SourceUrl Upstream spec URL backing the current revision, when known (catalog linkage).
+	//
+	// Examples: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json
 	SourceUrl *string `json:"source_url,omitempty"`
 
 	// UpdateAvailable Whether the upstream spec at `source_url` has a notified update this API hasn't adopted yet (Flow-3). Re-importing clears it.
+	//
+	// Examples: false
 	UpdateAvailable *bool `json:"update_available,omitempty"`
 
 	// UpdatedAt When the API was last updated (RFC 3339); equals `created_at` if never updated.
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ApiSourceInline Import source carrying raw OpenAPI/Arazzo content inline.
+//
+// Examples: {"api_name":"stripe","content":"{\"openapi\": \"3.1.0\", \"info\": {\"title\": \"Stripe API\", \"version\": \"2024-04-10\"}, \"paths\": {}}","filename":"openapi.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9","type":"inline","vendor":"stripe.com","version":"2024-04-10"}
 type ApiSourceInline struct {
 	// ApiName Name to register the API under; taken from the document title when omitted.
+	//
+	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
 	// Content Raw OpenAPI or Arazzo document as a JSON or YAML string.
+	//
+	// Examples: {"openapi": "3.1.0", "info": {"title": "Stripe API", "version": "2024-04-10"}, "paths": {}}
 	Content string `json:"content"`
 
 	// Filename File name of the submitted document.
+	//
+	// Examples: openapi.json
 	Filename string `json:"filename"`
 
 	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
 
 	// Type Source kind; always `inline` for this variant.
+	//
+	// Examples: inline
 	Type ApiSourceInlineType `json:"type"`
 
 	// Vendor Vendor to register the API under; taken from the document when omitted.
+	//
+	// Examples: stripe.com
 	Vendor *string `json:"vendor,omitempty"`
 
 	// Version Version to register the API under; taken from the document when omitted.
+	//
+	// Examples: 2024-04-10
 	Version *string `json:"version,omitempty"`
 }
 
 // ApiSourceInlineType Source kind; always `inline` for this variant.
+//
+// Examples: inline
 type ApiSourceInlineType string
 
 // ApiSourceUrl Import source pointing at a fetchable URL.
+//
+// Examples: {"api_name":"stripe","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9","type":"url","url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","vendor":"stripe.com","version":"2024-04-10"}
 type ApiSourceUrl struct {
 	// ApiName Name to register the API under; taken from the document title when omitted.
+	//
+	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
 	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
 
 	// Type Source kind; always `url` for this variant.
+	//
+	// Examples: url
 	Type ApiSourceUrlType `json:"type"`
 
 	// Url URL the OpenAPI or Arazzo document is fetched from.
+	//
+	// Examples: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json
 	Url string `json:"url"`
 
 	// Vendor Vendor to register the API under; taken from the document when omitted.
+	//
+	// Examples: stripe.com
 	Vendor *string `json:"vendor,omitempty"`
 
 	// Version Version to register the API under; taken from the document when omitted.
+	//
+	// Examples: 2024-04-10
 	Version *string `json:"version,omitempty"`
 }
 
 // ApiSourceUrlType Source kind; always `url` for this variant.
+//
+// Examples: url
 type ApiSourceUrlType string
 
 // ApiTargetRequest A registry API identity to connect a credential for.
+//
+// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type ApiTargetRequest struct {
 	// Name API name
+	//
+	// Examples: stripe
 	Name string `json:"name"`
 
 	// Vendor API vendor (e.g. 'stripe-com')
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version API version
+	//
+	// Examples: 2024-04-10
 	Version string `json:"version"`
 }
 
 // ApiUpdateRequest Partial update payload for an API's presentation fields.
+//
+// Examples: {"description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico"}
 type ApiUpdateRequest struct {
 	// Description Free-text description of the API; null clears it.
+	//
+	// Examples: Online payments platform: charges, customers, subscriptions and payouts.
 	Description *string `json:"description,omitempty"`
 
 	// DisplayName Human-readable name to show for the API; null clears it.
+	//
+	// Examples: Stripe
 	DisplayName *string `json:"display_name,omitempty"`
 
 	// IconUrl URL of an icon image for the API; null clears it.
+	//
+	// Examples: https://stripe.com/favicon.ico
 	IconUrl *string `json:"icon_url,omitempty"`
 }
 
@@ -1690,74 +2022,122 @@ type ApiUpdateRequest struct {
 type ApprovalDecision string
 
 // AuditListResponse Paginated list of audit entries.
+//
+// Examples: {"data":[{"action":"update","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_session_id":"5f0c2a9e-3b7d-4c1a-9e8f-2d6b4a1c7e30","actor_type":"user","after":{"active":true,"name":"Stripe production key"},"before":{"active":true,"name":"Stripe test key"},"diff":{"added":{},"modified":{"name":{"new":"Stripe production key","old":"Stripe test key"}},"removed":{}},"id":"aud_6968b3984275d71e90f7f09f","ip_address":"203.0.113.42","job_id":"job_6968b3985e8c9902207afaeb","occurred_at":"2026-01-15T09:30:00Z","origin":"dashboard","reason":"Rotated to the production key","request_id":"req_6968b3984d1c238d","target_id":"cred_6968b39855d91a3561684b32","target_parent_id":"agnt_6968b3984d1c238dbe7e2e29","target_type":"credential","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type AuditListResponse struct {
 	// Data The page of audit entries.
+	//
+	// Examples: [{"action":"update","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_session_id":"5f0c2a9e-3b7d-4c1a-9e8f-2d6b4a1c7e30","actor_type":"user","after":{"active":true,"name":"Stripe production key"},"before":{"active":true,"name":"Stripe test key"},"diff":{"added":{},"modified":{"name":{"new":"Stripe production key","old":"Stripe test key"}},"removed":{}},"id":"aud_6968b3984275d71e90f7f09f","ip_address":"203.0.113.42","job_id":"job_6968b3985e8c9902207afaeb","occurred_at":"2026-01-15T09:30:00Z","origin":"dashboard","reason":"Rotated to the production key","request_id":"req_6968b3984d1c238d","target_id":"cred_6968b39855d91a3561684b32","target_parent_id":"agnt_6968b3984d1c238dbe7e2e29","target_type":"credential","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15"}]
 	Data []AuditResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // AuditResponse Audit entry representation in API responses.
+//
+// Examples: {"action":"update","actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_session_id":"5f0c2a9e-3b7d-4c1a-9e8f-2d6b4a1c7e30","actor_type":"user","after":{"active":true,"name":"Stripe production key"},"before":{"active":true,"name":"Stripe test key"},"diff":{"added":{},"modified":{"name":{"new":"Stripe production key","old":"Stripe test key"}},"removed":{}},"id":"aud_6968b3984275d71e90f7f09f","ip_address":"203.0.113.42","job_id":"job_6968b3985e8c9902207afaeb","occurred_at":"2026-01-15T09:30:00Z","origin":"dashboard","reason":"Rotated to the production key","request_id":"req_6968b3984d1c238d","target_id":"cred_6968b39855d91a3561684b32","target_parent_id":"agnt_6968b3984d1c238dbe7e2e29","target_type":"credential","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15"}
 type AuditResponse struct {
 	// Action The audited action, e.g. `create`, `update` or `revoke`.
+	//
+	// Examples: update
 	Action string `json:"action"`
 
 	// ActorId ID of the actor that performed the action; null if unknown.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	ActorId *string `json:"actor_id,omitempty"`
 
 	// ActorSessionId Session the actor acted under; null if not recorded.
+	//
+	// Examples: 5f0c2a9e-3b7d-4c1a-9e8f-2d6b4a1c7e30
 	ActorSessionId *string `json:"actor_session_id,omitempty"`
 
 	// ActorType Kind of actor that performed the action, e.g. `user` or `agent`.
+	//
+	// Examples: user
 	ActorType string `json:"actor_type"`
 
 	// After Snapshot of the target after the action; null if none.
+	//
+	// Examples: {"active":true,"name":"Stripe production key"}
 	After *map[string]interface{} `json:"after,omitempty"`
 
 	// Before Snapshot of the target before the action; null if none.
+	//
+	// Examples: {"active":true,"name":"Stripe test key"}
 	Before *map[string]interface{} `json:"before,omitempty"`
 
 	// Diff Changes between `before` and `after`, keyed `added`, `removed` and `modified` (each modified key maps to `old`/`new`); null when nothing changed.
+	//
+	// Examples: {"added":{},"modified":{"name":{"new":"Stripe production key","old":"Stripe test key"}},"removed":{}}
 	Diff *map[string]interface{} `json:"diff,omitempty"`
 
 	// Id Unique ID of the audit entry.
+	//
+	// Examples: aud_6968b3984275d71e90f7f09f
 	Id string `json:"id"`
 
 	// IpAddress Client IP address of the triggering request, if recorded.
+	//
+	// Examples: 203.0.113.42
 	IpAddress *string `json:"ip_address,omitempty"`
 
 	// JobId ID of the job the action ran under, if any.
+	//
+	// Examples: job_6968b3985e8c9902207afaeb
 	JobId *string `json:"job_id,omitempty"`
 
 	// OccurredAt When the audited action happened (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	OccurredAt time.Time `json:"occurred_at"`
 
 	// Origin Surface the action was initiated from, e.g. `dashboard`, `cli`, `api`, `agent`, `mcp` or `system`; null if not recorded.
+	//
+	// Examples: dashboard
 	Origin *string `json:"origin,omitempty"`
 
 	// Reason Reason recorded for the action; null if none was given.
+	//
+	// Examples: Rotated to the production key
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestId ID of the request that triggered the action, if recorded.
+	//
+	// Examples: req_6968b3984d1c238d
 	RequestId *string `json:"request_id,omitempty"`
 
 	// TargetId ID of the entity the action was performed on.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	TargetId string `json:"target_id"`
 
 	// TargetParentId ID of the target's parent entity; null when not applicable.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	TargetParentId *string `json:"target_parent_id,omitempty"`
 
 	// TargetType Type of the entity the action was performed on.
+	//
+	// Examples: credential
 	TargetType string `json:"target_type"`
 
 	// TraceId Trace ID of the triggering request, if recorded.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
 	TraceId *string `json:"trace_id,omitempty"`
 
 	// UserAgent User-Agent of the triggering request, if recorded.
+	//
+	// Examples: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15
 	UserAgent *string `json:"user_agent,omitempty"`
 }
 
@@ -1769,235 +2149,342 @@ type AuditTargetType string
 // Examples: {"api_vendor":"github","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","client_secret":"\u003cpaste-client-secret-from-vendor-console\u003e","default_scopes":["repo","read:user"],"display_name":"GitHub","flow_kind":"authorization_code","name":"MyOrg GitHub","token_url":"https://github.com/login/oauth/access_token"}
 type AuthorizationCodeRegistrationCreateRequest struct {
 	// ApiVendor Vendor registry key the registration connects.
+	//
+	// Examples: github
 	ApiVendor string `json:"api_vendor"`
 
 	// AuthorizeUrl Authorization endpoint URL.
+	//
+	// Examples: https://github.com/login/oauth/authorize
 	AuthorizeUrl string `json:"authorize_url"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). The credential minted through this registration carries the same slug so its operations preview resolves against a real registered API.
+	//
+	// Examples: github.com/api.github.com
 	CatalogApiId string `json:"catalog_api_id"`
 
 	// ClientId OAuth client ID of the app.
+	//
+	// Examples: Iv1.a1b2c3d4
 	ClientId string `json:"client_id"`
 
 	// ClientSecret OAuth client secret of the app; stored encrypted and never returned.
+	//
+	// Examples: example-secret
 	ClientSecret string `json:"client_secret"`
 
 	// DefaultScopes Scopes requested by default.
+	//
+	// Examples: ["repo","read:user"]
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
+	//
+	// Examples: GitHub
 	DisplayName string `json:"display_name"`
 
 	// FlowKind OAuth flow the registration uses; always `authorization_code`.
+	//
+	// Examples: authorization_code
 	FlowKind AuthorizationCodeRegistrationCreateRequestFlowKind `json:"flow_kind"`
 
 	// Name Admin-chosen name of the registration.
+	//
+	// Examples: MyOrg GitHub
 	Name string `json:"name"`
 
 	// TokenUrl Token endpoint URL.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenUrl string `json:"token_url"`
 }
 
 // AuthorizationCodeRegistrationCreateRequestFlowKind OAuth flow the registration uses; always `authorization_code`.
+//
+// Examples: authorization_code
 type AuthorizationCodeRegistrationCreateRequestFlowKind string
 
 // BasicAuthCreateRequest Create request for basic credentials.
+//
+// Examples: {"api":{"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"name":"Stripe live key","password":"example-secret","provider":"static","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"basic","username":"svc-reporting"}
 type BasicAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Password Password for HTTP Basic auth. Stored encrypted; never returned after create.
+	//
+	// Examples: example-secret
 	Password string `json:"password"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential type; always `basic`.
+	//
+	// Examples: basic
 	Type BasicAuthCreateRequestType `json:"type"`
 
 	// Username Username sent with HTTP Basic auth.
+	//
+	// Examples: svc-reporting
 	Username string `json:"username"`
 }
 
 // BasicAuthCreateRequestType Credential type; always `basic`.
+//
+// Examples: basic
 type BasicAuthCreateRequestType string
 
 // BasicAuthUpdateRequest Update request for basic credentials.
+//
+// Examples: {"active":true,"name":"Stripe live key","password":"example-secret","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"basic","username":"svc-reporting"}
 type BasicAuthUpdateRequest struct {
 	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Stripe live key
 	Name *string `json:"name,omitempty"`
 
 	// Password Replacement password; omit to leave unchanged.
+	//
+	// Examples: example-secret
 	Password *string `json:"password,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential type; always `basic`.
+	//
+	// Examples: basic
 	Type BasicAuthUpdateRequestType `json:"type"`
 
 	// Username Replacement username; omit to leave unchanged.
+	//
+	// Examples: svc-reporting
 	Username *string `json:"username,omitempty"`
 }
 
 // BasicAuthUpdateRequestType Credential type; always `basic`.
+//
+// Examples: basic
 type BasicAuthUpdateRequestType string
 
 // BasicConfirmSessionRequest Confirm a “manual_basic“ session with the username and password to store.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"basic","password":"example-secret","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"username":"svc-reporting"}
 type BasicConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; always `basic`.
+	//
+	// Examples: basic
 	Kind BasicConfirmSessionRequestKind `json:"kind"`
 
 	// Password Password to store; write-only.
+	//
+	// Examples: example-secret
 	Password *string `json:"password,omitempty"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Username Username to store.
+	//
+	// Examples: svc-reporting
 	Username string `json:"username"`
 }
 
 // BasicConfirmSessionRequestKind Confirm variant; always `basic`.
+//
+// Examples: basic
 type BasicConfirmSessionRequestKind string
 
 // BearerConfirmSessionRequest Confirm a “manual_bearer“ session with the bearer token to store.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"bearer","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token":"example-secret"}
 type BearerConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; always `bearer`.
+	//
+	// Examples: bearer
 	Kind BearerConfirmSessionRequestKind `json:"kind"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// Token Bearer token to store; write-only.
+	//
+	// Examples: example-secret
 	Token *string `json:"token,omitempty"`
 }
 
 // BearerConfirmSessionRequestKind Confirm variant; always `bearer`.
+//
+// Examples: bearer
 type BearerConfirmSessionRequestKind string
 
 // BearerTokenCreateRequest Create request for bearer_token credentials.
+//
+// Examples: {"api":{"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"name":"Stripe live key","provider":"static","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"token":"example-secret","type":"bearer_token"}
 type BearerTokenCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Token The bearer token secret. Stored encrypted; never returned after create.
+	//
+	// Examples: example-secret
 	Token string `json:"token"`
 
 	// Type Credential type; always `bearer_token`.
+	//
+	// Examples: bearer_token
 	Type BearerTokenCreateRequestType `json:"type"`
 }
 
 // BearerTokenCreateRequestType Credential type; always `bearer_token`.
+//
+// Examples: bearer_token
 type BearerTokenCreateRequestType string
 
 // BearerTokenUpdateRequest Update request for bearer_token credentials.
+//
+// Examples: {"active":true,"name":"Stripe live key","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"token":"example-secret","type":"bearer_token"}
 type BearerTokenUpdateRequest struct {
 	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Stripe live key
 	Name *string `json:"name,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Token Replacement bearer token; omit to leave unchanged.
+	//
+	// Examples: example-secret
 	Token *string `json:"token,omitempty"`
 
 	// Type Credential type; always `bearer_token`.
+	//
+	// Examples: bearer_token
 	Type BearerTokenUpdateRequestType `json:"type"`
 }
 
 // BearerTokenUpdateRequestType Credential type; always `bearer_token`.
+//
+// Examples: bearer_token
 type BearerTokenUpdateRequestType string
 
-// BodyConsentAgentCreate defines model for Body_consentAgentCreate.
+// BodyConsentAgentCreate Examples: {"agent_name":"invoice-reconciler","consent_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","create_state":"eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"}
 type BodyConsentAgentCreate struct {
 	// AgentName Name for the new agent; surrounding whitespace is trimmed.
+	//
+	// Examples: invoice-reconciler
 	AgentName string `json:"agent_name"`
 
 	// ConsentToken Single-use consent handle embedded in the consent page.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	ConsentToken string `json:"consent_token"`
 
 	// CreateState Signed single-use agent-creation token embedded in the consent page.
+	//
+	// Examples: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
 	CreateState string `json:"create_state"`
-}
-
-// BodyConsentSubmit defines model for Body_consentSubmit.
-type BodyConsentSubmit struct {
-	// Action `approve` or `deny`; any value other than `deny` is treated as approval.
-	Action string `json:"action"`
-
-	// AgentId ID of the agent to connect the client to; sent only by the agent-picker consent page.
-	AgentId *string `json:"agent_id,omitempty"`
-
-	// ConsentToken Single-use consent handle embedded in the consent page.
-	ConsentToken string `json:"consent_token"`
-}
-
-// BodyLoginSubmit defines model for Body_loginSubmit.
-type BodyLoginSubmit struct {
-	// Csrf Single-use CSRF token embedded in the login form.
-	Csrf string `json:"csrf"`
-
-	// Email Email address of the local account.
-	Email string `json:"email"`
-
-	// Ls Signed authorization-flow state (carry-through token) from the login form.
-	Ls string `json:"ls"`
-
-	// Password Password of the local account.
-	Password string `json:"password"`
 }
 
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
@@ -2005,15 +2492,23 @@ type BodyLoginSubmit struct {
 // Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
 type CatalogEntryLinksResponse struct {
 	// Github Human-facing GitHub tree URL for the entry, when known.
+	//
+	// Examples: https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com
 	Github *string `json:"github,omitempty"`
 
 	// Import URL of the catalog import action (`POST /catalog/{api_id}:import`).
+	//
+	// Examples: https://jentic.example.com/catalog/stripe.com:import
 	Import string `json:"import"`
 
 	// Operations URL of the entry's operation preview.
+	//
+	// Examples: https://jentic.example.com/catalog/stripe.com/operations
 	Operations string `json:"operations"`
 
 	// Self Canonical URL of this catalog entry.
+	//
+	// Examples: https://jentic.example.com/catalog/stripe.com
 	Self string `json:"self"`
 }
 
@@ -2027,21 +2522,33 @@ type CatalogEntryResponse struct {
 	UnderscoreLinks CatalogEntryLinksResponse `json:"_links"`
 
 	// ApiId Catalog identity of the API (manifest domain, e.g. `stripe.com`).
+	//
+	// Examples: stripe.com
 	ApiId string `json:"api_id"`
 
 	// Path Manifest path of the entry within the public-APIs repo.
+	//
+	// Examples: apis/openapi/stripe.com
 	Path *string `json:"path"`
 
 	// Registered Whether this entry is already imported locally — its `spec_url` backs a non-archived revision in `GET /apis`.
+	//
+	// Examples: true
 	Registered bool `json:"registered"`
 
 	// SpecUrl Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).
+	//
+	// Examples: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json
 	SpecUrl *string `json:"spec_url"`
 
 	// UpdateAvailable Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
+	//
+	// Examples: false
 	UpdateAvailable *bool `json:"update_available,omitempty"`
 
 	// Vendor Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`).
+	//
+	// Examples: stripe.com
 	Vendor *string `json:"vendor"`
 }
 
@@ -2050,24 +2557,38 @@ type CatalogEntryResponse struct {
 // Examples: {"catalog_total":5231,"data":[],"has_more":true,"manifest_age_seconds":3600,"next_cursor":"eyJpZCI6ICJzdHJpcGUuY29tIn0=","registered_count":12}
 type CatalogListResponse struct {
 	// CatalogTotal Total entries in the whole manifest (pre-filter, pre-page).
+	//
+	// Examples: 5231
 	CatalogTotal int `json:"catalog_total"`
 
 	// Data The page of catalog entries.
+	//
+	// Examples: [{"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","vendor":"stripe.com"}]
 	Data []CatalogEntryResponse `json:"data"`
 
 	// HasMore Whether another page follows.
+	//
+	// Examples: true
 	HasMore *bool `json:"has_more,omitempty"`
 
 	// ManifestAgeSeconds Age of the cached manifest in seconds, or null when the cache is empty.
+	//
+	// Examples: 3600
 	ManifestAgeSeconds *int `json:"manifest_age_seconds,omitempty"`
 
 	// NextCursor Opaque keyset cursor for the next page (null when done).
+	//
+	// Examples: eyJpZCI6ICJzdHJpcGUuY29tIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 
 	// OutdatedCount Count of whole-manifest registered entries with an upstream update available.
+	//
+	// Examples: 1
 	OutdatedCount *int `json:"outdated_count,omitempty"`
 
 	// RegisteredCount Count of whole-manifest entries already imported locally.
+	//
+	// Examples: 12
 	RegisteredCount int `json:"registered_count"`
 }
 
@@ -2076,9 +2597,13 @@ type CatalogListResponse struct {
 // Examples: {"count":5231,"status":"refreshed"}
 type CatalogRefreshResponse struct {
 	// Count Number of entries in the freshly fetched manifest.
+	//
+	// Examples: 5231
 	Count int `json:"count"`
 
 	// Status Refresh outcome marker.
+	//
+	// Examples: refreshed
 	Status *string `json:"status,omitempty"`
 }
 
@@ -2087,84 +2612,138 @@ type CatalogRefreshResponse struct {
 // “snoozed_until“ is optional: omit or send “null“ to mute-until-newer (the primary
 // per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
 // provide an ISO-8601 timestamp for a time-boxed snooze that lapses at that instant.
+//
+// Examples: {"snoozed_until":"2026-02-01T00:00:00Z"}
 type CatalogSnoozeRequest struct {
 	// SnoozedUntil Optional expiry for the snooze (ISO-8601). Null = mute until a newer upstream digest is observed.
+	//
+	// Examples: 2026-02-01T00:00:00Z
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 }
 
 // ChangePasswordRequest Payload for changing own password.
+//
+// Examples: {"current_password":"example-password","new_password":"example-new-password"}
 type ChangePasswordRequest struct {
 	// CurrentPassword The caller's current password.
+	//
+	// Examples: example-password
 	CurrentPassword string `json:"current_password"`
 
 	// NewPassword The new password to set.
+	//
+	// Examples: example-new-password
 	NewPassword string `json:"new_password"`
 }
 
 // ClaimRequest Request body for claiming ownership of a self-registered agent.
+//
+// Examples: {"token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"}
 type ClaimRequest struct {
 	// Token Single-use claim token returned when the agent self-registered.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	Token string `json:"token"`
 }
 
 // ConnectRequestBody Request body for initiating a credential connect flow.
+//
+// Examples: {"extra":{"prompt":"consent"},"scopes":["read_write"]}
 type ConnectRequestBody struct {
 	// Extra Additional provider-specific connect parameters.
+	//
+	// Examples: {"prompt":"consent"}
 	Extra *map[string]string `json:"extra,omitempty"`
 
 	// Scopes OAuth scopes to request.
+	//
+	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
+//
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ConnectSessionListResponse struct {
 	// Data The page of connect sessions.
+	//
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}]
 	Data []ConnectSessionSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ConnectSessionSummaryResponse Slim list row for the console — deliberately excludes “poll_token“.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","connected_as":"octocat","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","session_id":"cs_6968b3983b8b91c75627bee5","state":"connected","vendor_display_name":"GitHub","vendor_key":"github"}
 type ConnectSessionSummaryResponse struct {
 	// AgentId ID of the agent the credential is bound to on confirm; null when unbound.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// ConnectedAs Upstream account the credential connected as; null until known.
+	//
+	// Examples: octocat
 	ConnectedAs *string `json:"connected_as,omitempty"`
 
 	// CreatedAt When the session was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CredentialId ID of the session's credential (pending until the session connects).
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// ErrorCode Reserved for a failure code; always null on listed sessions.
+	//
+	// Examples: access_denied
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Reason Free-text reason given when the session was started.
+	//
+	// Examples: Needs read access to triage issues in the platform repo.
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestedByActorId ID of the actor that started the session.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	RequestedByActorId string `json:"requested_by_actor_id"`
 
 	// SessionId Unique ID of the connect session.
+	//
+	// Examples: cs_6968b3983b8b91c75627bee5
 	SessionId string `json:"session_id"`
 
 	// State Current lifecycle state of the session.
+	//
+	// Examples: connected
 	State ConnectSessionSummaryResponseState `json:"state"`
 
 	// VendorDisplayName Display name of the vendor.
+	//
+	// Examples: GitHub
 	VendorDisplayName string `json:"vendor_display_name"`
 
 	// VendorKey Vendor registry key the session connects.
+	//
+	// Examples: github
 	VendorKey string `json:"vendor_key"`
 }
 
 // ConnectSessionSummaryResponseState Current lifecycle state of the session.
+//
+// Examples: connected
 type ConnectSessionSummaryResponseState string
 
 // ConsentAgentStatusResponse Minimal tri-state for the consent page's pending-agent awaiting page (P4).
@@ -2175,125 +2754,207 @@ type ConnectSessionSummaryResponseState string
 // never a bare id, and non-terminal lifecycle states (disabled, archived, a
 // vanished row) all read as “pending“ so the endpoint is not a lifecycle
 // oracle either.
+//
+// Examples: {"status":"pending"}
 type ConsentAgentStatusResponse struct {
 	// Status Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
+	//
+	// Examples: pending
 	Status ConsentAgentStatusResponseStatus `json:"status"`
 }
 
 // ConsentAgentStatusResponseStatus Approval state of the agent: `pending`, `approved` or `denied`; any state other than approved or denied reads as `pending`.
+//
+// Examples: pending
 type ConsentAgentStatusResponseStatus string
 
 // CreateAdminRequest Payload for first-run admin creation (one-time setup).
+//
+// Examples: {"email":"admin@example.com","first_name":"Ada","last_name":"Lovelace","password":"example-password"}
 type CreateAdminRequest struct {
 	// Email Email address of the first admin.
+	//
+	// Examples: admin@example.com
 	Email string `json:"email"`
 
 	// FirstName First name of the first admin; defaults to `Admin`.
+	//
+	// Examples: Ada
 	FirstName *string `json:"first_name,omitempty"`
 
 	// LastName Last name of the first admin; defaults to `User`.
+	//
+	// Examples: Lovelace
 	LastName *string `json:"last_name,omitempty"`
 
 	// Password Password for the first admin.
+	//
+	// Examples: example-password
 	Password string `json:"password"`
 }
 
 // CredentialAgentListResponse Paginated list of agents directly bound to a credential.
+//
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type CredentialAgentListResponse struct {
 	// Data The page of bound agents.
+	//
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}]
 	Data []CredentialAgentResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // CredentialAgentResponse Agent directly bound to a credential (theme 5 phase 1).
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false}
 type CredentialAgentResponse struct {
 	// AgentId ID of the bound agent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// AgentName Name of the bound agent.
+	//
+	// Examples: billing-assistant
 	AgentName string `json:"agent_name"`
 
 	// BoundAt When the agent was bound to the credential (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	BoundAt time.Time `json:"bound_at"`
 
 	// RuleSetId Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId *string `json:"rule_set_id,omitempty"`
 
 	// Status Status of the bound agent.
+	//
+	// Examples: active
 	Status string `json:"status"`
 
 	// Suspended True when the binding is soft-suspended (reversible cut-off): the binding and its rules survive, but the agent cannot execute through this credential until resumed.
+	//
+	// Examples: false
 	Suspended bool `json:"suspended"`
 }
 
 // CredentialBindRequest Request body for directly binding a credential to an agent.
+//
+// Examples: {"credential_id":"cred_6968b39855d91a3561684b32"}
 type CredentialBindRequest struct {
 	// CredentialId ID of the credential to bind to the agent.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 }
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
+//
+// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingEntry struct {
 	// BoundAt When the credential was bound (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	BoundAt time.Time `json:"bound_at"`
 
 	// CredentialId ID of the bound credential.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// Name Name of the bound credential; null if it no longer exists or cannot be resolved.
+	//
+	// Examples: Stripe production key
 	Name *string `json:"name,omitempty"`
 
 	// RuleSetId ID of the shared permission rule set attached; null when inline rules apply.
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId *string `json:"rule_set_id,omitempty"`
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
+	//
+	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended; the agent cannot execute through it until resumed.
+	//
+	// Examples: false
 	Suspended *bool `json:"suspended,omitempty"`
 
 	// SuspendedReason Why the binding is suspended: null for a manual suspension, `api_deleted` when the API the credential serves was deleted.
+	//
+	// Examples: api_deleted
 	SuspendedReason *string `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindingListResponse List of direct credential bindings.
+//
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
 type CredentialBindingListResponse struct {
 	// Data The agent's direct credential bindings.
+	//
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialBindingResponse `json:"data"`
 }
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingResponse struct {
 	// AgentId ID of the agent the credential is bound to.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// BoundAt When the credential was bound (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	BoundAt time.Time `json:"bound_at"`
 
 	// CredentialId ID of the bound credential.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// Id Unique ID of the binding.
+	//
+	// Examples: acb_6968b3989a4f1c2e7d3b5a60
 	Id string `json:"id"`
 
 	// Name Name of the bound credential; null if it cannot be resolved.
+	//
+	// Examples: Stripe production key
 	Name *string `json:"name,omitempty"`
 
 	// RuleSetId ID of the shared permission rule set attached; null when inline rules apply.
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId *string `json:"rule_set_id,omitempty"`
 
 	// Serves The APIs the bound credential serves; empty if unresolvable.
+	//
+	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
 
 	// Suspended Whether the binding is suspended, cutting off the agent's access to it.
+	//
+	// Examples: false
 	Suspended bool `json:"suspended"`
 
 	// SuspendedReason Why the binding is suspended: null for a manual suspension, `api_deleted` when the API the credential serves was deleted; cleared on resume.
+	//
+	// Examples: api_deleted
 	SuspendedReason *string `json:"suspended_reason,omitempty"`
 }
 
@@ -2307,21 +2968,33 @@ type CredentialCreateResponse struct {
 	Credential CredentialRedactedResponse `json:"credential"`
 
 	// Secret Type-specific secret material, returned only in this create response.
+	//
+	// Examples: {"key":"example-secret"}
 	Secret map[string]interface{} `json:"secret"`
 
 	// Warnings Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
+	//
+	// Examples: ["API scope 'stripe.com/stripe/2024-04-10' matches no imported API."]
 	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // CredentialListResponse Paginated list of credentials.
+//
+// Examples: {"data":[{"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type CredentialListResponse struct {
 	// Data The page of credentials.
+	//
+	// Examples: [{"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}]
 	Data []CredentialRedactedResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
@@ -2333,48 +3006,78 @@ type CredentialLocation string
 // Examples: {"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}
 type CredentialRedactedResponse struct {
 	// Active Whether the credential is enabled for injection.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// Api The (vendor, name, version) API this credential targets.
+	//
+	// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReference `json:"api"`
 
 	// CatalogApiId Catalog identity slug of the target API (`domain[/sub-api]`), when recorded at create time. Display-only; null for older credentials.
+	//
+	// Examples: stripe.com
 	CatalogApiId *string `json:"catalog_api_id,omitempty"`
 
 	// CreatedAt Creation timestamp (UTC).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy Identity that created the credential (its owner).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by,omitempty"`
 
 	// CredentialId Stable credential identifier, prefixed `cred_`.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// Details Redacted, type-specific projection (hints/last-N chars; never the secret). For oauth2: client_id, token_url, grant_type (authorization_code | client_credentials), scopes, and — for authorization_code only — `connected`, whether the interactive sign-in completed and is still usable (null for other grants).
+	//
+	// Examples: {"client_id":"ca_example123","connected":true,"grant_type":"authorization_code","scopes":["read_write"],"token_url":"https://connect.stripe.com/oauth/token"}
 	Details *map[string]interface{} `json:"details,omitempty"`
 
 	// Name Human-readable label.
+	//
+	// Examples: Stripe Connect
 	Name string `json:"name"`
 
 	// OauthAppRegistrationId Id of the shared ``oauth_app_registrations`` row this credential was minted through, if any. Null for legacy embedded OAuth credentials and every non-OAuth type.
+	//
+	// Examples: oar_6968b39821e5f89a6975f501
 	OauthAppRegistrationId *string `json:"oauth_app_registration_id,omitempty"`
 
 	// OauthAppRegistrationName Admin-facing name of the shared OAuth app registration this credential was minted through. Null when the credential is not backed by a shared registration.
+	//
+	// Examples: MyOrg Stripe
 	OauthAppRegistrationName *string `json:"oauth_app_registration_name,omitempty"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: direct_oauth2
 	Provider string `json:"provider"`
 
 	// ProviderAccountRef Opaque reference to the provider account, when applicable.
+	//
+	// Examples: acct_1Nv0FGQ9RKHgCVdK
 	ProviderAccountRef *string `json:"provider_account_ref,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential auth type (api_key, bearer_token, basic, oauth2).
+	//
+	// Examples: oauth2
 	Type CredentialType `json:"type"`
 
 	// UpdatedAt Last update timestamp (UTC).
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -2382,47 +3085,77 @@ type CredentialRedactedResponse struct {
 type CredentialType string
 
 // CurrentUserResponse Current user profile.
+//
+// Examples: {"active":true,"created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","last_name":"Lovelace","must_change_password":false,"permissions":["users:write","users:read","agents:read"],"updated_at":"2026-01-20T14:05:00Z"}
 type CurrentUserResponse struct {
 	// Active Whether the user account is enabled.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// CreatedAt When the user was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Email Email address of the user.
+	//
+	// Examples: ada@example.com
 	Email string `json:"email"`
 
 	// FirstName First name of the user.
+	//
+	// Examples: Ada
 	FirstName string `json:"first_name"`
 
 	// Id Unique ID of the user.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	Id string `json:"id"`
 
 	// LastName Last name of the user.
+	//
+	// Examples: Lovelace
 	LastName string `json:"last_name"`
 
 	// MustChangePassword Whether the user must change their password before using other endpoints.
+	//
+	// Examples: false
 	MustChangePassword bool `json:"must_change_password"`
 
 	// Permissions The user's effective permissions, including those implied by assigned ones.
+	//
+	// Examples: ["users:write","users:read","agents:read"]
 	Permissions []string `json:"permissions"`
 
 	// UpdatedAt When the user was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // DailyExecutionBucket Execution counts for a single day.
+//
+// Examples: {"date":"2026-01-15","failed":8,"success":120,"total":128}
 type DailyExecutionBucket struct {
 	// Date The day the bucket covers, as `YYYY-MM-DD`.
+	//
+	// Examples: 2026-01-15
 	Date string `json:"date"`
 
 	// Failed Number of those executions that failed.
+	//
+	// Examples: 8
 	Failed int `json:"failed"`
 
 	// Success Number of those executions that completed.
+	//
+	// Examples: 120
 	Success int `json:"success"`
 
 	// Total Number of executions started that day.
+	//
+	// Examples: 128
 	Total int `json:"total"`
 }
 
@@ -2438,8 +3171,12 @@ type DecideHeldExecutionRequest struct {
 }
 
 // DenyRequest Request body for denying an agent.
+//
+// Examples: {"reason":"Requested permissions exceed the agent's stated purpose."}
 type DenyRequest struct {
 	// Reason Why the agent is being denied.
+	//
+	// Examples: Requested permissions exceed the agent's stated purpose.
 	Reason string `json:"reason"`
 }
 
@@ -2448,48 +3185,76 @@ type DenyRequest struct {
 // Examples: {"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","default_scopes":["repo"],"display_name":"GitHub","flow_kind":"device_authorization","name":"MyOrg GitHub (device flow)","token_endpoint":"https://github.com/login/oauth/access_token"}
 type DeviceAuthorizationRegistrationCreateRequest struct {
 	// ApiVendor Vendor registry key the registration connects.
+	//
+	// Examples: github
 	ApiVendor string `json:"api_vendor"`
 
 	// AuthorizationEndpoint Device authorization endpoint URL.
+	//
+	// Examples: https://github.com/login/device/code
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com').
+	//
+	// Examples: github.com/api.github.com
 	CatalogApiId string `json:"catalog_api_id"`
 
 	// ClientId OAuth client ID of the app.
+	//
+	// Examples: Iv1.a1b2c3d4
 	ClientId string `json:"client_id"`
 
 	// DefaultScopes Scopes requested by default.
+	//
+	// Examples: ["repo"]
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DisplayName Vendor family label ('GitHub'), shown on picker cards.
+	//
+	// Examples: GitHub
 	DisplayName string `json:"display_name"`
 
 	// FlowKind OAuth flow the registration uses; always `device_authorization`.
+	//
+	// Examples: device_authorization
 	FlowKind DeviceAuthorizationRegistrationCreateRequestFlowKind `json:"flow_kind"`
 
 	// Name Admin-chosen name of the registration.
+	//
+	// Examples: MyOrg GitHub
 	Name string `json:"name"`
 
 	// TokenEndpoint Token endpoint URL.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenEndpoint string `json:"token_endpoint"`
 }
 
 // DeviceAuthorizationRegistrationCreateRequestFlowKind OAuth flow the registration uses; always `device_authorization`.
+//
+// Examples: device_authorization
 type DeviceAuthorizationRegistrationCreateRequestFlowKind string
 
 // EffectivePermission A single effective permission with provenance.
+//
+// Examples: {"implied_by":"users:write","name":"users:read"}
 type EffectivePermission struct {
 	// ImpliedBy Assigned permission that implies this one; null when it is assigned directly.
+	//
+	// Examples: users:write
 	ImpliedBy *string `json:"implied_by,omitempty"`
 
 	// Name Permission name.
+	//
+	// Examples: users:read
 	Name string `json:"name"`
 }
 
 // ErrorItem A granular error detail entry within the errors[] array of a ProblemDetails response.
 //
 // At least one of pointer, parameter, or header SHOULD be present to identify the error source.
+//
+// Examples: {"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}
 type ErrorItem struct {
 	// Code An optional provider-specific code identifying this error in internal taxonomy or documentation.
 	//
@@ -2518,68 +3283,112 @@ type ErrorItem struct {
 }
 
 // EventLinks HAL-style links for an event.
+//
+// Examples: {"action":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action","execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","job":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb","self":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1"}
 type EventLinks struct {
 	// Action Reserved link to a follow-up action; currently always null.
+	//
+	// Examples: https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action
 	Action *string `json:"action,omitempty"`
 
 	// Execution URL of the related execution record; null if none.
+	//
+	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
 
 	// Job URL of the related job; null if none.
+	//
+	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb
 	Job *string `json:"job,omitempty"`
 
 	// Self URL of this event.
+	//
+	// Examples: https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1
 	Self string `json:"self"`
 }
 
 // EventListResponse Paginated list of events.
+//
+// Examples: {"data":[{"_links":{"action":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action","execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","job":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb","self":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1"},"actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_type":"user","created_at":"2026-01-15T09:30:00Z","data":{"job_id":"job_6968b3985e8c9902207afaeb","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"detail":"The import produced 1 revision with 142 operations.","event_id":"evt_6968b398b04f002b6dbff4d1","requires_action":false,"severity":"info","summary":"Imported stripe.com/stripe 2024-04-10","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","type":"import.completed"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type EventListResponse struct {
 	// Data The page of events.
+	//
+	// Examples: [{"_links":{"action":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action","execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","job":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb","self":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1"},"actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_type":"user","created_at":"2026-01-15T09:30:00Z","data":{"job_id":"job_6968b3985e8c9902207afaeb","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"detail":"The import produced 1 revision with 142 operations.","event_id":"evt_6968b398b04f002b6dbff4d1","requires_action":false,"severity":"info","summary":"Imported stripe.com/stripe 2024-04-10","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","type":"import.completed"}]
 	Data []EventResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // EventResponse Event representation in API responses.
+//
+// Examples: {"_links":{"action":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action","execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","job":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb","self":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1"},"actor_id":"usr_6968b3987ee4c3ec0b4ee3b9","actor_type":"user","created_at":"2026-01-15T09:30:00Z","data":{"job_id":"job_6968b3985e8c9902207afaeb","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"detail":"The import produced 1 revision with 142 operations.","event_id":"evt_6968b398b04f002b6dbff4d1","requires_action":false,"severity":"info","summary":"Imported stripe.com/stripe 2024-04-10","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","type":"import.completed"}
 type EventResponse struct {
 	// UnderscoreLinks HAL-style links for an event.
+	//
+	// Examples: {"action":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1/action","execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","job":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb","self":"https://jentic.example.com/events/evt_6968b398b04f002b6dbff4d1"}
 	UnderscoreLinks EventLinks `json:"_links"`
 
 	// ActorId ID of the actor that caused the event; null if none.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	ActorId *string `json:"actor_id,omitempty"`
 
 	// ActorType Kind of actor that caused the event, e.g. `user` or `agent`; null if none.
+	//
+	// Examples: user
 	ActorType *string `json:"actor_type,omitempty"`
 
 	// CreatedAt When the event was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Data Type-specific structured payload; empty object when there is none.
+	//
+	// Examples: {"job_id":"job_6968b3985e8c9902207afaeb","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 	Data *map[string]interface{} `json:"data,omitempty"`
 
 	// Detail Longer human-readable detail; null if none.
+	//
+	// Examples: The import produced 1 revision with 142 operations.
 	Detail *string `json:"detail,omitempty"`
 
 	// EventId Unique ID of the event (`evt_…`).
+	//
+	// Examples: evt_6968b398b04f002b6dbff4d1
 	EventId string `json:"event_id"`
 
 	// RequiresAction Whether the event needs someone to act on it.
+	//
+	// Examples: false
 	RequiresAction bool `json:"requires_action"`
 
 	// Severity Severity level for platform events.
+	//
+	// Examples: info
 	Severity EventSeverity `json:"severity"`
 
 	// Summary Short human-readable summary of the event.
+	//
+	// Examples: Imported stripe.com/stripe 2024-04-10
 	Summary string `json:"summary"`
 
 	// TraceId Trace ID of the request that produced the event, if any.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
 	TraceId *string `json:"trace_id,omitempty"`
 
 	// Type Namespaced event type, e.g. `import.completed`. Opaque string: historical events may carry types that are no longer emitted.
+	//
+	// Examples: import.completed
 	Type string `json:"type"`
 }
 
@@ -2587,126 +3396,208 @@ type EventResponse struct {
 type EventSeverity string
 
 // ExecutionListResponse Paginated list of executions.
+//
+// Examples: {"data":[{"_links":{"self":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","credential_name":"Stripe production key","duration_ms":342,"error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","http_status":200,"operation_id":"listCharges","operation_method":"GET","operation_path":"/v1/charges","origin":"agent","pinned_revisions":{"stripe.com:stripe:2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"started_at":"2026-01-15T09:30:00Z","status":"completed","toolkit_id":"tk_6968b3981ec22d56dbbc91e8","toolkit_name":"billing-toolkit","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ExecutionListResponse struct {
 	// Data The page of execution records.
+	//
+	// Examples: [{"_links":{"self":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","credential_name":"Stripe production key","duration_ms":342,"error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","http_status":200,"operation_id":"listCharges","operation_method":"GET","operation_path":"/v1/charges","origin":"agent","pinned_revisions":{"stripe.com:stripe:2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"started_at":"2026-01-15T09:30:00Z","status":"completed","toolkit_id":"tk_6968b3981ec22d56dbbc91e8","toolkit_name":"billing-toolkit","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}]
 	Data []ExecutionResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ExecutionRecordLinks HATEOAS links for an execution record.
+//
+// Examples: {"self":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"}
 type ExecutionRecordLinks struct {
 	// Self URL of this execution record.
+	//
+	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Self string `json:"self"`
 }
 
 // ExecutionResponse Execution record representation in API responses.
+//
+// Examples: {"_links":{"self":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","credential_name":"Stripe production key","duration_ms":342,"error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","http_status":200,"operation_id":"listCharges","operation_method":"GET","operation_path":"/v1/charges","origin":"agent","pinned_revisions":{"stripe.com:stripe:2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"started_at":"2026-01-15T09:30:00Z","status":"completed","toolkit_id":"tk_6968b3981ec22d56dbbc91e8","toolkit_name":"billing-toolkit","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}
 type ExecutionResponse struct {
 	// UnderscoreLinks HATEOAS links for an execution record.
+	//
+	// Examples: {"self":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"}
 	UnderscoreLinks ExecutionRecordLinks `json:"_links"`
 
 	// ActorId ID of the actor that ran the execution.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ActorId string `json:"actor_id"`
 
 	// ActorType Kind of actor that ran the execution, e.g. `user` or `agent`. Opaque string: historical rows may carry a retired type.
+	//
+	// Examples: agent
 	ActorType string `json:"actor_type"`
 
 	// Api The API that was called; null when it is not recorded.
+	//
+	// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api *ApiInfoResponse `json:"api,omitempty"`
 
 	// CreatedAt When the execution record was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CredentialId ID of the credential used. Null for inline auth, credential-less APIs, older records and executions that failed before a credential was chosen.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId *string `json:"credential_id,omitempty"`
 
 	// CredentialName Name of the credential used; null when no credential is recorded.
+	//
+	// Examples: Stripe production key
 	CredentialName *string `json:"credential_name,omitempty"`
 
 	// DurationMs Duration of the execution in milliseconds; null if unknown.
+	//
+	// Examples: 342
 	DurationMs *int `json:"duration_ms,omitempty"`
 
 	// Error Short error message (at most 128 characters) for a failed execution.
+	//
+	// Examples: Upstream returned HTTP 502 Bad Gateway
 	Error *string `json:"error,omitempty"`
 
 	// ExecutionId Unique ID of the execution record.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId string `json:"execution_id"`
 
 	// HttpStatus HTTP status returned by the upstream; null if no upstream response.
+	//
+	// Examples: 200
 	HttpStatus *int `json:"http_status,omitempty"`
 
 	// OperationId Machine identifier of the operation called; null when none was resolved.
+	//
+	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`
 
 	// OperationMethod The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+	//
+	// Examples: GET
 	OperationMethod *string `json:"operation_method,omitempty"`
 
 	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	//
+	// Examples: /v1/charges
 	OperationPath *string `json:"operation_path,omitempty"`
 
 	// Origin Surface the execution was initiated from, e.g. `api`, `agent` or `mcp`; null if not recorded.
+	//
+	// Examples: agent
 	Origin *string `json:"origin,omitempty"`
 
 	// PinnedRevisions Pinned API revisions used, keyed `vendor:name:version` with the revision ID as value; null when no pin applied.
+	//
+	// Examples: {"stripe.com:stripe:2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 
 	// StartedAt When the execution started (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	StartedAt time.Time `json:"started_at"`
 
 	// Status Terminal outcome: `completed` or `failed`. An upstream response with HTTP status 400 or above counts as `failed`.
+	//
+	// Examples: completed
 	Status string `json:"status"`
 
 	// ToolkitId Legacy: toolkit that mediated the execution. Null for direct-binding executions; attribute those via `credential_id` instead.
+	//
+	// Examples: tk_6968b3981ec22d56dbbc91e8
 	ToolkitId *string `json:"toolkit_id,omitempty"`
 
 	// ToolkitName Legacy: name of the toolkit in `toolkit_id`; null when unavailable.
+	//
+	// Examples: billing-toolkit
 	ToolkitName *string `json:"toolkit_name,omitempty"`
 
 	// TraceId Trace ID of the execution request.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
 	TraceId string `json:"trace_id"`
 }
 
 // ExecutionStatsResponse Aggregated execution statistics for the dashboard.
+//
+// Examples: {"daily_buckets":[{"date":"2026-01-15","failed":8,"success":120,"total":128}],"success_rate_percent":93.75,"top_operations":[{"api_name":"stripe","api_vendor":"stripe.com","failed":12,"operation_id":"listCharges","total":342}],"total_executions":1280}
 type ExecutionStatsResponse struct {
 	// DailyBuckets Per-day execution counts, oldest first; days with no executions are omitted.
+	//
+	// Examples: [{"date":"2026-01-15","failed":8,"success":120,"total":128}]
 	DailyBuckets []DailyExecutionBucket `json:"daily_buckets"`
 
 	// SuccessRatePercent Share of executions in the window that completed, as a percentage rounded to two decimals; 0 when there were none.
+	//
+	// Examples: 93.75
 	SuccessRatePercent float32 `json:"success_rate_percent"`
 
 	// TopOperations The most-executed operations in the window, most executions first (up to 10).
+	//
+	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","failed":12,"operation_id":"listCharges","total":342}]
 	TopOperations []TopOperation `json:"top_operations"`
 
 	// TotalExecutions Number of executions started in the window.
+	//
+	// Examples: 1280
 	TotalExecutions int `json:"total_executions"`
 }
 
 // ExistingCredentialConfirmSessionRequest Bind a credential the approver already holds (OAuth only if its grant covers the ask).
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"existing_credential","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ExistingCredentialConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// CredentialId ID of the approver's credential to bind.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; always `existing_credential`.
+	//
+	// Examples: existing_credential
 	Kind ExistingCredentialConfirmSessionRequestKind `json:"kind"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
 // ExistingCredentialConfirmSessionRequestKind Confirm variant; always `existing_credential`.
+//
+// Examples: existing_credential
 type ExistingCredentialConfirmSessionRequestKind string
 
 // GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
@@ -2720,11 +3611,17 @@ type ExistingCredentialConfirmSessionRequestKind string
 // cover the whole set atomically — a paginated digest would be meaningless.
 // This is a documented deviation from the list-endpoint pagination
 // convention.
+//
+// Examples: {"data":["api.github.com","api.stripe.com","files.stripe.com:8443"],"digest":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
 type GovernedHostsResponse struct {
 	// Data Governed host entries, normalised (lowercased, FQDN root dot stripped, internationalised names IDNA/punycode-encoded), deduplicated, and sorted — the literal URL-index hosts the broker's discovery matches for the APIs the caller's bound credentials cover. An entry is a hostname, a bare IP literal, or either followed by a non-default port (`host[:port]` — default ports are already stripped). Compare case-insensitively (lowercase the incoming host before matching); a gate keying on hostname or SNI alone must strip any `:port` suffix from the entry first. Variable-bearing hosts (defaultless `{var}` server variables) are excluded — the broker's discovery never matches them. On a `5xx` retain the last known set; never fall back to an empty (intercept-nothing) list.
+	//
+	// Examples: ["api.github.com","api.stripe.com","files.stripe.com:8443"]
 	Data []string `json:"data"`
 
 	// Digest SHA-256 hex digest over the newline-joined `data` list; also emitted as the response's strong `ETag`. To change-poll, send it back quoted — `If-None-Match: "<digest>"` (the bare digest is accepted as a compatibility form) — and expect an empty `304` until the host set changes. Poll at most once per minute.
+	//
+	// Examples: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 	Digest string `json:"digest"`
 }
 
@@ -2738,17 +3635,27 @@ type GovernedHostsResponse struct {
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
+//
+// Examples: {"next_step":"create_admin","setup_required":true,"status":"ok","surface":"admin"}
 type HealthResponse struct {
 	// NextStep Next setup step to perform, e.g. `create_admin`; null when setup is complete.
+	//
+	// Examples: create_admin
 	NextStep *string `json:"next_step,omitempty"`
 
 	// SetupRequired Whether first-run setup is still needed because no user exists yet.
+	//
+	// Examples: true
 	SetupRequired bool `json:"setup_required"`
 
 	// Status Health status of the surface; `ok` when it is serving.
+	//
+	// Examples: ok
 	Status string `json:"status"`
 
 	// Surface Name of the surface reporting health; always `admin`.
+	//
+	// Examples: admin
 	Surface string `json:"surface"`
 }
 
@@ -2950,86 +3857,142 @@ type HeldRequestResponse struct {
 // A client can compare “backend“/“canonical_base_url“/“host“ against where
 // it *thinks* it is pointed to confirm it is talking to the intended backend
 // (e.g. a local install vs. a remote one) before diagnosing "missing" data.
+//
+// Examples: {"backend":"remote","broker_url":"https://broker.jentic.example.com","canonical_base_url":"https://jentic.example.com","host":"jentic.example.com","instance_id":"5f2c9e0b7a41d8c3","mcp_enabled":true}
 type InstanceIdentityResponse struct {
 	// Backend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
+	//
+	// Examples: remote
 	Backend InstanceIdentityResponseBackend `json:"backend"`
 
 	// BrokerUrl The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a 'remote' backend a loopback-host value (the config default) describes the control plane's own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).
+	//
+	// Examples: https://broker.jentic.example.com
 	BrokerUrl *string `json:"broker_url,omitempty"`
 
 	// CanonicalBaseUrl The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
+	//
+	// Examples: https://jentic.example.com
 	CanonicalBaseUrl string `json:"canonical_base_url"`
 
 	// Host Host (and port, when the canonical base URL declares one) parsed from canonical_base_url; '' if unset or unparseable.
+	//
+	// Examples: jentic.example.com
 	Host string `json:"host"`
 
 	// InstanceId Opaque digest derived from the telemetry instance id — stable per install, but not the telemetry id itself. Null when telemetry has not resolved an id (e.g. telemetry disabled).
+	//
+	// Examples: 5f2c9e0b7a41d8c3
 	InstanceId *string `json:"instance_id,omitempty"`
 
 	// McpEnabled Whether this instance serves the daemon-native Streamable HTTP MCP endpoint at /mcp (server.mcp.enabled). Lets clients (notably the UI's agent MCP card) advertise the HTTP transport only when it exists. Not sensitive: the endpoint's enabled state is observable by probing /mcp anyway.
+	//
+	// Examples: true
 	McpEnabled *bool `json:"mcp_enabled,omitempty"`
 }
 
 // InstanceIdentityResponseBackend Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.
+//
+// Examples: remote
 type InstanceIdentityResponseBackend string
 
 // IntegrationsConnectRequest Start connecting a credential for a vendor or a registry API.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"auth_type":"oauth2","name":"GitHub (work)","oauth_app_registration_id":"oar_6968b39821e5f89a6975f501","preferred_flow":"authorization_code","reason":"Needs read access to triage issues in the platform repo.","requested_permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"vendor":"github"}
 type IntegrationsConnectRequest struct {
 	// AgentId ID of the agent to bind the credential to on confirm; agent callers must omit it, and when omitted by a user the credential connects unbound.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// Api Registry API to connect a credential for. Exactly one of vendor or api.
+	//
+	// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api *ApiTargetRequest `json:"api,omitempty"`
 
 	// AuthType Declared scheme name or kind to use for an api target
+	//
+	// Examples: oauth2
 	AuthType *string `json:"auth_type,omitempty"`
 
 	// Name Label for the resulting credential; defaults to the vendor's display name.
+	//
+	// Examples: GitHub (work)
 	Name *string `json:"name,omitempty"`
 
 	// OauthAppRegistrationId ID of the admin OAuth app registration to connect through; required when several active registrations offer the flow.
+	//
+	// Examples: oar_6968b39821e5f89a6975f501
 	OauthAppRegistrationId *string `json:"oauth_app_registration_id,omitempty"`
 
 	// PreferredFlow Flow kind to use if the source offers it; defaults to the source's first flow.
+	//
+	// Examples: authorization_code
 	PreferredFlow *string `json:"preferred_flow,omitempty"`
 
 	// Reason Free-text reason for the request, shown to the approver.
+	//
+	// Examples: Needs read access to triage issues in the platform repo.
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestedPermissionRules Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	RequestedPermissionRules *[]PermissionRuleSchema `json:"requested_permission_rules,omitempty"`
 
 	// RequestedScopes Upstream scopes to request (at most 100).
+	//
+	// Examples: ["repo","read:user"]
 	RequestedScopes *[]string `json:"requested_scopes,omitempty"`
 
 	// Vendor Vendor registry key (e.g. 'github'). Exactly one of vendor or api.
+	//
+	// Examples: github
 	Vendor *string `json:"vendor,omitempty"`
 }
 
 // IntrospectResponse RFC 7662 introspection response.
+//
+// Examples: {"active":true,"exp":1769903999,"scope":"apis:read capabilities:execute","sub":"agnt_6968b3984d1c238dbe7e2e29","token_type":"access_token"}
 type IntrospectResponse struct {
 	// Active Whether the token is currently valid.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// Exp Token expiry, in seconds since the Unix epoch; omitted if unknown.
+	//
+	// Examples: 1769903999
 	Exp *int `json:"exp,omitempty"`
 
 	// Scope Space-separated effective scopes of the token; omitted if unknown.
+	//
+	// Examples: apis:read capabilities:execute
 	Scope *string `json:"scope,omitempty"`
 
 	// Sub ID of the actor the token was issued to; omitted if unknown.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	Sub *string `json:"sub,omitempty"`
 
 	// TokenType Kind of token: `access_token` or `refresh_token`; omitted if unknown.
+	//
+	// Examples: access_token
 	TokenType *string `json:"token_type,omitempty"`
 }
 
 // InviteIssuedResponse Response when an invite token is issued.
+//
+// Examples: {"expires_at":"2026-01-22T09:30:00Z","token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"}
 type InviteIssuedResponse struct {
 	// ExpiresAt When the invite token expires (RFC 3339).
+	//
+	// Examples: 2026-01-22T09:30:00Z
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Token One-time invite token the user redeems to set a password.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	Token string `json:"token"`
 }
 
@@ -3037,59 +4000,97 @@ type InviteIssuedResponse struct {
 type InviteState string
 
 // JobLinksResponse Hypermedia links for a job.
+//
+// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result","self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
 type JobLinksResponse struct {
 	// Execution URL of the related execution record; null if none.
+	//
+	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
 
 	// Result URL of the job result; null until the job has completed.
+	//
+	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result
 	Result *string `json:"result,omitempty"`
 
 	// Self URL of this job.
+	//
+	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb
 	Self string `json:"self"`
 }
 
 // JobListResponse Paginated list of jobs.
+//
+// Examples: {"data":[{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result","self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","created_at":"2026-01-15T09:30:00Z","error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","job_id":"job_6968b3985e8c9902207afaeb","kind":"execution","status":"completed","updated_at":"2026-01-15T09:30:05Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type JobListResponse struct {
 	// Data The page of jobs.
+	//
+	// Examples: [{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result","self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","created_at":"2026-01-15T09:30:00Z","error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","job_id":"job_6968b3985e8c9902207afaeb","kind":"execution","status":"completed","updated_at":"2026-01-15T09:30:05Z"}]
 	Data []JobResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // JobResponse Job representation in API responses.
+//
+// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result","self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"},"actor_id":"agnt_6968b3984d1c238dbe7e2e29","actor_type":"agent","created_at":"2026-01-15T09:30:00Z","error":"Upstream returned HTTP 502 Bad Gateway","execution_id":"exec_6968b3982706c619fe73f0cf","job_id":"job_6968b3985e8c9902207afaeb","kind":"execution","status":"completed","updated_at":"2026-01-15T09:30:05Z"}
 type JobResponse struct {
 	// UnderscoreLinks Hypermedia links for a job.
+	//
+	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result","self":"https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb"}
 	UnderscoreLinks JobLinksResponse `json:"_links"`
 
 	// ActorId Subject that enqueued the job. Null only for legacy rows with no actor.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ActorId *string `json:"actor_id,omitempty"`
 
 	// ActorType Kind of actor that enqueued the job: 'user' or 'agent'. Opaque string: historical rows may carry a retired type such as 'service_account'.
+	//
+	// Examples: agent
 	ActorType string `json:"actor_type"`
 
 	// CreatedAt When the job was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Error Error message recorded for the job; null if none.
+	//
+	// Examples: Upstream returned HTTP 502 Bad Gateway
 	Error *string `json:"error,omitempty"`
 
 	// ExecutionId ID of the execution record linked to the job, if any.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId *string `json:"execution_id,omitempty"`
 
 	// JobId Unique ID of the job.
+	//
+	// Examples: job_6968b3985e8c9902207afaeb
 	JobId string `json:"job_id"`
 
 	// Kind Kind of job, e.g. `import` or `execution`.
+	//
+	// Examples: execution
 	Kind string `json:"kind"`
 
 	// Status Lifecycle state: `queued`, `running`, `completed`, `failed`, `cancelled` or `dead_letter`.
+	//
+	// Examples: completed
 	Status string `json:"status"`
 
 	// UpdatedAt When the job was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-15T09:30:05Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3097,32 +4098,52 @@ type JobResponse struct {
 //
 // The JWKS must contain at least one Ed25519 public key and must not
 // contain any private key material.
+//
+// Examples: {"jwks":{"keys":[{"crv":"Ed25519","kid":"agent-key-1","kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}]}}
 type JwksUpdateRequest struct {
 	// Jwks JWKS containing public keys
+	//
+	// Examples: {"keys":[{"crv":"Ed25519","kid":"agent-key-1","kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}]}
 	Jwks map[string]interface{} `json:"jwks"`
 }
 
 // LoginRequest Credentials for login.
+//
+// Examples: {"email":"ada@example.com","password":"example-password"}
 type LoginRequest struct {
 	// Email Email address of the user.
+	//
+	// Examples: ada@example.com
 	Email string `json:"email"`
 
 	// Password The user's password.
+	//
+	// Examples: example-password
 	Password string `json:"password"`
 }
 
 // LoginResponse JWT token response after successful authentication.
+//
+// Examples: {"access_token":"example-access-token","expires_in":3600,"must_change_password":false,"token_type":"bearer"}
 type LoginResponse struct {
 	// AccessToken Signed JWT to send as a bearer token on subsequent requests.
+	//
+	// Examples: example-access-token
 	AccessToken string `json:"access_token"`
 
 	// ExpiresIn Lifetime of the access token in seconds.
+	//
+	// Examples: 3600
 	ExpiresIn int `json:"expires_in"`
 
 	// MustChangePassword Whether the user must change their password before using other endpoints.
+	//
+	// Examples: false
 	MustChangePassword bool `json:"must_change_password"`
 
 	// TokenType Token type; always `bearer`.
+	//
+	// Examples: bearer
 	TokenType string `json:"token_type"`
 }
 
@@ -3131,15 +4152,23 @@ type LoginResponse struct {
 // Examples: {"runtime":"cursor"}
 type McpConfigRegistrationRequest struct {
 	// Runtime The agent runtime whose MCP config entry was written — a closed set; clients map anything unrecognised to `other`.
+	//
+	// Examples: cursor
 	Runtime McpConfigRuntime `json:"runtime"`
 }
 
 // McpConfigRegistrationResponse Acknowledgement of a config-registration report.
+//
+// Examples: {"recorded":true,"runtime":"cursor"}
 type McpConfigRegistrationResponse struct {
 	// Recorded Whether the report was recorded as an event. `false` means it was accepted but throttled (an identical (actor, runtime) report was already recorded within the last 24h).
+	//
+	// Examples: true
 	Recorded bool `json:"recorded"`
 
 	// Runtime The runtime the report was recorded for.
+	//
+	// Examples: cursor
 	Runtime McpConfigRuntime `json:"runtime"`
 }
 
@@ -3152,66 +4181,108 @@ type McpConfigRegistrationResponse struct {
 type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
+//
+// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
 type MeAgent struct {
 	// ApprovedBy ID of the user who approved the agent; null if not approved.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	ApprovedBy *string `json:"approved_by,omitempty"`
 
 	// CredentialBindings Credentials bound directly to the agent.
+	//
+	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
 
 	// Id Unique ID of the agent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	Id string `json:"id"`
 
 	// Name Human-readable name of the agent.
+	//
+	// Examples: invoice-reconciler
 	Name string `json:"name"`
 
 	// ParentAgentId ID of the parent agent; null when the agent has no parent.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ParentAgentId *string `json:"parent_agent_id,omitempty"`
 
 	// Permissions Permissions currently granted to the agent, read live rather than from the token.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Permissions []string `json:"permissions"`
 
 	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	//
+	// Examples: active
 	Status string `json:"status"`
 
 	// TokenPermissions Permissions in the presented bearer token; if narrower than `permissions`, obtain a new token to pick up newer grants.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	TokenPermissions []string `json:"token_permissions"`
 
 	// Type Actor type discriminator; always `agent`.
+	//
+	// Examples: agent
 	Type *MeAgentType `json:"type,omitempty"`
 }
 
 // MeAgentType Actor type discriminator; always `agent`.
+//
+// Examples: agent
 type MeAgentType string
 
 // MeUser Identity response for a user actor.
+//
+// Examples: {"admin":true,"email":"ada@example.com","id":"usr_6968b3987ee4c3ec0b4ee3b9","must_change_password":false,"name":"Ada Lovelace","permissions":["org:admin","agents:read"],"status":"active","type":"user"}
 type MeUser struct {
 	// Admin Whether the caller's token holds `org:admin`.
+	//
+	// Examples: true
 	Admin bool `json:"admin"`
 
 	// Email Email address of the user.
+	//
+	// Examples: ada@example.com
 	Email string `json:"email"`
 
 	// Id Unique ID of the user.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	Id string `json:"id"`
 
 	// MustChangePassword Whether the user must change their password; most endpoints return 403 until they do.
+	//
+	// Examples: false
 	MustChangePassword bool `json:"must_change_password"`
 
 	// Name Display name of the user.
+	//
+	// Examples: Ada Lovelace
 	Name string `json:"name"`
 
 	// Permissions Permissions carried by the caller's token.
+	//
+	// Examples: ["org:admin","agents:read"]
 	Permissions []string `json:"permissions"`
 
 	// Status User status: `active` or `disabled`.
+	//
+	// Examples: active
 	Status string `json:"status"`
 
 	// Type Actor type discriminator; always `user`.
+	//
+	// Examples: user
 	Type *MeUserType `json:"type,omitempty"`
 }
 
 // MeUserType Actor type discriminator; always `user`.
+//
+// Examples: user
 type MeUserType string
 
 // NoAuthCreateRequest Create request for no_auth credentials.
@@ -3220,38 +4291,62 @@ type MeUserType string
 // without authentication". It still exists as a credential row so an agent
 // binding (and its permission rules) can hang off it, and the broker resolves
 // it as a no-op auth (see broker credential resolver / injection).
+//
+// Examples: {"api":{"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"name":"Stripe live key","provider":"static","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"server_variables":{"region":"eu"},"type":"no_auth"}
 type NoAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// Type Credential type; always `no_auth`.
+	//
+	// Examples: no_auth
 	Type NoAuthCreateRequestType `json:"type"`
 }
 
 // NoAuthCreateRequestType Credential type; always `no_auth`.
+//
+// Examples: no_auth
 type NoAuthCreateRequestType string
 
 // NoteApiReference Loose “(vendor, name, version)“ identity tuple for a registered API.
+//
+// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 type NoteApiReference struct {
 	// Name Name of the API within the vendor.
+	//
+	// Examples: stripe
 	Name string `json:"name"`
 
 	// Vendor Vendor of the API.
+	//
+	// Examples: stripe.com
 	Vendor string `json:"vendor"`
 
 	// Version Version of the API.
+	//
+	// Examples: 2024-04-10
 	Version string `json:"version"`
 }
 
@@ -3259,38 +4354,62 @@ type NoteApiReference struct {
 type NoteConfidence string
 
 // NoteCreateRequest Payload for creating a new note.
+//
+// Examples: {"body":"Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.","confidence":"observed","related_execution_id":"exec_6968b3982706c619fe73f0cf","resource":{"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"credential_id":"cred_6968b39855d91a3561684b32","execution_id":"exec_6968b3982706c619fe73f0cf","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34"},"source":"agent","type":"auth_quirk"}
 type NoteCreateRequest struct {
 	// Body Text of the note, up to 4000 characters.
+	//
+	// Examples: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
 	Body string `json:"body"`
 
 	// Confidence Author's confidence in the note; null if not stated.
+	//
+	// Examples: observed
 	Confidence *NoteConfidence `json:"confidence,omitempty"`
 
 	// RelatedExecutionId ID of an execution the note relates to; null if none.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	RelatedExecutionId *string `json:"related_execution_id,omitempty"`
 
 	// Resource Exactly-one-of resource identifier for a note (request side).
+	//
+	// Examples: {"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"credential_id":"cred_6968b39855d91a3561684b32","execution_id":"exec_6968b3982706c619fe73f0cf","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34"}
 	Resource NoteResource `json:"resource"`
 
 	// Source Origin of the note (`agent`, `human` or `platform`); null if not stated.
+	//
+	// Examples: agent
 	Source *NoteSource `json:"source,omitempty"`
 
 	// Type Category of the note; null if uncategorised.
+	//
+	// Examples: auth_quirk
 	Type *NoteType `json:"type,omitempty"`
 }
 
 // NoteResource Exactly-one-of resource identifier for a note (request side).
+//
+// Examples: {"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"credential_id":"cred_6968b39855d91a3561684b32","execution_id":"exec_6968b3982706c619fe73f0cf","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34"}
 type NoteResource struct {
 	// Api API to attach the note to; set exactly one resource field.
+	//
+	// Examples: {"name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api *NoteApiReference `json:"api,omitempty"`
 
 	// CredentialId ID of the credential to attach the note to; set exactly one resource field.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId *string `json:"credential_id,omitempty"`
 
 	// ExecutionId ID of the execution to attach the note to; set exactly one resource field.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId *string `json:"execution_id,omitempty"`
 
 	// OperationId ID of the operation to attach the note to; set exactly one resource field.
+	//
+	// Examples: op_f92d69f1621f381bce8aaff47053c61b069ffe34
 	OperationId *string `json:"operation_id,omitempty"`
 }
 
@@ -3301,20 +4420,32 @@ type NoteSource string
 type NoteType string
 
 // NoteUpdateRequest Payload for updating an existing note (partial).
+//
+// Examples: {"body":"Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.","confidence":"verified","related_execution_id":"exec_6968b3982706c619fe73f0cf","source":"agent","type":"auth_quirk"}
 type NoteUpdateRequest struct {
 	// Body New text of the note, up to 4000 characters; may be omitted but not null.
+	//
+	// Examples: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
 	Body *string `json:"body,omitempty"`
 
 	// Confidence New confidence in the note; null clears it.
+	//
+	// Examples: verified
 	Confidence *NoteConfidence `json:"confidence,omitempty"`
 
 	// RelatedExecutionId ID of an execution the note relates to; null clears it.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	RelatedExecutionId *string `json:"related_execution_id,omitempty"`
 
 	// Source New origin of the note; null clears it.
+	//
+	// Examples: agent
 	Source *NoteSource `json:"source,omitempty"`
 
 	// Type New category of the note; null clears it.
+	//
+	// Examples: auth_quirk
 	Type *NoteType `json:"type,omitempty"`
 }
 
@@ -3322,89 +4453,145 @@ type NoteUpdateRequest struct {
 //
 // For managed providers (e.g. pipedream, direct_oauth2), token_url/client_id/client_secret
 // are optional — the connect flow handles authentication without caller-supplied client details.
+//
+// Examples: {"api":{"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"authorize_url":"https://connect.stripe.com/oauth/authorize","client_id":"ca_example123","client_secret":"example-secret","grant_type":"client_credentials","name":"Stripe live key","provider":"static","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"scopes":["read_write"],"server_variables":{"region":"eu"},"token_url":"https://connect.stripe.com/oauth/token","type":"oauth2"}
 type OAuth2CreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// AuthorizeUrl Authorization endpoint URL; for the device_code grant, the device authorization endpoint.
+	//
+	// Examples: https://connect.stripe.com/oauth/authorize
 	AuthorizeUrl *string `json:"authorize_url,omitempty"`
 
 	// ClientId OAuth client ID; required for non-managed providers.
+	//
+	// Examples: ca_example123
 	ClientId *string `json:"client_id,omitempty"`
 
 	// ClientSecret OAuth client secret; required for non-managed providers except the device_code grant. Stored encrypted; never returned after create.
+	//
+	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
 
 	// GrantType OAuth2 grant type (e.g. client_credentials, authorization_code, device_code).
+	//
+	// Examples: client_credentials
 	GrantType *string `json:"grant_type,omitempty"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// Scopes OAuth scopes to request.
+	//
+	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// TokenUrl Token endpoint URL; required for non-managed providers.
+	//
+	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
 
 	// Type Credential type; always `oauth2`.
+	//
+	// Examples: oauth2
 	Type OAuth2CreateRequestType `json:"type"`
 }
 
 // OAuth2CreateRequestType Credential type; always `oauth2`.
+//
+// Examples: oauth2
 type OAuth2CreateRequestType string
 
 // OAuth2UpdateRequest Update request for oauth2 credentials.
+//
+// Examples: {"active":true,"client_secret":"example-secret","name":"Stripe live key","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"scopes":["read_write"],"server_variables":{"region":"eu"},"token_url":"https://connect.stripe.com/oauth/token","type":"oauth2"}
 type OAuth2UpdateRequest struct {
 	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// ClientSecret Replacement client secret; omit to leave unchanged. token_url and scopes are applied only together with it.
+	//
+	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
 
 	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Stripe live key
 	Name *string `json:"name,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// Scopes Replacement OAuth scopes; applied only when client_secret is sent.
+	//
+	// Examples: ["read_write"]
 	Scopes *[]string `json:"scopes,omitempty"`
 
 	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// TokenUrl Replacement token endpoint URL; applied only when client_secret is sent.
+	//
+	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
 
 	// Type Credential type; always `oauth2`.
+	//
+	// Examples: oauth2
 	Type OAuth2UpdateRequestType `json:"type"`
 }
 
 // OAuth2UpdateRequestType Credential type; always `oauth2`.
+//
+// Examples: oauth2
 type OAuth2UpdateRequestType string
 
 // OAuthAppRegistrationFlowKind Which OAuth flow a registration supports.
 type OAuthAppRegistrationFlowKind string
 
 // OAuthAppRegistrationListResponse Paginated list of OAuth app registrations.
+//
+// Examples: {"data":[{"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","default_scopes":["repo","read:user"],"dependent_credential_count":4,"display_name":"GitHub","flow_kind":"authorization_code","has_client_secret":true,"id":"oar_6968b39821e5f89a6975f501","is_active":true,"name":"MyOrg GitHub","secret_last_rotated_at":"2026-01-20T14:05:00Z","token_endpoint":"https://github.com/login/oauth/access_token","token_url":"https://github.com/login/oauth/access_token","updated_at":"2026-01-20T14:05:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type OAuthAppRegistrationListResponse struct {
 	// Data The page of OAuth app registrations.
+	//
+	// Examples: [{"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","default_scopes":["repo","read:user"],"dependent_credential_count":4,"display_name":"GitHub","flow_kind":"authorization_code","has_client_secret":true,"id":"oar_6968b39821e5f89a6975f501","is_active":true,"name":"MyOrg GitHub","secret_last_rotated_at":"2026-01-20T14:05:00Z","token_endpoint":"https://github.com/login/oauth/access_token","token_url":"https://github.com/login/oauth/access_token","updated_at":"2026-01-20T14:05:00Z"}]
 	Data []OAuthAppRegistrationResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
@@ -3413,95 +4600,157 @@ type OAuthAppRegistrationListResponse struct {
 // Never includes the client secret — only “has_client_secret“ +
 // “secret_last_rotated_at“ so an admin can see rotation history without
 // being able to read the material.
+//
+// Examples: {"api_vendor":"github","authorization_endpoint":"https://github.com/login/device/code","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","default_scopes":["repo","read:user"],"dependent_credential_count":4,"display_name":"GitHub","flow_kind":"authorization_code","has_client_secret":true,"id":"oar_6968b39821e5f89a6975f501","is_active":true,"name":"MyOrg GitHub","secret_last_rotated_at":"2026-01-20T14:05:00Z","token_endpoint":"https://github.com/login/oauth/access_token","token_url":"https://github.com/login/oauth/access_token","updated_at":"2026-01-20T14:05:00Z"}
 type OAuthAppRegistrationResponse struct {
 	// ApiVendor Vendor registry key the registration connects.
+	//
+	// Examples: github
 	ApiVendor string `json:"api_vendor"`
 
 	// AuthorizationEndpoint Device authorization endpoint URL; null for authorization-code registrations.
+	//
+	// Examples: https://github.com/login/device/code
 	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
 
 	// AuthorizeUrl Authorization endpoint URL; null for device-authorization registrations.
+	//
+	// Examples: https://github.com/login/oauth/authorize
 	AuthorizeUrl *string `json:"authorize_url,omitempty"`
 
 	// CatalogApiId Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). Feeds credential.catalog_api_id at connect time so the operations preview resolves against a real registered API.
+	//
+	// Examples: github.com/api.github.com
 	CatalogApiId string `json:"catalog_api_id"`
 
 	// ClientId OAuth client ID of the app.
+	//
+	// Examples: Iv1.a1b2c3d4
 	ClientId string `json:"client_id"`
 
 	// CreatedAt When the registration was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the registration.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by"`
 
 	// DefaultScopes Scopes requested by default; null if none are set.
+	//
+	// Examples: ["repo","read:user"]
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DependentCredentialCount Number of credentials minted through this registration.
+	//
+	// Examples: 4
 	DependentCredentialCount int `json:"dependent_credential_count"`
 
 	// DisplayName Vendor family label ('Gmail'), shown alongside the admin's per-registration 'name' on the picker card.
+	//
+	// Examples: GitHub
 	DisplayName string `json:"display_name"`
 
 	// FlowKind Which OAuth flow a registration supports.
+	//
+	// Examples: authorization_code
 	FlowKind OAuthAppRegistrationFlowKind `json:"flow_kind"`
 
 	// HasClientSecret Whether a client secret is stored.
+	//
+	// Examples: true
 	HasClientSecret bool `json:"has_client_secret"`
 
 	// Id Unique ID of the OAuth app registration.
+	//
+	// Examples: oar_6968b39821e5f89a6975f501
 	Id string `json:"id"`
 
 	// IsActive Whether the registration is active.
+	//
+	// Examples: true
 	IsActive bool `json:"is_active"`
 
 	// Name Admin-chosen name of the registration.
+	//
+	// Examples: MyOrg GitHub
 	Name string `json:"name"`
 
 	// SecretLastRotatedAt When the client secret was last rotated (RFC 3339); null if never rotated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	SecretLastRotatedAt *time.Time `json:"secret_last_rotated_at"`
 
 	// TokenEndpoint Token endpoint URL; null for authorization-code registrations.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenEndpoint *string `json:"token_endpoint,omitempty"`
 
 	// TokenUrl Token endpoint URL; null for device-authorization registrations.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenUrl *string `json:"token_url,omitempty"`
 
 	// UpdatedAt When the registration was last updated (RFC 3339).
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OAuthAppRegistrationRotateSecretRequest Rotate the client secret on an auth-code registration.
+//
+// Examples: {"client_secret":"example-secret"}
 type OAuthAppRegistrationRotateSecretRequest struct {
 	// ClientSecret New OAuth client secret; stored encrypted and never returned.
+	//
+	// Examples: example-secret
 	ClientSecret string `json:"client_secret"`
 }
 
 // OAuthAppRegistrationUpdateRequest Partial update — fields not present are left untouched.
+//
+// Examples: {"authorization_endpoint":"https://github.com/login/device/code","authorize_url":"https://github.com/login/oauth/authorize","default_scopes":["repo","read:user"],"display_name":"GitHub","is_active":true,"name":"MyOrg GitHub","token_endpoint":"https://github.com/login/oauth/access_token","token_url":"https://github.com/login/oauth/access_token"}
 type OAuthAppRegistrationUpdateRequest struct {
 	// AuthorizationEndpoint New device authorization endpoint URL; device-authorization registrations only.
+	//
+	// Examples: https://github.com/login/device/code
 	AuthorizationEndpoint *string `json:"authorization_endpoint,omitempty"`
 
 	// AuthorizeUrl New authorization endpoint URL; authorization-code registrations only.
+	//
+	// Examples: https://github.com/login/oauth/authorize
 	AuthorizeUrl *string `json:"authorize_url,omitempty"`
 
 	// DefaultScopes Replacement default scopes; omit to leave unchanged.
+	//
+	// Examples: ["repo","read:user"]
 	DefaultScopes *[]string `json:"default_scopes,omitempty"`
 
 	// DisplayName New vendor family label; omit to leave unchanged.
+	//
+	// Examples: GitHub
 	DisplayName *string `json:"display_name,omitempty"`
 
 	// IsActive Activate or deactivate the registration; omit to leave unchanged.
+	//
+	// Examples: true
 	IsActive *bool `json:"is_active,omitempty"`
 
 	// Name New registration name; omit to leave unchanged.
+	//
+	// Examples: MyOrg GitHub
 	Name *string `json:"name,omitempty"`
 
 	// TokenEndpoint New token endpoint URL; device-authorization registrations only.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenEndpoint *string `json:"token_endpoint,omitempty"`
 
 	// TokenUrl New token endpoint URL; authorization-code registrations only.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenUrl *string `json:"token_url,omitempty"`
 }
 
@@ -3519,15 +4768,23 @@ type OAuthAppRegistrationUpdateRequest struct {
 // the decision endpoint additionally requires an authenticated admin with
 // “oauth-clients:write“ — so global redaction buys nothing worth that
 // collision.
+//
+// Examples: {"action":"approve","state":"eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"}
 type OAuthApprovalDecisionRequest struct {
 	// Action The decision: `approve` or `deny` the pending client.
+	//
+	// Examples: approve
 	Action OAuthApprovalDecisionRequestAction `json:"action"`
 
 	// State Signed approval-state token issued by `/authorize` for this request.
+	//
+	// Examples: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
 	State string `json:"state"`
 }
 
 // OAuthApprovalDecisionRequestAction The decision: `approve` or `deny` the pending client.
+//
+// Examples: approve
 type OAuthApprovalDecisionRequestAction string
 
 // OAuthApprovalStatusResponse Minimal tri-state approval status for a pending-client authorize request.
@@ -3535,12 +4792,18 @@ type OAuthApprovalDecisionRequestAction string
 // Deliberately carries nothing else — no client name, redirect URIs, or
 // metadata — so the anonymous poll endpoint cannot be used to read client
 // details out of the registry.
+//
+// Examples: {"status":"approved"}
 type OAuthApprovalStatusResponse struct {
 	// Status Approval state of the client: `pending`, `approved` or `denied`.
+	//
+	// Examples: approved
 	Status OAuthApprovalStatusResponseStatus `json:"status"`
 }
 
 // OAuthApprovalStatusResponseStatus Approval state of the client: `pending`, `approved` or `denied`.
+//
+// Examples: approved
 type OAuthApprovalStatusResponseStatus string
 
 // OAuthClientCreateRequest Request body for creating an OAuth client.
@@ -3548,31 +4811,49 @@ type OAuthApprovalStatusResponseStatus string
 // Examples: {"description":"My application production deployment","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"require_consent":true}
 type OAuthClientCreateRequest struct {
 	// AllowedScopes If set, restricts which scopes this client may request. An empty list denies all non-OIDC scopes. Null means unrestricted (all scopes permitted).
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
 
 	// ConsentModel What a user's consent grants for this client. ``user`` keeps today's act-as-user semantics; ``agent`` marks the client for agent-bound consent (the MCP path).
+	//
+	// Examples: user
 	ConsentModel *OAuthClientCreateRequestConsentModel `json:"consent_model,omitempty"`
 
 	// Description Optional description of the client.
+	//
+	// Examples: Billing assistant production deployment
 	Description *string `json:"description,omitempty"`
 
 	// Name Human-readable name for the client.
+	//
+	// Examples: billing-assistant-prod
 	Name string `json:"name"`
 
 	// RedirectUris Allowed OAuth callback URLs. At least one required.
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris []string `json:"redirect_uris"`
 
 	// RequireConsent Whether to show a consent screen during authorization. Set to false for trusted first-party integrations.
+	//
+	// Examples: true
 	RequireConsent *bool `json:"require_consent,omitempty"`
 
 	// TokenEndpointAuthMethod Client authentication method at the token endpoint. ``client_secret_basic`` creates a confidential client with a generated secret; ``none`` creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+	//
+	// Examples: client_secret_basic
 	TokenEndpointAuthMethod *OAuthClientCreateRequestTokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // OAuthClientCreateRequestConsentModel What a user's consent grants for this client. “user“ keeps today's act-as-user semantics; “agent“ marks the client for agent-bound consent (the MCP path).
+//
+// Examples: user
 type OAuthClientCreateRequestConsentModel string
 
 // OAuthClientCreateRequestTokenEndpointAuthMethod Client authentication method at the token endpoint. “client_secret_basic“ creates a confidential client with a generated secret; “none“ creates a public (secret-less) client that relies on PKCE alone — no secret is generated or returned.
+//
+// Examples: client_secret_basic
 type OAuthClientCreateRequestTokenEndpointAuthMethod string
 
 // OAuthClientCreateResponse Returned on creation — includes the one-time plaintext client secret.
@@ -3580,99 +4861,163 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 // Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","client_secret":"\u003credacted\u003e","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientCreateResponse struct {
 	// Active Whether the client is enabled; false for disabled, pending or denied clients.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
+	//
+	// Examples: 3
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
 	// ApprovalStatus Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.
+	//
+	// Examples: approved
 	ApprovalStatus string `json:"approval_status"`
 
 	// ClientId Public client identifier used in OAuth flows.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	ClientId string `json:"client_id"`
 
 	// ClientSecret The client secret. Shown only once at creation — store it securely. Null for public (secret-less) clients.
+	//
+	// Examples: example-client-secret
 	ClientSecret *string `json:"client_secret"`
 
 	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
+	//
+	// Examples: user
 	ConsentModel string `json:"consent_model"`
 
 	// CreatedAt When the client was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the client; null if not recorded.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by"`
 
 	// Description Description of the client; null if none.
+	//
+	// Examples: Billing assistant production deployment
 	Description *string `json:"description"`
 
-	// Id Internal ID (ksuid).
+	// Id Record ID of the OAuth client (`oac_…`), not its public `client_id`.
+	//
+	// Examples: oac_6968b39840a935d9f7e2714b
 	Id string `json:"id"`
 
 	// Name Human-readable name for the client.
+	//
+	// Examples: billing-assistant-prod
 	Name string `json:"name"`
 
 	// RedirectUris Allowed OAuth callback URLs.
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris []string `json:"redirect_uris"`
 
 	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
+	//
+	// Examples: admin
 	RegistrationSource string `json:"registration_source"`
 
 	// RequireConsent Whether a consent screen is shown during authorization.
+	//
+	// Examples: true
 	RequireConsent bool `json:"require_consent"`
 
 	// SoftwareId RFC 7591 software identifier claimed at registration, if any.
+	//
+	// Examples: com.example.billing-assistant
 	SoftwareId *string `json:"software_id"`
 
 	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
+	//
+	// Examples: client_secret_basic
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
 
 	// UpdatedAt When the client was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OAuthClientDenyRequest Request body for denying an OAuth client.
+//
+// Examples: {"reason":"Unrecognised publisher; redirect URI not owned by a known vendor."}
 type OAuthClientDenyRequest struct {
 	// Reason Optional reason recorded in the audit trail.
+	//
+	// Examples: Unrecognised publisher; redirect URI not owned by a known vendor.
 	Reason *string `json:"reason,omitempty"`
 }
 
 // OAuthClientListResponse A list of OAuth clients.
+//
+// Examples: {"data":[{"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}]}
 type OAuthClientListResponse struct {
 	// Data The OAuth clients.
+	//
+	// Examples: [{"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}]
 	Data []OAuthClientResponse `json:"data"`
 }
 
 // OAuthClientRegistrationRequest POST /oauth-clients request body (RFC 7591 client metadata subset).
+//
+// Examples: {"application_type":"native","client_name":"Cursor","grant_types":["authorization_code","refresh_token"],"redirect_uris":["https://client.example.com/oauth/callback"],"response_types":["code"],"scope":"apis:read capabilities:execute","software_id":"com.example.mcp-client","software_version":"1.4.2","token_endpoint_auth_method":"none"}
 type OAuthClientRegistrationRequest struct {
 	// ApplicationType Accepted and echoed ('native' for desktop/CLI apps, per the 2026-07-28 MCP spec revision); localhost http redirect URIs are allowed regardless.
+	//
+	// Examples: native
 	ApplicationType *string `json:"application_type,omitempty"`
 
 	// ClientName Human-readable client name; self-asserted and not verified by the server.
+	//
+	// Examples: Cursor
 	ClientName string `json:"client_name"`
 
 	// GrantTypes Subset of ['authorization_code', 'refresh_token'].
+	//
+	// Examples: ["authorization_code","refresh_token"]
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// RedirectUris 1-20 redirect URIs. `https` always; `http` for loopback hosts only; RFC 8252 §7.1 private-use (custom) schemes are accepted for native apps (browser-executable and other dangerous schemes are rejected).
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris []string `json:"redirect_uris"`
 
 	// ResponseTypes Only ['code'] is supported.
+	//
+	// Examples: ["code"]
 	ResponseTypes *[]string `json:"response_types,omitempty"`
 
 	// Scope Space-separated scopes requested as the client's ceiling (at most 100 tokens); capped to the scopes the server grants OAuth clients, and the full set when omitted.
+	//
+	// Examples: apis:read capabilities:execute
 	Scope *string `json:"scope,omitempty"`
 
 	// SoftwareId Stable identifier of the client software; with the redirect URIs it is used to match a repeat registration to the existing client.
+	//
+	// Examples: com.example.mcp-client
 	SoftwareId *string `json:"software_id,omitempty"`
 
 	// SoftwareVersion Version of the client software.
+	//
+	// Examples: 1.4.2
 	SoftwareVersion *string `json:"software_version,omitempty"`
 
 	// TokenEndpointAuthMethod Must be 'none' if supplied — this endpoint only registers public (secret-less, PKCE-only) clients.
+	//
+	// Examples: none
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
@@ -3682,38 +5027,62 @@ type OAuthClientRegistrationRequest struct {
 // “client_secret“ (public clients only) and no
 // “registration_access_token“ (D12 — no RFC 7592 self-management surface;
 // clients retry “/authorize“, they don't poll).
+//
+// Examples: {"application_type":"native","client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","client_id_issued_at":1767225600,"client_name":"Cursor","grant_types":["authorization_code","refresh_token"],"redirect_uris":["https://client.example.com/oauth/callback"],"response_types":["code"],"scope":"apis:read capabilities:execute","software_id":"com.example.mcp-client","software_version":"1.4.2","token_endpoint_auth_method":"none"}
 type OAuthClientRegistrationResponse struct {
 	// ApplicationType The application type as sent in the request; omitted if not sent.
+	//
+	// Examples: native
 	ApplicationType *string `json:"application_type,omitempty"`
 
 	// ClientId The client identifier to use in OAuth requests.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	ClientId string `json:"client_id"`
 
 	// ClientIdIssuedAt Seconds since the Unix epoch at which the client_id was issued.
+	//
+	// Examples: 1767225600
 	ClientIdIssuedAt int `json:"client_id_issued_at"`
 
 	// ClientName The client name as sent in the request.
+	//
+	// Examples: Cursor
 	ClientName string `json:"client_name"`
 
 	// GrantTypes Grant types the client may use.
+	//
+	// Examples: ["authorization_code","refresh_token"]
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// RedirectUris The registered redirect URIs.
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris []string `json:"redirect_uris"`
 
 	// ResponseTypes Response types the client may use; always `code`.
+	//
+	// Examples: ["code"]
 	ResponseTypes *[]string `json:"response_types,omitempty"`
 
 	// Scope Space-separated scope ceiling granted to the client (the request's scope capped to the MCP tool-scope set).
+	//
+	// Examples: apis:read capabilities:execute
 	Scope string `json:"scope"`
 
 	// SoftwareId The software ID as sent in the request; omitted if not sent.
+	//
+	// Examples: com.example.mcp-client
 	SoftwareId *string `json:"software_id,omitempty"`
 
 	// SoftwareVersion The software version as sent in the request; omitted if not sent.
+	//
+	// Examples: 1.4.2
 	SoftwareVersion *string `json:"software_version,omitempty"`
 
 	// TokenEndpointAuthMethod Always `none`: the client is public and uses PKCE.
+	//
+	// Examples: none
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
@@ -3722,108 +5091,176 @@ type OAuthClientRegistrationResponse struct {
 // Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientResponse struct {
 	// Active Whether the client is enabled; false for disabled, pending or denied clients.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// ActiveGrantCount Number of active consent→agent grants for this client. Computed on the read endpoints (list/get); write-path responses report 0.
+	//
+	// Examples: 3
 	ActiveGrantCount *int `json:"active_grant_count,omitempty"`
 
 	// AllowedScopes Scopes this client may request. Null means unrestricted.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	AllowedScopes *[]string `json:"allowed_scopes"`
 
 	// ApprovalStatus Admin approval lifecycle: ``pending``, ``approved``, or ``denied``. Only approved clients may enter OAuth flows; ``active`` remains the independent kill switch.
+	//
+	// Examples: approved
 	ApprovalStatus string `json:"approval_status"`
 
 	// ClientId Public client identifier used in OAuth flows.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	ClientId string `json:"client_id"`
 
 	// ConsentModel What a user's consent grants for this client: ``user`` or ``agent``.
+	//
+	// Examples: user
 	ConsentModel string `json:"consent_model"`
 
 	// CreatedAt When the client was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the client; null if not recorded.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by"`
 
 	// Description Description of the client; null if none.
+	//
+	// Examples: Billing assistant production deployment
 	Description *string `json:"description"`
 
-	// Id Internal ID (ksuid).
+	// Id Record ID of the OAuth client (`oac_…`), not its public `client_id`.
+	//
+	// Examples: oac_6968b39840a935d9f7e2714b
 	Id string `json:"id"`
 
 	// Name Human-readable name for the client.
+	//
+	// Examples: billing-assistant-prod
 	Name string `json:"name"`
 
 	// RedirectUris Allowed OAuth callback URLs.
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris []string `json:"redirect_uris"`
 
 	// RegistrationSource How the client entered the registry: ``admin`` or ``dcr``.
+	//
+	// Examples: admin
 	RegistrationSource string `json:"registration_source"`
 
 	// RequireConsent Whether a consent screen is shown during authorization.
+	//
+	// Examples: true
 	RequireConsent bool `json:"require_consent"`
 
 	// SoftwareId RFC 7591 software identifier claimed at registration, if any.
+	//
+	// Examples: com.example.billing-assistant
 	SoftwareId *string `json:"software_id"`
 
 	// TokenEndpointAuthMethod Client authentication method at the token endpoint: ``client_secret_basic`` (confidential) or ``none`` (public, PKCE-only).
+	//
+	// Examples: client_secret_basic
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
 
 	// UpdatedAt When the client was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OAuthClientRotateSecretResponse Returned on secret rotation — the new one-time plaintext secret.
+//
+// Examples: {"client_secret":"example-client-secret"}
 type OAuthClientRotateSecretResponse struct {
 	// ClientSecret The new client secret. Store it securely; the previous secret is now invalid.
+	//
+	// Examples: example-client-secret
 	ClientSecret string `json:"client_secret"`
 }
 
 // OAuthClientUpdateRequest Request body for updating an OAuth client.
+//
+// Examples: {"active":true,"allowed_scopes":["apis:read","capabilities:execute"],"description":"Billing assistant production deployment","name":"billing-assistant-prod","redirect_uris":["https://client.example.com/oauth/callback"],"require_consent":true}
 type OAuthClientUpdateRequest struct {
 	// Active False disables the client and true re-enables it; null means no change.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// AllowedScopes Scope restriction list. Null means no change; an empty list denies all non-OIDC scopes; the wildcard ``["*"]`` resets to unrestricted.
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	AllowedScopes *[]string `json:"allowed_scopes,omitempty"`
 
 	// Description New description for the client; null means no change.
+	//
+	// Examples: Billing assistant production deployment
 	Description *string `json:"description,omitempty"`
 
 	// Name New name for the client; null means no change.
+	//
+	// Examples: billing-assistant-prod
 	Name *string `json:"name,omitempty"`
 
 	// RedirectUris Replacement list of allowed OAuth callback URLs; null means no change.
+	//
+	// Examples: ["https://client.example.com/oauth/callback"]
 	RedirectUris *[]string `json:"redirect_uris,omitempty"`
 
 	// RequireConsent Whether to show a consent screen during authorization; null means no change.
+	//
+	// Examples: true
 	RequireConsent *bool `json:"require_consent,omitempty"`
 }
 
 // OAuthConfirmSessionRequest Confirm an OAuth session: the scopes to request and the agent's rules.
 //
 // The default variant — a body without “kind“ is this one.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"oauth","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type OAuthConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// ConfirmedScopes Upstream scopes the approver confirmed (at most 100).
+	//
+	// Examples: ["repo","read:user"]
 	ConfirmedScopes []string `json:"confirmed_scopes"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale. Required for an API target.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest *string `json:"digest,omitempty"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale. Required for an API target.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; `oauth` (the default when omitted).
+	//
+	// Examples: oauth
 	Kind *OAuthConfirmSessionRequestKind `json:"kind,omitempty"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules *[]PermissionRuleSchema `json:"permission_rules,omitempty"`
 }
 
 // OAuthConfirmSessionRequestKind Confirm variant; `oauth` (the default when omitted).
+//
+// Examples: oauth
 type OAuthConfirmSessionRequestKind string
 
 // OAuthErrorResponse OAuth 2.0 error response (RFC 6749 §5.2 dialect).
@@ -3835,148 +5272,194 @@ type OAuthConfirmSessionRequestKind string
 // Examples: {"error":"invalid_request","error_description":"missing required parameter"}
 type OAuthErrorResponse struct {
 	// Error ASCII error code, e.g. `invalid_request`, `invalid_grant`, `invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.
+	//
+	// Examples: invalid_request
 	Error string `json:"error"`
 
 	// ErrorDescription Human-readable explanation of the error.
+	//
+	// Examples: missing required parameter
 	ErrorDescription *string `json:"error_description,omitempty"`
 }
 
 // OAuthGrantAdminListResponse A paginated list of OAuth grants (admin cross-view).
+//
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"billing-assistant-prod","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-19T08:12:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-20T14:05:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type OAuthGrantAdminListResponse struct {
 	// Data The page of grants.
+	//
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"billing-assistant-prod","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-19T08:12:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-20T14:05:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}]
 	Data []OAuthGrantAdminResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OAuthGrantAdminResponse One consent→agent grant in the admin cross-view.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"billing-assistant-prod","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-19T08:12:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-20T14:05:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}
 type OAuthGrantAdminResponse struct {
 	// AgentId The agent this grant binds the client to.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// AgentStatus Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).
+	//
+	// Examples: active
 	AgentStatus *string `json:"agent_status,omitempty"`
 
 	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. a read-only admin.
+	//
+	// Examples: true
 	CanRevoke bool `json:"can_revoke"`
 
 	// ClientName Display name of the registered client, if the row still exists.
+	//
+	// Examples: billing-assistant-prod
 	ClientName *string `json:"client_name"`
 
 	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+	//
+	// Examples: https://client.example.com
 	ClientOrigin *string `json:"client_origin"`
 
 	// CreatedAt When the grant was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Id Grant ID (ksuid, `ocg_` prefix).
+	//
+	// Examples: ocg_6968b3985e21c5fdf643025d
 	Id string `json:"id"`
 
 	// LastUsedAt Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+	//
+	// Examples: 2026-01-19T08:12:00Z
 	LastUsedAt *time.Time `json:"last_used_at"`
 
 	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	OauthClientId string `json:"oauth_client_id"`
 
 	// RevokedAt When the grant was revoked (RFC 3339); null while it is active.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	RevokedAt *time.Time `json:"revoked_at"`
 
 	// Scopes Scopes granted at consent (the D2 intersection).
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Scopes []string `json:"scopes"`
 
 	// Status Grant lifecycle state: ``active`` or ``revoked``.
+	//
+	// Examples: revoked
 	Status string `json:"status"`
 
 	// UserId The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent's).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	UserId string `json:"user_id"`
 }
 
 // OAuthGrantListResponse A paginated list of OAuth grants.
+//
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"Cursor","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-24T08:15:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-25T16:00:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type OAuthGrantListResponse struct {
 	// Data The page of OAuth grants.
+	//
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"Cursor","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-24T08:15:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-25T16:00:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}]
 	Data []OAuthGrantResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OAuthGrantResponse One consent→agent grant in API responses.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_status":"active","can_revoke":true,"client_name":"Cursor","client_origin":"https://client.example.com","created_at":"2026-01-15T09:30:00Z","id":"ocg_6968b3985e21c5fdf643025d","last_used_at":"2026-01-24T08:15:00Z","oauth_client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","revoked_at":"2026-01-25T16:00:00Z","scopes":["apis:read","capabilities:execute"],"status":"revoked","user_id":"usr_6968b3987ee4c3ec0b4ee3b9"}
 type OAuthGrantResponse struct {
 	// AgentId The agent this grant binds the client to.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// AgentStatus Lifecycle state of the bound agent (`active`, `disabled`, `archived`, …). A grant on a non-active agent is dormant: the row stays `active` (disable is reversible — re-enable restores the standing consent without a new consent round) but no token resolves while the agent is non-active. Lets listings tell a working connection from a dormant one (#1233).
+	//
+	// Examples: active
 	AgentStatus *string `json:"agent_status,omitempty"`
 
 	// CanRevoke Whether the CALLER may revoke this grant (the consenting user, or an admin holding the revoke permission set). May be false even for callers who can list — e.g. the agent's new owner after an ownership transfer, or a read-only admin.
+	//
+	// Examples: true
 	CanRevoke bool `json:"can_revoke"`
 
 	// ClientName Display name of the registered client, if the row still exists.
+	//
+	// Examples: Cursor
 	ClientName *string `json:"client_name"`
 
 	// ClientOrigin Origin (scheme://host) of the client's first redirect URI — the 'authorized apps' display pattern.
+	//
+	// Examples: https://client.example.com
 	ClientOrigin *string `json:"client_origin"`
 
 	// CreatedAt When the grant was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Id Grant ID (ksuid, `ocg_` prefix).
+	//
+	// Examples: ocg_6968b3985e21c5fdf643025d
 	Id string `json:"id"`
 
 	// LastUsedAt Last time the client obtained tokens under this grant (stamped at exchange/refresh, not per request).
+	//
+	// Examples: 2026-01-24T08:15:00Z
 	LastUsedAt *time.Time `json:"last_used_at"`
 
 	// OauthClientId The client's public client_id — the same identifier stamped on tokens minted under this grant.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	OauthClientId string `json:"oauth_client_id"`
 
 	// RevokedAt When the grant was revoked (RFC 3339); null while it is active.
+	//
+	// Examples: 2026-01-25T16:00:00Z
 	RevokedAt *time.Time `json:"revoked_at"`
 
 	// Scopes Scopes granted at consent (the D2 intersection).
+	//
+	// Examples: ["apis:read","capabilities:execute"]
 	Scopes []string `json:"scopes"`
 
 	// Status Grant lifecycle state: ``active`` or ``revoked``.
+	//
+	// Examples: revoked
 	Status string `json:"status"`
 
 	// UserId The consenting user who approved this grant. Shown even after an agent ownership transfer: the grant stays with the original consenter (it is their consent, not the agent's).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	UserId string `json:"user_id"`
-}
-
-// OAuthSessionContinueRequest Front-channel session-continue exchange posted from the login page.
-//
-// “state“ is the signed “login“-purpose carry-through token (“ls“)
-// minted by rung 3 of “flow.resolve_identity_gate“ for this exact
-// authorize request — the exchange never accepts bare flow parameters, so a
-// caller cannot probe arbitrary client ids through it.
-//
-// “state“ is deliberately NOT marked x-sensitive, for the same reason as
-// “OAuthApprovalDecisionRequest.state“: the CLI's redaction backstop
-// unions bare field names globally, and the blob is not a lasting bearer
-// credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
-// additionally requires an authenticated platform user).
-type OAuthSessionContinueRequest struct {
-	// State Signed login carry-through token (`ls`) issued for this authorize request.
-	State string `json:"state"`
-}
-
-// OAuthSessionContinueResponse The resume leg for a successful session-continue exchange.
-//
-// “redirect_url“ is a same-origin, relative “/authorize“ URL re-running
-// the ORIGINAL authorize request plus the short-TTL “session“-purpose
-// continuation blob (“sc“) pinning the platform user at exchange time.
-// Relative by design (mirrors the approval-pending page's resume URL): the
-// page script navigates within its own origin, never to a caller-influenced
-// absolute URL.
-type OAuthSessionContinueResponse struct {
-	// RedirectUrl Relative `/authorize` URL to navigate to in order to resume the flow.
-	RedirectUrl string `json:"redirect_url"`
 }
 
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
@@ -3989,6 +5472,8 @@ type OAuthSessionContinueResponse struct {
 // Examples: {"data":[],"info":{"description":"Payments.","title":"Stripe","version":"2024-01-01"},"offset":0,"security_schemes":{},"total":42,"truncated":true}
 type OperationPreviewListResponse struct {
 	// Data The page of previewed operations.
+	//
+	// Examples: [{"description":"","method":"GET","operation_id":"listCharges","parameters":[],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}]
 	Data []PreviewOperationResponse `json:"data"`
 
 	// Info The spec's `info` block.
@@ -3997,108 +5482,178 @@ type OperationPreviewListResponse struct {
 	Info PreviewInfoResponse `json:"info"`
 
 	// Offset Offset of the returned window.
+	//
+	// Examples: 0
 	Offset int `json:"offset"`
 
 	// SecuritySchemes Slimmed `components.securitySchemes` projection.
+	//
+	// Examples: {"BearerAuth":{"scheme":"bearer","type":"http"}}
 	SecuritySchemes map[string]map[string]interface{} `json:"security_schemes"`
 
 	// Total Total operations in the spec (pre-page).
+	//
+	// Examples: 42
 	Total int `json:"total"`
 
 	// Truncated Whether more operations follow this window.
+	//
+	// Examples: true
 	Truncated bool `json:"truncated"`
 }
 
 // OperationResultResponse A single search result matching the OperationResult spec.
+//
+// Examples: {"_links":{"inspect":"https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","relevance_score":0.87,"target":"GET:https://api.stripe.com/v1/charges","type":"operation","url":"https://api.stripe.com/v1/charges"}
 type OperationResultResponse struct {
 	// UnderscoreLinks Hypermedia links for a search result row.
+	//
+	// Examples: {"inspect":"https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges"}
 	UnderscoreLinks SearchLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
+	//
+	// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api ApiReferenceResponse `json:"api"`
 
 	// Description Description of the operation; null if the spec gives none.
+	//
+	// Examples: Returns a list of charges you've previously created, newest first.
 	Description *string `json:"description,omitempty"`
 
 	// Method HTTP method of the operation.
+	//
+	// Examples: GET
 	Method string `json:"method"`
 
 	// Name Summary of the operation from the spec; null if it has none.
+	//
+	// Examples: List all charges
 	Name *string `json:"name,omitempty"`
 
 	// OperationId Registry ID of the operation.
+	//
+	// Examples: op_f92d69f1621f381bce8aaff47053c61b069ffe34
 	OperationId string `json:"operation_id"`
 
 	// RelevanceScore Relevance of the result to the query, from 0 to 1; higher is more relevant.
+	//
+	// Examples: 0.87
 	RelevanceScore float32 `json:"relevance_score"`
 
 	// Target The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.
+	//
+	// Examples: GET:https://api.stripe.com/v1/charges
 	Target string `json:"target"`
 
 	// Type Result kind; always `operation`.
+	//
+	// Examples: operation
 	Type *OperationResultResponseType `json:"type,omitempty"`
 
 	// Url URL of the operation, built from the spec's server and path; host-relative when the spec declares no absolute server.
+	//
+	// Examples: https://api.stripe.com/v1/charges
 	Url string `json:"url"`
 }
 
 // OperationResultResponseType Result kind; always `operation`.
+//
+// Examples: operation
 type OperationResultResponseType string
 
 // OperationSummaryLinksResponse Hypermedia links for an operation summary.
+//
+// Examples: {"inspect":"https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34\u0026revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 type OperationSummaryLinksResponse struct {
 	// Inspect URL of the operation's full detail via `GET /inspect`.
+	//
+	// Examples: https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34&revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	Inspect string `json:"inspect"`
 }
 
 // OperationSummaryListResponse Cursor-paginated list of operations.
+//
+// Examples: {"data":[{"_links":{"inspect":"https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34\u0026revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"deprecated":false,"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","path":"/v1/charges","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","tags":["Charges"]}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type OperationSummaryListResponse struct {
 	// Data The page of operations.
+	//
+	// Examples: [{"_links":{"inspect":"https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34\u0026revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"deprecated":false,"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","path":"/v1/charges","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","tags":["Charges"]}]
 	Data []OperationSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OperationSummaryResponse Single operation in a paginated list.
+//
+// Examples: {"_links":{"inspect":"https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34\u0026revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"deprecated":false,"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","path":"/v1/charges","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","tags":["Charges"]}
 type OperationSummaryResponse struct {
 	// UnderscoreLinks Hypermedia links for an operation summary.
+	//
+	// Examples: {"inspect":"https://jentic.example.com/inspect?operation_id=op_f92d69f1621f381bce8aaff47053c61b069ffe34\u0026revision_id=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 	UnderscoreLinks OperationSummaryLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
+	//
+	// Examples: {"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api ApiReferenceResponse `json:"api"`
 
 	// Deprecated Whether the spec marks the operation as deprecated.
+	//
+	// Examples: false
 	Deprecated *bool `json:"deprecated,omitempty"`
 
 	// Description Description of the operation; null if the spec gives none.
+	//
+	// Examples: Returns a list of charges you've previously created, newest first.
 	Description *string `json:"description,omitempty"`
 
 	// Method HTTP method of the operation.
+	//
+	// Examples: GET
 	Method string `json:"method"`
 
 	// Name Summary of the operation from the spec; null if it has none.
+	//
+	// Examples: List all charges
 	Name *string `json:"name,omitempty"`
 
 	// OperationId Registry ID of the operation.
+	//
+	// Examples: op_f92d69f1621f381bce8aaff47053c61b069ffe34
 	OperationId string `json:"operation_id"`
 
 	// Path Path template of the operation as declared in the spec.
+	//
+	// Examples: /v1/charges
 	Path string `json:"path"`
 
 	// RevisionId ID of the revision the operation belongs to.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	RevisionId string `json:"revision_id"`
 
 	// Tags Tags the spec assigns to the operation.
+	//
+	// Examples: ["Charges"]
 	Tags *[]string `json:"tags,omitempty"`
 }
 
 // OverlayConfirmRequest Payload for confirming an overlay.
+//
+// Examples: {"execution_id":"exec_6968b3982706c619fe73f0cf"}
 type OverlayConfirmRequest struct {
 	// ExecutionId ID of the execution that verified the overlay, recorded as `confirmed_by_execution_id`.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId *string `json:"execution_id,omitempty"`
 }
 
@@ -4108,36 +5663,58 @@ type OverlayConfirmRequest struct {
 // revisions resource's promote/archive links), so a surface renders an action only
 // when it is applicable to the current status. They are not permission-scoped — the
 // “overlays:confirm“ gate on confirm/rollback is still enforced server-side (403).
+//
+// Examples: {"api":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10","confirm":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm","deprecate":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a","rollback":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a"}
 type OverlayLinksResponse struct {
 	// Api URL of the API the overlay applies to.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10
 	Api string `json:"api"`
 
 	// Confirm URL to confirm the overlay; null unless it is `pending`.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm
 	Confirm *string `json:"confirm,omitempty"`
 
 	// Deprecate URL to deprecate the overlay (via `DELETE`); null once it is `deprecated`.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a
 	Deprecate *string `json:"deprecate,omitempty"`
 
 	// Rollback URL to roll back the overlay; null unless it is `confirmed` and its revision has been produced.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback
 	Rollback *string `json:"rollback,omitempty"`
 
 	// Self URL of this overlay.
+	//
+	// Examples: https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a
 	Self string `json:"self"`
 }
 
 // OverlayListResponse Cursor-paginated list of overlays.
+//
+// Examples: {"data":[{"_links":{"api":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10","confirm":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm","deprecate":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a","rollback":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a"},"api_id":"debfc9ff-7c37-4a09-801a-575bd4963ddd","confirmed_at":"2026-01-15T10:05:00Z","confirmed_by_execution_id":"exec_6968b3982706c619fe73f0cf","confirmed_revision_id":"6992059c-0abd-4d22-bd07-5287e1bf5e6a","contributed_by":"docs-review-agent","created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","deprecated_at":"2026-01-17T16:45:00Z","deprecated_reason":"rollback","document":{"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"},"id":"ovr_6968b398ae1c9a6e2fe6520a","status":"deprecated","superseded_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","target_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","updated_at":"2026-01-17T16:45:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type OverlayListResponse struct {
 	// Data The page of overlays.
+	//
+	// Examples: [{"_links":{"api":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10","confirm":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm","deprecate":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a","rollback":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a"},"api_id":"debfc9ff-7c37-4a09-801a-575bd4963ddd","confirmed_at":"2026-01-15T10:05:00Z","confirmed_by_execution_id":"exec_6968b3982706c619fe73f0cf","confirmed_revision_id":"6992059c-0abd-4d22-bd07-5287e1bf5e6a","contributed_by":"docs-review-agent","created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","deprecated_at":"2026-01-17T16:45:00Z","deprecated_reason":"rollback","document":{"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"},"id":"ovr_6968b398ae1c9a6e2fe6520a","status":"deprecated","superseded_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","target_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","updated_at":"2026-01-17T16:45:00Z"}]
 	Data []OverlayResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // OverlayResponse Full overlay resource response.
+//
+// Examples: {"_links":{"api":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10","confirm":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm","deprecate":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a","rollback":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a"},"api_id":"debfc9ff-7c37-4a09-801a-575bd4963ddd","confirmed_at":"2026-01-15T10:05:00Z","confirmed_by_execution_id":"exec_6968b3982706c619fe73f0cf","confirmed_revision_id":"6992059c-0abd-4d22-bd07-5287e1bf5e6a","contributed_by":"docs-review-agent","created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","deprecated_at":"2026-01-17T16:45:00Z","deprecated_reason":"rollback","document":{"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"},"id":"ovr_6968b398ae1c9a6e2fe6520a","status":"deprecated","superseded_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","target_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","updated_at":"2026-01-17T16:45:00Z"}
 type OverlayResponse struct {
 	// UnderscoreLinks Hypermedia links for an overlay resource.
 	//
@@ -4145,72 +5722,118 @@ type OverlayResponse struct {
 	// revisions resource's promote/archive links), so a surface renders an action only
 	// when it is applicable to the current status. They are not permission-scoped — the
 	// ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
+	//
+	// Examples: {"api":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10","confirm":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:confirm","deprecate":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a","rollback":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a:rollback","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/overlays/ovr_6968b398ae1c9a6e2fe6520a"}
 	UnderscoreLinks OverlayLinksResponse `json:"_links"`
 
 	// ApiId ID of the API the overlay applies to.
+	//
+	// Examples: debfc9ff-7c37-4a09-801a-575bd4963ddd
 	ApiId string `json:"api_id"`
 
 	// ConfirmedAt When the overlay was confirmed (RFC 3339); null if not confirmed.
+	//
+	// Examples: 2026-01-15T10:05:00Z
 	ConfirmedAt *time.Time `json:"confirmed_at"`
 
 	// ConfirmedByExecutionId ID of the execution supplied when the overlay was confirmed; null if none.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ConfirmedByExecutionId *string `json:"confirmed_by_execution_id"`
 
 	// ConfirmedRevisionId ID of the revision produced by applying the overlay; null until confirmation completes.
+	//
+	// Examples: 6992059c-0abd-4d22-bd07-5287e1bf5e6a
 	ConfirmedRevisionId *string `json:"confirmed_revision_id,omitempty"`
 
 	// ContributedBy Free-text attribution label supplied at submission; null if none.
+	//
+	// Examples: docs-review-agent
 	ContributedBy *string `json:"contributed_by"`
 
 	// CreatedAt When the overlay was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the overlay.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	CreatedBy *string `json:"created_by,omitempty"`
 
 	// DeprecatedAt When the overlay was deprecated (RFC 3339); null if not deprecated.
+	//
+	// Examples: 2026-01-17T16:45:00Z
 	DeprecatedAt *time.Time `json:"deprecated_at"`
 
 	// DeprecatedReason Why the overlay was deprecated: `manual`, `rollback` or `superseded_by_reimport`; null when not deprecated or not recorded.
+	//
+	// Examples: rollback
 	DeprecatedReason *string `json:"deprecated_reason,omitempty"`
 
 	// Document The OpenAPI Overlay document.
+	//
+	// Examples: {"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"}
 	Document map[string]interface{} `json:"document"`
 
 	// Id Unique ID of the overlay.
+	//
+	// Examples: ovr_6968b398ae1c9a6e2fe6520a
 	Id string `json:"id"`
 
 	// Status Lifecycle status of the overlay: `pending`, `confirmed` or `deprecated`.
+	//
+	// Examples: deprecated
 	Status string `json:"status"`
 
 	// SupersededRevisionId ID of the revision the overlay replaced when applied, restored by a rollback; null if none.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	SupersededRevisionId *string `json:"superseded_revision_id,omitempty"`
 
 	// TargetRevisionId ID of the revision the overlay was written against; null if unpinned.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	TargetRevisionId *string `json:"target_revision_id"`
 
 	// UpdatedAt When the overlay was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-17T16:45:00Z
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // OverlaySubmitRequest Payload for submitting a new overlay.
+//
+// Examples: {"contributed_by":"docs-review-agent","document":{"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"},"target_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 type OverlaySubmitRequest struct {
 	// ContributedBy Free-text attribution label for who contributed the overlay.
+	//
+	// Examples: docs-review-agent
 	ContributedBy *string `json:"contributed_by,omitempty"`
 
 	// Document OpenAPI Overlay document; must be a JSON object with an `actions` array.
+	//
+	// Examples: {"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"}
 	Document map[string]interface{} `json:"document"`
 
 	// TargetRevisionId ID of the revision the overlay was written against; null to leave unpinned.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	TargetRevisionId *string `json:"target_revision_id,omitempty"`
 }
 
 // OverlayUpdateRequest Payload for updating an existing overlay.
+//
+// Examples: {"document":{"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"},"target_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 type OverlayUpdateRequest struct {
 	// Document Replacement OpenAPI Overlay document; omit to keep the current one.
+	//
+	// Examples: {"actions":[{"target":"$.paths['/v1/charges'].get","update":{"summary":"List all charges, newest first"}}],"info":{"title":"Clarify charges listing","version":"1.0.0"},"overlay":"1.0.0"}
 	Document *map[string]interface{} `json:"document,omitempty"`
 
 	// TargetRevisionId ID of the revision the overlay was written against.
+	//
+	// Examples: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
 	TargetRevisionId *string `json:"target_revision_id,omitempty"`
 }
 
@@ -4222,96 +5845,158 @@ type OverlayUpdateRequest struct {
 // declared OAuth endpoints are never used for the approver's client, since
 // the spec may be agent-submitted and the token endpoint receives the
 // client secret.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","authorize_url":"https://github.com/login/oauth/authorize","client_id":"Iv1.a1b2c3d4","client_secret":"example-secret","confirmed_scopes":["repo","read:user"],"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"own_oauth_client","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"token_url":"https://github.com/login/oauth/access_token"}
 type OwnOAuthClientConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// AuthorizeUrl Authorization endpoint URL of the OAuth app.
+	//
+	// Examples: https://github.com/login/oauth/authorize
 	AuthorizeUrl string `json:"authorize_url"`
 
 	// ClientId Client ID of the approver's OAuth app.
+	//
+	// Examples: Iv1.a1b2c3d4
 	ClientId string `json:"client_id"`
 
 	// ClientSecret Client secret of the approver's OAuth app; write-only.
+	//
+	// Examples: example-secret
 	ClientSecret *string `json:"client_secret,omitempty"`
 
 	// ConfirmedScopes Upstream scopes to request (at most 100).
+	//
+	// Examples: ["repo","read:user"]
 	ConfirmedScopes *[]string `json:"confirmed_scopes,omitempty"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; always `own_oauth_client`.
+	//
+	// Examples: own_oauth_client
 	Kind OwnOAuthClientConfirmSessionRequestKind `json:"kind"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 
 	// TokenUrl Token endpoint URL of the OAuth app.
+	//
+	// Examples: https://github.com/login/oauth/access_token
 	TokenUrl string `json:"token_url"`
 }
 
 // OwnOAuthClientConfirmSessionRequestKind Confirm variant; always `own_oauth_client`.
+//
+// Examples: own_oauth_client
 type OwnOAuthClientConfirmSessionRequestKind string
 
 // PermissionListResponse List of available permissions.
+//
+// Examples: {"data":[{"description":"Create, update, and disable users","grantable_by_caller":true,"implies":["users:read"],"name":"users:write"}]}
 type PermissionListResponse struct {
 	// Data The permissions in the catalogue.
+	//
+	// Examples: [{"description":"Create, update, and disable users","grantable_by_caller":true,"implies":["users:read"],"name":"users:write"}]
 	Data []PermissionResponse `json:"data"`
 }
 
 // PermissionResponse A single permission entry from the catalogue.
+//
+// Examples: {"description":"Create, update, and disable users","grantable_by_caller":true,"implies":["users:read"],"name":"users:write"}
 type PermissionResponse struct {
 	// Description Human-readable description of what the permission allows.
+	//
+	// Examples: Create, update, and disable users
 	Description string `json:"description"`
 
 	// GrantableByCaller Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
+	//
+	// Examples: true
 	GrantableByCaller bool `json:"grantable_by_caller"`
 
 	// Implies Permissions this one implies when granted.
+	//
+	// Examples: ["users:read"]
 	Implies []string `json:"implies"`
 
 	// Name Permission name, e.g. `users:read`.
+	//
+	// Examples: users:write
 	Name string `json:"name"`
 }
 
 // PermissionRuleListResponse List of permission rules.
+//
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type PermissionRuleListResponse struct {
 	// Data The binding's permission rules, in evaluation order.
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
+//
+// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleReadSchema struct {
 	// UnderscoreComment Optional note attached to the rule.
+	//
+	// Examples: Read-only access to charges.
 	UnderscoreComment *string `json:"_comment,omitempty"`
 
 	// UnderscoreSystem True when the rule is platform-managed rather than user-authored.
+	//
+	// Examples: false
 	UnderscoreSystem *bool `json:"_system,omitempty"`
 
 	// Effect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
+	//
+	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+	//
+	// Examples: prefix
 	MatchMode *PermissionRuleReadSchemaMatchMode `json:"match_mode,omitempty"`
 
 	// Methods HTTP methods the rule matches; null matches all.
+	//
+	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
 	// Operations OpenAPI operation IDs the rule matches; null matches all.
+	//
+	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
 	// Path Path pattern relative to the API's server URL, interpreted per `match_mode`; null matches all paths.
+	//
+	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
 }
 
 // PermissionRuleReadSchemaEffect Whether this rule allows, denies, or holds the matched request for human approval (`require-approval`).
+//
+// Examples: allow
 type PermissionRuleReadSchemaEffect string
 
 // PermissionRuleReadSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
+//
+// Examples: prefix
 type PermissionRuleReadSchemaMatchMode string
 
 // PermissionRuleSchema Permission rule for an agent↔credential binding.
@@ -4319,77 +6004,127 @@ type PermissionRuleReadSchemaMatchMode string
 // Rules are evaluated first-match-wins. If no rule matches, the request is
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
+//
+// Examples: {"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleSchema struct {
 	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
+	//
+	// Examples: allow
 	Effect PermissionRuleSchemaEffect `json:"effect"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+	//
+	// Examples: prefix
 	MatchMode *PermissionRuleSchemaMatchMode `json:"match_mode,omitempty"`
 
 	// Methods HTTP methods to match (case-insensitive). None matches all.
+	//
+	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
 	// Operations OpenAPI operation IDs to match. None matches all operations.
+	//
+	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
 
 	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	//
+	// Examples: /v1/charges
 	Path *string `json:"path,omitempty"`
 }
 
 // PermissionRuleSchemaEffect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
+//
+// Examples: allow
 type PermissionRuleSchemaEffect string
 
 // PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+//
+// Examples: prefix
 type PermissionRuleSchemaMatchMode string
 
 // PermissionTestRequest Request body for :test — dry-run a request shape against the binding's rules.
+//
+// Examples: {"method":"GET","operation_id":"listCharges","path":"/v1/charges"}
 type PermissionTestRequest struct {
 	// Method HTTP method of the hypothetical request (case-insensitive).
+	//
+	// Examples: GET
 	Method string `json:"method"`
 
 	// OperationId Optional OpenAPI operation id resolved from the request URL.
+	//
+	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`
 
 	// Path Path of the hypothetical request relative to the API's server URL (the spec's path, e.g. `/widgets/42`) — the path the broker evaluates rules on.
+	//
+	// Examples: /v1/charges
 	Path string `json:"path"`
 }
 
 // PermissionTestResponse Dry-run result matching :class:`PermissionTestResult`.
+//
+// Examples: {"allowed":true,"credential_id":"cred_6968b39855d91a3561684b32","effect":"allow","is_system":false,"matched":true,"rule_index":0}
 type PermissionTestResponse struct {
 	// Allowed Whether the broker would allow this request under the binding's rules.
+	//
+	// Examples: true
 	Allowed bool `json:"allowed"`
 
 	// CredentialId The binding whose rule list contributed the matching rule.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId *string `json:"credential_id,omitempty"`
 
 	// Effect Effect of the matching rule (`allow`/`deny`); null when no match.
+	//
+	// Examples: allow
 	Effect *string `json:"effect,omitempty"`
 
 	// IsSystem True when the matching rule was written by the system; null when no match.
+	//
+	// Examples: false
 	IsSystem *bool `json:"is_system,omitempty"`
 
 	// Matched Whether any rule matched; when false, the outcome is default-deny.
+	//
+	// Examples: true
 	Matched bool `json:"matched"`
 
 	// RuleIndex Zero-based index in the binding's ordered rule list; null when no match.
+	//
+	// Examples: 0
 	RuleIndex *int `json:"rule_index,omitempty"`
 }
 
 // Permissions Structured permissions view: assigned + effective.
+//
+// Examples: {"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]}
 type Permissions struct {
 	// Assigned Permissions assigned directly to the user.
+	//
+	// Examples: ["users:write","agents:read"]
 	Assigned []string `json:"assigned"`
 
 	// Effective All permissions the user holds, including those implied by assigned ones.
+	//
+	// Examples: [{"implied_by":"users:write","name":"users:read"}]
 	Effective []EffectivePermission `json:"effective"`
 }
 
 // PermissionsPatchRequest Patch permission rules — add and/or remove.
+//
+// Examples: {"add":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"remove":[0,2]}
 type PermissionsPatchRequest struct {
 	// Add Rules to append after the existing user rules.
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Add *[]PermissionRuleSchema `json:"add,omitempty"`
 
 	// Remove Zero-based indexes of user rules (excluding system rules) to delete; applied before `add`.
+	//
+	// Examples: [0,2]
 	Remove *[]int `json:"remove,omitempty"`
 }
 
@@ -4398,12 +6133,18 @@ type PermissionsPatchRequest struct {
 // Examples: {"description":"Payments.","title":"Stripe","version":"2024-01-01"}
 type PreviewInfoResponse struct {
 	// Description Spec description.
+	//
+	// Examples: Payments.
 	Description *string `json:"description"`
 
 	// Title Spec title.
+	//
+	// Examples: Stripe
 	Title *string `json:"title"`
 
 	// Version Spec version.
+	//
+	// Examples: 2024-04-10
 	Version *string `json:"version"`
 }
 
@@ -4412,42 +6153,66 @@ type PreviewInfoResponse struct {
 // Examples: {"description":"","method":"GET","operation_id":"listCharges","parameters":[],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}
 type PreviewOperationResponse struct {
 	// Description Operation description (empty string when absent).
+	//
+	// Examples: Returns a list of charges you've previously created, newest first.
 	Description string `json:"description"`
 
 	// Method Upper-case HTTP method.
+	//
+	// Examples: GET
 	Method string `json:"method"`
 
 	// OperationId OpenAPI operationId, when declared.
+	//
+	// Examples: listCharges
 	OperationId *string `json:"operation_id"`
 
 	// Parameters Merged path- and operation-level parameters.
+	//
+	// Examples: [{"description":"Page size.","in":"query","name":"limit","required":false}]
 	Parameters []PreviewParameterResponse `json:"parameters"`
 
 	// Path Operation path template.
+	//
+	// Examples: /v1/charges
 	Path string `json:"path"`
 
 	// Security Flattened names of the security schemes that apply.
+	//
+	// Examples: ["BearerAuth"]
 	Security []string `json:"security"`
 
 	// Summary Operation summary (empty string when absent).
+	//
+	// Examples: List charges
 	Summary string `json:"summary"`
 
 	// Tags Operation tags.
+	//
+	// Examples: ["charges"]
 	Tags []string `json:"tags"`
 }
 
 // PreviewParameterResponse A slimmed parameter in an operation preview.
 type PreviewParameterResponse struct {
 	// Description Parameter description (empty string when absent).
+	//
+	// Examples: Page size.
 	Description string `json:"description"`
 
 	// In OpenAPI parameter location.
+	//
+	// Examples: query
 	In string `json:"in"`
 
 	// Name Parameter name.
+	//
+	// Examples: limit
 	Name string `json:"name"`
 
 	// Required Whether the parameter is required.
+	//
+	// Examples: false
 	Required bool `json:"required"`
 }
 
@@ -4471,6 +6236,8 @@ type ProblemDetail struct {
 	Detail string `json:"detail"`
 
 	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+	//
+	// Examples: [{"code":"JENTIC-V-001","detail":"Field 'name' must not be blank.","header":"Authorization","parameter":"limit","pointer":"#/name"}]
 	Errors *[]ErrorItem `json:"errors,omitempty"`
 
 	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
@@ -4495,8 +6262,12 @@ type ProblemDetail struct {
 }
 
 // ProviderConfigListResponse A list of stored provider configs (secrets redacted).
+//
+// Examples: {"data":[{"config":{"client_id":"client_abc123","client_secret":"***","environment":"production","kind":"pipedream","project_id":"proj_abc123"},"created_at":"2026-06-29T12:00:00Z","name":"pipedream","updated_at":"2026-06-29T12:00:00Z"}]}
 type ProviderConfigListResponse struct {
 	// Data The stored provider configs.
+	//
+	// Examples: [{"config":{"client_id":"client_abc123","client_secret":"***","environment":"production","kind":"pipedream","project_id":"proj_abc123"},"created_at":"2026-06-29T12:00:00Z","name":"pipedream","updated_at":"2026-06-29T12:00:00Z"}]
 	Data []ProviderConfigResponse `json:"data"`
 }
 
@@ -4505,15 +6276,23 @@ type ProviderConfigListResponse struct {
 // Examples: {"config":{"client_id":"client_abc123","client_secret":"***","environment":"production","kind":"pipedream","project_id":"proj_abc123"},"created_at":"2026-06-29T12:00:00Z","name":"pipedream","updated_at":"2026-06-29T12:00:00Z"}
 type ProviderConfigResponse struct {
 	// Config Stored config with secret fields redacted.
+	//
+	// Examples: {"client_id":"client_abc123","client_secret":"***","environment":"production","kind":"pipedream","project_id":"proj_abc123"}
 	Config map[string]interface{} `json:"config"`
 
 	// CreatedAt When the provider config was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Name Provider name (e.g. 'pipedream').
+	//
+	// Examples: pipedream
 	Name string `json:"name"`
 
 	// UpdatedAt When the provider config was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -4527,125 +6306,203 @@ type ProviderConfigResponse struct {
 // Examples: {"config":{"client_id":"client_abc123","client_secret":"\u003credacted\u003e","environment":"production","project_id":"proj_abc123"}}
 type ProviderConfigSetRequest struct {
 	// Config Provider-specific configuration fields, validated by provider name.
+	//
+	// Examples: {"client_id":"client_abc123","client_secret":"example-secret","environment":"production","project_id":"proj_abc123"}
 	Config map[string]interface{} `json:"config"`
 }
 
 // ProviderDiscoveryEntryResponse Discovery metadata for a single credential provider.
+//
+// Examples: {"callback_url":"https://jentic.example.com/api/v1/credentials/oauth/callback","configured":true,"id":"pipedream","label":"Pipedream","managed":true,"types":["oauth2","api_key"]}
 type ProviderDiscoveryEntryResponse struct {
 	// CallbackUrl OAuth2 redirect URI for providers that require it. When no explicit redirect_uri is configured, this is derived from the deployment's public origin (server.public_base_url or the request origin), so it reflects the exact callback the connect flow will register with the IdP. Add this URL to your OAuth app's allowed redirect URIs.
+	//
+	// Examples: https://jentic.example.com/api/v1/credentials/oauth/callback
 	CallbackUrl *string `json:"callback_url,omitempty"`
 
 	// Configured Whether the provider is fully configured and operational.
+	//
+	// Examples: true
 	Configured bool `json:"configured"`
 
 	// Id Provider identifier (registry key).
+	//
+	// Examples: pipedream
 	Id string `json:"id"`
 
 	// Label Human-readable provider name.
+	//
+	// Examples: Pipedream
 	Label string `json:"label"`
 
 	// Managed Whether the provider handles vendor sign-in on behalf of the user.
+	//
+	// Examples: true
 	Managed bool `json:"managed"`
 
 	// Types Wire-level credential types this provider supports.
+	//
+	// Examples: ["oauth2","api_key"]
 	Types []CredentialType `json:"types"`
 }
 
 // ProviderDiscoveryResponse Discovery response listing all available credential providers.
+//
+// Examples: {"providers":[{"callback_url":"https://jentic.example.com/api/v1/credentials/oauth/callback","configured":true,"id":"pipedream","label":"Pipedream","managed":true,"types":["oauth2","api_key"]}]}
 type ProviderDiscoveryResponse struct {
 	// Providers The available credential providers.
+	//
+	// Examples: [{"callback_url":"https://jentic.example.com/api/v1/credentials/oauth/callback","configured":true,"id":"pipedream","label":"Pipedream","managed":true,"types":["oauth2","api_key"]}]
 	Providers []ProviderDiscoveryEntryResponse `json:"providers"`
 }
 
 // ReauthorizeConfirmSessionRequest Bind the approver's OAuth credential and re-consent it with the requested scopes.
 //
 // Refused when another agent is bound to the credential.
+//
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32","digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","expected_agent_id":"agnt_6968b3984d1c238dbe7e2e29","kind":"reauthorize","permission_rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type ReauthorizeConfirmSessionRequest struct {
 	// AgentId Agent to bind when the session has none; ignored if the session already has one.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId *string `json:"agent_id,omitempty"`
 
 	// CredentialId ID of the approver's OAuth credential to bind and re-consent.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// Digest Review digest echoed from the review data; a mismatch is 409 review_stale.
+	//
+	// Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
 	// ExpectedAgentId Agent ID from the review the approver saw; a mismatch is 409 review_stale.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ExpectedAgentId *string `json:"expected_agent_id,omitempty"`
 
 	// Kind Confirm variant; always `reauthorize`.
+	//
+	// Examples: reauthorize
 	Kind ReauthorizeConfirmSessionRequestKind `json:"kind"`
 
 	// PermissionRules Permission rules to bind for the agent (at most 100).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	PermissionRules []PermissionRuleSchema `json:"permission_rules"`
 }
 
 // ReauthorizeConfirmSessionRequestKind Confirm variant; always `reauthorize`.
+//
+// Examples: reauthorize
 type ReauthorizeConfirmSessionRequestKind string
 
 // RedeemInviteRequest Payload for redeeming an invite token.
+//
+// Examples: {"invite_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","password":"example-password"}
 type RedeemInviteRequest struct {
 	// InviteToken The invite token issued when the user was created or re-invited.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	InviteToken string `json:"invite_token"`
 
 	// Password Password to set for the invited user.
+	//
+	// Examples: example-password
 	Password string `json:"password"`
 }
 
 // RegisterRequest POST /register request body.
+//
+// Examples: {"client_name":"invoice-reconciler","grant_types":["urn:ietf:params:oauth:grant-type:jwt-bearer"],"jwks":{"keys":[{"crv":"Ed25519","kid":"agent-key-1","kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}]},"scope":"apis:read capabilities:execute","token_endpoint_auth_method":"private_key_jwt"}
 type RegisterRequest struct {
 	// ClientName Name for the new agent.
+	//
+	// Examples: invoice-reconciler
 	ClientName string `json:"client_name"`
 
 	// GrantTypes Accepted for RFC 7591 compatibility and ignored; the agent uses the JWT-bearer grant.
+	//
+	// Examples: ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// Jwks A JSON Web Key Set containing at least one Ed25519 public key (kty=OKP, crv=Ed25519). RSA and other key types are not accepted.
 	Jwks map[string]interface{} `json:"jwks"`
 
 	// Scope Space-separated permissions requested for the agent (at most 100 tokens).
+	//
+	// Examples: apis:read capabilities:execute
 	Scope *string `json:"scope,omitempty"`
 
 	// TokenEndpointAuthMethod Accepted for RFC 7591 compatibility and ignored; the agent uses `private_key_jwt`.
+	//
+	// Examples: private_key_jwt
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // RegisterResponse POST /register 201 response.
+//
+// Examples: {"claim_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","client_id":"agnt_6968b3984d1c238dbe7e2e29","grant_types":["urn:ietf:params:oauth:grant-type:jwt-bearer"],"registration_access_token":"rat_example-secret","registration_client_uri":"https://jentic.example.com/register/agnt_6968b3984d1c238dbe7e2e29","status":"pending","token_endpoint_auth_method":"private_key_jwt"}
 type RegisterResponse struct {
 	// ClaimToken Single-use token a human presents to `POST /agents/{agent_id}:claim` to take ownership; omitted when the deployment does not issue claim tokens.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	ClaimToken *string `json:"claim_token,omitempty"`
 
 	// ClientId ID of the new agent, used as its OAuth client_id.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ClientId string `json:"client_id"`
 
 	// GrantTypes Grant types the agent may use; always the JWT-bearer grant.
+	//
+	// Examples: ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// RegistrationAccessToken Bearer token for polling `registration_client_uri`; shown once and expires after a configured time.
+	//
+	// Examples: rat_example-secret
 	RegistrationAccessToken string `json:"registration_access_token"`
 
 	// RegistrationClientUri URL to poll for the registration status.
+	//
+	// Examples: https://jentic.example.com/register/agnt_6968b3984d1c238dbe7e2e29
 	RegistrationClientUri string `json:"registration_client_uri"`
 
 	// Status Lifecycle status of the new agent; `pending` until an operator approves it.
+	//
+	// Examples: pending
 	Status string `json:"status"`
 
 	// TokenEndpointAuthMethod How the agent authenticates at the token endpoint; always `private_key_jwt`.
+	//
+	// Examples: private_key_jwt
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // RegistrationStatusResponse GET /register/{agent_id} response.
+//
+// Examples: {"client_id":"agnt_6968b3984d1c238dbe7e2e29","grant_types":["urn:ietf:params:oauth:grant-type:jwt-bearer"],"status":"active","token_endpoint_auth_method":"private_key_jwt"}
 type RegistrationStatusResponse struct {
 	// ClientId ID of the agent, used as its OAuth client_id.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	ClientId string `json:"client_id"`
 
 	// GrantTypes Grant types the agent may use; always the JWT-bearer grant.
+	//
+	// Examples: ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
 	GrantTypes *[]string `json:"grant_types,omitempty"`
 
 	// Status Lifecycle status of the agent: `pending`, `active`, `rejected`, `disabled` or `archived`.
+	//
+	// Examples: active
 	Status string `json:"status"`
 
 	// TokenEndpointAuthMethod How the agent authenticates at the token endpoint; always `private_key_jwt`.
+	//
+	// Examples: private_key_jwt
 	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
 }
 
@@ -4657,14 +6514,22 @@ type RegistrationStatusResponse struct {
 // “client_id“ belongs to the form-encoded public-client arm (G11): the
 // secret-less client's lineage binding; ignored on the bearer-authenticated
 // JSON arm, where the platform identity scopes the revocation instead.
+//
+// Examples: {"client_id":"oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU","token":"rt_example-refresh-token","token_type_hint":"refresh_token"}
 type RevokeRequest struct {
 	// ClientId Public client's client_id, used on form-encoded requests; ignored on bearer-authenticated JSON requests.
+	//
+	// Examples: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
 	ClientId *string `json:"client_id,omitempty"`
 
 	// Token The token to revoke.
+	//
+	// Examples: rt_example-refresh-token
 	Token string `json:"token"`
 
 	// TokenTypeHint Optional hint, `access_token` or `refresh_token`; both types are checked regardless.
+	//
+	// Examples: refresh_token
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
 }
 
@@ -4673,12 +6538,18 @@ type RevokeRequest struct {
 // Examples: {"status":"ok","version":"1.0.0"}
 type RootHealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
+	//
+	// Examples: AWS Marketplace subscription is not active for this deployment; renew the subscription to restore service
 	Reason *string `json:"reason,omitempty"`
 
 	// Status `ok` while the process is serving requests. A metered marketplace deployment whose entitlement lapsed answers `not_entitled` (still HTTP 200, so orchestrators don't restart it).
+	//
+	// Examples: ok
 	Status string `json:"status"`
 
 	// Version Running Jentic One release. Absent on the `not_entitled` body.
+	//
+	// Examples: 1.0.0
 	Version *string `json:"version,omitempty"`
 }
 
@@ -4690,195 +6561,323 @@ type RootHealthResponse struct {
 // Examples: {"detail":"Not Found"}
 type RouteNotFoundResponse struct {
 	// Detail Always `Not Found`.
+	//
+	// Examples: Not Found
 	Detail string `json:"detail"`
 }
 
 // RuleSetAttachRequest Point a direct agent↔credential binding at a shared rule set.
+//
+// Examples: {"rule_set_id":"prs_6968b3987c22b63e87e79f05"}
 type RuleSetAttachRequest struct {
 	// RuleSetId Id (`prs_…`) of the rule set to attach.
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId string `json:"rule_set_id"`
 }
 
 // RuleSetCreateRequest Create a shared permission rule set (theme 5 phase 1, Q-04).
+//
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rules":[{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetCreateRequest struct {
 	// Description Optional free-text description of the set.
+	//
+	// Examples: Allows GET requests to the Stripe API; denies everything else.
 	Description *string `json:"description,omitempty"`
 
 	// Name Unique human-readable name.
+	//
+	// Examples: Stripe read-only
 	Name string `json:"name"`
 
 	// Rules Initial ordered rule list (first-match-wins, default-deny).
+	//
+	// Examples: [{"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules *[]PermissionRuleSchema `json:"rules,omitempty"`
 }
 
 // RuleSetListResponse Paginated list of rule sets.
+//
+// Examples: {"data":[{"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_count":2,"rule_set_id":"prs_6968b3987c22b63e87e79f05"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type RuleSetListResponse struct {
 	// Data The page of rule sets.
+	//
+	// Examples: [{"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_count":2,"rule_set_id":"prs_6968b3987c22b63e87e79f05"}]
 	Data []RuleSetSummaryResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
+//
+// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
+	//
+	// Examples: 3
 	BindingCount int `json:"binding_count"`
 
 	// CreatedAt When the rule set was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the rule set.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by,omitempty"`
 
 	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	//
+	// Examples: true
 	Curated bool `json:"curated"`
 
 	// Description Free-text description of the rule set; null if unset.
+	//
+	// Examples: Allows GET requests to the Stripe API; denies everything else.
 	Description *string `json:"description,omitempty"`
 
 	// Name Unique human-readable name of the rule set.
+	//
+	// Examples: Stripe read-only
 	Name string `json:"name"`
 
 	// RuleSetId Unique ID of the rule set (`prs_…`).
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId string `json:"rule_set_id"`
 
 	// Rules Ordered rule list (first-match-wins, default-deny).
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
 // RuleSetSummaryResponse Rule set list entry.
+//
+// Examples: {"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_count":2,"rule_set_id":"prs_6968b3987c22b63e87e79f05"}
 type RuleSetSummaryResponse struct {
 	// CreatedAt When the rule set was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CreatedBy ID of the actor that created the rule set.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	CreatedBy *string `json:"created_by,omitempty"`
 
 	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	//
+	// Examples: true
 	Curated bool `json:"curated"`
 
 	// Description Free-text description of the rule set; null if unset.
+	//
+	// Examples: Allows GET requests to the Stripe API; denies everything else.
 	Description *string `json:"description,omitempty"`
 
 	// Name Unique human-readable name of the rule set.
+	//
+	// Examples: Stripe read-only
 	Name string `json:"name"`
 
 	// RuleCount Number of rules in the set.
+	//
+	// Examples: 2
 	RuleCount int `json:"rule_count"`
 
 	// RuleSetId Unique ID of the rule set (`prs_…`).
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
 	RuleSetId string `json:"rule_set_id"`
 }
 
 // RuleSetUpdateRequest Rename or re-describe a rule set.
+//
+// Examples: {"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only"}
 type RuleSetUpdateRequest struct {
 	// Description New description; omit to leave unchanged.
+	//
+	// Examples: Allows GET requests to the Stripe API; denies everything else.
 	Description *string `json:"description,omitempty"`
 
 	// Name New unique name; omit to leave unchanged.
+	//
+	// Examples: Stripe read-only
 	Name *string `json:"name,omitempty"`
 }
 
 // RuntimeConfig Optional per-upstream-call overrides.
+//
+// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 type RuntimeConfig struct {
 	// Headers Header overrides for upstream calls.
+	//
+	// Examples: {"Stripe-Version":"2024-04-10"}
 	Headers *map[string]string `json:"headers,omitempty"`
 
 	// QueryParams Query-parameter overrides for upstream calls.
+	//
+	// Examples: {"locale":"en-GB"}
 	QueryParams *map[string]string `json:"query_params,omitempty"`
 }
 
 // SearchLinksResponse Hypermedia links for a search result row.
+//
+// Examples: {"inspect":"https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges"}
 type SearchLinksResponse struct {
 	// Inspect URL of the operation's full detail via `GET /inspect`.
+	//
+	// Examples: https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges
 	Inspect string `json:"inspect"`
 }
 
 // SearchRequest POST /search request body.
+//
+// Examples: {"apis":["stripe.com/stripe"],"cursor":"eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9","limit":10,"query":"list recent charges","revision_pins":{"stripe.com/stripe/2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}}
 type SearchRequest struct {
 	// Apis Restrict results to these APIs. Each entry is a 'vendor[/name[/version]]' identifier of an imported API (e.g. 'github-com/api-github-com/1.1.4'); vendor and name are normalized like ingest, so raw spellings such as 'stripe.com/api' also resolve. The legacy colon-separated form 'vendor[:name[:version]]' is also accepted.
+	//
+	// Examples: ["stripe.com/stripe"]
 	Apis *[]string `json:"apis,omitempty"`
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+	//
+	// Examples: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
 	Cursor *string `json:"cursor,omitempty"`
 
 	// Limit Maximum number of results to return (1-100).
+	//
+	// Examples: 10
 	Limit *int `json:"limit,omitempty"`
 
 	// Query Free-text search query; must not be empty.
+	//
+	// Examples: list recent charges
 	Query string `json:"query"`
 
 	// RevisionPins Pin specific APIs to a revision for this search. Keys are full 'vendor/name/version' identifiers (colon-separated also accepted); values are revision UUIDs.
+	//
+	// Examples: {"stripe.com/stripe/2024-04-10":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"}
 	RevisionPins *map[string]string `json:"revision_pins,omitempty"`
 }
 
 // SearchResponse Cursor-paginated search results page.
+//
+// Examples: {"data":[{"_links":{"inspect":"https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","relevance_score":0.87,"target":"GET:https://api.stripe.com/v1/charges","type":"operation","url":"https://api.stripe.com/v1/charges"}],"has_more":true,"next_cursor":"eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9"}
 type SearchResponse struct {
 	// Data The page of matching operations.
+	//
+	// Examples: [{"_links":{"inspect":"https://jentic.example.com/inspect?id=GET%20https%3A%2F%2Fapi.stripe.com%2Fv1%2Fcharges"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"description":"Returns a list of charges you've previously created, newest first.","method":"GET","name":"List all charges","operation_id":"op_f92d69f1621f381bce8aaff47053c61b069ffe34","relevance_score":0.87,"target":"GET:https://api.stripe.com/v1/charges","type":"operation","url":"https://api.stripe.com/v1/charges"}]
 	Data []OperationResultResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // SecuritySchemeFlowResponse A single OAuth2 flow within a security scheme.
+//
+// Examples: {"authorization_url":"https://connect.stripe.com/oauth/authorize","flow_type":"authorizationCode","refresh_url":"https://connect.stripe.com/oauth/token","scopes":{"read_only":"Read-only access","read_write":"Read and write access"},"token_url":"https://connect.stripe.com/oauth/token"}
 type SecuritySchemeFlowResponse struct {
 	// AuthorizationUrl Authorization endpoint URL; null if the flow has none.
+	//
+	// Examples: https://connect.stripe.com/oauth/authorize
 	AuthorizationUrl *string `json:"authorization_url,omitempty"`
 
 	// FlowType OAuth2 flow type (for example `authorizationCode` or `clientCredentials`).
+	//
+	// Examples: authorizationCode
 	FlowType string `json:"flow_type"`
 
 	// RefreshUrl Token refresh URL; null if the flow has none.
+	//
+	// Examples: https://connect.stripe.com/oauth/token
 	RefreshUrl *string `json:"refresh_url,omitempty"`
 
 	// Scopes Available scopes mapped to their descriptions.
+	//
+	// Examples: {"read_only":"Read-only access","read_write":"Read and write access"}
 	Scopes *map[string]string `json:"scopes,omitempty"`
 
 	// TokenUrl Token endpoint URL; null if the flow has none.
+	//
+	// Examples: https://connect.stripe.com/oauth/token
 	TokenUrl *string `json:"token_url,omitempty"`
 }
 
 // SecuritySchemeListResponse List of security schemes for an API's current revision.
+//
+// Examples: {"data":[{"bearer_format":"JWT","description":"Use your secret API key as the bearer token.","flows":[{"authorization_url":"https://connect.stripe.com/oauth/authorize","flow_type":"authorizationCode","refresh_url":"https://connect.stripe.com/oauth/token","scopes":{"read_only":"Read-only access","read_write":"Read and write access"},"token_url":"https://connect.stripe.com/oauth/token"}],"in_location":"header","name":"bearerAuth","open_id_connect_url":"https://accounts.example.com/.well-known/openid-configuration","param_name":"X-API-Key","scheme":"bearer","type":"http"}]}
 type SecuritySchemeListResponse struct {
 	// Data Security schemes declared by the API's current revision.
+	//
+	// Examples: [{"bearer_format":"JWT","description":"Use your secret API key as the bearer token.","flows":[{"authorization_url":"https://connect.stripe.com/oauth/authorize","flow_type":"authorizationCode","refresh_url":"https://connect.stripe.com/oauth/token","scopes":{"read_only":"Read-only access","read_write":"Read and write access"},"token_url":"https://connect.stripe.com/oauth/token"}],"in_location":"header","name":"bearerAuth","open_id_connect_url":"https://accounts.example.com/.well-known/openid-configuration","param_name":"X-API-Key","scheme":"bearer","type":"http"}]
 	Data []SecuritySchemeResponse `json:"data"`
 }
 
 // SecuritySchemeResponse Full security scheme detail for a revision.
+//
+// Examples: {"bearer_format":"JWT","description":"Use your secret API key as the bearer token.","flows":[{"authorization_url":"https://connect.stripe.com/oauth/authorize","flow_type":"authorizationCode","refresh_url":"https://connect.stripe.com/oauth/token","scopes":{"read_only":"Read-only access","read_write":"Read and write access"},"token_url":"https://connect.stripe.com/oauth/token"}],"in_location":"header","name":"bearerAuth","open_id_connect_url":"https://accounts.example.com/.well-known/openid-configuration","param_name":"X-API-Key","scheme":"bearer","type":"http"}
 type SecuritySchemeResponse struct {
 	// BearerFormat Hint for the bearer token format; null if not declared.
+	//
+	// Examples: JWT
 	BearerFormat *string `json:"bearer_format,omitempty"`
 
 	// Description Description of the scheme from the spec; null if none.
+	//
+	// Examples: Use your secret API key as the bearer token.
 	Description *string `json:"description,omitempty"`
 
 	// Flows OAuth2 flows declared by the scheme; empty for other types.
+	//
+	// Examples: [{"authorization_url":"https://connect.stripe.com/oauth/authorize","flow_type":"authorizationCode","refresh_url":"https://connect.stripe.com/oauth/token","scopes":{"read_only":"Read-only access","read_write":"Read and write access"},"token_url":"https://connect.stripe.com/oauth/token"}]
 	Flows *[]SecuritySchemeFlowResponse `json:"flows,omitempty"`
 
 	// InLocation Where an API key is sent (`header`, `query` or `cookie`); null for other types.
+	//
+	// Examples: header
 	InLocation *string `json:"in_location,omitempty"`
 
 	// Name Name of the security scheme as declared in the spec.
+	//
+	// Examples: bearerAuth
 	Name string `json:"name"`
 
 	// OpenIdConnectUrl OpenID Connect discovery URL; null unless `type` is `openIdConnect`.
+	//
+	// Examples: https://accounts.example.com/.well-known/openid-configuration
 	OpenIdConnectUrl *string `json:"open_id_connect_url,omitempty"`
 
 	// ParamName Name of the header, query or cookie parameter carrying the API key.
+	//
+	// Examples: X-API-Key
 	ParamName *string `json:"param_name,omitempty"`
 
 	// Scheme HTTP authentication scheme (for example `bearer`); null unless `type` is `http`.
+	//
+	// Examples: bearer
 	Scheme *string `json:"scheme,omitempty"`
 
 	// Type Security scheme type (for example `apiKey`, `http`, `oauth2` or `openIdConnect`).
+	//
+	// Examples: http
 	Type string `json:"type"`
 }
 
@@ -4889,374 +6888,622 @@ type SecuritySchemeResponse struct {
 // names/versions" wildcard, #775) — so they're optional here, unlike the strict
 // all-required “APIReference“. Shared so the auth service schema and the
 // “/me“ web schema use ONE model instead of two identical copies.
+//
+// Examples: {"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}
 type ServedApiRef struct {
 	// ApiName Name of the served API; null means every API of the vendor.
+	//
+	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
 	// ApiVendor Vendor of the served API.
+	//
+	// Examples: stripe.com
 	ApiVendor string `json:"api_vendor"`
 
 	// ApiVersion Version of the served API; null means every version.
+	//
+	// Examples: 2024-04-10
 	ApiVersion *string `json:"api_version,omitempty"`
 }
 
 // SetPermissionsRequest Request body for setting user permissions.
+//
+// Examples: {"permissions":["users:write","agents:read"]}
 type SetPermissionsRequest struct {
 	// Permissions Permissions to assign to the user; replaces the current assigned set.
+	//
+	// Examples: ["users:write","agents:read"]
 	Permissions []string `json:"permissions"`
 }
 
 // Sigv4CreateRequest Create request for sigv4 (AWS Signature V4) credentials.
+//
+// Examples: {"access_key_id":"AKIAIOSFODNN7EXAMPLE","api":{"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"aws_region":"us-east-1","aws_service":"execute-api","name":"Stripe live key","provider":"static","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"secret_access_key":"example-secret","server_variables":{"region":"eu"},"session_token":"example-secret","type":"sigv4"}
 type Sigv4CreateRequest struct {
 	// AccessKeyId AWS access key id (public identifier).
+	//
+	// Examples: AKIAIOSFODNN7EXAMPLE
 	AccessKeyId string `json:"access_key_id"`
 
 	// Api Loose (vendor, name, version) API identity tuple.
+	//
+	// Examples: {"catalog_api_id":"stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"}
 	Api APIReferenceRequest `json:"api"`
 
 	// AwsRegion Signing region, e.g. 'us-east-1'.
+	//
+	// Examples: us-east-1
 	AwsRegion string `json:"aws_region"`
 
 	// AwsService Signing service, e.g. 'aoss', 'execute-api', 's3'.
+	//
+	// Examples: execute-api
 	AwsService string `json:"aws_service"`
 
 	// Name Human-readable label for the credential.
+	//
+	// Examples: Stripe live key
 	Name string `json:"name"`
 
 	// Provider Credential provider; 'static' for stored secrets.
+	//
+	// Examples: static
 	Provider *string `json:"provider,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// SecretAccessKey AWS secret access key. Stored encrypted; never returned after create.
+	//
+	// Examples: example-secret
 	SecretAccessKey string `json:"secret_access_key"`
 
 	// ServerVariables OpenAPI server-variable values for URL template substitution (at most 20).
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// SessionToken Optional temporary-credential session token (STS). Expires; re-save when it does.
+	//
+	// Examples: example-secret
 	SessionToken *string `json:"session_token,omitempty"`
 
 	// Type Credential type; always `sigv4`.
+	//
+	// Examples: sigv4
 	Type Sigv4CreateRequestType `json:"type"`
 }
 
 // Sigv4CreateRequestType Credential type; always `sigv4`.
+//
+// Examples: sigv4
 type Sigv4CreateRequestType string
 
 // Sigv4UpdateRequest Update request for sigv4 credentials (key rotation / scope edit).
+//
+// Examples: {"access_key_id":"AKIAIOSFODNN7EXAMPLE","active":true,"aws_region":"us-east-1","aws_service":"execute-api","clear_session_token":false,"name":"Stripe live key","runtime_config":{"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}},"secret_access_key":"example-secret","server_variables":{"region":"eu"},"session_token":"example-secret","type":"sigv4"}
 type Sigv4UpdateRequest struct {
 	// AccessKeyId Replacement AWS access key ID; must be sent with secret_access_key.
+	//
+	// Examples: AKIAIOSFODNN7EXAMPLE
 	AccessKeyId *string `json:"access_key_id,omitempty"`
 
 	// Active Enable or disable the credential for injection; omit to leave unchanged.
+	//
+	// Examples: true
 	Active *bool `json:"active,omitempty"`
 
 	// AwsRegion Replacement signing region; omit to leave unchanged.
+	//
+	// Examples: us-east-1
 	AwsRegion *string `json:"aws_region,omitempty"`
 
 	// AwsService Replacement signing service; omit to leave unchanged.
+	//
+	// Examples: execute-api
 	AwsService *string `json:"aws_service,omitempty"`
 
 	// ClearSessionToken Remove the stored session token; takes precedence over session_token.
+	//
+	// Examples: false
 	ClearSessionToken *bool `json:"clear_session_token,omitempty"`
 
 	// Name New label for the credential; omit to leave unchanged.
+	//
+	// Examples: Stripe live key
 	Name *string `json:"name,omitempty"`
 
 	// RuntimeConfig Per-upstream-call overrides; reserved and not currently applied.
+	//
+	// Examples: {"headers":{"Stripe-Version":"2024-04-10"},"query_params":{"locale":"en-GB"}}
 	RuntimeConfig *RuntimeConfig `json:"runtime_config,omitempty"`
 
 	// SecretAccessKey Replacement AWS secret access key; must be sent with access_key_id.
+	//
+	// Examples: example-secret
 	SecretAccessKey *string `json:"secret_access_key,omitempty"`
 
 	// ServerVariables Replacement OpenAPI server-variable values; omit to leave unchanged.
+	//
+	// Examples: {"region":"eu"}
 	ServerVariables *map[string]string `json:"server_variables,omitempty"`
 
 	// SessionToken Replacement STS session token; omit to leave unchanged.
+	//
+	// Examples: example-secret
 	SessionToken *string `json:"session_token,omitempty"`
 
 	// Type Credential type; always `sigv4`.
+	//
+	// Examples: sigv4
 	Type Sigv4UpdateRequestType `json:"type"`
 }
 
 // Sigv4UpdateRequestType Credential type; always `sigv4`.
+//
+// Examples: sigv4
 type Sigv4UpdateRequestType string
 
 // TokenResponse Token endpoint success response.
+//
+// Examples: {"access_token":"at_example-access-token","expires_in":3600,"id_token":"example-id-token","refresh_token":"rt_example-refresh-token","scope":"apis:read capabilities:execute","token_type":"bearer"}
 type TokenResponse struct {
 	// AccessToken The access token to send as a bearer token.
+	//
+	// Examples: at_example-access-token
 	AccessToken string `json:"access_token"`
 
 	// ExpiresIn Lifetime of the access token, in seconds.
+	//
+	// Examples: 3600
 	ExpiresIn int `json:"expires_in"`
 
 	// IdToken OpenID Connect ID token; omitted when none was issued.
+	//
+	// Examples: example-id-token
 	IdToken *string `json:"id_token,omitempty"`
 
 	// RefreshToken Refresh token for obtaining new tokens; omitted when none was issued.
+	//
+	// Examples: rt_example-refresh-token
 	RefreshToken *string `json:"refresh_token,omitempty"`
 
 	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+	//
+	// Examples: apis:read capabilities:execute
 	Scope *string `json:"scope,omitempty"`
 
 	// TokenType Token type; always `bearer`.
+	//
+	// Examples: bearer
 	TokenType *string `json:"token_type,omitempty"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
+//
+// Examples: {"api_name":"stripe","api_vendor":"stripe.com","failed":12,"operation_id":"listCharges","total":342}
 type TopOperation struct {
 	// ApiName Name of the API the operation belongs to.
+	//
+	// Examples: stripe
 	ApiName string `json:"api_name"`
 
 	// ApiVendor Vendor of the API the operation belongs to.
+	//
+	// Examples: stripe.com
 	ApiVendor string `json:"api_vendor"`
 
 	// Failed Number of those executions that failed.
+	//
+	// Examples: 12
 	Failed int `json:"failed"`
 
 	// OperationId Identifier of the operation.
+	//
+	// Examples: listCharges
 	OperationId string `json:"operation_id"`
 
 	// Total Number of executions of the operation in the window.
+	//
+	// Examples: 342
 	Total int `json:"total"`
 }
 
 // UsageBucket Execution counts for a single time bucket.
+//
+// Examples: {"avg_ms":231.4,"failed":2,"success":40,"total":42,"ts":1767225600}
 type UsageBucket struct {
 	// AvgMs Mean execution duration in the bucket, in milliseconds.
+	//
+	// Examples: 231.4
 	AvgMs float32 `json:"avg_ms"`
 
 	// Failed Number of those executions that failed.
+	//
+	// Examples: 2
 	Failed int `json:"failed"`
 
 	// Success Number of those executions that completed.
+	//
+	// Examples: 40
 	Success int `json:"success"`
 
 	// Total Number of executions started in the bucket.
+	//
+	// Examples: 42
 	Total int `json:"total"`
 
 	// Ts Start of the bucket, in Unix epoch seconds.
+	//
+	// Examples: 1767225600
 	Ts int `json:"ts"`
 }
 
 // UsageResponse Full usage statistics response.
+//
+// Examples: {"bucket_seconds":86400,"buckets":[{"avg_ms":231.4,"failed":2,"success":40,"total":42,"ts":1767225600}],"group_by":"api","since":1767225600,"stats":{"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280},"top":[{"avg_ms":212.8,"failed":12,"key":"stripe.com/stripe","label":"Stripe","success":330,"total":342,"trend":[40,52,47,61,58,84]}],"until":1769903999}
 type UsageResponse struct {
 	// BucketSeconds Width of each entry in `buckets`, in seconds; chosen from the window length.
+	//
+	// Examples: 86400
 	BucketSeconds int `json:"bucket_seconds"`
 
 	// Buckets Execution counts per time bucket, oldest first; empty buckets are omitted.
+	//
+	// Examples: [{"avg_ms":231.4,"failed":2,"success":40,"total":42,"ts":1767225600}]
 	Buckets []UsageBucket `json:"buckets"`
 
 	// GroupBy Dimension the `top` rows are grouped by.
+	//
+	// Examples: api
 	GroupBy string `json:"group_by"`
 
 	// Since Start of the window, in Unix epoch seconds (inclusive).
+	//
+	// Examples: 1767225600
 	Since int `json:"since"`
 
 	// Stats Overall usage statistics for a time window.
+	//
+	// Examples: {"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280}
 	Stats UsageStatsBlock `json:"stats"`
 
 	// Top The entities with the most executions in the window, most first.
+	//
+	// Examples: [{"avg_ms":212.8,"failed":12,"key":"stripe.com/stripe","label":"Stripe","success":330,"total":342,"trend":[40,52,47,61,58,84]}]
 	Top []UsageTopRow `json:"top"`
 
 	// Until End of the window, in Unix epoch seconds (exclusive).
+	//
+	// Examples: 1769903999
 	Until int `json:"until"`
 }
 
 // UsageStatsBlock Overall usage statistics for a time window.
+//
+// Examples: {"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280}
 type UsageStatsBlock struct {
 	// ActiveNow Reserved count of in-flight executions; currently always 0.
+	//
+	// Examples: 0
 	ActiveNow int `json:"active_now"`
 
 	// AvgMs Mean execution duration in milliseconds; 0 when there were no executions.
+	//
+	// Examples: 245.6
 	AvgMs float32 `json:"avg_ms"`
 
 	// Failed Number of those executions that failed.
+	//
+	// Examples: 80
 	Failed int `json:"failed"`
 
 	// P50Ms Median execution duration in milliseconds; null when not available.
+	//
+	// Examples: 180
 	P50Ms *float32 `json:"p50_ms"`
 
 	// P95Ms 95th-percentile execution duration in milliseconds; null when not available.
+	//
+	// Examples: 720
 	P95Ms *float32 `json:"p95_ms"`
 
 	// Pending Reserved count of pending executions; currently always 0.
+	//
+	// Examples: 0
 	Pending int `json:"pending"`
 
 	// Success Number of those executions that completed.
+	//
+	// Examples: 1200
 	Success int `json:"success"`
 
 	// Total Number of executions started in the window.
+	//
+	// Examples: 1280
 	Total int `json:"total"`
 }
 
 // UsageTopRow Top entity row with sparkline trend.
+//
+// Examples: {"avg_ms":212.8,"failed":12,"key":"stripe.com/stripe","label":"Stripe","success":330,"total":342,"trend":[40,52,47,61,58,84]}
 type UsageTopRow struct {
 	// AvgMs Mean execution duration for this entity, in milliseconds.
+	//
+	// Examples: 212.8
 	AvgMs float32 `json:"avg_ms"`
 
 	// Failed Number of those executions that failed.
+	//
+	// Examples: 12
 	Failed int `json:"failed"`
 
 	// Key Grouping key for the row: `vendor/name` for `api`, the toolkit or credential ID, or `actor_type/actor_id` for `agent`; `unknown` when the value is missing.
+	//
+	// Examples: stripe.com/stripe
 	Key string `json:"key"`
 
 	// Label Display label for the row.
+	//
+	// Examples: Stripe
 	Label string `json:"label"`
 
 	// Success Number of those executions that completed.
+	//
+	// Examples: 330
 	Success int `json:"success"`
 
 	// Total Number of executions for this entity in the window.
+	//
+	// Examples: 342
 	Total int `json:"total"`
 
 	// Trend Execution counts for this entity across equal segments of the window, oldest first.
+	//
+	// Examples: [40,52,47,61,58,84]
 	Trend []int `json:"trend"`
 }
 
 // UserCreateRequest Request body for creating a new user.
+//
+// Examples: {"email":"ada@example.com","first_name":"Ada","last_name":"Lovelace","permissions":["users:read","agents:read"]}
 type UserCreateRequest struct {
 	// Email Email address of the new user; must be unique.
+	//
+	// Examples: ada@example.com
 	Email string `json:"email"`
 
 	// FirstName First name of the new user.
+	//
+	// Examples: Ada
 	FirstName string `json:"first_name"`
 
 	// LastName Last name of the new user.
+	//
+	// Examples: Lovelace
 	LastName string `json:"last_name"`
 
 	// Permissions Permissions to assign to the new user; the caller may only grant permissions they hold. Defaults to none.
+	//
+	// Examples: ["users:read","agents:read"]
 	Permissions *[]string `json:"permissions,omitempty"`
 }
 
 // UserCreatedResponse Response after user creation including invite token.
+//
+// Examples: {"invite_expires_at":"2026-01-22T09:30:00Z","invite_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","user":{"active":true,"auth_provider":"external","created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","external_subject_id":"auth0|6568b3984d1c238dbe7e2e29","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","invite_state":"accepted","last_name":"Lovelace","must_change_password":false,"name":"Ada Lovelace","permissions":{"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]},"updated_at":"2026-01-20T14:05:00Z"}}
 type UserCreatedResponse struct {
 	// InviteExpiresAt When the invite token expires (RFC 3339).
+	//
+	// Examples: 2026-01-22T09:30:00Z
 	InviteExpiresAt time.Time `json:"invite_expires_at"`
 
 	// InviteToken One-time invite token the user redeems to set a password.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	InviteToken string `json:"invite_token"`
 
 	// User User representation in API responses.
+	//
+	// Examples: {"active":true,"auth_provider":"external","created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","external_subject_id":"auth0|6568b3984d1c238dbe7e2e29","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","invite_state":"accepted","last_name":"Lovelace","must_change_password":false,"name":"Ada Lovelace","permissions":{"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]},"updated_at":"2026-01-20T14:05:00Z"}
 	User UserResponse `json:"user"`
 }
 
 // UserListResponse Paginated list of users.
+//
+// Examples: {"data":[{"active":true,"auth_provider":"external","created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","external_subject_id":"auth0|6568b3984d1c238dbe7e2e29","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","invite_state":"accepted","last_name":"Lovelace","must_change_password":false,"name":"Ada Lovelace","permissions":{"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]},"updated_at":"2026-01-20T14:05:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type UserListResponse struct {
 	// Data The page of users.
+	//
+	// Examples: [{"active":true,"auth_provider":"external","created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","external_subject_id":"auth0|6568b3984d1c238dbe7e2e29","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","invite_state":"accepted","last_name":"Lovelace","must_change_password":false,"name":"Ada Lovelace","permissions":{"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]},"updated_at":"2026-01-20T14:05:00Z"}]
 	Data []UserResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
 	HasMore bool `json:"has_more"`
 
 	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // UserResponse User representation in API responses.
+//
+// Examples: {"active":true,"auth_provider":"external","created_at":"2026-01-15T09:30:00Z","email":"ada@example.com","external_subject_id":"auth0|6568b3984d1c238dbe7e2e29","first_name":"Ada","id":"usr_6968b3987ee4c3ec0b4ee3b9","invite_state":"accepted","last_name":"Lovelace","must_change_password":false,"name":"Ada Lovelace","permissions":{"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]},"updated_at":"2026-01-20T14:05:00Z"}
 type UserResponse struct {
 	// Active Whether the user account is enabled.
+	//
+	// Examples: true
 	Active bool `json:"active"`
 
 	// AuthProvider How the user authenticates: `local` (password) or `external`.
+	//
+	// Examples: external
 	AuthProvider string `json:"auth_provider"`
 
 	// CreatedAt When the user was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// Email Email address of the user.
+	//
+	// Examples: ada@example.com
 	Email string `json:"email"`
 
 	// ExternalSubjectId Subject ID from the external identity provider; null for local users.
+	//
+	// Examples: auth0|6568b3984d1c238dbe7e2e29
 	ExternalSubjectId *string `json:"external_subject_id,omitempty"`
 
 	// FirstName First name of the user.
+	//
+	// Examples: Ada
 	FirstName string `json:"first_name"`
 
 	// Id Unique ID of the user.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	Id string `json:"id"`
 
 	// InviteState Invitation state: `pending`, `redeemed`, `accepted` or `expired`. `expired` means a pending invite whose token has lapsed and should be reissued.
+	//
+	// Examples: accepted
 	InviteState string `json:"invite_state"`
 
 	// LastName Last name of the user.
+	//
+	// Examples: Lovelace
 	LastName string `json:"last_name"`
 
 	// MustChangePassword Whether the user must change their password at next use.
+	//
+	// Examples: false
 	MustChangePassword bool `json:"must_change_password"`
 
 	// Name Full display name: first name and last name.
+	//
+	// Examples: Ada Lovelace
 	Name string `json:"name"`
 
 	// Permissions Structured permissions view: assigned + effective.
+	//
+	// Examples: {"assigned":["users:write","agents:read"],"effective":[{"implied_by":"users:write","name":"users:read"}]}
 	Permissions Permissions `json:"permissions"`
 
 	// UpdatedAt When the user was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-20T14:05:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // UserUpdateRequest Request body for updating a user.
+//
+// Examples: {"email":"ada.lovelace@example.com","first_name":"Ada","last_name":"Lovelace"}
 type UserUpdateRequest struct {
 	// Email New email address; must be unique. Null means no change.
+	//
+	// Examples: ada.lovelace@example.com
 	Email *string `json:"email,omitempty"`
 
 	// FirstName New first name; null means no change.
+	//
+	// Examples: Ada
 	FirstName *string `json:"first_name,omitempty"`
 
 	// LastName New last name; null means no change.
+	//
+	// Examples: Lovelace
 	LastName *string `json:"last_name,omitempty"`
 }
 
 // VendorListResponse The vendors the caller can connect a credential for.
+//
+// Examples: {"data":[{"catalog_api_id":"github.com/api.github.com","display_name":"GitHub","entry_id":"oar_6968b39821e5f89a6975f501","flow_kinds":["authorization_code"],"key":"github","name":"MyOrg GitHub","registration_id":"oar_6968b39821e5f89a6975f501","source":"db","vendor":"github.com/api.github.com"}]}
 type VendorListResponse struct {
 	// Data The connectable vendors.
+	//
+	// Examples: [{"catalog_api_id":"github.com/api.github.com","display_name":"GitHub","entry_id":"oar_6968b39821e5f89a6975f501","flow_kinds":["authorization_code"],"key":"github","name":"MyOrg GitHub","registration_id":"oar_6968b39821e5f89a6975f501","source":"db","vendor":"github.com/api.github.com"}]
 	Data []VendorSummaryResponse `json:"data"`
 }
 
 // VendorSummaryResponse A vendor, or one admin registration for it, that the caller can connect to.
+//
+// Examples: {"catalog_api_id":"github.com/api.github.com","display_name":"GitHub","entry_id":"oar_6968b39821e5f89a6975f501","flow_kinds":["authorization_code"],"key":"github","name":"MyOrg GitHub","registration_id":"oar_6968b39821e5f89a6975f501","source":"db","vendor":"github.com/api.github.com"}
 type VendorSummaryResponse struct {
 	// CatalogApiId Catalog API (`<domain>/<sub>`) the registration signs in to; null for platform-shipped vendors.
+	//
+	// Examples: github.com/api.github.com
 	CatalogApiId *string `json:"catalog_api_id,omitempty"`
 
 	// DisplayName Vendor's display name (e.g. 'Gmail').
+	//
+	// Examples: GitHub
 	DisplayName string `json:"display_name"`
 
 	// EntryId Stable per-row key: the registration ID for admin registrations, else the vendor key.
+	//
+	// Examples: oar_6968b39821e5f89a6975f501
 	EntryId string `json:"entry_id"`
 
 	// FlowKinds OAuth flow kinds this row supports (`authorization_code`, `device_authorization`).
+	//
+	// Examples: ["authorization_code"]
 	FlowKinds []string `json:"flow_kinds"`
 
 	// Key Vendor registry key shared by every registration for the vendor.
+	//
+	// Examples: github
 	Key string `json:"key"`
 
 	// Name Label for this row: the registration name for admin registrations, else the display name.
+	//
+	// Examples: MyOrg GitHub
 	Name string `json:"name"`
 
 	// RegistrationId ID of the admin OAuth app registration behind this row; null for platform-shipped vendors.
+	//
+	// Examples: oar_6968b39821e5f89a6975f501
 	RegistrationId *string `json:"registration_id,omitempty"`
 
 	// Source Where the row came from: `db` for an admin registration, `config` for a platform-shipped vendor.
+	//
+	// Examples: db
 	Source VendorSummaryResponseSource `json:"source"`
 
 	// Vendor Fully-qualified vendor ID (`<host>/<api-id>`) when known; otherwise the vendor key.
+	//
+	// Examples: github.com/api.github.com
 	Vendor string `json:"vendor"`
 }
 
 // VendorSummaryResponseSource Where the row came from: `db` for an admin registration, `config` for a platform-shipped vendor.
+//
+// Examples: db
 type VendorSummaryResponseSource string
 
 // VersionResponse The running app version and the latest release known to this backend.
+//
+// Examples: {"current":"0.42.2","latest":"0.43.0","update_available":true}
 type VersionResponse struct {
 	// Current The version of jentic-one currently running on this backend.
+	//
+	// Examples: 0.42.2
 	Current string `json:"current"`
 
 	// Latest The latest published release of jentic-one, without a leading 'v'. Null when the backend can't determine it (update check disabled, air-gapped, a remote backend, or GitHub was unreachable).
+	//
+	// Examples: 0.43.0
 	Latest *string `json:"latest,omitempty"`
 
 	// UpdateAvailable True when `latest` is a newer release than `current`. Matches the verdict `jenticctl update` would print.
+	//
+	// Examples: true
 	UpdateAvailable bool `json:"update_available"`
 }
 
@@ -5443,36 +7690,6 @@ type ListAuditEntriesParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// AuthorizeEndpointParams defines parameters for AuthorizeEndpoint.
-type AuthorizeEndpointParams struct {
-	// ResponseType OAuth response type; only `code` is supported.
-	ResponseType string `form:"response_type" json:"response_type"`
-
-	// ClientId Client ID of the application requesting authorization.
-	ClientId string `form:"client_id" json:"client_id"`
-
-	// RedirectUri Where to send the result; must be a redirect URI allowed for the client.
-	RedirectUri string `form:"redirect_uri" json:"redirect_uri"`
-
-	// CodeChallenge PKCE code challenge derived from the client's code verifier.
-	CodeChallenge string `form:"code_challenge" json:"code_challenge"`
-
-	// CodeChallengeMethod PKCE challenge method; only `S256` is supported.
-	CodeChallengeMethod string `form:"code_challenge_method" json:"code_challenge_method"`
-
-	// Scope Space-separated scopes requested; must stay within the client's allowed scopes.
-	Scope *string `form:"scope,omitempty" json:"scope,omitempty"`
-
-	// State Opaque client value returned unchanged on the redirect back to the client.
-	State *string `form:"state,omitempty" json:"state,omitempty"`
-
-	// Nonce OpenID Connect nonce to bind the ID token to the client's session.
-	Nonce *string `form:"nonce,omitempty" json:"nonce,omitempty"`
-
-	// Sc Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
-	Sc *string `form:"sc,omitempty" json:"sc,omitempty"`
-}
-
 // ListCatalogParams defines parameters for ListCatalog.
 type ListCatalogParams struct {
 	// Q Search text matched against entry IDs; results are ranked by match quality.
@@ -5577,18 +7794,6 @@ type ListCredentialsParams struct {
 // CreateCredentialJSONBody defines parameters for CreateCredential.
 type CreateCredentialJSONBody struct {
 	union json.RawMessage
-}
-
-// OauthCallbackParams defines parameters for OauthCallback.
-type OauthCallbackParams struct {
-	// Code Authorization code issued by the identity provider.
-	Code *string `form:"code,omitempty" json:"code,omitempty"`
-
-	// State Signed state value issued when the connect flow began.
-	State *string `form:"state,omitempty" json:"state,omitempty"`
-
-	// Error OAuth error code from the identity provider when authorization failed.
-	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
 // UpdateCredentialJSONBody defines parameters for UpdateCredential.
@@ -5767,12 +7972,6 @@ type ListJobsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// LoginPageParams defines parameters for LoginPage.
-type LoginPageParams struct {
-	// Ls Signed authorization-flow state (carry-through token)
-	Ls string `form:"ls" json:"ls"`
-}
-
 // GetMe200JSONResponseBody defines parameters for GetMe.
 type GetMe200JSONResponseBody struct {
 	union json.RawMessage
@@ -5877,21 +8076,6 @@ type CreateOauthAppRegistrationJSONBody struct {
 type ApprovalStatusEndpointParams struct {
 	// St Signed approval-state blob minted by /authorize
 	St string `form:"st" json:"st"`
-}
-
-// AuthorizeOauthCallbackParams defines parameters for AuthorizeOauthCallback.
-type AuthorizeOauthCallbackParams struct {
-	// Code Authorization code issued by the external identity provider.
-	Code string `form:"code" json:"code"`
-
-	// State Signed authorization-flow state that `/authorize` sent to the provider.
-	State string `form:"state" json:"state"`
-}
-
-// ConsentPageParams defines parameters for ConsentPage.
-type ConsentPageParams struct {
-	// Ch Opaque consent-flow handle
-	Ch string `form:"ch" json:"ch"`
 }
 
 // ConsentAgentStatusParams defines parameters for ConsentAgentStatus.
@@ -6050,9 +8234,6 @@ type DecideHeldExecutionJSONRequestBody = DecideHeldExecutionRequest
 // IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
 type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
 
-// LoginSubmitFormdataRequestBody defines body for LoginSubmit for application/x-www-form-urlencoded ContentType.
-type LoginSubmitFormdataRequestBody = BodyLoginSubmit
-
 // ReportMcpConfigRegistrationJSONRequestBody defines body for ReportMcpConfigRegistration for application/json ContentType.
 type ReportMcpConfigRegistrationJSONRequestBody = McpConfigRegistrationRequest
 
@@ -6077,9 +8258,6 @@ type RegisterOauthClientEndpointJSONRequestBody = OAuthClientRegistrationRequest
 // ApprovalDecisionEndpointJSONRequestBody defines body for ApprovalDecisionEndpoint for application/json ContentType.
 type ApprovalDecisionEndpointJSONRequestBody = OAuthApprovalDecisionRequest
 
-// ConsentSubmitFormdataRequestBody defines body for ConsentSubmit for application/x-www-form-urlencoded ContentType.
-type ConsentSubmitFormdataRequestBody = BodyConsentSubmit
-
 // ConsentAgentCreateFormdataRequestBody defines body for ConsentAgentCreate for application/x-www-form-urlencoded ContentType.
 type ConsentAgentCreateFormdataRequestBody = BodyConsentAgentCreate
 
@@ -6094,9 +8272,6 @@ type RevokeEndpointJSONRequestBody = RevokeRequest
 
 // RevokeEndpointFormdataRequestBody defines body for RevokeEndpoint for application/x-www-form-urlencoded ContentType.
 type RevokeEndpointFormdataRequestBody = RevokeRequest
-
-// SessionContinueEndpointJSONRequestBody defines body for SessionContinueEndpoint for application/json ContentType.
-type SessionContinueEndpointJSONRequestBody = OAuthSessionContinueRequest
 
 // TokenEndpointJSONRequestBody defines body for TokenEndpoint for application/json ContentType.
 type TokenEndpointJSONRequestBody TokenEndpointJSONBody
@@ -6248,6 +8423,10 @@ func (t ConfirmConnectSessionJSONBody) AsOAuthConfirmSessionRequest() (OAuthConf
 // FromOAuthConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided OAuthConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromOAuthConfirmSessionRequest(v OAuthConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"oauth"}`))
 	t.union = b
 	return err
 }
@@ -6255,6 +8434,10 @@ func (t *ConfirmConnectSessionJSONBody) FromOAuthConfirmSessionRequest(v OAuthCo
 // MergeOAuthConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided OAuthConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeOAuthConfirmSessionRequest(v OAuthConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"oauth"}`))
 	if err != nil {
 		return err
 	}
@@ -6274,6 +8457,10 @@ func (t ConfirmConnectSessionJSONBody) AsApiKeyConfirmSessionRequest() (ApiKeyCo
 // FromApiKeyConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ApiKeyConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromApiKeyConfirmSessionRequest(v ApiKeyConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"api_key"}`))
 	t.union = b
 	return err
 }
@@ -6281,6 +8468,10 @@ func (t *ConfirmConnectSessionJSONBody) FromApiKeyConfirmSessionRequest(v ApiKey
 // MergeApiKeyConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ApiKeyConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeApiKeyConfirmSessionRequest(v ApiKeyConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"api_key"}`))
 	if err != nil {
 		return err
 	}
@@ -6300,6 +8491,10 @@ func (t ConfirmConnectSessionJSONBody) AsBearerConfirmSessionRequest() (BearerCo
 // FromBearerConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided BearerConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromBearerConfirmSessionRequest(v BearerConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"bearer"}`))
 	t.union = b
 	return err
 }
@@ -6307,6 +8502,10 @@ func (t *ConfirmConnectSessionJSONBody) FromBearerConfirmSessionRequest(v Bearer
 // MergeBearerConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided BearerConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeBearerConfirmSessionRequest(v BearerConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"bearer"}`))
 	if err != nil {
 		return err
 	}
@@ -6326,6 +8525,10 @@ func (t ConfirmConnectSessionJSONBody) AsBasicConfirmSessionRequest() (BasicConf
 // FromBasicConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided BasicConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromBasicConfirmSessionRequest(v BasicConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"basic"}`))
 	t.union = b
 	return err
 }
@@ -6333,6 +8536,10 @@ func (t *ConfirmConnectSessionJSONBody) FromBasicConfirmSessionRequest(v BasicCo
 // MergeBasicConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided BasicConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeBasicConfirmSessionRequest(v BasicConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"basic"}`))
 	if err != nil {
 		return err
 	}
@@ -6352,6 +8559,10 @@ func (t ConfirmConnectSessionJSONBody) AsOwnOAuthClientConfirmSessionRequest() (
 // FromOwnOAuthClientConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided OwnOAuthClientConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromOwnOAuthClientConfirmSessionRequest(v OwnOAuthClientConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"own_oauth_client"}`))
 	t.union = b
 	return err
 }
@@ -6359,6 +8570,10 @@ func (t *ConfirmConnectSessionJSONBody) FromOwnOAuthClientConfirmSessionRequest(
 // MergeOwnOAuthClientConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided OwnOAuthClientConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeOwnOAuthClientConfirmSessionRequest(v OwnOAuthClientConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"own_oauth_client"}`))
 	if err != nil {
 		return err
 	}
@@ -6378,6 +8593,10 @@ func (t ConfirmConnectSessionJSONBody) AsExistingCredentialConfirmSessionRequest
 // FromExistingCredentialConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ExistingCredentialConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromExistingCredentialConfirmSessionRequest(v ExistingCredentialConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"existing_credential"}`))
 	t.union = b
 	return err
 }
@@ -6385,6 +8604,10 @@ func (t *ConfirmConnectSessionJSONBody) FromExistingCredentialConfirmSessionRequ
 // MergeExistingCredentialConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ExistingCredentialConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeExistingCredentialConfirmSessionRequest(v ExistingCredentialConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"existing_credential"}`))
 	if err != nil {
 		return err
 	}
@@ -6404,6 +8627,10 @@ func (t ConfirmConnectSessionJSONBody) AsReauthorizeConfirmSessionRequest() (Rea
 // FromReauthorizeConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ReauthorizeConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
 	t.union = b
 	return err
 }
@@ -6414,10 +8641,47 @@ func (t *ConfirmConnectSessionJSONBody) MergeReauthorizeConfirmSessionRequest(v 
 	if err != nil {
 		return err
 	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	if err != nil {
+		return err
+	}
 
 	merged, err := runtime.JSONMerge(t.union, b)
 	t.union = merged
 	return err
+}
+
+func (t ConfirmConnectSessionJSONBody) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ConfirmConnectSessionJSONBody) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "api_key":
+		return t.AsApiKeyConfirmSessionRequest()
+	case "basic":
+		return t.AsBasicConfirmSessionRequest()
+	case "bearer":
+		return t.AsBearerConfirmSessionRequest()
+	case "existing_credential":
+		return t.AsExistingCredentialConfirmSessionRequest()
+	case "oauth":
+		return t.AsOAuthConfirmSessionRequest()
+	case "own_oauth_client":
+		return t.AsOwnOAuthClientConfirmSessionRequest()
+	case "reauthorize":
+		return t.AsReauthorizeConfirmSessionRequest()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
 }
 
 func (t ConfirmConnectSessionJSONBody) MarshalJSON() ([]byte, error) {
@@ -7159,63 +9423,6 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
-
-	// Jwks JSON Web Key Set
-	//
-	// Return the JWKS document with the active public signing keys (ES256).
-	//
-	// Corresponds with GET /.well-known/jwks.json (the `Jwks` operationId).
-	Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// OauthAuthorizationServer OAuth authorization server metadata
-	//
-	// Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms).
-	//
-	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
-	OauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// McpOauthAuthorizationServer Get OAuth authorization server metadata for MCP clients
-	//
-	// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
-	//
-	// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
-	// — the URL an MCP client derives from the protected-resource document
-	// (RFC 8414 §3.1). It lists the authorization, token and revocation
-	// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
-	// the MCP tool scopes, and the public client profile: no client secret
-	// (`none`) with PKCE `S256`. It differs from the root
-	// `/.well-known/oauth-authorization-server` document, whose
-	// `registration_endpoint` is the agent `/register`. Returns 404 when
-	// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-	//
-	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
-	McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// McpOauthProtectedResourceRootAlias Get MCP protected resource metadata (root fallback)
-	//
-	// Serve the MCP protected-resource document at the root well-known path.
-	//
-	// Returns the same RFC 9728 body as
-	// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
-	// its authorization server, and the MCP tool scopes. It exists for clients
-	// (such as Claude Code) that probe this root path instead of following the
-	// `resource_metadata` pointer in a 401. That is safe while this deployment
-	// has exactly one OAuth-protected resource. Returns 404 when interactive
-	// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-	//
-	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
-	McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
-	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp`.
-	//
-	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
-	// same body is also served at the root well-known path for clients that
-	// ignore the 401's `resource_metadata` pointer.
-	//
-	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
-	McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListActors List users and agents
 	//
@@ -8204,17 +10411,6 @@ type ClientInterface interface {
 	// Corresponds with GET /audit/{audit_id} (the `GetAuditEntry` operationId).
 	GetAuditEntry(ctx context.Context, auditId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthHealth Auth health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Corresponds with GET /auth/health (the `AuthHealth` operationId).
-	AuthHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// AuthIdpDescriptor External IdP login descriptor
 	//
 	// Public capability hint: whether IdP login is enabled, and which provider.
@@ -8257,16 +10453,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeEndpoint Authorize Endpoint
-	//
-	// RFC 6749 Authorization endpoint with PKCE (S256 only).
-	//
-	// If an external IdP is configured, redirects to the upstream provider.
-	// Otherwise returns an error (direct login requires a separate credential exchange).
-	//
-	// Corresponds with GET /authorize (the `AuthorizeEndpoint` operationId).
-	AuthorizeEndpoint(ctx context.Context, params *AuthorizeEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCatalog List Catalog
 	//
@@ -8474,17 +10660,6 @@ type ClientInterface interface {
 	// Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
 	RejectConnectSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ControlHealth Control health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Corresponds with GET /control/health (the `ControlHealth` operationId).
-	ControlHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListCredentials List credentials
 	//
 	// List credentials with cursor-based pagination.
@@ -8509,32 +10684,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /credentials (the `CreateCredential` operationId).
 	CreateCredential(ctx context.Context, body CreateCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// OauthCallback OAuth connect callback
-	//
-	// Handle the OAuth callback from the IdP.
-	//
-	// This endpoint is intentionally unauthenticated — it receives redirects
-	// from external IdPs where the user has no session cookie. Security
-	// binding is provided by the signed, time-limited state JWT which ties
-	// the callback to a specific credential and caller.
-	//
-	// Redirects the popup the SPA opened to a public SPA route
-	// (``/app/oauth/connected``) that owns the user-facing "you can close this"
-	// experience and self-closes. Two variants, distinguished only by a coarse
-	// ``status`` query param:
-	//
-	//   * Success: ``?status=ok``.
-	//   * Failure: ``?status=error`` — no protocol or provider detail is
-	//     exposed in the redirect URL.
-	//
-	// The parent SPA still learns the real outcome by polling
-	// ``GET /credentials/{id}`` — never from this redirect. The actual cause
-	// (missing state, connect failure, provider error, etc.) is recorded via
-	// structured logging for operators.
-	//
-	// Corresponds with GET /credentials/oauth/callback (the `OauthCallback` operationId).
-	OauthCallback(ctx context.Context, params *OauthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListProviders List credential providers
 	//
@@ -8968,63 +11117,6 @@ type ClientInterface interface {
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// LoginPage Local-account login form (authorization flow)
-	//
-	// Render the local-account login form for an in-flight ``/authorize`` request.
-	//
-	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
-	// expired, forged, or wrong-purpose token never gets a form — re-checks the
-	// D7 client gate (a client denied or deactivated while the user holds the
-	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
-	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
-	//
-	// Corresponds with GET /login (the `LoginPage` operationId).
-	LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// LoginSubmitWithBody Local-account login submit (authorization flow)
-	//
-	// Authenticate the local account and rejoin the authorization flow.
-	//
-	// Success never mints a JWT — it flows straight into code issuance (platform
-	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins, and burns the single-use ``ls``.
-	// Credential failures re-render the form with one generic message: lockout
-	// state, unknown email, and wrong password are indistinguishable (no
-	// user-enumeration response oracle), while the shared
-	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold. An account flagged
-	// ``must_change_password`` authenticates but is told to rotate via the UI
-	// first — the OAuth plane must not hand a fully-scoped token to a
-	// temporary-password principal the UI would have boxed into
-	// change-password-only.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /login (the `LoginSubmit` operationId).
-	LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
-	//
-	// Authenticate the local account and rejoin the authorization flow.
-	//
-	// Success never mints a JWT — it flows straight into code issuance (platform
-	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins, and burns the single-use ``ls``.
-	// Credential failures re-render the form with one generic message: lockout
-	// state, unknown email, and wrong password are indistinguishable (no
-	// user-enumeration response oracle), while the shared
-	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold. An account flagged
-	// ``must_change_password`` authenticates but is told to rotate via the UI
-	// first — the OAuth plane must not hand a fully-scoped token to a
-	// temporary-password principal the UI would have boxed into
-	// change-password-only.
-	//
-	// Takes a body of the `application/x-www-form-urlencoded` content type.
-	//
-	// Corresponds with POST /login (the `LoginSubmit` operationId).
-	LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ReportMcpConfigRegistrationWithBody Report MCP config registration
 	//
 	// Record that an MCP server entry was written for an agent runtime.
@@ -9348,58 +11440,6 @@ type ClientInterface interface {
 	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
 	ApprovalStatusEndpoint(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeOauthCallback Authorize Oauth Callback
-	//
-	// External IdP callback — exchanges upstream code and issues platform auth code.
-	//
-	// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
-	AuthorizeOauthCallback(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ConsentPage Consent Page
-	//
-	// Display the OAuth consent screen.
-	//
-	// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
-	ConsentPage(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ConsentSubmitWithBody Consent Submit
-	//
-	// Process the consent form submission. Mints the auth code only on approval.
-	//
-	// ``consent_token`` is the opaque handle emitted by the callback. It never
-	// leaves the state backend as anything more than an ID — the actual consent
-	// parameters (user_id, email, scopes, redirect_uri) live server-side and
-	// can't be tampered with or captured from browser history/proxy logs.
-	//
-	// ``agent_id`` is posted only by the agent-picker variant
-	// (``consent_model='agent'`` clients); it is validated and the scope math
-	// recomputed entirely server-side — the browser's selection is never
-	// trusted.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-	ConsentSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ConsentSubmitWithFormdataBody Consent Submit
-	//
-	// Process the consent form submission. Mints the auth code only on approval.
-	//
-	// ``consent_token`` is the opaque handle emitted by the callback. It never
-	// leaves the state backend as anything more than an ID — the actual consent
-	// parameters (user_id, email, scopes, redirect_uri) live server-side and
-	// can't be tampered with or captured from browser history/proxy logs.
-	//
-	// ``agent_id`` is posted only by the agent-picker variant
-	// (``consent_model='agent'`` clients); it is validated and the scope math
-	// recomputed entirely server-side — the browser's selection is never
-	// trusted.
-	//
-	// Takes a body of the `application/x-www-form-urlencoded` content type.
-	//
-	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-	ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 	//
 	// Create the consenting user's first agent from the zero-agents consent page (P4).
@@ -9657,60 +11697,6 @@ type ClientInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
-	//
-	// Rung 1 of the /authorize identity ladder: reuse the platform session.
-	//
-	// The login page's script posts the pending authorize state (the ``ls``
-	// carry-through token) with the SPA's bearer token in the Authorization
-	// header — no cookies, no ambient credentials, so a cross-site form cannot
-	// drive it (same CSRF posture as the consent POST and the inline approval
-	// decision). The platform token is validated by the standard auth
-	// dependency (users only), and the ``active`` / ``must_change_password``
-	// fences are re-checked with a LIVE user-row read — not the token's baked
-	// claims — matching rung 3's ``password_rotation_required`` posture, so an
-	// admin-forced reset fences the exchange immediately even while pre-reset
-	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-	// success the response carries a relative ``/authorize`` resume URL bearing
-	// a short-TTL, ``session``-purpose continuation blob that pins THIS
-	// caller's ``user_id`` — the identity is fixed at exchange time, before the
-	// consent page renders it with its "Not you?" escape.
-	//
-	// Every failure after authentication is the same generic 400: an invalid
-	// blob must not let the caller learn anything about the client or the flow.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-	SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
-	//
-	// Rung 1 of the /authorize identity ladder: reuse the platform session.
-	//
-	// The login page's script posts the pending authorize state (the ``ls``
-	// carry-through token) with the SPA's bearer token in the Authorization
-	// header — no cookies, no ambient credentials, so a cross-site form cannot
-	// drive it (same CSRF posture as the consent POST and the inline approval
-	// decision). The platform token is validated by the standard auth
-	// dependency (users only), and the ``active`` / ``must_change_password``
-	// fences are re-checked with a LIVE user-row read — not the token's baked
-	// claims — matching rung 3's ``password_rotation_required`` posture, so an
-	// admin-forced reset fences the exchange immediately even while pre-reset
-	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-	// success the response carries a relative ``/authorize`` resume URL bearing
-	// a short-TTL, ``session``-purpose continuation blob that pins THIS
-	// caller's ``user_id`` — the identity is fixed at exchange time, before the
-	// consent page renders it with its "Not you?" escape.
-	//
-	// Every failure after authentication is the same generic 400: an invalid
-	// blob must not let the caller learn anything about the client or the flow.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-	SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// TokenEndpointWithBody Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
@@ -9944,17 +11930,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /register/{agent_id} (the `UpdateRegistrationEndpoint` operationId).
 	UpdateRegistrationEndpoint(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RegistryHealth Registry health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Corresponds with GET /registry/health (the `RegistryHealth` operationId).
-	RegistryHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchOperationsWithBody Search operations
 	//
@@ -10199,113 +12174,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /vendors/{vendor_key}/auth-capabilities (the `GetAuthCapabilities` operationId).
 	GetAuthCapabilities(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-}
-
-// Jwks JSON Web Key Set
-//
-// Return the JWKS document with the active public signing keys (ES256).
-//
-// Corresponds with GET /.well-known/jwks.json (the `Jwks` operationId).
-func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewJwksRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// OauthAuthorizationServer OAuth authorization server metadata
-//
-// Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms).
-//
-// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
-func (c *Client) OauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOauthAuthorizationServerRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// McpOauthAuthorizationServer Get OAuth authorization server metadata for MCP clients
-//
-// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
-//
-// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
-// — the URL an MCP client derives from the protected-resource document
-// (RFC 8414 §3.1). It lists the authorization, token and revocation
-// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
-// the MCP tool scopes, and the public client profile: no client secret
-// (`none`) with PKCE `S256`. It differs from the root
-// `/.well-known/oauth-authorization-server` document, whose
-// `registration_endpoint` is the agent `/register`. Returns 404 when
-// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-//
-// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
-func (c *Client) McpOauthAuthorizationServer(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMcpOauthAuthorizationServerRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// McpOauthProtectedResourceRootAlias Get MCP protected resource metadata (root fallback)
-//
-// Serve the MCP protected-resource document at the root well-known path.
-//
-// Returns the same RFC 9728 body as
-// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
-// its authorization server, and the MCP tool scopes. It exists for clients
-// (such as Claude Code) that probe this root path instead of following the
-// `resource_metadata` pointer in a 401. That is safe while this deployment
-// has exactly one OAuth-protected resource. Returns 404 when interactive
-// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-//
-// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
-func (c *Client) McpOauthProtectedResourceRootAlias(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMcpOauthProtectedResourceRootAliasRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// McpOauthProtectedResource OAuth protected resource metadata for the MCP resource
-//
-// RFC 9728 protected-resource metadata for `{base}/mcp`.
-//
-// Names the /mcp-scoped authorization server and the MCP tool scopes. The
-// same body is also served at the root well-known path for clients that
-// ignore the 401's `resource_metadata` pointer.
-//
-// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
-func (c *Client) McpOauthProtectedResource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMcpOauthProtectedResourceRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
 }
 
 // ListActors List users and agents
@@ -12075,27 +13943,6 @@ func (c *Client) GetAuditEntry(ctx context.Context, auditId string, reqEditors .
 	return c.Client.Do(req)
 }
 
-// AuthHealth Auth health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Corresponds with GET /auth/health (the `AuthHealth` operationId).
-func (c *Client) AuthHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthHealthRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // AuthIdpDescriptor External IdP login descriptor
 //
 // Public capability hint: whether IdP login is enabled, and which provider.
@@ -12169,26 +14016,6 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshSessionRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeEndpoint Authorize Endpoint
-//
-// RFC 6749 Authorization endpoint with PKCE (S256 only).
-//
-// If an external IdP is configured, redirects to the upstream provider.
-// Otherwise returns an error (direct login requires a separate credential exchange).
-//
-// Corresponds with GET /authorize (the `AuthorizeEndpoint` operationId).
-func (c *Client) AuthorizeEndpoint(ctx context.Context, params *AuthorizeEndpointParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeEndpointRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12555,27 +14382,6 @@ func (c *Client) RejectConnectSession(ctx context.Context, sessionId string, req
 	return c.Client.Do(req)
 }
 
-// ControlHealth Control health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Corresponds with GET /control/health (the `ControlHealth` operationId).
-func (c *Client) ControlHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewControlHealthRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListCredentials List credentials
 //
 // List credentials with cursor-based pagination.
@@ -12621,42 +14427,6 @@ func (c *Client) CreateCredentialWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /credentials (the `CreateCredential` operationId).
 func (c *Client) CreateCredential(ctx context.Context, body CreateCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateCredentialRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// OauthCallback OAuth connect callback
-//
-// Handle the OAuth callback from the IdP.
-//
-// This endpoint is intentionally unauthenticated — it receives redirects
-// from external IdPs where the user has no session cookie. Security
-// binding is provided by the signed, time-limited state JWT which ties
-// the callback to a specific credential and caller.
-//
-// Redirects the popup the SPA opened to a public SPA route
-// (“/app/oauth/connected“) that owns the user-facing "you can close this"
-// experience and self-closes. Two variants, distinguished only by a coarse
-// “status“ query param:
-//
-//   - Success: “?status=ok“.
-//   - Failure: “?status=error“ — no protocol or provider detail is
-//     exposed in the redirect URL.
-//
-// The parent SPA still learns the real outcome by polling
-// “GET /credentials/{id}“ — never from this redirect. The actual cause
-// (missing state, connect failure, provider error, etc.) is recorded via
-// structured logging for operators.
-//
-// Corresponds with GET /credentials/oauth/callback (the `OauthCallback` operationId).
-func (c *Client) OauthCallback(ctx context.Context, params *OauthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOauthCallbackRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -13499,93 +15269,6 @@ func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
-// LoginPage Local-account login form (authorization flow)
-//
-// Render the local-account login form for an in-flight “/authorize“ request.
-//
-// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
-// expired, forged, or wrong-purpose token never gets a form — re-checks the
-// D7 client gate (a client denied or deactivated while the user holds the
-// “ls“ must not be asked for a password), rejects an already-spent “ls“,
-// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
-//
-// Corresponds with GET /login (the `LoginPage` operationId).
-func (c *Client) LoginPage(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLoginPageRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// LoginSubmitWithBody Local-account login submit (authorization flow)
-//
-// Authenticate the local account and rejoin the authorization flow.
-//
-// Success never mints a JWT — it flows straight into code issuance (platform
-// client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins, and burns the single-use “ls“.
-// Credential failures re-render the form with one generic message: lockout
-// state, unknown email, and wrong password are indistinguishable (no
-// user-enumeration response oracle), while the shared
-// “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold. An account flagged
-// “must_change_password“ authenticates but is told to rotate via the UI
-// first — the OAuth plane must not hand a fully-scoped token to a
-// temporary-password principal the UI would have boxed into
-// change-password-only.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /login (the `LoginSubmit` operationId).
-func (c *Client) LoginSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLoginSubmitRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// LoginSubmitWithFormdataBody Local-account login submit (authorization flow)
-//
-// Authenticate the local account and rejoin the authorization flow.
-//
-// Success never mints a JWT — it flows straight into code issuance (platform
-// client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins, and burns the single-use “ls“.
-// Credential failures re-render the form with one generic message: lockout
-// state, unknown email, and wrong password are indistinguishable (no
-// user-enumeration response oracle), while the shared
-// “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold. An account flagged
-// “must_change_password“ authenticates but is told to rotate via the UI
-// first — the OAuth plane must not hand a fully-scoped token to a
-// temporary-password principal the UI would have boxed into
-// change-password-only.
-//
-// Takes a body of the `application/x-www-form-urlencoded` content type.
-//
-// Corresponds with POST /login (the `LoginSubmit` operationId).
-func (c *Client) LoginSubmitWithFormdataBody(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewLoginSubmitRequestWithFormdataBody(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ReportMcpConfigRegistrationWithBody Report MCP config registration
 //
 // Record that an MCP server entry was written for an agent runtime.
@@ -14179,98 +15862,6 @@ func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalSta
 	return c.Client.Do(req)
 }
 
-// AuthorizeOauthCallback Authorize Oauth Callback
-//
-// External IdP callback — exchanges upstream code and issues platform auth code.
-//
-// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
-func (c *Client) AuthorizeOauthCallback(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeOauthCallbackRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ConsentPage Consent Page
-//
-// Display the OAuth consent screen.
-//
-// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
-func (c *Client) ConsentPage(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConsentPageRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ConsentSubmitWithBody Consent Submit
-//
-// Process the consent form submission. Mints the auth code only on approval.
-//
-// “consent_token“ is the opaque handle emitted by the callback. It never
-// leaves the state backend as anything more than an ID — the actual consent
-// parameters (user_id, email, scopes, redirect_uri) live server-side and
-// can't be tampered with or captured from browser history/proxy logs.
-//
-// “agent_id“ is posted only by the agent-picker variant
-// (“consent_model='agent'“ clients); it is validated and the scope math
-// recomputed entirely server-side — the browser's selection is never
-// trusted.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-func (c *Client) ConsentSubmitWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConsentSubmitRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ConsentSubmitWithFormdataBody Consent Submit
-//
-// Process the consent form submission. Mints the auth code only on approval.
-//
-// “consent_token“ is the opaque handle emitted by the callback. It never
-// leaves the state backend as anything more than an ID — the actual consent
-// parameters (user_id, email, scopes, redirect_uri) live server-side and
-// can't be tampered with or captured from browser history/proxy logs.
-//
-// “agent_id“ is posted only by the agent-picker variant
-// (“consent_model='agent'“ clients); it is validated and the scope math
-// recomputed entirely server-side — the browser's selection is never
-// trusted.
-//
-// Takes a body of the `application/x-www-form-urlencoded` content type.
-//
-// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-func (c *Client) ConsentSubmitWithFormdataBody(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConsentSubmitRequestWithFormdataBody(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 //
 // Create the consenting user's first agent from the zero-agents consent page (P4).
@@ -14608,80 +16199,6 @@ func (c *Client) RevokeEndpoint(ctx context.Context, body RevokeEndpointJSONRequ
 // Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 func (c *Client) RevokeEndpointWithFormdataBody(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeEndpointRequestWithFormdataBody(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SessionContinueEndpointWithBody Exchange a live platform session for an authorize continuation
-//
-// Rung 1 of the /authorize identity ladder: reuse the platform session.
-//
-// The login page's script posts the pending authorize state (the “ls“
-// carry-through token) with the SPA's bearer token in the Authorization
-// header — no cookies, no ambient credentials, so a cross-site form cannot
-// drive it (same CSRF posture as the consent POST and the inline approval
-// decision). The platform token is validated by the standard auth
-// dependency (users only), and the “active“ / “must_change_password“
-// fences are re-checked with a LIVE user-row read — not the token's baked
-// claims — matching rung 3's “password_rotation_required“ posture, so an
-// admin-forced reset fences the exchange immediately even while pre-reset
-// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-// success the response carries a relative “/authorize“ resume URL bearing
-// a short-TTL, “session“-purpose continuation blob that pins THIS
-// caller's “user_id“ — the identity is fixed at exchange time, before the
-// consent page renders it with its "Not you?" escape.
-//
-// Every failure after authentication is the same generic 400: an invalid
-// blob must not let the caller learn anything about the client or the flow.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-func (c *Client) SessionContinueEndpointWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSessionContinueEndpointRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SessionContinueEndpoint Exchange a live platform session for an authorize continuation
-//
-// Rung 1 of the /authorize identity ladder: reuse the platform session.
-//
-// The login page's script posts the pending authorize state (the “ls“
-// carry-through token) with the SPA's bearer token in the Authorization
-// header — no cookies, no ambient credentials, so a cross-site form cannot
-// drive it (same CSRF posture as the consent POST and the inline approval
-// decision). The platform token is validated by the standard auth
-// dependency (users only), and the “active“ / “must_change_password“
-// fences are re-checked with a LIVE user-row read — not the token's baked
-// claims — matching rung 3's “password_rotation_required“ posture, so an
-// admin-forced reset fences the exchange immediately even while pre-reset
-// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-// success the response carries a relative “/authorize“ resume URL bearing
-// a short-TTL, “session“-purpose continuation blob that pins THIS
-// caller's “user_id“ — the identity is fixed at exchange time, before the
-// consent page renders it with its "Not you?" escape.
-//
-// Every failure after authentication is the same generic 400: an invalid
-// blob must not let the caller learn anything about the client or the flow.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-func (c *Client) SessionContinueEndpoint(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSessionContinueEndpointRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15096,27 +16613,6 @@ func (c *Client) PollStatusEndpoint(ctx context.Context, agentId string, reqEdit
 // Corresponds with PUT /register/{agent_id} (the `UpdateRegistrationEndpoint` operationId).
 func (c *Client) UpdateRegistrationEndpoint(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateRegistrationEndpointRequest(c.Server, agentId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RegistryHealth Registry health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Corresponds with GET /registry/health (the `RegistryHealth` operationId).
-func (c *Client) RegistryHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRegistryHealthRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -15609,141 +17105,6 @@ func (c *Client) GetAuthCapabilities(ctx context.Context, vendorKey string, para
 		return nil, err
 	}
 	return c.Client.Do(req)
-}
-
-// NewJwksRequest constructs an http.Request for the Jwks method
-func NewJwksRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/.well-known/jwks.json")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewOauthAuthorizationServerRequest constructs an http.Request for the OauthAuthorizationServer method
-func NewOauthAuthorizationServerRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/.well-known/oauth-authorization-server")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewMcpOauthAuthorizationServerRequest constructs an http.Request for the McpOauthAuthorizationServer method
-func NewMcpOauthAuthorizationServerRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/.well-known/oauth-authorization-server/mcp")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewMcpOauthProtectedResourceRootAliasRequest constructs an http.Request for the McpOauthProtectedResourceRootAlias method
-func NewMcpOauthProtectedResourceRootAliasRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/.well-known/oauth-protected-resource")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewMcpOauthProtectedResourceRequest constructs an http.Request for the McpOauthProtectedResource method
-func NewMcpOauthProtectedResourceRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/.well-known/oauth-protected-resource/mcp")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
 }
 
 // NewListActorsRequest constructs an http.Request for the ListActors method
@@ -19093,33 +20454,6 @@ func NewGetAuditEntryRequest(server string, auditId string) (*http.Request, erro
 	return req, nil
 }
 
-// NewAuthHealthRequest constructs an http.Request for the AuthHealth method
-func NewAuthHealthRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/auth/health")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewAuthIdpDescriptorRequest constructs an http.Request for the AuthIdpDescriptor method
 func NewAuthIdpDescriptorRequest(server string) (*http.Request, error) {
 	var err error
@@ -19207,136 +20541,6 @@ func NewRefreshSessionRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAuthorizeEndpointRequest constructs an http.Request for the AuthorizeEndpoint method
-func NewAuthorizeEndpointRequest(server string, params *AuthorizeEndpointParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/authorize")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "response_type", params.ResponseType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_id", params.ClientId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "redirect_uri", params.RedirectUri, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code_challenge", params.CodeChallenge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code_challenge_method", params.CodeChallengeMethod, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.Scope != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "scope", *params.Scope, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.State != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Nonce != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "nonce", *params.Nonce, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Sc != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sc", *params.Sc, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -20124,33 +21328,6 @@ func NewRejectConnectSessionRequest(server string, sessionId string) (*http.Requ
 	return req, nil
 }
 
-// NewControlHealthRequest constructs an http.Request for the ControlHealth method
-func NewControlHealthRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/control/health")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewListCredentialsRequest constructs an http.Request for the ListCredentials method
 func NewListCredentialsRequest(server string, params *ListCredentialsParams) (*http.Request, error) {
 	var err error
@@ -20265,84 +21442,6 @@ func NewCreateCredentialRequestWithBody(server string, contentType string, body 
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewOauthCallbackRequest constructs an http.Request for the OauthCallback method
-func NewOauthCallbackRequest(server string, params *OauthCallbackParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/credentials/oauth/callback")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Code != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.State != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Error != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -22175,96 +23274,6 @@ func NewCancelJobRequest(server string, jobId string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewLoginPageRequest constructs an http.Request for the LoginPage method
-func NewLoginPageRequest(server string, params *LoginPageParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/login")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ls", params.Ls, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewLoginSubmitRequestWithFormdataBody calls the generic LoginSubmit builder with application/x-www-form-urlencoded body
-func NewLoginSubmitRequestWithFormdataBody(server string, body LoginSubmitFormdataRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	bodyStr, err := runtime.MarshalForm(body, nil)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = strings.NewReader(bodyStr.Encode())
-	return NewLoginSubmitRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
-}
-
-// NewLoginSubmitRequestWithBody constructs an http.Request for the LoginSubmit method, with any body, and a specified content type
-func NewLoginSubmitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/login")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewReportMcpConfigRegistrationRequest calls the generic ReportMcpConfigRegistration builder with application/json body
 func NewReportMcpConfigRegistrationRequest(server string, body ReportMcpConfigRegistrationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -23315,154 +24324,6 @@ func NewApprovalStatusEndpointRequest(server string, params *ApprovalStatusEndpo
 	return req, nil
 }
 
-// NewAuthorizeOauthCallbackRequest constructs an http.Request for the AuthorizeOauthCallback method
-func NewAuthorizeOauthCallbackRequest(server string, params *AuthorizeOauthCallbackParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/oauth/callback")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewConsentPageRequest constructs an http.Request for the ConsentPage method
-func NewConsentPageRequest(server string, params *ConsentPageParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/oauth/consent")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ch", params.Ch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewConsentSubmitRequestWithFormdataBody calls the generic ConsentSubmit builder with application/x-www-form-urlencoded body
-func NewConsentSubmitRequestWithFormdataBody(server string, body ConsentSubmitFormdataRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	bodyStr, err := runtime.MarshalForm(body, nil)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = strings.NewReader(bodyStr.Encode())
-	return NewConsentSubmitRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
-}
-
-// NewConsentSubmitRequestWithBody constructs an http.Request for the ConsentSubmit method, with any body, and a specified content type
-func NewConsentSubmitRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/oauth/consent")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewConsentAgentCreateRequestWithFormdataBody calls the generic ConsentAgentCreate builder with application/x-www-form-urlencoded body
 func NewConsentAgentCreateRequestWithFormdataBody(server string, body ConsentAgentCreateFormdataRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -23636,46 +24497,6 @@ func NewRevokeEndpointRequestWithBody(server string, contentType string, body io
 	}
 
 	operationPath := fmt.Sprintf("/oauth/revoke")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewSessionContinueEndpointRequest calls the generic SessionContinueEndpoint builder with application/json body
-func NewSessionContinueEndpointRequest(server string, body SessionContinueEndpointJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSessionContinueEndpointRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewSessionContinueEndpointRequestWithBody constructs an http.Request for the SessionContinueEndpoint method, with any body, and a specified content type
-func NewSessionContinueEndpointRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/oauth/session/continue")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -24176,33 +24997,6 @@ func NewUpdateRegistrationEndpointRequest(server string, agentId string) (*http.
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRegistryHealthRequest constructs an http.Request for the RegistryHealth method
-func NewRegistryHealthRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/registry/health")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -24937,73 +25731,6 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
-
-	// JwksWithResponse JSON Web Key Set
-	//
-	// Return the JWKS document with the active public signing keys (ES256).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /.well-known/jwks.json (the `Jwks` operationId).
-	JwksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JwksHTTPResp, error)
-
-	// OauthAuthorizationServerWithResponse OAuth authorization server metadata
-	//
-	// Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
-	OauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthAuthorizationServerHTTPResp, error)
-
-	// McpOauthAuthorizationServerWithResponse Get OAuth authorization server metadata for MCP clients
-	//
-	// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
-	//
-	// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
-	// — the URL an MCP client derives from the protected-resource document
-	// (RFC 8414 §3.1). It lists the authorization, token and revocation
-	// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
-	// the MCP tool scopes, and the public client profile: no client secret
-	// (`none`) with PKCE `S256`. It differs from the root
-	// `/.well-known/oauth-authorization-server` document, whose
-	// `registration_endpoint` is the agent `/register`. Returns 404 when
-	// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
-	McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error)
-
-	// McpOauthProtectedResourceRootAliasWithResponse Get MCP protected resource metadata (root fallback)
-	//
-	// Serve the MCP protected-resource document at the root well-known path.
-	//
-	// Returns the same RFC 9728 body as
-	// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
-	// its authorization server, and the MCP tool scopes. It exists for clients
-	// (such as Claude Code) that probe this root path instead of following the
-	// `resource_metadata` pointer in a 401. That is safe while this deployment
-	// has exactly one OAuth-protected resource. Returns 404 when interactive
-	// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
-	McpOauthProtectedResourceRootAliasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceRootAliasHTTPResp, error)
-
-	// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
-	//
-	// RFC 9728 protected-resource metadata for `{base}/mcp`.
-	//
-	// Names the /mcp-scoped authorization server and the MCP tool scopes. The
-	// same body is also served at the root well-known path for clients that
-	// ignore the 401's `resource_metadata` pointer.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
-	McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error)
 
 	// ListActorsWithResponse List users and agents
 	//
@@ -26084,19 +26811,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /audit/{audit_id} (the `GetAuditEntry` operationId).
 	GetAuditEntryWithResponse(ctx context.Context, auditId string, reqEditors ...RequestEditorFn) (*GetAuditEntryHTTPResp, error)
 
-	// AuthHealthWithResponse Auth health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /auth/health (the `AuthHealth` operationId).
-	AuthHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthHealthHTTPResp, error)
-
 	// AuthIdpDescriptorWithResponse External IdP login descriptor
 	//
 	// Public capability hint: whether IdP login is enabled, and which provider.
@@ -26143,18 +26857,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshSessionHTTPResp, error)
-
-	// AuthorizeEndpointWithResponse Authorize Endpoint
-	//
-	// RFC 6749 Authorization endpoint with PKCE (S256 only).
-	//
-	// If an external IdP is configured, redirects to the upstream provider.
-	// Otherwise returns an error (direct login requires a separate credential exchange).
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /authorize (the `AuthorizeEndpoint` operationId).
-	AuthorizeEndpointWithResponse(ctx context.Context, params *AuthorizeEndpointParams, reqEditors ...RequestEditorFn) (*AuthorizeEndpointHTTPResp, error)
 
 	// ListCatalogWithResponse List Catalog
 	//
@@ -26384,19 +27086,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /connect-sessions/{session_id}:reject (the `RejectConnectSession` operationId).
 	RejectConnectSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RejectConnectSessionHTTPResp, error)
 
-	// ControlHealthWithResponse Control health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /control/health (the `ControlHealth` operationId).
-	ControlHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ControlHealthHTTPResp, error)
-
 	// ListCredentialsWithResponse List credentials
 	//
 	// List credentials with cursor-based pagination.
@@ -26423,34 +27112,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /credentials (the `CreateCredential` operationId).
 	CreateCredentialWithResponse(ctx context.Context, body CreateCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCredentialHTTPResp, error)
-
-	// OauthCallbackWithResponse OAuth connect callback
-	//
-	// Handle the OAuth callback from the IdP.
-	//
-	// This endpoint is intentionally unauthenticated — it receives redirects
-	// from external IdPs where the user has no session cookie. Security
-	// binding is provided by the signed, time-limited state JWT which ties
-	// the callback to a specific credential and caller.
-	//
-	// Redirects the popup the SPA opened to a public SPA route
-	// (``/app/oauth/connected``) that owns the user-facing "you can close this"
-	// experience and self-closes. Two variants, distinguished only by a coarse
-	// ``status`` query param:
-	//
-	//   * Success: ``?status=ok``.
-	//   * Failure: ``?status=error`` — no protocol or provider detail is
-	//     exposed in the redirect URL.
-	//
-	// The parent SPA still learns the real outcome by polling
-	// ``GET /credentials/{id}`` — never from this redirect. The actual cause
-	// (missing state, connect failure, provider error, etc.) is recorded via
-	// structured logging for operators.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /credentials/oauth/callback (the `OauthCallback` operationId).
-	OauthCallbackWithResponse(ctx context.Context, params *OauthCallbackParams, reqEditors ...RequestEditorFn) (*OauthCallbackHTTPResp, error)
 
 	// ListProvidersWithResponse List credential providers
 	//
@@ -26932,65 +27593,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJobWithResponse(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*CancelJobHTTPResp, error)
 
-	// LoginPageWithResponse Local-account login form (authorization flow)
-	//
-	// Render the local-account login form for an in-flight ``/authorize`` request.
-	//
-	// Verifies the ``ls`` signature/TTL/purpose **before** rendering — an
-	// expired, forged, or wrong-purpose token never gets a form — re-checks the
-	// D7 client gate (a client denied or deactivated while the user holds the
-	// ``ls`` must not be asked for a password), rejects an already-spent ``ls``,
-	// and embeds ``ls`` plus a fresh single-use CSRF nonce bound to it.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /login (the `LoginPage` operationId).
-	LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error)
-
-	// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
-	//
-	// Authenticate the local account and rejoin the authorization flow.
-	//
-	// Success never mints a JWT — it flows straight into code issuance (platform
-	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins, and burns the single-use ``ls``.
-	// Credential failures re-render the form with one generic message: lockout
-	// state, unknown email, and wrong password are indistinguishable (no
-	// user-enumeration response oracle), while the shared
-	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold. An account flagged
-	// ``must_change_password`` authenticates but is told to rotate via the UI
-	// first — the OAuth plane must not hand a fully-scoped token to a
-	// temporary-password principal the UI would have boxed into
-	// change-password-only.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /login (the `LoginSubmit` operationId).
-	LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
-
-	// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
-	//
-	// Authenticate the local account and rejoin the authorization flow.
-	//
-	// Success never mints a JWT — it flows straight into code issuance (platform
-	// client) or the consent handle (registered third-party client), exactly
-	// where the IdP callback rejoins, and burns the single-use ``ls``.
-	// Credential failures re-render the form with one generic message: lockout
-	// state, unknown email, and wrong password are indistinguishable (no
-	// user-enumeration response oracle), while the shared
-	// ``AuthService.authenticate`` core still increments the failed-login count
-	// and applies the lockout threshold. An account flagged
-	// ``must_change_password`` authenticates but is told to rotate via the UI
-	// first — the OAuth plane must not hand a fully-scoped token to a
-	// temporary-password principal the UI would have boxed into
-	// change-password-only.
-	//
-	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /login (the `LoginSubmit` operationId).
-	LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error)
-
 	// ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
 	//
 	// Record that an MCP server entry was written for an agent runtime.
@@ -27336,62 +27938,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /oauth/approval/status (the `ApprovalStatusEndpoint` operationId).
 	ApprovalStatusEndpointWithResponse(ctx context.Context, params *ApprovalStatusEndpointParams, reqEditors ...RequestEditorFn) (*ApprovalStatusEndpointHTTPResp, error)
 
-	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
-	//
-	// External IdP callback — exchanges upstream code and issues platform auth code.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
-	AuthorizeOauthCallbackWithResponse(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*AuthorizeOauthCallbackHTTPResp, error)
-
-	// ConsentPageWithResponse Consent Page
-	//
-	// Display the OAuth consent screen.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
-	ConsentPageWithResponse(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*ConsentPageHTTPResp, error)
-
-	// ConsentSubmitWithBodyWithResponse Consent Submit
-	//
-	// Process the consent form submission. Mints the auth code only on approval.
-	//
-	// ``consent_token`` is the opaque handle emitted by the callback. It never
-	// leaves the state backend as anything more than an ID — the actual consent
-	// parameters (user_id, email, scopes, redirect_uri) live server-side and
-	// can't be tampered with or captured from browser history/proxy logs.
-	//
-	// ``agent_id`` is posted only by the agent-picker variant
-	// (``consent_model='agent'`` clients); it is validated and the scope math
-	// recomputed entirely server-side — the browser's selection is never
-	// trusted.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-	ConsentSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
-
-	// ConsentSubmitWithFormdataBodyWithResponse Consent Submit
-	//
-	// Process the consent form submission. Mints the auth code only on approval.
-	//
-	// ``consent_token`` is the opaque handle emitted by the callback. It never
-	// leaves the state backend as anything more than an ID — the actual consent
-	// parameters (user_id, email, scopes, redirect_uri) live server-side and
-	// can't be tampered with or captured from browser history/proxy logs.
-	//
-	// ``agent_id`` is posted only by the agent-picker variant
-	// (``consent_model='agent'`` clients); it is validated and the scope math
-	// recomputed entirely server-side — the browser's selection is never
-	// trusted.
-	//
-	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-	ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error)
-
 	// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 	//
 	// Create the consenting user's first agent from the zero-agents consent page (P4).
@@ -27651,60 +28197,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /oauth/revoke (the `RevokeEndpoint` operationId).
 	RevokeEndpointWithFormdataBodyWithResponse(ctx context.Context, body RevokeEndpointFormdataRequestBody, reqEditors ...RequestEditorFn) (*RevokeEndpointHTTPResp, error)
 
-	// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
-	//
-	// Rung 1 of the /authorize identity ladder: reuse the platform session.
-	//
-	// The login page's script posts the pending authorize state (the ``ls``
-	// carry-through token) with the SPA's bearer token in the Authorization
-	// header — no cookies, no ambient credentials, so a cross-site form cannot
-	// drive it (same CSRF posture as the consent POST and the inline approval
-	// decision). The platform token is validated by the standard auth
-	// dependency (users only), and the ``active`` / ``must_change_password``
-	// fences are re-checked with a LIVE user-row read — not the token's baked
-	// claims — matching rung 3's ``password_rotation_required`` posture, so an
-	// admin-forced reset fences the exchange immediately even while pre-reset
-	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-	// success the response carries a relative ``/authorize`` resume URL bearing
-	// a short-TTL, ``session``-purpose continuation blob that pins THIS
-	// caller's ``user_id`` — the identity is fixed at exchange time, before the
-	// consent page renders it with its "Not you?" escape.
-	//
-	// Every failure after authentication is the same generic 400: an invalid
-	// blob must not let the caller learn anything about the client or the flow.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-	SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
-
-	// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
-	//
-	// Rung 1 of the /authorize identity ladder: reuse the platform session.
-	//
-	// The login page's script posts the pending authorize state (the ``ls``
-	// carry-through token) with the SPA's bearer token in the Authorization
-	// header — no cookies, no ambient credentials, so a cross-site form cannot
-	// drive it (same CSRF posture as the consent POST and the inline approval
-	// decision). The platform token is validated by the standard auth
-	// dependency (users only), and the ``active`` / ``must_change_password``
-	// fences are re-checked with a LIVE user-row read — not the token's baked
-	// claims — matching rung 3's ``password_rotation_required`` posture, so an
-	// admin-forced reset fences the exchange immediately even while pre-reset
-	// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-	// success the response carries a relative ``/authorize`` resume URL bearing
-	// a short-TTL, ``session``-purpose continuation blob that pins THIS
-	// caller's ``user_id`` — the identity is fixed at exchange time, before the
-	// consent page renders it with its "Not you?" escape.
-	//
-	// Every failure after authentication is the same generic 400: an invalid
-	// blob must not let the caller learn anything about the client or the flow.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-	SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error)
-
 	// TokenEndpointWithBodyWithResponse Token Endpoint
 	//
 	// Exchange a refresh token, JWT assertion, or authorization code for tokens.
@@ -27952,19 +28444,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /register/{agent_id} (the `UpdateRegistrationEndpoint` operationId).
 	UpdateRegistrationEndpointWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*UpdateRegistrationEndpointHTTPResp, error)
-
-	// RegistryHealthWithResponse Registry health
-	//
-	// Return service health status for this surface.
-	//
-	// Unauthenticated liveness probe. In combined mode this is served under
-	// the surface prefix (e.g. ``/control/health``) so surfaces don't collide;
-	// the canonical platform probe is the root ``GET /health``.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /registry/health (the `RegistryHealth` operationId).
-	RegistryHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RegistryHealthHTTPResp, error)
 
 	// SearchOperationsWithBodyWithResponse Search operations
 	//
@@ -28231,372 +28710,6 @@ type ClientWithResponsesInterface interface {
 	GetAuthCapabilitiesWithResponse(ctx context.Context, vendorKey string, params *GetAuthCapabilitiesParams, reqEditors ...RequestEditorFn) (*GetAuthCapabilitiesHTTPResp, error)
 }
 
-type JwksHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r JwksHTTPResp) GetJSON200() *map[string]interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r JwksHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r JwksHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r JwksHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r JwksHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r JwksHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r JwksHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r JwksHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r JwksHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type OauthAuthorizationServerHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r OauthAuthorizationServerHTTPResp) GetJSON200() *map[string]interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r OauthAuthorizationServerHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r OauthAuthorizationServerHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r OauthAuthorizationServerHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r OauthAuthorizationServerHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r OauthAuthorizationServerHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type McpOauthAuthorizationServerHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetJSON200() *map[string]interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r McpOauthAuthorizationServerHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r McpOauthAuthorizationServerHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r McpOauthAuthorizationServerHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r McpOauthAuthorizationServerHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type McpOauthProtectedResourceRootAliasHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON200() *map[string]interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r McpOauthProtectedResourceRootAliasHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r McpOauthProtectedResourceRootAliasHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r McpOauthProtectedResourceRootAliasHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r McpOauthProtectedResourceRootAliasHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type McpOauthProtectedResourceHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r McpOauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r McpOauthProtectedResourceHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r McpOauthProtectedResourceHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r McpOauthProtectedResourceHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r McpOauthProtectedResourceHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r McpOauthProtectedResourceHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListActorsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28614,6 +28727,8 @@ type ListActorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28649,6 +28764,11 @@ func (r ListActorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListActorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListActorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28697,6 +28817,8 @@ type LookupActorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28732,6 +28854,11 @@ func (r LookupActorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LookupActorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28780,6 +28907,8 @@ type ListProviderConfigsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28815,6 +28944,11 @@ func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListProviderConfigsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28865,6 +28999,8 @@ type GetProviderConfigHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28905,6 +29041,11 @@ func (r GetProviderConfigHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetProviderConfigHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetProviderConfigHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -28953,6 +29094,8 @@ type SetProviderConfigHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28988,6 +29131,11 @@ func (r SetProviderConfigHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SetProviderConfigHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetProviderConfigHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29032,6 +29180,8 @@ type HealthHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29057,6 +29207,11 @@ func (r HealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r HealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r HealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29105,6 +29260,8 @@ type ListOauthClientsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29140,6 +29297,11 @@ func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthClientsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthClientsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29188,6 +29350,8 @@ type CreateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -29223,6 +29387,11 @@ func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29271,6 +29440,8 @@ type DeactivateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -29306,6 +29477,11 @@ func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeactivateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29356,6 +29532,8 @@ type GetOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29396,6 +29574,11 @@ func (r GetOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29446,6 +29629,8 @@ type UpdateOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29486,6 +29671,11 @@ func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29536,6 +29726,8 @@ type RotateOauthClientSecretHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29576,6 +29768,11 @@ func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateOauthClientSecretHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29626,6 +29823,8 @@ type ApproveOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29666,6 +29865,11 @@ func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApproveOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29714,6 +29918,8 @@ type DeleteOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -29749,6 +29955,11 @@ func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29799,6 +30010,8 @@ type DenyOauthClientHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29839,6 +30052,11 @@ func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DenyOauthClientHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DenyOauthClientHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29887,6 +30105,8 @@ type ListOauthGrantsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -29922,6 +30142,11 @@ func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthGrantsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -29970,6 +30195,8 @@ type ListAgentsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30005,6 +30232,11 @@ func (r ListAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30053,6 +30285,8 @@ type CreateAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -30088,6 +30322,11 @@ func (r CreateAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30134,6 +30373,8 @@ type ArchiveAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -30164,6 +30405,11 @@ func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ArchiveAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ArchiveAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30212,6 +30458,8 @@ type GetAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30247,6 +30495,11 @@ func (r GetAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30295,6 +30548,8 @@ type UpdateAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30330,6 +30585,11 @@ func (r UpdateAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30378,6 +30638,8 @@ type GetAgentApiKeyInfoHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30413,6 +30675,11 @@ func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentApiKeyInfoHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30461,6 +30728,8 @@ type GetAgentApiKeyHistoryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30496,6 +30765,11 @@ func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentApiKeyHistoryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30544,6 +30818,8 @@ type ListAgentCredentialsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30579,6 +30855,11 @@ func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentCredentialsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30627,6 +30908,8 @@ type BindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -30662,6 +30945,11 @@ func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BindAgentCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30708,6 +30996,8 @@ type UnbindAgentCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -30738,6 +31028,11 @@ func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UnbindAgentCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30786,6 +31081,8 @@ type ResumeAgentCredentialBindingHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30821,6 +31118,11 @@ func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeAgentCredentialBindingHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30869,6 +31171,8 @@ type UpdateAgentJwksHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30904,6 +31208,11 @@ func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateAgentJwksHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -30954,6 +31263,8 @@ type ListAgentOauthGrantsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -30994,6 +31305,11 @@ func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentOauthGrantsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31042,6 +31358,8 @@ type GetAgentPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31077,6 +31395,11 @@ func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31125,6 +31448,8 @@ type ReplaceAgentPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31160,6 +31485,11 @@ func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31208,6 +31538,8 @@ type ApproveAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31243,6 +31575,11 @@ func (r ApproveAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApproveAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApproveAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31291,6 +31628,8 @@ type ClaimAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31326,6 +31665,11 @@ func (r ClaimAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ClaimAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31374,6 +31718,8 @@ type DenyAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31409,6 +31755,11 @@ func (r DenyAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DenyAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DenyAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31455,6 +31806,8 @@ type DisableAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31485,6 +31838,11 @@ func (r DisableAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DisableAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisableAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31531,6 +31889,8 @@ type EnableAgentHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31561,6 +31921,11 @@ func (r EnableAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r EnableAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableAgentHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31609,6 +31974,8 @@ type GenerateAgentApiKeyHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31644,6 +32011,11 @@ func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GenerateAgentApiKeyHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31690,6 +32062,8 @@ type RevokeAgentApiKeyHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31720,6 +32094,11 @@ func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeAgentApiKeyHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31768,6 +32147,8 @@ type ListApisHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -31803,6 +32184,11 @@ func (r ListApisHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApisHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApisHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31851,6 +32237,8 @@ type ImportApisHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -31886,6 +32274,11 @@ func (r ImportApisHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ImportApisHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ImportApisHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -31936,6 +32329,8 @@ type DeleteApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -31976,6 +32371,11 @@ func (r DeleteApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32024,6 +32424,8 @@ type GetApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32059,6 +32461,11 @@ func (r GetApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32107,6 +32514,8 @@ type UpdateApiHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32142,6 +32551,11 @@ func (r UpdateApiHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateApiHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateApiHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32190,6 +32604,8 @@ type GetApiSpecHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32225,6 +32641,11 @@ func (r GetApiSpecHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiSpecHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiSpecHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32273,6 +32694,8 @@ type ListApiOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32308,6 +32731,11 @@ func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32356,6 +32784,8 @@ type ListOverlaysHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32391,6 +32821,11 @@ func (r ListOverlaysHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOverlaysHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOverlaysHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32439,6 +32874,8 @@ type SubmitOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -32474,6 +32911,11 @@ func (r SubmitOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SubmitOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SubmitOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32520,6 +32962,8 @@ type DeprecateOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -32550,6 +32994,11 @@ func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeprecateOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32598,6 +33047,8 @@ type GetOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32633,6 +33084,11 @@ func (r GetOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32681,6 +33137,8 @@ type UpdateOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32716,6 +33174,11 @@ func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32764,6 +33227,8 @@ type ConfirmOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32799,6 +33264,11 @@ func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32845,6 +33315,8 @@ type RollbackOverlayHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -32875,6 +33347,11 @@ func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RollbackOverlayHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RollbackOverlayHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -32923,6 +33400,8 @@ type ListApiRevisionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -32958,6 +33437,11 @@ func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiRevisionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33004,6 +33488,8 @@ type DeleteRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -33034,6 +33520,11 @@ func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33082,6 +33573,8 @@ type GetApiRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33117,6 +33610,11 @@ func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33165,6 +33663,8 @@ type GetApiRevisionSpecHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33200,6 +33700,11 @@ func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetApiRevisionSpecHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33248,6 +33753,8 @@ type ListApiRevisionOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33283,6 +33790,11 @@ func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON500() *Probl
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiRevisionOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33331,6 +33843,8 @@ type ArchiveRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33366,6 +33880,11 @@ func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ArchiveRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33414,6 +33933,8 @@ type PromoteRevisionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33449,6 +33970,11 @@ func (r PromoteRevisionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PromoteRevisionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PromoteRevisionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33499,6 +34025,8 @@ type ListApiSecuritySchemesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33539,6 +34067,11 @@ func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListApiSecuritySchemesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33587,6 +34120,8 @@ type ListAuditEntriesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33622,6 +34157,11 @@ func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAuditEntriesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33670,6 +34210,8 @@ type GetAuditEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33707,6 +34249,11 @@ func (r GetAuditEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAuditEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r GetAuditEntryHTTPResp) GetBody() []byte {
 	return r.Body
@@ -33736,75 +34283,6 @@ func (r GetAuditEntryHTTPResp) ContentType() string {
 	return ""
 }
 
-type AuthHealthHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]string
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthHealthHTTPResp) GetJSON200() *map[string]string {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r AuthHealthHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r AuthHealthHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r AuthHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r AuthHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthHealthHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthHealthHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthHealthHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthHealthHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type AuthIdpDescriptorHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -33818,6 +34296,8 @@ type AuthIdpDescriptorHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33843,6 +34323,11 @@ func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33887,6 +34372,8 @@ type LoginHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33912,6 +34399,11 @@ func (r LoginHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r LoginHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LoginHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -33960,6 +34452,8 @@ type RefreshSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -33997,6 +34491,11 @@ func (r RefreshSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r RefreshSessionHTTPResp) GetBody() []byte {
 	return r.Body
@@ -34026,75 +34525,6 @@ func (r RefreshSessionHTTPResp) ContentType() string {
 	return ""
 }
 
-type AuthorizeEndpointHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeEndpointHTTPResp) GetJSON200() *interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r AuthorizeEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeEndpointHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeEndpointHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeEndpointHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeEndpointHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListCatalogHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -34112,6 +34542,8 @@ type ListCatalogHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34147,6 +34579,11 @@ func (r ListCatalogHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCatalogHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCatalogHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34195,6 +34632,8 @@ type GetCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34230,6 +34669,11 @@ func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34278,6 +34722,8 @@ type PreviewCatalogOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34313,6 +34759,11 @@ func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34361,6 +34812,8 @@ type ImportCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -34396,6 +34849,11 @@ func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34444,6 +34902,8 @@ type SnoozeCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34479,6 +34939,11 @@ func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SnoozeCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34525,6 +34990,8 @@ type UnsnoozeCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34555,6 +35022,11 @@ func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UnsnoozeCatalogEntryHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34603,6 +35075,8 @@ type RefreshCatalogHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34638,6 +35112,11 @@ func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RefreshCatalogHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshCatalogHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34686,6 +35165,8 @@ type ListConnectSessionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34721,6 +35202,11 @@ func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListConnectSessionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34771,6 +35257,8 @@ type GetConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34811,6 +35299,11 @@ func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34859,6 +35352,8 @@ type PollConnectSessionStatusHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34894,6 +35389,11 @@ func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PollConnectSessionStatusHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -34940,6 +35440,8 @@ type CancelConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -34970,6 +35472,11 @@ func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CancelConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35022,6 +35529,8 @@ type ConfirmConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35069,6 +35578,11 @@ func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDe
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r ConfirmConnectSessionHTTPResp) GetBody() []byte {
 	return r.Body
@@ -35113,6 +35627,8 @@ type RejectConnectSessionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -35145,6 +35661,11 @@ func (r RejectConnectSessionHTTPResp) GetApplicationproblemJSON503() *ProblemDet
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RejectConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r RejectConnectSessionHTTPResp) GetBody() []byte {
 	return r.Body
@@ -35174,75 +35695,6 @@ func (r RejectConnectSessionHTTPResp) ContentType() string {
 	return ""
 }
 
-type ControlHealthHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]string
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ControlHealthHTTPResp) GetJSON200() *map[string]string {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ControlHealthHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ControlHealthHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ControlHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ControlHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ControlHealthHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ControlHealthHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ControlHealthHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ControlHealthHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListCredentialsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35260,6 +35712,8 @@ type ListCredentialsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35295,6 +35749,11 @@ func (r ListCredentialsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCredentialsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCredentialsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35343,6 +35802,8 @@ type CreateCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -35380,6 +35841,11 @@ func (r CreateCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r CreateCredentialHTTPResp) GetBody() []byte {
 	return r.Body
@@ -35409,75 +35875,6 @@ func (r CreateCredentialHTTPResp) ContentType() string {
 	return ""
 }
 
-type OauthCallbackHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r OauthCallbackHTTPResp) GetJSON200() *interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r OauthCallbackHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r OauthCallbackHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r OauthCallbackHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r OauthCallbackHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r OauthCallbackHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r OauthCallbackHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r OauthCallbackHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r OauthCallbackHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListProvidersHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -35495,6 +35892,8 @@ type ListProvidersHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35530,6 +35929,11 @@ func (r ListProvidersHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListProvidersHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListProvidersHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35578,6 +35982,8 @@ type DeleteCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -35613,6 +36019,11 @@ func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35663,6 +36074,8 @@ type GetCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35703,6 +36116,11 @@ func (r GetCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35753,6 +36171,8 @@ type UpdateCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35793,6 +36213,11 @@ func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35843,6 +36268,8 @@ type ListCredentialAgentsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35883,6 +36310,11 @@ func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCredentialAgentsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -35933,6 +36365,8 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -35973,6 +36407,11 @@ func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36023,6 +36462,8 @@ type PatchAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36063,6 +36504,11 @@ func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PatchAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36113,6 +36559,8 @@ type ReplaceAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36153,6 +36601,11 @@ func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500(
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplaceAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36203,6 +36656,8 @@ type TestAgentCredentialPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36243,6 +36698,11 @@ func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON500() *
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TestAgentCredentialPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36291,6 +36751,8 @@ type DetachAgentCredentialRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -36326,6 +36788,11 @@ func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DetachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36374,6 +36841,8 @@ type AttachAgentCredentialRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -36409,6 +36878,11 @@ func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON500() *Pr
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AttachAgentCredentialRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36461,6 +36935,8 @@ type ConnectCredentialHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36508,6 +36984,11 @@ func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConnectCredentialHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r ConnectCredentialHTTPResp) GetBody() []byte {
 	return r.Body
@@ -36550,6 +37031,8 @@ type ErrorPageHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36575,6 +37058,11 @@ func (r ErrorPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ErrorPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ErrorPageHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36623,6 +37111,8 @@ type ListEventsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36658,6 +37148,11 @@ func (r ListEventsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListEventsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListEventsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36706,6 +37201,8 @@ type StreamEventsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36741,6 +37238,11 @@ func (r StreamEventsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r StreamEventsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StreamEventsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36789,6 +37291,8 @@ type GetEventHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36824,6 +37328,11 @@ func (r GetEventHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetEventHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetEventHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36872,6 +37381,8 @@ type ListExecutionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36907,6 +37418,11 @@ func (r ListExecutionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListExecutionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListExecutionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -36955,6 +37471,8 @@ type ListHeldExecutionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -36990,6 +37508,11 @@ func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37040,6 +37563,8 @@ type GetHeldExecutionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37080,6 +37605,11 @@ func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37132,6 +37662,8 @@ type GetHeldExecutionResultHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37177,6 +37709,11 @@ func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37229,6 +37766,8 @@ type DecideHeldExecutionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37274,6 +37813,11 @@ func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDeta
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37326,6 +37870,8 @@ type WithdrawHeldExecutionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37371,6 +37917,11 @@ func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDe
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37419,6 +37970,8 @@ type GetExecutionHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37454,6 +38007,11 @@ func (r GetExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetExecutionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37512,6 +38070,8 @@ type GetGovernedHostsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetGovernedHostsHTTPResp200Headers
 	// Headers304 the parsed response headers for an HTTP 304 response
@@ -37553,6 +38113,11 @@ func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetGovernedHostsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r GetGovernedHostsHTTPResp) GetBody() []byte {
 	return r.Body
@@ -37587,11 +38152,18 @@ type GetHealthHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *RootHealthResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetHealthHTTPResp) GetJSON200() *RootHealthResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetHealthHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37640,6 +38212,8 @@ type InspectOperationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37677,6 +38251,11 @@ func (r InspectOperationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r InspectOperationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r InspectOperationHTTPResp) GetBody() []byte {
 	return r.Body
@@ -37711,11 +38290,18 @@ type GetInstanceHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *InstanceIdentityResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetInstanceHTTPResp) GetJSON200() *InstanceIdentityResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetInstanceHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37770,6 +38356,8 @@ type IntegrationsConnectHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -37822,6 +38410,11 @@ func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSON503() *ProblemDeta
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntegrationsConnectHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r IntegrationsConnectHTTPResp) GetBody() []byte {
 	return r.Body
@@ -37868,6 +38461,8 @@ type ListJobsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37903,6 +38498,11 @@ func (r ListJobsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListJobsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListJobsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -37951,6 +38551,8 @@ type GetJobHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -37986,6 +38588,11 @@ func (r GetJobHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetJobHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetJobHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38034,6 +38641,8 @@ type GetJobResultHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38069,6 +38678,11 @@ func (r GetJobResultHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetJobResultHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetJobResultHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38121,6 +38735,8 @@ type CancelJobHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38168,6 +38784,11 @@ func (r CancelJobHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CancelJobHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r CancelJobHTTPResp) GetBody() []byte {
 	return r.Body
@@ -38197,151 +38818,6 @@ func (r CancelJobHTTPResp) ContentType() string {
 	return ""
 }
 
-type LoginPageHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r LoginPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r LoginPageHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r LoginPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r LoginPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r LoginPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r LoginPageHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r LoginPageHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r LoginPageHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r LoginPageHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type LoginSubmitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r LoginSubmitHTTPResp) GetJSON200() *interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r LoginSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r LoginSubmitHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r LoginSubmitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r LoginSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r LoginSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r LoginSubmitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r LoginSubmitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r LoginSubmitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r LoginSubmitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ReportMcpConfigRegistrationHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38359,6 +38835,8 @@ type ReportMcpConfigRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -38394,6 +38872,11 @@ func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON500() *Pro
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReportMcpConfigRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38442,6 +38925,8 @@ type GetMeHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38477,6 +38962,11 @@ func (r GetMeHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetMeHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetMeHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38525,6 +39015,8 @@ type GetExecutionStatsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38560,6 +39052,11 @@ func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetExecutionStatsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38608,6 +39105,8 @@ type GetUsageStatsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38643,6 +39142,11 @@ func (r GetUsageStatsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetUsageStatsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetUsageStatsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38691,6 +39195,8 @@ type ListNotesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38726,6 +39232,11 @@ func (r ListNotesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListNotesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListNotesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38774,6 +39285,8 @@ type CreateNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -38809,6 +39322,11 @@ func (r CreateNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38855,6 +39373,8 @@ type DeleteNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -38885,6 +39405,11 @@ func (r DeleteNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -38933,6 +39458,8 @@ type GetNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -38968,6 +39495,11 @@ func (r GetNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39016,6 +39548,8 @@ type UpdateNoteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39051,6 +39585,11 @@ func (r UpdateNoteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateNoteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateNoteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39099,6 +39638,8 @@ type ListOauthAppRegistrationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39134,6 +39675,11 @@ func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON500() *Probl
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListOauthAppRegistrationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39182,6 +39728,8 @@ type CreateOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39217,6 +39765,11 @@ func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39267,6 +39820,8 @@ type DeleteOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -39307,6 +39862,11 @@ func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39357,6 +39917,8 @@ type GetOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39397,6 +39959,11 @@ func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39447,6 +40014,8 @@ type UpdateOauthAppRegistrationHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39487,6 +40056,11 @@ func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateOauthAppRegistrationHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39539,6 +40113,8 @@ type RotateOauthAppRegistrationSecretHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39586,6 +40162,11 @@ func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSON503()
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateOauthAppRegistrationSecretHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r RotateOauthAppRegistrationSecretHTTPResp) GetBody() []byte {
 	return r.Body
@@ -39626,6 +40207,8 @@ type RegisterOauthClientEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -39646,6 +40229,11 @@ func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON500() *Pro
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39694,6 +40282,8 @@ type RevokeOauthGrantHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -39729,6 +40319,11 @@ func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeOauthGrantHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39777,6 +40372,8 @@ type ApprovalDecisionEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39812,6 +40409,11 @@ func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON500() *Proble
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39856,6 +40458,8 @@ type ApprovalStatusEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -39881,6 +40485,11 @@ func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -39912,206 +40521,6 @@ func (r ApprovalStatusEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
-type AuthorizeOauthCallbackHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeOauthCallbackHTTPResp) GetJSON200() *interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r AuthorizeOauthCallbackHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeOauthCallbackHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeOauthCallbackHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeOauthCallbackHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeOauthCallbackHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ConsentPageHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ConsentPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ConsentPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ConsentPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ConsentPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ConsentPageHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ConsentPageHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ConsentPageHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ConsentPageHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ConsentSubmitHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ConsentSubmitHTTPResp) GetJSON200() *interface{} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ConsentSubmitHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ConsentSubmitHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ConsentSubmitHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ConsentSubmitHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ConsentSubmitHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ConsentAgentCreateHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40125,6 +40534,8 @@ type ConsentAgentCreateHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40150,6 +40561,11 @@ func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentAgentCreateHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40194,6 +40610,8 @@ type ConsentAgentStatusHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40219,6 +40637,11 @@ func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40267,6 +40690,8 @@ type IntrospectEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40302,6 +40727,11 @@ func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IntrospectEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40354,6 +40784,8 @@ type RevokeEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40401,6 +40833,11 @@ func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r RevokeEndpointHTTPResp) GetBody() []byte {
 	return r.Body
@@ -40430,96 +40867,6 @@ func (r RevokeEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
-type SessionContinueEndpointHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *OAuthSessionContinueResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *RouteNotFoundResponse
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SessionContinueEndpointHTTPResp) GetJSON200() *OAuthSessionContinueResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r SessionContinueEndpointHTTPResp) GetJSON404() *RouteNotFoundResponse {
-	return r.JSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r SessionContinueEndpointHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SessionContinueEndpointHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SessionContinueEndpointHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SessionContinueEndpointHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type TokenEndpointHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40533,6 +40880,8 @@ type TokenEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40558,6 +40907,11 @@ func (r TokenEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r TokenEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TokenEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40606,6 +40960,8 @@ type ListPermissionRuleSetsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40641,6 +40997,11 @@ func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON500() *ProblemD
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPermissionRuleSetsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40691,6 +41052,8 @@ type CreatePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -40731,6 +41094,11 @@ func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40781,6 +41149,8 @@ type DeletePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -40821,6 +41191,11 @@ func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeletePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40871,6 +41246,8 @@ type GetPermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -40911,6 +41288,11 @@ func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *ProblemDet
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -40961,6 +41343,8 @@ type UpdatePermissionRuleSetHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41001,6 +41385,11 @@ func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON500() *Problem
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdatePermissionRuleSetHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41051,6 +41440,8 @@ type ReplacePermissionRuleSetRulesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41091,6 +41482,11 @@ func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON500() *P
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplacePermissionRuleSetRulesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41139,6 +41535,8 @@ type ListPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41174,6 +41572,11 @@ func (r ListPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41218,6 +41621,8 @@ type RegisterEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -41243,6 +41648,11 @@ func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetail 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41291,6 +41701,8 @@ type DeleteRegistrationEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41326,6 +41738,11 @@ func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON500() *Prob
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteRegistrationEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41372,6 +41789,8 @@ type PollStatusEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41402,6 +41821,11 @@ func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PollStatusEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41450,6 +41874,8 @@ type UpdateRegistrationEndpointHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41487,6 +41913,11 @@ func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSON503() *Prob
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateRegistrationEndpointHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r UpdateRegistrationEndpointHTTPResp) GetBody() []byte {
 	return r.Body
@@ -41516,75 +41947,6 @@ func (r UpdateRegistrationEndpointHTTPResp) ContentType() string {
 	return ""
 }
 
-type RegistryHealthHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]string
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RegistryHealthHTTPResp) GetJSON200() *map[string]string {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r RegistryHealthHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r RegistryHealthHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r RegistryHealthHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r RegistryHealthHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r RegistryHealthHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RegistryHealthHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RegistryHealthHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RegistryHealthHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type SearchOperationsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -41602,6 +41964,8 @@ type SearchOperationsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41639,6 +42003,11 @@ func (r SearchOperationsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail 
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SearchOperationsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r SearchOperationsHTTPResp) GetBody() []byte {
 	return r.Body
@@ -41673,11 +42042,18 @@ type GetVersionHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *VersionResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetVersionHTTPResp) GetJSON200() *VersionResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetVersionHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41726,6 +42102,8 @@ type ListUsersHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41761,6 +42139,11 @@ func (r ListUsersHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListUsersHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListUsersHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41809,6 +42192,8 @@ type CreateUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -41844,6 +42229,11 @@ func (r CreateUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41892,6 +42282,8 @@ type GetCurrentUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -41927,6 +42319,11 @@ func (r GetCurrentUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetCurrentUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCurrentUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -41975,6 +42372,8 @@ type ChangePasswordHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42010,6 +42409,11 @@ func (r ChangePasswordHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ChangePasswordHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ChangePasswordHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42060,6 +42464,8 @@ type DeleteUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -42100,6 +42506,11 @@ func (r DeleteUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DeleteUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42150,6 +42561,8 @@ type GetUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42190,6 +42603,11 @@ func (r GetUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r GetUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42238,6 +42656,8 @@ type UpdateUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42273,6 +42693,11 @@ func (r UpdateUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r UpdateUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42325,6 +42750,8 @@ type SetUserPermissionsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42370,6 +42797,11 @@ func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetai
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetUserPermissionsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42420,6 +42852,8 @@ type DisableUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -42460,6 +42894,11 @@ func (r DisableUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r DisableUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisableUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42506,6 +42945,8 @@ type EnableUserHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
@@ -42536,6 +42977,11 @@ func (r EnableUserHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r EnableUserHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42584,6 +43030,8 @@ type ReissueInviteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42619,6 +43067,11 @@ func (r ReissueInviteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ReissueInviteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42665,6 +43118,8 @@ type CreateAdminHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42695,6 +43150,11 @@ func (r CreateAdminHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r CreateAdminHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAdminHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42739,6 +43199,8 @@ type RedeemInviteHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42764,6 +43226,11 @@ func (r RedeemInviteHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r RedeemInviteHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemInviteHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42812,6 +43279,8 @@ type ListVendorsHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42847,6 +43316,11 @@ func (r ListVendorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
 func (r ListVendorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListVendorsHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
@@ -42895,6 +43369,8 @@ type GetAuthCapabilitiesHTTPResp struct {
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -42932,6 +43408,11 @@ func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSON503() *ProblemDeta
 	return r.ApplicationproblemJSON503
 }
 
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAuthCapabilitiesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
 // GetBody returns the raw response body bytes
 func (r GetAuthCapabilitiesHTTPResp) GetBody() []byte {
 	return r.Body
@@ -42959,103 +43440,6 @@ func (r GetAuthCapabilitiesHTTPResp) ContentType() string {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
-}
-
-// JwksWithResponse JSON Web Key Set
-//
-// Return the JWKS document with the active public signing keys (ES256).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /.well-known/jwks.json (the `Jwks` operationId).
-func (c *ClientWithResponses) JwksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JwksHTTPResp, error) {
-	rsp, err := c.Jwks(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseJwksHTTPResp(rsp)
-}
-
-// OauthAuthorizationServerWithResponse OAuth authorization server metadata
-//
-// Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /.well-known/oauth-authorization-server (the `OauthAuthorizationServer` operationId).
-func (c *ClientWithResponses) OauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OauthAuthorizationServerHTTPResp, error) {
-	rsp, err := c.OauthAuthorizationServer(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseOauthAuthorizationServerHTTPResp(rsp)
-}
-
-// McpOauthAuthorizationServerWithResponse Get OAuth authorization server metadata for MCP clients
-//
-// Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
-//
-// Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
-// — the URL an MCP client derives from the protected-resource document
-// (RFC 8414 §3.1). It lists the authorization, token and revocation
-// endpoints, the anonymous client registration endpoint (`/oauth-clients`),
-// the MCP tool scopes, and the public client profile: no client secret
-// (`none`) with PKCE `S256`. It differs from the root
-// `/.well-known/oauth-authorization-server` document, whose
-// `registration_endpoint` is the agent `/register`. Returns 404 when
-// interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /.well-known/oauth-authorization-server/mcp (the `McpOauthAuthorizationServer` operationId).
-func (c *ClientWithResponses) McpOauthAuthorizationServerWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthAuthorizationServerHTTPResp, error) {
-	rsp, err := c.McpOauthAuthorizationServer(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMcpOauthAuthorizationServerHTTPResp(rsp)
-}
-
-// McpOauthProtectedResourceRootAliasWithResponse Get MCP protected resource metadata (root fallback)
-//
-// Serve the MCP protected-resource document at the root well-known path.
-//
-// Returns the same RFC 9728 body as
-// `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
-// its authorization server, and the MCP tool scopes. It exists for clients
-// (such as Claude Code) that probe this root path instead of following the
-// `resource_metadata` pointer in a 401. That is safe while this deployment
-// has exactly one OAuth-protected resource. Returns 404 when interactive
-// OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /.well-known/oauth-protected-resource (the `McpOauthProtectedResourceRootAlias` operationId).
-func (c *ClientWithResponses) McpOauthProtectedResourceRootAliasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceRootAliasHTTPResp, error) {
-	rsp, err := c.McpOauthProtectedResourceRootAlias(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp)
-}
-
-// McpOauthProtectedResourceWithResponse OAuth protected resource metadata for the MCP resource
-//
-// RFC 9728 protected-resource metadata for `{base}/mcp`.
-//
-// Names the /mcp-scoped authorization server and the MCP tool scopes. The
-// same body is also served at the root well-known path for clients that
-// ignore the 401's `resource_metadata` pointer.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /.well-known/oauth-protected-resource/mcp (the `McpOauthProtectedResource` operationId).
-func (c *ClientWithResponses) McpOauthProtectedResourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*McpOauthProtectedResourceHTTPResp, error) {
-	rsp, err := c.McpOauthProtectedResource(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMcpOauthProtectedResourceHTTPResp(rsp)
 }
 
 // ListActorsWithResponse List users and agents
@@ -44605,25 +44989,6 @@ func (c *ClientWithResponses) GetAuditEntryWithResponse(ctx context.Context, aud
 	return ParseGetAuditEntryHTTPResp(rsp)
 }
 
-// AuthHealthWithResponse Auth health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /auth/health (the `AuthHealth` operationId).
-func (c *ClientWithResponses) AuthHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthHealthHTTPResp, error) {
-	rsp, err := c.AuthHealth(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthHealthHTTPResp(rsp)
-}
-
 // AuthIdpDescriptorWithResponse External IdP login descriptor
 //
 // Public capability hint: whether IdP login is enabled, and which provider.
@@ -44693,24 +45058,6 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseRefreshSessionHTTPResp(rsp)
-}
-
-// AuthorizeEndpointWithResponse Authorize Endpoint
-//
-// RFC 6749 Authorization endpoint with PKCE (S256 only).
-//
-// If an external IdP is configured, redirects to the upstream provider.
-// Otherwise returns an error (direct login requires a separate credential exchange).
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /authorize (the `AuthorizeEndpoint` operationId).
-func (c *ClientWithResponses) AuthorizeEndpointWithResponse(ctx context.Context, params *AuthorizeEndpointParams, reqEditors ...RequestEditorFn) (*AuthorizeEndpointHTTPResp, error) {
-	rsp, err := c.AuthorizeEndpoint(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeEndpointHTTPResp(rsp)
 }
 
 // ListCatalogWithResponse List Catalog
@@ -45031,25 +45378,6 @@ func (c *ClientWithResponses) RejectConnectSessionWithResponse(ctx context.Conte
 	return ParseRejectConnectSessionHTTPResp(rsp)
 }
 
-// ControlHealthWithResponse Control health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /control/health (the `ControlHealth` operationId).
-func (c *ClientWithResponses) ControlHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ControlHealthHTTPResp, error) {
-	rsp, err := c.ControlHealth(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseControlHealthHTTPResp(rsp)
-}
-
 // ListCredentialsWithResponse List credentials
 //
 // List credentials with cursor-based pagination.
@@ -45093,40 +45421,6 @@ func (c *ClientWithResponses) CreateCredentialWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseCreateCredentialHTTPResp(rsp)
-}
-
-// OauthCallbackWithResponse OAuth connect callback
-//
-// Handle the OAuth callback from the IdP.
-//
-// This endpoint is intentionally unauthenticated — it receives redirects
-// from external IdPs where the user has no session cookie. Security
-// binding is provided by the signed, time-limited state JWT which ties
-// the callback to a specific credential and caller.
-//
-// Redirects the popup the SPA opened to a public SPA route
-// (“/app/oauth/connected“) that owns the user-facing "you can close this"
-// experience and self-closes. Two variants, distinguished only by a coarse
-// “status“ query param:
-//
-//   - Success: “?status=ok“.
-//   - Failure: “?status=error“ — no protocol or provider detail is
-//     exposed in the redirect URL.
-//
-// The parent SPA still learns the real outcome by polling
-// “GET /credentials/{id}“ — never from this redirect. The actual cause
-// (missing state, connect failure, provider error, etc.) is recorded via
-// structured logging for operators.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /credentials/oauth/callback (the `OauthCallback` operationId).
-func (c *ClientWithResponses) OauthCallbackWithResponse(ctx context.Context, params *OauthCallbackParams, reqEditors ...RequestEditorFn) (*OauthCallbackHTTPResp, error) {
-	rsp, err := c.OauthCallback(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseOauthCallbackHTTPResp(rsp)
 }
 
 // ListProvidersWithResponse List credential providers
@@ -45849,83 +46143,6 @@ func (c *ClientWithResponses) CancelJobWithResponse(ctx context.Context, jobId s
 	return ParseCancelJobHTTPResp(rsp)
 }
 
-// LoginPageWithResponse Local-account login form (authorization flow)
-//
-// Render the local-account login form for an in-flight “/authorize“ request.
-//
-// Verifies the “ls“ signature/TTL/purpose **before** rendering — an
-// expired, forged, or wrong-purpose token never gets a form — re-checks the
-// D7 client gate (a client denied or deactivated while the user holds the
-// “ls“ must not be asked for a password), rejects an already-spent “ls“,
-// and embeds “ls“ plus a fresh single-use CSRF nonce bound to it.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /login (the `LoginPage` operationId).
-func (c *ClientWithResponses) LoginPageWithResponse(ctx context.Context, params *LoginPageParams, reqEditors ...RequestEditorFn) (*LoginPageHTTPResp, error) {
-	rsp, err := c.LoginPage(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLoginPageHTTPResp(rsp)
-}
-
-// LoginSubmitWithBodyWithResponse Local-account login submit (authorization flow)
-//
-// Authenticate the local account and rejoin the authorization flow.
-//
-// Success never mints a JWT — it flows straight into code issuance (platform
-// client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins, and burns the single-use “ls“.
-// Credential failures re-render the form with one generic message: lockout
-// state, unknown email, and wrong password are indistinguishable (no
-// user-enumeration response oracle), while the shared
-// “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold. An account flagged
-// “must_change_password“ authenticates but is told to rotate via the UI
-// first — the OAuth plane must not hand a fully-scoped token to a
-// temporary-password principal the UI would have boxed into
-// change-password-only.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /login (the `LoginSubmit` operationId).
-func (c *ClientWithResponses) LoginSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
-	rsp, err := c.LoginSubmitWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLoginSubmitHTTPResp(rsp)
-}
-
-// LoginSubmitWithFormdataBodyWithResponse Local-account login submit (authorization flow)
-//
-// Authenticate the local account and rejoin the authorization flow.
-//
-// Success never mints a JWT — it flows straight into code issuance (platform
-// client) or the consent handle (registered third-party client), exactly
-// where the IdP callback rejoins, and burns the single-use “ls“.
-// Credential failures re-render the form with one generic message: lockout
-// state, unknown email, and wrong password are indistinguishable (no
-// user-enumeration response oracle), while the shared
-// “AuthService.authenticate“ core still increments the failed-login count
-// and applies the lockout threshold. An account flagged
-// “must_change_password“ authenticates but is told to rotate via the UI
-// first — the OAuth plane must not hand a fully-scoped token to a
-// temporary-password principal the UI would have boxed into
-// change-password-only.
-//
-// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /login (the `LoginSubmit` operationId).
-func (c *ClientWithResponses) LoginSubmitWithFormdataBodyWithResponse(ctx context.Context, body LoginSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*LoginSubmitHTTPResp, error) {
-	rsp, err := c.LoginSubmitWithFormdataBody(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseLoginSubmitHTTPResp(rsp)
-}
-
 // ReportMcpConfigRegistrationWithBodyWithResponse Report MCP config registration
 //
 // Record that an MCP server entry was written for an agent runtime.
@@ -46433,86 +46650,6 @@ func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Con
 	return ParseApprovalStatusEndpointHTTPResp(rsp)
 }
 
-// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
-//
-// External IdP callback — exchanges upstream code and issues platform auth code.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /oauth/callback (the `AuthorizeOauthCallback` operationId).
-func (c *ClientWithResponses) AuthorizeOauthCallbackWithResponse(ctx context.Context, params *AuthorizeOauthCallbackParams, reqEditors ...RequestEditorFn) (*AuthorizeOauthCallbackHTTPResp, error) {
-	rsp, err := c.AuthorizeOauthCallback(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeOauthCallbackHTTPResp(rsp)
-}
-
-// ConsentPageWithResponse Consent Page
-//
-// Display the OAuth consent screen.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /oauth/consent (the `ConsentPage` operationId).
-func (c *ClientWithResponses) ConsentPageWithResponse(ctx context.Context, params *ConsentPageParams, reqEditors ...RequestEditorFn) (*ConsentPageHTTPResp, error) {
-	rsp, err := c.ConsentPage(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseConsentPageHTTPResp(rsp)
-}
-
-// ConsentSubmitWithBodyWithResponse Consent Submit
-//
-// Process the consent form submission. Mints the auth code only on approval.
-//
-// “consent_token“ is the opaque handle emitted by the callback. It never
-// leaves the state backend as anything more than an ID — the actual consent
-// parameters (user_id, email, scopes, redirect_uri) live server-side and
-// can't be tampered with or captured from browser history/proxy logs.
-//
-// “agent_id“ is posted only by the agent-picker variant
-// (“consent_model='agent'“ clients); it is validated and the scope math
-// recomputed entirely server-side — the browser's selection is never
-// trusted.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-func (c *ClientWithResponses) ConsentSubmitWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error) {
-	rsp, err := c.ConsentSubmitWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseConsentSubmitHTTPResp(rsp)
-}
-
-// ConsentSubmitWithFormdataBodyWithResponse Consent Submit
-//
-// Process the consent form submission. Mints the auth code only on approval.
-//
-// “consent_token“ is the opaque handle emitted by the callback. It never
-// leaves the state backend as anything more than an ID — the actual consent
-// parameters (user_id, email, scopes, redirect_uri) live server-side and
-// can't be tampered with or captured from browser history/proxy logs.
-//
-// “agent_id“ is posted only by the agent-picker variant
-// (“consent_model='agent'“ clients); it is validated and the scope math
-// recomputed entirely server-side — the browser's selection is never
-// trusted.
-//
-// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /oauth/consent (the `ConsentSubmit` operationId).
-func (c *ClientWithResponses) ConsentSubmitWithFormdataBodyWithResponse(ctx context.Context, body ConsentSubmitFormdataRequestBody, reqEditors ...RequestEditorFn) (*ConsentSubmitHTTPResp, error) {
-	rsp, err := c.ConsentSubmitWithFormdataBody(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseConsentSubmitHTTPResp(rsp)
-}
-
 // ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 //
 // Create the consenting user's first agent from the zero-agents consent page (P4).
@@ -46824,72 +46961,6 @@ func (c *ClientWithResponses) RevokeEndpointWithFormdataBodyWithResponse(ctx con
 		return nil, err
 	}
 	return ParseRevokeEndpointHTTPResp(rsp)
-}
-
-// SessionContinueEndpointWithBodyWithResponse Exchange a live platform session for an authorize continuation
-//
-// Rung 1 of the /authorize identity ladder: reuse the platform session.
-//
-// The login page's script posts the pending authorize state (the “ls“
-// carry-through token) with the SPA's bearer token in the Authorization
-// header — no cookies, no ambient credentials, so a cross-site form cannot
-// drive it (same CSRF posture as the consent POST and the inline approval
-// decision). The platform token is validated by the standard auth
-// dependency (users only), and the “active“ / “must_change_password“
-// fences are re-checked with a LIVE user-row read — not the token's baked
-// claims — matching rung 3's “password_rotation_required“ posture, so an
-// admin-forced reset fences the exchange immediately even while pre-reset
-// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-// success the response carries a relative “/authorize“ resume URL bearing
-// a short-TTL, “session“-purpose continuation blob that pins THIS
-// caller's “user_id“ — the identity is fixed at exchange time, before the
-// consent page renders it with its "Not you?" escape.
-//
-// Every failure after authentication is the same generic 400: an invalid
-// blob must not let the caller learn anything about the client or the flow.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-func (c *ClientWithResponses) SessionContinueEndpointWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
-	rsp, err := c.SessionContinueEndpointWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSessionContinueEndpointHTTPResp(rsp)
-}
-
-// SessionContinueEndpointWithResponse Exchange a live platform session for an authorize continuation
-//
-// Rung 1 of the /authorize identity ladder: reuse the platform session.
-//
-// The login page's script posts the pending authorize state (the “ls“
-// carry-through token) with the SPA's bearer token in the Authorization
-// header — no cookies, no ambient credentials, so a cross-site form cannot
-// drive it (same CSRF posture as the consent POST and the inline approval
-// decision). The platform token is validated by the standard auth
-// dependency (users only), and the “active“ / “must_change_password“
-// fences are re-checked with a LIVE user-row read — not the token's baked
-// claims — matching rung 3's “password_rotation_required“ posture, so an
-// admin-forced reset fences the exchange immediately even while pre-reset
-// SPA tokens are still in flight. The D7 client gate is re-checked, and on
-// success the response carries a relative “/authorize“ resume URL bearing
-// a short-TTL, “session“-purpose continuation blob that pins THIS
-// caller's “user_id“ — the identity is fixed at exchange time, before the
-// consent page renders it with its "Not you?" escape.
-//
-// Every failure after authentication is the same generic 400: an invalid
-// blob must not let the caller learn anything about the client or the flow.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /oauth/session/continue (the `SessionContinueEndpoint` operationId).
-func (c *ClientWithResponses) SessionContinueEndpointWithResponse(ctx context.Context, body SessionContinueEndpointJSONRequestBody, reqEditors ...RequestEditorFn) (*SessionContinueEndpointHTTPResp, error) {
-	rsp, err := c.SessionContinueEndpoint(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSessionContinueEndpointHTTPResp(rsp)
 }
 
 // TokenEndpointWithBodyWithResponse Token Endpoint
@@ -47246,25 +47317,6 @@ func (c *ClientWithResponses) UpdateRegistrationEndpointWithResponse(ctx context
 		return nil, err
 	}
 	return ParseUpdateRegistrationEndpointHTTPResp(rsp)
-}
-
-// RegistryHealthWithResponse Registry health
-//
-// Return service health status for this surface.
-//
-// Unauthenticated liveness probe. In combined mode this is served under
-// the surface prefix (e.g. “/control/health“) so surfaces don't collide;
-// the canonical platform probe is the root “GET /health“.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /registry/health (the `RegistryHealth` operationId).
-func (c *ClientWithResponses) RegistryHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RegistryHealthHTTPResp, error) {
-	rsp, err := c.RegistryHealth(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRegistryHealthHTTPResp(rsp)
 }
 
 // SearchOperationsWithBodyWithResponse Search operations
@@ -47675,297 +47727,6 @@ func (c *ClientWithResponses) GetAuthCapabilitiesWithResponse(ctx context.Contex
 	return ParseGetAuthCapabilitiesHTTPResp(rsp)
 }
 
-// ParseJwksHTTPResp parses an HTTP response from a JwksWithResponse call
-func ParseJwksHTTPResp(rsp *http.Response) (*JwksHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &JwksHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseOauthAuthorizationServerHTTPResp parses an HTTP response from a OauthAuthorizationServerWithResponse call
-func ParseOauthAuthorizationServerHTTPResp(rsp *http.Response) (*OauthAuthorizationServerHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &OauthAuthorizationServerHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMcpOauthAuthorizationServerHTTPResp parses an HTTP response from a McpOauthAuthorizationServerWithResponse call
-func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuthorizationServerHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &McpOauthAuthorizationServerHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMcpOauthProtectedResourceRootAliasHTTPResp parses an HTTP response from a McpOauthProtectedResourceRootAliasWithResponse call
-func ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp *http.Response) (*McpOauthProtectedResourceRootAliasHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &McpOauthProtectedResourceRootAliasHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMcpOauthProtectedResourceHTTPResp parses an HTTP response from a McpOauthProtectedResourceWithResponse call
-func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtectedResourceHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &McpOauthProtectedResourceHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListActorsHTTPResp parses an HTTP response from a ListActorsWithResponse call
 func ParseListActorsHTTPResp(rsp *http.Response) (*ListActorsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -48028,6 +47789,13 @@ func ParseListActorsHTTPResp(rsp *http.Response) (*ListActorsHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48097,6 +47865,13 @@ func ParseLookupActorsHTTPResp(rsp *http.Response) (*LookupActorsHTTPResp, error
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48164,6 +47939,13 @@ func ParseListProviderConfigsHTTPResp(rsp *http.Response) (*ListProviderConfigsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48240,6 +48022,13 @@ func ParseGetProviderConfigHTTPResp(rsp *http.Response) (*GetProviderConfigHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48308,6 +48097,13 @@ func ParseSetProviderConfigHTTPResp(rsp *http.Response) (*SetProviderConfigHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48361,6 +48157,13 @@ func ParseHealthHTTPResp(rsp *http.Response) (*HealthHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48430,6 +48233,13 @@ func ParseListOauthClientsHTTPResp(rsp *http.Response) (*ListOauthClientsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48497,6 +48307,13 @@ func ParseCreateOauthClientHTTPResp(rsp *http.Response) (*CreateOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48568,6 +48385,13 @@ func ParseDeactivateOauthClientHTTPResp(rsp *http.Response) (*DeactivateOauthCli
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48644,6 +48468,13 @@ func ParseGetOauthClientHTTPResp(rsp *http.Response) (*GetOauthClientHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48718,6 +48549,13 @@ func ParseUpdateOauthClientHTTPResp(rsp *http.Response) (*UpdateOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -48794,6 +48632,13 @@ func ParseRotateOauthClientSecretHTTPResp(rsp *http.Response) (*RotateOauthClien
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48869,6 +48714,13 @@ func ParseApproveOauthClientHTTPResp(rsp *http.Response) (*ApproveOauthClientHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -48939,6 +48791,13 @@ func ParseDeleteOauthClientHTTPResp(rsp *http.Response) (*DeleteOauthClientHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49015,6 +48874,13 @@ func ParseDenyOauthClientHTTPResp(rsp *http.Response) (*DenyOauthClientHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49082,6 +48948,13 @@ func ParseListOauthGrantsHTTPResp(rsp *http.Response) (*ListOauthGrantsHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49151,6 +49024,13 @@ func ParseListAgentsHTTPResp(rsp *http.Response) (*ListAgentsHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49219,6 +49099,13 @@ func ParseCreateAgentHTTPResp(rsp *http.Response) (*CreateAgentHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49282,6 +49169,13 @@ func ParseArchiveAgentHTTPResp(rsp *http.Response) (*ArchiveAgentHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49351,6 +49245,13 @@ func ParseGetAgentHTTPResp(rsp *http.Response) (*GetAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49418,6 +49319,13 @@ func ParseUpdateAgentHTTPResp(rsp *http.Response) (*UpdateAgentHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49487,6 +49395,13 @@ func ParseGetAgentApiKeyInfoHTTPResp(rsp *http.Response) (*GetAgentApiKeyInfoHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49554,6 +49469,13 @@ func ParseGetAgentApiKeyHistoryHTTPResp(rsp *http.Response) (*GetAgentApiKeyHist
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49623,6 +49545,13 @@ func ParseListAgentCredentialsHTTPResp(rsp *http.Response) (*ListAgentCredential
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49691,6 +49620,13 @@ func ParseBindAgentCredentialHTTPResp(rsp *http.Response) (*BindAgentCredentialH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49754,6 +49690,13 @@ func ParseUnbindAgentCredentialHTTPResp(rsp *http.Response) (*UnbindAgentCredent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49823,6 +49766,13 @@ func ParseResumeAgentCredentialBindingHTTPResp(rsp *http.Response) (*ResumeAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -49890,6 +49840,13 @@ func ParseUpdateAgentJwksHTTPResp(rsp *http.Response) (*UpdateAgentJwksHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -49966,6 +49923,13 @@ func ParseListAgentOauthGrantsHTTPResp(rsp *http.Response) (*ListAgentOauthGrant
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50033,6 +49997,13 @@ func ParseGetAgentPermissionsHTTPResp(rsp *http.Response) (*GetAgentPermissionsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50102,6 +50073,13 @@ func ParseReplaceAgentPermissionsHTTPResp(rsp *http.Response) (*ReplaceAgentPerm
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50169,6 +50147,13 @@ func ParseApproveAgentHTTPResp(rsp *http.Response) (*ApproveAgentHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50238,6 +50223,13 @@ func ParseClaimAgentHTTPResp(rsp *http.Response) (*ClaimAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50306,6 +50298,13 @@ func ParseDenyAgentHTTPResp(rsp *http.Response) (*DenyAgentHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50370,6 +50369,13 @@ func ParseDisableAgentHTTPResp(rsp *http.Response) (*DisableAgentHTTPResp, error
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50433,6 +50439,13 @@ func ParseEnableAgentHTTPResp(rsp *http.Response) (*EnableAgentHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50502,6 +50515,13 @@ func ParseGenerateAgentApiKeyHTTPResp(rsp *http.Response) (*GenerateAgentApiKeyH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50565,6 +50585,13 @@ func ParseRevokeAgentApiKeyHTTPResp(rsp *http.Response) (*RevokeAgentApiKeyHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50634,6 +50661,13 @@ func ParseListApisHTTPResp(rsp *http.Response) (*ListApisHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50701,6 +50735,13 @@ func ParseImportApisHTTPResp(rsp *http.Response) (*ImportApisHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50780,6 +50821,13 @@ func ParseDeleteApiHTTPResp(rsp *http.Response) (*DeleteApiHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50847,6 +50895,13 @@ func ParseGetApiHTTPResp(rsp *http.Response) (*GetApiHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -50916,6 +50971,13 @@ func ParseUpdateApiHTTPResp(rsp *http.Response) (*UpdateApiHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -50983,6 +51045,13 @@ func ParseGetApiSpecHTTPResp(rsp *http.Response) (*GetApiSpecHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51052,6 +51121,13 @@ func ParseListApiOperationsHTTPResp(rsp *http.Response) (*ListApiOperationsHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51119,6 +51195,13 @@ func ParseListOverlaysHTTPResp(rsp *http.Response) (*ListOverlaysHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51188,6 +51271,13 @@ func ParseSubmitOverlayHTTPResp(rsp *http.Response) (*SubmitOverlayHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51251,6 +51341,13 @@ func ParseDeprecateOverlayHTTPResp(rsp *http.Response) (*DeprecateOverlayHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51320,6 +51417,13 @@ func ParseGetOverlayHTTPResp(rsp *http.Response) (*GetOverlayHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51387,6 +51491,13 @@ func ParseUpdateOverlayHTTPResp(rsp *http.Response) (*UpdateOverlayHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51456,6 +51567,13 @@ func ParseConfirmOverlayHTTPResp(rsp *http.Response) (*ConfirmOverlayHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51519,6 +51637,13 @@ func ParseRollbackOverlayHTTPResp(rsp *http.Response) (*RollbackOverlayHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51588,6 +51713,13 @@ func ParseListApiRevisionsHTTPResp(rsp *http.Response) (*ListApiRevisionsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51651,6 +51783,13 @@ func ParseDeleteRevisionHTTPResp(rsp *http.Response) (*DeleteRevisionHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51720,6 +51859,13 @@ func ParseGetApiRevisionHTTPResp(rsp *http.Response) (*GetApiRevisionHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51787,6 +51933,13 @@ func ParseGetApiRevisionSpecHTTPResp(rsp *http.Response) (*GetApiRevisionSpecHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -51856,6 +52009,13 @@ func ParseListApiRevisionOperationsHTTPResp(rsp *http.Response) (*ListApiRevisio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51924,6 +52084,13 @@ func ParseArchiveRevisionHTTPResp(rsp *http.Response) (*ArchiveRevisionHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -51991,6 +52158,13 @@ func ParsePromoteRevisionHTTPResp(rsp *http.Response) (*PromoteRevisionHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52067,6 +52241,13 @@ func ParseListApiSecuritySchemesHTTPResp(rsp *http.Response) (*ListApiSecuritySc
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52134,6 +52315,13 @@ func ParseListAuditEntriesHTTPResp(rsp *http.Response) (*ListAuditEntriesHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52203,59 +52391,12 @@ func ParseGetAuditEntryHTTPResp(rsp *http.Response) (*GetAuditEntryHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseAuthHealthHTTPResp parses an HTTP response from a AuthHealthWithResponse call
-func ParseAuthHealthHTTPResp(rsp *http.Response) (*AuthHealthHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthHealthHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]string
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52311,6 +52452,13 @@ func ParseAuthIdpDescriptorHTTPResp(rsp *http.Response) (*AuthIdpDescriptorHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52364,6 +52512,13 @@ func ParseLoginHTTPResp(rsp *http.Response) (*LoginHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52433,59 +52588,12 @@ func ParseRefreshSessionHTTPResp(rsp *http.Response) (*RefreshSessionHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseAuthorizeEndpointHTTPResp parses an HTTP response from a AuthorizeEndpointWithResponse call
-func ParseAuthorizeEndpointHTTPResp(rsp *http.Response) (*AuthorizeEndpointHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeEndpointHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52555,6 +52663,13 @@ func ParseListCatalogHTTPResp(rsp *http.Response) (*ListCatalogHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52622,6 +52737,13 @@ func ParseGetCatalogEntryHTTPResp(rsp *http.Response) (*GetCatalogEntryHTTPResp,
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52691,6 +52813,13 @@ func ParsePreviewCatalogOperationsHTTPResp(rsp *http.Response) (*PreviewCatalogO
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52758,6 +52887,13 @@ func ParseImportCatalogEntryHTTPResp(rsp *http.Response) (*ImportCatalogEntryHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52830,6 +52966,13 @@ func ParseSnoozeCatalogEntryHTTPResp(rsp *http.Response) (*SnoozeCatalogEntryHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -52893,6 +53036,13 @@ func ParseUnsnoozeCatalogEntryHTTPResp(rsp *http.Response) (*UnsnoozeCatalogEntr
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -52962,6 +53112,13 @@ func ParseRefreshCatalogHTTPResp(rsp *http.Response) (*RefreshCatalogHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53029,6 +53186,13 @@ func ParseListConnectSessionsHTTPResp(rsp *http.Response) (*ListConnectSessionsH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53105,6 +53269,13 @@ func ParseGetConnectSessionHTTPResp(rsp *http.Response) (*GetConnectSessionHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53173,6 +53344,13 @@ func ParsePollConnectSessionStatusHTTPResp(rsp *http.Response) (*PollConnectSess
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53236,6 +53414,13 @@ func ParseCancelConnectSessionHTTPResp(rsp *http.Response) (*CancelConnectSessio
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53319,6 +53504,13 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53383,59 +53575,12 @@ func ParseRejectConnectSessionHTTPResp(rsp *http.Response) (*RejectConnectSessio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseControlHealthHTTPResp parses an HTTP response from a ControlHealthWithResponse call
-func ParseControlHealthHTTPResp(rsp *http.Response) (*ControlHealthHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ControlHealthHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]string
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53505,6 +53650,13 @@ func ParseListCredentialsHTTPResp(rsp *http.Response) (*ListCredentialsHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53573,59 +53725,12 @@ func ParseCreateCredentialHTTPResp(rsp *http.Response) (*CreateCredentialHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseOauthCallbackHTTPResp parses an HTTP response from a OauthCallbackWithResponse call
-func ParseOauthCallbackHTTPResp(rsp *http.Response) (*OauthCallbackHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &OauthCallbackHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53694,6 +53799,13 @@ func ParseListProvidersHTTPResp(rsp *http.Response) (*ListProvidersHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53765,6 +53877,13 @@ func ParseDeleteCredentialHTTPResp(rsp *http.Response) (*DeleteCredentialHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53841,6 +53960,13 @@ func ParseGetCredentialHTTPResp(rsp *http.Response) (*GetCredentialHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -53915,6 +54041,13 @@ func ParseUpdateCredentialHTTPResp(rsp *http.Response) (*UpdateCredentialHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -53991,6 +54124,13 @@ func ParseListCredentialAgentsHTTPResp(rsp *http.Response) (*ListCredentialAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54065,6 +54205,13 @@ func ParseListAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ListAgent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54141,6 +54288,13 @@ func ParsePatchAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*PatchAge
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54215,6 +54369,13 @@ func ParseReplaceAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*Replac
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54291,6 +54452,13 @@ func ParseTestAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*TestAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54362,6 +54530,13 @@ func ParseDetachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*DetachAgent
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54432,6 +54607,13 @@ func ParseAttachAgentCredentialRuleSetHTTPResp(rsp *http.Response) (*AttachAgent
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54515,6 +54697,13 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54568,6 +54757,13 @@ func ParseErrorPageHTTPResp(rsp *http.Response) (*ErrorPageHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54637,6 +54833,13 @@ func ParseListEventsHTTPResp(rsp *http.Response) (*ListEventsHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54704,6 +54907,13 @@ func ParseStreamEventsHTTPResp(rsp *http.Response) (*StreamEventsHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54773,6 +54983,13 @@ func ParseGetEventHTTPResp(rsp *http.Response) (*GetEventHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54841,6 +55058,13 @@ func ParseListExecutionsHTTPResp(rsp *http.Response) (*ListExecutionsHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -54908,6 +55132,13 @@ func ParseListHeldExecutionsHTTPResp(rsp *http.Response) (*ListHeldExecutionsHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -54983,6 +55214,13 @@ func ParseGetHeldExecutionHTTPResp(rsp *http.Response) (*GetHeldExecutionHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55066,6 +55304,13 @@ func ParseGetHeldExecutionResultHTTPResp(rsp *http.Response) (*GetHeldExecutionR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55147,6 +55392,13 @@ func ParseDecideHeldExecutionHTTPResp(rsp *http.Response) (*DecideHeldExecutionH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55230,6 +55482,13 @@ func ParseWithdrawHeldExecutionHTTPResp(rsp *http.Response) (*WithdrawHeldExecut
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55297,6 +55556,13 @@ func ParseGetExecutionHTTPResp(rsp *http.Response) (*GetExecutionHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55369,6 +55635,13 @@ func ParseGetGovernedHostsHTTPResp(rsp *http.Response) (*GetGovernedHostsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	switch {
@@ -55417,6 +55690,13 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55486,6 +55766,13 @@ func ParseInspectOperationHTTPResp(rsp *http.Response) (*InspectOperationHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55511,6 +55798,13 @@ func ParseGetInstanceHTTPResp(rsp *http.Response) (*GetInstanceHTTPResp, error) 
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55601,6 +55895,13 @@ func ParseIntegrationsConnectHTTPResp(rsp *http.Response) (*IntegrationsConnectH
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55668,6 +55969,13 @@ func ParseListJobsHTTPResp(rsp *http.Response) (*ListJobsHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55737,6 +56045,13 @@ func ParseGetJobHTTPResp(rsp *http.Response) (*GetJobHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -55804,6 +56119,13 @@ func ParseGetJobResultHTTPResp(rsp *http.Response) (*GetJobResultHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -55887,120 +56209,12 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseLoginPageHTTPResp parses an HTTP response from a LoginPageWithResponse call
-func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &LoginPageHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseLoginSubmitHTTPResp parses an HTTP response from a LoginSubmitWithResponse call
-func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &LoginSubmitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56070,6 +56284,13 @@ func ParseReportMcpConfigRegistrationHTTPResp(rsp *http.Response) (*ReportMcpCon
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56137,6 +56358,13 @@ func ParseGetMeHTTPResp(rsp *http.Response) (*GetMeHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56206,6 +56434,13 @@ func ParseGetExecutionStatsHTTPResp(rsp *http.Response) (*GetExecutionStatsHTTPR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56273,6 +56508,13 @@ func ParseGetUsageStatsHTTPResp(rsp *http.Response) (*GetUsageStatsHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56342,6 +56584,13 @@ func ParseListNotesHTTPResp(rsp *http.Response) (*ListNotesHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56410,6 +56659,13 @@ func ParseCreateNoteHTTPResp(rsp *http.Response) (*CreateNoteHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56473,6 +56729,13 @@ func ParseDeleteNoteHTTPResp(rsp *http.Response) (*DeleteNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56542,6 +56805,13 @@ func ParseGetNoteHTTPResp(rsp *http.Response) (*GetNoteHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56609,6 +56879,13 @@ func ParseUpdateNoteHTTPResp(rsp *http.Response) (*UpdateNoteHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56678,6 +56955,13 @@ func ParseListOauthAppRegistrationsHTTPResp(rsp *http.Response) (*ListOauthAppRe
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56745,6 +57029,13 @@ func ParseCreateOauthAppRegistrationHTTPResp(rsp *http.Response) (*CreateOauthAp
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -56824,6 +57115,13 @@ func ParseDeleteOauthAppRegistrationHTTPResp(rsp *http.Response) (*DeleteOauthAp
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56899,6 +57197,13 @@ func ParseGetOauthAppRegistrationHTTPResp(rsp *http.Response) (*GetOauthAppRegis
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -56973,6 +57278,13 @@ func ParseUpdateOauthAppRegistrationHTTPResp(rsp *http.Response) (*UpdateOauthAp
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57056,6 +57368,13 @@ func ParseRotateOauthAppRegistrationSecretHTTPResp(rsp *http.Response) (*RotateO
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57102,6 +57421,13 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57174,6 +57500,13 @@ func ParseRevokeOauthGrantHTTPResp(rsp *http.Response) (*RevokeOauthGrantHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57242,6 +57575,13 @@ func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisio
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57296,160 +57636,12 @@ func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEnd
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseAuthorizeOauthCallbackHTTPResp parses an HTTP response from a AuthorizeOauthCallbackWithResponse call
-func ParseAuthorizeOauthCallbackHTTPResp(rsp *http.Response) (*AuthorizeOauthCallbackHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeOauthCallbackHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseConsentPageHTTPResp parses an HTTP response from a ConsentPageWithResponse call
-func ParseConsentPageHTTPResp(rsp *http.Response) (*ConsentPageHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ConsentPageHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseConsentSubmitHTTPResp parses an HTTP response from a ConsentSubmitWithResponse call
-func ParseConsentSubmitHTTPResp(rsp *http.Response) (*ConsentSubmitHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ConsentSubmitHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57505,6 +57697,13 @@ func ParseConsentAgentCreateHTTPResp(rsp *http.Response) (*ConsentAgentCreateHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -57558,6 +57757,13 @@ func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57626,6 +57832,13 @@ func ParseIntrospectEndpointHTTPResp(rsp *http.Response) (*IntrospectEndpointHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57709,80 +57922,12 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseSessionContinueEndpointHTTPResp parses an HTTP response from a SessionContinueEndpointWithResponse call
-func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueEndpointHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SessionContinueEndpointHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OAuthSessionContinueResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest RouteNotFoundResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57837,6 +57982,13 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57905,6 +58057,13 @@ func ParseListPermissionRuleSetsHTTPResp(rsp *http.Response) (*ListPermissionRul
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -57980,6 +58139,13 @@ func ParseCreatePermissionRuleSetHTTPResp(rsp *http.Response) (*CreatePermission
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58059,6 +58225,13 @@ func ParseDeletePermissionRuleSetHTTPResp(rsp *http.Response) (*DeletePermission
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58133,6 +58306,13 @@ func ParseGetPermissionRuleSetHTTPResp(rsp *http.Response) (*GetPermissionRuleSe
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58209,6 +58389,13 @@ func ParseUpdatePermissionRuleSetHTTPResp(rsp *http.Response) (*UpdatePermission
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58284,6 +58471,13 @@ func ParseReplacePermissionRuleSetRulesHTTPResp(rsp *http.Response) (*ReplacePer
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58352,6 +58546,13 @@ func ParseListPermissionsHTTPResp(rsp *http.Response) (*ListPermissionsHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58405,6 +58606,13 @@ func ParseRegisterEndpointHTTPResp(rsp *http.Response) (*RegisterEndpointHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58474,6 +58682,13 @@ func ParseDeleteRegistrationEndpointHTTPResp(rsp *http.Response) (*DeleteRegistr
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58534,6 +58749,13 @@ func ParsePollStatusEndpointHTTPResp(rsp *http.Response) (*PollStatusEndpointHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58603,59 +58825,12 @@ func ParseUpdateRegistrationEndpointHTTPResp(rsp *http.Response) (*UpdateRegistr
 		}
 		response.ApplicationproblemJSON503 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseRegistryHealthHTTPResp parses an HTTP response from a RegistryHealthWithResponse call
-func ParseRegistryHealthHTTPResp(rsp *http.Response) (*RegistryHealthHTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RegistryHealthHTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]string
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.ApplicationproblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ProblemDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSON503 = &dest
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58725,6 +58900,13 @@ func ParseSearchOperationsHTTPResp(rsp *http.Response) (*SearchOperationsHTTPRes
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58750,6 +58932,13 @@ func ParseGetVersionHTTPResp(rsp *http.Response) (*GetVersionHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58819,6 +59008,13 @@ func ParseListUsersHTTPResp(rsp *http.Response) (*ListUsersHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -58886,6 +59082,13 @@ func ParseCreateUserHTTPResp(rsp *http.Response) (*CreateUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -58955,6 +59158,13 @@ func ParseGetCurrentUserHTTPResp(rsp *http.Response) (*GetCurrentUserHTTPResp, e
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59022,6 +59232,13 @@ func ParseChangePasswordHTTPResp(rsp *http.Response) (*ChangePasswordHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -59101,6 +59318,13 @@ func ParseDeleteUserHTTPResp(rsp *http.Response) (*DeleteUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59176,6 +59400,13 @@ func ParseGetUserHTTPResp(rsp *http.Response) (*GetUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59243,6 +59474,13 @@ func ParseUpdateUserHTTPResp(rsp *http.Response) (*UpdateUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -59326,6 +59564,13 @@ func ParseSetUserPermissionsHTTPResp(rsp *http.Response) (*SetUserPermissionsHTT
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59404,6 +59649,13 @@ func ParseDisableUserHTTPResp(rsp *http.Response) (*DisableUserHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59467,6 +59719,13 @@ func ParseEnableUserHTTPResp(rsp *http.Response) (*EnableUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -59536,6 +59795,13 @@ func ParseReissueInviteHTTPResp(rsp *http.Response) (*ReissueInviteHTTPResp, err
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59597,6 +59863,13 @@ func ParseCreateAdminHTTPResp(rsp *http.Response) (*CreateAdminHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59650,6 +59923,13 @@ func ParseRedeemInviteHTTPResp(rsp *http.Response) (*RedeemInviteHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -59719,6 +59999,13 @@ func ParseListVendorsHTTPResp(rsp *http.Response) (*ListVendorsHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
 	}
 
 	return response, nil
@@ -59786,6 +60073,13 @@ func ParseGetAuthCapabilitiesHTTPResp(rsp *http.Response) (*GetAuthCapabilitiesH
 			return nil, err
 		}
 		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 

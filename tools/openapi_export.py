@@ -88,6 +88,28 @@ def published_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return {**spec, "servers": PUBLISHED_SERVERS}
 
 
+def ui_client_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """The SPA codegen input: ``spec`` without the operations' ``default`` responses.
+
+    ``openapi-typescript-codegen`` folds a ``default`` response into the success
+    union, so every service method would be typed ``Promise<X | ProblemDetail>``
+    although the client throws ``ApiError`` on any non-2xx. The default
+    (RFC 9457 catch-all) is documentation for spec readers, not a result the SPA
+    can receive, so it is dropped from this artefact only.
+    """
+    paths: dict[str, Any] = {}
+    for path, item in spec.get("paths", {}).items():
+        paths[path] = {
+            key: (
+                {**op, "responses": {c: r for c, r in op["responses"].items() if c != "default"}}
+                if isinstance(op, dict) and "responses" in op
+                else op
+            )
+            for key, op in item.items()
+        }
+    return {**spec, "paths": paths}
+
+
 def dump_spec_yaml(spec: dict[str, Any]) -> str:
     """Serialise an OpenAPI document to deterministic, sorted YAML."""
     return yaml.dump(
@@ -107,7 +129,7 @@ def dump_spec_json(spec: dict[str, Any]) -> str:
 
 def _serialise(spec: dict[str, Any], path: Path) -> str:
     if path.suffix == ".json":
-        return dump_spec_json(spec)
+        return dump_spec_json(ui_client_spec(spec))
     return dump_spec_yaml(published_spec(spec))
 
 

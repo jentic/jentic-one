@@ -35,6 +35,7 @@ are stable enough to promise the usual SemVer backward-compatibility guarantee.
 | Python package | `pyproject.toml` `[project].version` | canonical |
 | `jentic_one.__version__` / `/health` / OpenAPI | package metadata | `importlib.metadata.version("jentic-one")` — never hand-edited |
 | Helm charts (umbrella + observability + subcharts) | each `Chart.yaml` | bumped in lockstep by the release tooling |
+| Broker OpenAPI spec (`info.version` + `/health` examples) | `openapi/broker/broker.openapi.yaml` (hand-curated) | bumped in lockstep by release-please via `x-release-please-version` markers; derived copies regenerated on the Release PR |
 | Go CLI (`jenticctl`, `jentic`) | build-time ldflag | stamped from the git tag by GoReleaser (`version = "dev"` in source) |
 
 ## Lockstep versioning

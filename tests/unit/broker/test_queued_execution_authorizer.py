@@ -159,6 +159,7 @@ async def test_policy_denial_carries_the_sync_problem_body() -> None:
         "type": "action_denied",
         "title": "Denied by rule",
         "status": 403,
+        "detail": "Denied by rule",
         "error_origin": "broker",
         "instance": "/api.example.com/v1/things",
         "agent_directive": {

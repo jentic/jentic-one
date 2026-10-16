@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
+from jentic_one.shared.web import openapi_examples as ex
 
 
 class BasePermissionRuleSchema(BaseModel):
@@ -30,10 +31,12 @@ class BasePermissionRuleSchema(BaseModel):
 
     methods: list[str] | None = Field(
         default=None,
+        examples=[["GET"]],
         description="HTTP methods to match (case-insensitive). None matches all.",
     )
     path: str | None = Field(
         default=None,
+        examples=["/v1/charges"],
         description=(
             "Path pattern to match, relative to the API's server URL — the "
             "spec's path (`/widgets`), never the full upstream path with the "
@@ -45,6 +48,7 @@ class BasePermissionRuleSchema(BaseModel):
     )
     match_mode: MatchMode = Field(
         default="regex",
+        examples=["prefix"],
         description=(
             "How `path` is interpreted: `regex` (full-match), `prefix` "
             "(string prefix), or `exact` (equality). Defaults to `regex` for "
@@ -53,6 +57,7 @@ class BasePermissionRuleSchema(BaseModel):
     )
     operations: list[str] | None = Field(
         default=None,
+        examples=[[ex.OPERATION_ID]],
         description="OpenAPI operation IDs to match. None matches all operations.",
     )
 
@@ -97,7 +102,8 @@ class PermissionRuleSchema(BasePermissionRuleSchema):
         description=(
             "Whether this rule allows the matched request, denies it, "
             "or holds it for human approval before the broker executes it."
-        )
+        ),
+        examples=["allow"],
     )
 
 
@@ -106,13 +112,17 @@ class PermissionRuleReadSchema(BaseModel):
 
     effect: Literal["allow", "deny", "require-approval"] = Field(
         description="Whether this rule allows, denies, or holds the matched request for "
-        "human approval (`require-approval`)."
+        "human approval (`require-approval`).",
+        examples=["allow"],
     )
     methods: list[str] | None = Field(
-        default=None, description="HTTP methods the rule matches; null matches all."
+        default=None,
+        description="HTTP methods the rule matches; null matches all.",
+        examples=[["GET"]],
     )
     path: str | None = Field(
         default=None,
+        examples=["/v1/charges"],
         description=(
             "Path pattern relative to the API's server URL, interpreted per `match_mode`; "
             "null matches all paths."
@@ -120,18 +130,25 @@ class PermissionRuleReadSchema(BaseModel):
     )
     match_mode: MatchMode = Field(
         default="regex",
+        examples=["prefix"],
         description="How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.",
     )
     operations: list[str] | None = Field(
-        default=None, description="OpenAPI operation IDs the rule matches; null matches all."
+        default=None,
+        description="OpenAPI operation IDs the rule matches; null matches all.",
+        examples=[[ex.OPERATION_ID]],
     )
     is_system: bool = Field(
         alias="_system",
         default=False,
         description="True when the rule is platform-managed rather than user-authored.",
+        examples=[False],
     )
     comment: str | None = Field(
-        alias="_comment", default=None, description="Optional note attached to the rule."
+        alias="_comment",
+        default=None,
+        description="Optional note attached to the rule.",
+        examples=["Read-only access to charges."],
     )
 
     model_config = {"populate_by_name": True}
@@ -145,6 +162,7 @@ class PermissionsPatchRequest(BaseModel):
     )
     remove: list[int] | None = Field(
         default=None,
+        examples=[[0, 2]],
         description=(
             "Zero-based indexes of user rules (excluding system rules) to delete; "
             "applied before `add`."
@@ -167,8 +185,10 @@ class PermissionTestRequest(BaseModel):
 
     method: str = Field(
         description="HTTP method of the hypothetical request (case-insensitive).",
+        examples=["GET"],
     )
     path: str = Field(
+        examples=["/v1/charges"],
         description=(
             "Path of the hypothetical request relative to the API's server URL "
             "(the spec's path, e.g. `/widgets/42`) — the path the broker "
@@ -178,6 +198,7 @@ class PermissionTestRequest(BaseModel):
     operation_id: str | None = Field(
         default=None,
         description="Optional OpenAPI operation id resolved from the request URL.",
+        examples=[ex.OPERATION_ID],
     )
 
 
@@ -185,24 +206,30 @@ class PermissionTestResponse(BaseModel):
     """Dry-run result matching :class:`PermissionTestResult`."""
 
     allowed: bool = Field(
-        description="Whether the broker would allow this request under the binding's rules."
+        description="Whether the broker would allow this request under the binding's rules.",
+        examples=[True],
     )
     matched: bool = Field(
-        description="Whether any rule matched; when false, the outcome is default-deny."
+        description="Whether any rule matched; when false, the outcome is default-deny.",
+        examples=[True],
     )
     effect: str | None = Field(
         default=None,
+        examples=["allow"],
         description="Effect of the matching rule (`allow`/`deny`); null when no match.",
     )
     rule_index: int | None = Field(
         default=None,
+        examples=[0],
         description="Zero-based index in the binding's ordered rule list; null when no match.",
     )
     credential_id: str | None = Field(
         default=None,
+        examples=[ex.CREDENTIAL_ID],
         description="The binding whose rule list contributed the matching rule.",
     )
     is_system: bool | None = Field(
         default=None,
+        examples=[False],
         description="True when the matching rule was written by the system; null when no match.",
     )

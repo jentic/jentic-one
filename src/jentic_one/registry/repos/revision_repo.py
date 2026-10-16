@@ -9,12 +9,47 @@ from typing import Any, cast
 
 from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
+
+# The unique constraints whose violation means "this revision already exists".
+#   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
+#   - ix_api_revisions_one_active: a concurrent import raced to become the single
+#     active (published/imported) revision for the API and lost — the digest guard
+#     can't catch this (it's keyed on api_id alone, independent of spec_digest).
+# Postgres names the violated constraint; SQLite reports only its column list
+# (``UNIQUE constraint failed: api_revisions.api_id[, api_revisions.spec_digest]``),
+# and these are the only unique constraints on ``api_revisions`` keyed on api_id.
+_DUPLICATE_REVISION_CONSTRAINTS = (
+    "uq_api_revisions_api_id_spec_digest",
+    "ix_api_revisions_one_active",
+    "UNIQUE constraint failed: api_revisions.api_id",
+)
+
+
+def is_duplicate_revision_conflict(exc: DatabaseIntegrityError) -> bool:
+    """True when ``exc`` is a violation of one of the "revision already exists" constraints."""
+    return any(name in exc.detail for name in _DUPLICATE_REVISION_CONSTRAINTS)
+
+
+async def _flush_new_revision(session: AsyncSession) -> None:
+    """Flush a freshly added revision, surfacing constraint violations as a domain error.
+
+    The insert is where a concurrent import loses a uniqueness race, and callers
+    sit outside the repository layer (no SQLAlchemy imports), so the raw
+    ``IntegrityError`` is mapped to ``DatabaseIntegrityError`` here — the same
+    type ``DatabaseSession.transaction`` raises for a commit-time violation.
+    """
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        raise DatabaseIntegrityError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -69,7 +104,7 @@ class ApiRevisionRepository:
             created_by=created_by,
         )
         session.add(revision)
-        await session.flush()
+        await _flush_new_revision(session)
         return revision
 
     @staticmethod
@@ -102,7 +137,7 @@ class ApiRevisionRepository:
             created_by=created_by,
         )
         session.add(revision)
-        await session.flush()
+        await _flush_new_revision(session)
         return revision
 
     @staticmethod

@@ -430,8 +430,11 @@ async def test_failing_registered_stage_rolls_back_ingest(
     everything the built-in stages persisted — exactly like a built-in failure."""
     register_pipeline_stage(PipelineStageSpec(name="test.failing", factory=_FailingStage))
 
-    with pytest.raises(IngestPipelineError, match="extension stage exploded"):
+    with pytest.raises(
+        IngestPipelineError, match="Stage 'TestFailingStage' failed unexpectedly"
+    ) as exc_info:
         await Ingestor(ingest_context).ingest(_build_spec(), created_by="usr_test")
+    assert "extension stage exploded" not in str(exc_info.value)
 
     async with registry_db.session() as session:
         apis = (await session.execute(select(Api))).unique().scalars().all()

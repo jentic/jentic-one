@@ -8,14 +8,20 @@ from pydantic import BaseModel, Field
 class HealthResponse(BaseModel):
     """Health check response for the admin surface."""
 
-    status: str = Field(description="Health status of the surface; `ok` when it is serving.")
-    surface: str = Field(description="Name of the surface reporting health; always `admin`.")
+    status: str = Field(
+        description="Health status of the surface; `ok` when it is serving.", examples=["ok"]
+    )
+    surface: str = Field(
+        description="Name of the surface reporting health; always `admin`.", examples=["admin"]
+    )
     setup_required: bool = Field(
-        description="Whether first-run setup is still needed because no user exists yet."
+        description="Whether first-run setup is still needed because no user exists yet.",
+        examples=[True],
     )
     next_step: str | None = Field(
         default=None,
         description=(
             "Next setup step to perform, e.g. `create_admin`; null when setup is complete."
         ),
+        examples=["create_admin"],
     )

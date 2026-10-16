@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from jentic_one.control.services.oauth_app_registrations.schemas import (
     OAuthAppRegistrationFlowKind,
 )
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 # ``<domain>/<sub>`` — the same shape ``VendorAuthConfig.vendor`` enforces, so
@@ -32,10 +33,18 @@ class OAuthAppRegistrationResponse(BaseModel):
     being able to read the material.
     """
 
-    id: str = Field(description="Unique ID of the OAuth app registration.")
-    name: str = Field(description="Admin-chosen name of the registration.")
-    api_vendor: str = Field(description="Vendor registry key the registration connects.")
+    id: str = Field(
+        description="Unique ID of the OAuth app registration.",
+        examples=[ex.OAUTH_APP_REGISTRATION_ID],
+    )
+    name: str = Field(
+        description="Admin-chosen name of the registration.", examples=["MyOrg GitHub"]
+    )
+    api_vendor: str = Field(
+        description="Vendor registry key the registration connects.", examples=[ex.VENDOR_KEY]
+    )
     catalog_api_id: str = Field(
+        examples=["github.com/api.github.com"],
         description=(
             "Catalog API slug this OAuth app targets (e.g. 'googleapis-com/gmail'). "
             "Feeds credential.catalog_api_id at connect time so the operations "
@@ -43,42 +52,60 @@ class OAuthAppRegistrationResponse(BaseModel):
         ),
     )
     display_name: str = Field(
+        examples=["GitHub"],
         description=(
             "Vendor family label ('Gmail'), shown alongside the admin's per-registration "
             "'name' on the picker card."
         ),
     )
-    flow_kind: OAuthAppRegistrationFlowKind
-    client_id: str = Field(description="OAuth client ID of the app.")
-    is_active: bool = Field(description="Whether the registration is active.")
-    has_client_secret: bool = Field(description="Whether a client secret is stored.")
+    flow_kind: OAuthAppRegistrationFlowKind = Field(examples=["authorization_code"])
+    client_id: str = Field(description="OAuth client ID of the app.", examples=["Iv1.a1b2c3d4"])
+    is_active: bool = Field(description="Whether the registration is active.", examples=[True])
+    has_client_secret: bool = Field(
+        description="Whether a client secret is stored.", examples=[True]
+    )
     secret_last_rotated_at: datetime | None = Field(
-        description="When the client secret was last rotated (RFC 3339); null if never rotated."
+        description="When the client secret was last rotated (RFC 3339); null if never rotated.",
+        examples=["2026-01-20T14:05:00Z"],
     )
     authorize_url: str | None = Field(
         default=None,
         description="Authorization endpoint URL; null for device-authorization registrations.",
+        examples=["https://github.com/login/oauth/authorize"],
     )
     token_url: str | None = Field(
         default=None,
         description="Token endpoint URL; null for device-authorization registrations.",
+        examples=["https://github.com/login/oauth/access_token"],
     )
     authorization_endpoint: str | None = Field(
         default=None,
         description="Device authorization endpoint URL; null for authorization-code registrations.",
+        examples=["https://github.com/login/device/code"],
     )
     token_endpoint: str | None = Field(
         default=None,
         description="Token endpoint URL; null for authorization-code registrations.",
+        examples=["https://github.com/login/oauth/access_token"],
     )
     default_scopes: list[str] | None = Field(
-        default=None, description="Scopes requested by default; null if none are set."
+        default=None,
+        description="Scopes requested by default; null if none are set.",
+        examples=[["repo", "read:user"]],
     )
-    created_at: datetime = Field(description="When the registration was created (RFC 3339).")
-    updated_at: datetime = Field(description="When the registration was last updated (RFC 3339).")
-    created_by: str | None = Field(description="ID of the actor that created the registration.")
+    created_at: datetime = Field(
+        description="When the registration was created (RFC 3339).",
+        examples=["2026-01-15T09:30:00Z"],
+    )
+    updated_at: datetime = Field(
+        description="When the registration was last updated (RFC 3339).",
+        examples=["2026-01-20T14:05:00Z"],
+    )
+    created_by: str | None = Field(
+        description="ID of the actor that created the registration.", examples=[ex.USER_ID]
+    )
     dependent_credential_count: int = Field(
-        description="Number of credentials minted through this registration."
+        description="Number of credentials minted through this registration.", examples=[4]
     )
 
 
@@ -88,9 +115,13 @@ class OAuthAppRegistrationListResponse(BaseModel):
     data: list[OAuthAppRegistrationResponse] = Field(
         description="The page of OAuth app registrations."
     )
-    has_more: bool = Field(description="Whether more results exist after this page.")
+    has_more: bool = Field(
+        description="Whether more results exist after this page.", examples=[True]
+    )
     next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page; null when there are no more results."
+        default=None,
+        description="Cursor for the next page; null when there are no more results.",
+        examples=[ex.CURSOR],
     )
 
 
@@ -119,7 +150,12 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
 
     name: Annotated[
         str,
-        Field(min_length=1, max_length=255, description="Admin-chosen name of the registration."),
+        Field(
+            min_length=1,
+            max_length=255,
+            description="Admin-chosen name of the registration.",
+            examples=["MyOrg GitHub"],
+        ),
     ]
     api_vendor: Annotated[
         str,
@@ -127,6 +163,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=100,
             description="Vendor registry key the registration connects.",
+            examples=[ex.VENDOR_KEY],
         ),
     ]
     catalog_api_id: Annotated[
@@ -135,6 +172,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=255,
             pattern=_CATALOG_API_ID_PATTERN,
+            examples=["github.com/api.github.com"],
             description=(
                 "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com'). "
                 "The credential minted through this registration carries the same slug "
@@ -148,13 +186,21 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=255,
             description="Vendor family label ('GitHub'), shown on picker cards.",
+            examples=["GitHub"],
         ),
     ]
     flow_kind: Literal[OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE] = Field(
-        description="OAuth flow the registration uses; always `authorization_code`."
+        description="OAuth flow the registration uses; always `authorization_code`.",
+        examples=["authorization_code"],
     )
     client_id: Annotated[
-        str, Field(min_length=1, max_length=255, description="OAuth client ID of the app.")
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description="OAuth client ID of the app.",
+            examples=["Iv1.a1b2c3d4"],
+        ),
     ]
     client_secret: Annotated[
         str,
@@ -163,16 +209,29 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
             max_length=_CLIENT_SECRET_MAX_LENGTH,
             json_schema_extra=SENSITIVE,
             description="OAuth client secret of the app; stored encrypted and never returned.",
+            examples=["example-secret"],  # pragma: allowlist secret
         ),
     ]
     authorize_url: Annotated[
-        str, Field(min_length=1, max_length=2048, description="Authorization endpoint URL.")
+        str,
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="Authorization endpoint URL.",
+            examples=["https://github.com/login/oauth/authorize"],
+        ),
     ]
     token_url: Annotated[
-        str, Field(min_length=1, max_length=2048, description="Token endpoint URL.")
+        str,
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="Token endpoint URL.",
+            examples=["https://github.com/login/oauth/access_token"],
+        ),
     ]
     default_scopes: list[ScopeToken] | None = Field(
-        default=None, description="Scopes requested by default."
+        default=None, description="Scopes requested by default.", examples=[["repo", "read:user"]]
     )
 
 
@@ -200,7 +259,12 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
 
     name: Annotated[
         str,
-        Field(min_length=1, max_length=255, description="Admin-chosen name of the registration."),
+        Field(
+            min_length=1,
+            max_length=255,
+            description="Admin-chosen name of the registration.",
+            examples=["MyOrg GitHub"],
+        ),
     ]
     api_vendor: Annotated[
         str,
@@ -208,6 +272,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=100,
             description="Vendor registry key the registration connects.",
+            examples=[ex.VENDOR_KEY],
         ),
     ]
     catalog_api_id: Annotated[
@@ -216,6 +281,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=255,
             pattern=_CATALOG_API_ID_PATTERN,
+            examples=["github.com/api.github.com"],
             description=(
                 "Catalog API slug this OAuth app targets (e.g. 'github.com/api.github.com')."
             ),
@@ -227,23 +293,42 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
             min_length=1,
             max_length=255,
             description="Vendor family label ('GitHub'), shown on picker cards.",
+            examples=["GitHub"],
         ),
     ]
     flow_kind: Literal[OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION] = Field(
-        description="OAuth flow the registration uses; always `device_authorization`."
+        description="OAuth flow the registration uses; always `device_authorization`.",
+        examples=["device_authorization"],
     )
     client_id: Annotated[
-        str, Field(min_length=1, max_length=255, description="OAuth client ID of the app.")
+        str,
+        Field(
+            min_length=1,
+            max_length=255,
+            description="OAuth client ID of the app.",
+            examples=["Iv1.a1b2c3d4"],
+        ),
     ]
     authorization_endpoint: Annotated[
         str,
-        Field(min_length=1, max_length=2048, description="Device authorization endpoint URL."),
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="Device authorization endpoint URL.",
+            examples=["https://github.com/login/device/code"],
+        ),
     ]
     token_endpoint: Annotated[
-        str, Field(min_length=1, max_length=2048, description="Token endpoint URL.")
+        str,
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="Token endpoint URL.",
+            examples=["https://github.com/login/oauth/access_token"],
+        ),
     ]
     default_scopes: list[ScopeToken] | None = Field(
-        default=None, description="Scopes requested by default."
+        default=None, description="Scopes requested by default.", examples=[["repo"]]
     )
 
 
@@ -262,34 +347,46 @@ class OAuthAppRegistrationUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str, Field(min_length=1, max_length=255)] | None = Field(
-        default=None, description="New registration name; omit to leave unchanged."
+        default=None,
+        description="New registration name; omit to leave unchanged.",
+        examples=["MyOrg GitHub"],
     )
     display_name: Annotated[str, Field(min_length=1, max_length=255)] | None = Field(
-        default=None, description="New vendor family label; omit to leave unchanged."
+        default=None,
+        description="New vendor family label; omit to leave unchanged.",
+        examples=["GitHub"],
     )
     is_active: bool | None = Field(
         default=None,
         description="Activate or deactivate the registration; omit to leave unchanged.",
+        examples=[True],
     )
     default_scopes: list[ScopeToken] | None = Field(
-        default=None, description="Replacement default scopes; omit to leave unchanged."
+        default=None,
+        description="Replacement default scopes; omit to leave unchanged.",
+        examples=[["repo", "read:user"]],
     )
     authorize_url: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(
         default=None,
         description="New authorization endpoint URL; authorization-code registrations only.",
+        examples=["https://github.com/login/oauth/authorize"],
     )
     token_url: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(
-        default=None, description="New token endpoint URL; authorization-code registrations only."
+        default=None,
+        description="New token endpoint URL; authorization-code registrations only.",
+        examples=["https://github.com/login/oauth/access_token"],
     )
     authorization_endpoint: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(
         default=None,
         description=(
             "New device authorization endpoint URL; device-authorization registrations only."
         ),
+        examples=["https://github.com/login/device/code"],
     )
     token_endpoint: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(
         default=None,
         description="New token endpoint URL; device-authorization registrations only.",
+        examples=["https://github.com/login/oauth/access_token"],
     )
 
 
@@ -305,5 +402,6 @@ class OAuthAppRegistrationRotateSecretRequest(BaseModel):
             max_length=_CLIENT_SECRET_MAX_LENGTH,
             json_schema_extra=SENSITIVE,
             description="New OAuth client secret; stored encrypted and never returned.",
+            examples=["example-secret"],  # pragma: allowlist secret
         ),
     ]

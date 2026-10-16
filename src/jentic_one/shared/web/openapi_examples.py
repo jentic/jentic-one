@@ -41,6 +41,8 @@ def example(value: object, summary: str | None = None) -> dict[str, Example]:
 AGENT_ID = "agnt_6968b3984d1c238dbe7e2e29"
 USER_ID = "usr_6968b3987ee4c3ec0b4ee3b9"
 CREDENTIAL_ID = "cred_6968b39855d91a3561684b32"
+CREDENTIAL_BINDING_ID = "acb_6968b3989a4f1c2e7d3b5a60"  # direct agent↔credential binding
+AGENT_API_KEY_ID = "agc_6968b398c1d2e3f4a5b6c7d8"  # agent API-key record (not the key)
 RULE_SET_ID = "prs_6968b3987c22b63e87e79f05"
 OVERLAY_ID = "ovr_6968b398ae1c9a6e2fe6520a"
 CONNECT_SESSION_ID = "cs_6968b3983b8b91c75627bee5"
@@ -55,10 +57,16 @@ HELD_EXECUTION_ID = "held_6968b398a1c4e2d07b5f93c6"
 NOTE_ID = "note_6968b398edb465624291e405"
 TOOLKIT_ID = "tk_6968b3981ec22d56dbbc91e8"
 REVISION_ID = "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"  # registry revisions are UUIDs
+# A later revision of the same API (e.g. the one an overlay materialized).
+NEXT_REVISION_ID = "6992059c-0abd-4d22-bd07-5287e1bf5e6a"
+REGISTRY_API_ID = "debfc9ff-7c37-4a09-801a-575bd4963ddd"  # registry API rows are UUIDs
+# Registry operation id: ``op_`` + 40 hex of sha256(revision:path:method).
+REGISTRY_OPERATION_ID = "op_f92d69f1621f381bce8aaff47053c61b069ffe34"
 # Public OAuth ``client_id`` (``oc_`` + 32 url-safe chars), distinct from the
 # ``oac_`` record id used in admin paths.
 OAUTH_PUBLIC_CLIENT_ID = "oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU"  # pragma: allowlist secret
 TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"  # W3C trace-context trace id
+REQUEST_ID = "req_6968b3984d1c238d"  # minted ``req_`` + 16 hex (see ``shared/logging.py``)
 
 # --- Registry API identity ---------------------------------------------------
 
@@ -72,6 +80,8 @@ OPERATION_ID = "listCharges"
 OPERATION_METHOD_URL = "GET https://api.stripe.com/v1/charges"
 VENDOR_KEY = "github"  # vendor-registry key (connect flow / auth capabilities)
 PROVIDER_NAME = "pipedream"  # credential provider config name
+# Public base URL of a deployment; response ``_links`` are absolute under it.
+BASE_URL = "https://jentic.example.com"
 
 # --- Pagination, time windows, conditional requests --------------------------
 
@@ -84,6 +94,10 @@ EPOCH_UNTIL = 1769903999  # 2026-01-31T23:59:59Z, Unix seconds
 NOTE_ETAG = '"3"'  # notes ETag: quoted revision counter
 GOVERNED_HOSTS_ETAG = (
     '"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"'  # pragma: allowlist secret
+)
+# Connect-session review digest: unquoted SHA-256 hex of the review payload.
+REVIEW_DIGEST = (
+    "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"  # pragma: allowlist secret
 )
 
 # --- OAuth / OIDC (RFC 6749, RFC 7636, OIDC Core) ----------------------------
@@ -108,6 +122,8 @@ _VALUE_SUMMARIES: dict[str, str] = {
     AGENT_ID: "Agent ID",
     USER_ID: "User ID",
     CREDENTIAL_ID: "Credential ID",
+    CREDENTIAL_BINDING_ID: "Credential binding ID",
+    AGENT_API_KEY_ID: "Agent API key record ID",
     RULE_SET_ID: "Permission rule set ID",
     OVERLAY_ID: "Overlay ID",
     CONNECT_SESSION_ID: "Connect session ID",
@@ -121,8 +137,12 @@ _VALUE_SUMMARIES: dict[str, str] = {
     NOTE_ID: "Note ID",
     TOOLKIT_ID: "Toolkit ID",
     REVISION_ID: "Revision ID (UUID)",
+    NEXT_REVISION_ID: "Later revision ID (UUID)",
+    REGISTRY_API_ID: "Registry API ID (UUID)",
+    REGISTRY_OPERATION_ID: "Registry operation ID",
     OAUTH_PUBLIC_CLIENT_ID: "Public OAuth client_id",
     TRACE_ID: "W3C trace ID",
+    REQUEST_ID: "Request ID",
     API_VENDOR: "API vendor domain",
     API_NAME: "API name",
     API_VERSION: "API version",
@@ -132,11 +152,13 @@ _VALUE_SUMMARIES: dict[str, str] = {
     OPERATION_METHOD_URL: "Upstream operation (method and URL)",
     VENDOR_KEY: "Vendor registry key",
     PROVIDER_NAME: "Credential provider name",
+    BASE_URL: "Deployment base URL",
     CURSOR: "Opaque cursor from a previous page",
     DATETIME_FROM: "Start of a time window (RFC 3339)",
     DATETIME_TO: "End of a time window (RFC 3339)",
     NOTE_ETAG: "Note ETag (quoted revision)",
     GOVERNED_HOSTS_ETAG: "Governed-hosts ETag",
+    REVIEW_DIGEST: "Connect-session review digest",
     REDIRECT_URI: "Registered redirect URI",
     OAUTH_STATE: "Client OAuth state",
     OIDC_NONCE: "OIDC nonce",

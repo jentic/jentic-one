@@ -102,11 +102,13 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 		Aliases: []string{"add"},
 		Short:   "Create a context binding an environment + identity + mode",
 		Long: "Create a context — a named binding of an environment (--env), an identity\n" +
-			"(--identity), and a mode (--mode, default human). Contexts are what commands\n" +
-			"act through; --use activates the new one immediately. Most people never run\n" +
-			"this directly — `jentic register --url …` creates the trio for you.",
+			"(--identity), and a mode (--context-mode, default human). Contexts are what\n" +
+			"commands act through; --use activates the new one immediately. --context-mode\n" +
+			"is the mode SAVED in the context; the global --mode is this invocation's own\n" +
+			"session mode, and agent mode fences this command. Most people never run this\n" +
+			"directly — `jentic register --url …` creates the trio for you.",
 		Example: "  jentic context create prod --env prod --identity crawler --use\n" +
-			"  jentic context create local --env local --identity laptop --mode agent",
+			"  jentic context create local --env local --identity laptop --context-mode agent",
 		Args: exactNamedArgs("<name>", "name"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -114,6 +116,15 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 
 			if mode == "" {
 				mode = clictx.ModeHuman
+			}
+			// Closed enum: a typo'd mode saved here would fail closed to agent on
+			// every later command through this context, far from its cause.
+			if mode != clictx.ModeHuman && mode != clictx.ModeAgent {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("invalid --context-mode %q (allowed: human, agent)", mode),
+					Actionable: "Pass --context-mode human or --context-mode agent.",
+				})
 			}
 			if err := config.MutateConfig(func(cfg *config.Config) error {
 				if !config.ValidName(name) {
@@ -174,7 +185,11 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&env, "env", "", "Environment this context targets")
 	cmd.Flags().StringVar(&ident, "identity", "", "Identity this context acts as")
-	cmd.Flags().StringVar(&mode, "mode", "", "Interaction mode: human|agent (default human)")
+	// Not named --mode: a local flag sharing a root session flag's name absorbs
+	// every --mode token on this command (cobra binds the leaf's own flag first),
+	// so `jentic --mode agent context create …` would silently lose the session
+	// mode and skip the fence (#1412).
+	cmd.Flags().StringVar(&mode, "context-mode", "", "Interaction mode to save in this context: human|agent (default human)")
 	cmd.Flags().BoolVar(&use, "use", false, "Set this as the active context after creating it")
 	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing context of the same name")
 	mustMarkRequired(cmd, "env")

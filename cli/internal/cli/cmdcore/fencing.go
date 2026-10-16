@@ -52,8 +52,8 @@ func installInterceptor(app *App, root *cobra.Command) {
 	}
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Preserve the shipped banner + update nudge.
-		app.banner(cmd)
+		// The update nudge writes to stderr only, so it is safe in every mode. The
+		// banner (stdout) is drawn below, once the mode is known.
 		app.maybeNudgeUpdate(cmd)
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
@@ -86,12 +86,13 @@ func installInterceptor(app *App, root *cobra.Command) {
 			}
 		}
 
-		// 2. Resolve theme. STAGE 0 — mode gate: agent mode forces
-		// no-color, beating --theme/JENTIC_THEME/NO_COLOR/config so machine output is
-		// never corrupted by ANSI. Human falls through to the normal ladder.
+		// 2. Resolve theme. STAGE 0 — mode gate: machine mode (agent, or any
+		// unknown mode failing closed to agent) forces no-color, beating
+		// --theme/JENTIC_THEME/NO_COLOR/config so machine output is never
+		// corrupted by ANSI. Human falls through to the normal ladder.
 		var palette ux.Palette
 		var themeName string
-		if state.Mode == clictx.ModeAgent {
+		if state.IsMachine() {
 			palette, themeName = theme.Themes["no-color"], "no-color"
 		} else {
 			palette, themeName = theme.ResolveThemeWithName(flagValue(cmd, "theme"), state.ThemeName)
@@ -112,11 +113,11 @@ func installInterceptor(app *App, root *cobra.Command) {
 		}
 
 		// 3.5. Diagnostics bootstrap (impl/3.2 §2d): install the mode-dependent
-		// slog default (text for human, JSON for agent), always to stderr and
-		// redacted. This is the ONLY slog.SetDefault call in the process, so every
-		// later log line — including the SDK's via the default logger — carries
-		// the mode-appropriate, secret-scrubbed handler.
-		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
+		// slog default (text for human, JSON for machine mode), always to stderr
+		// and redacted. This is the ONLY slog.SetDefault call in the process, so
+		// every later log line — including the SDK's via the default logger —
+		// carries the mode-appropriate, secret-scrubbed handler.
+		setupSlog(app, state.IsMachine(), boolFlag(cmd, "verbose"))
 
 		// An unknown mode (typo, or the retired `service-account` alias — 14
 		// BC-12) already failed closed to AgentUX above; say so on stderr only,
@@ -163,22 +164,34 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// prompts/paginators aren't cut off. Long-running commands (annotation
 		// above) are exempt: their lifetime is caller-owned and they bound their
 		// own per-call contexts. The cancel is released in PersistentPostRunE
-		// above.
-		if state.Mode == clictx.ModeAgent &&
+		// above. Keyed off IsMachine so an unknown mode, which already runs as
+		// AgentUX, is bounded too.
+		if state.IsMachine() &&
 			cmd.Annotations[LongRunningAnnotation] != "true" {
 			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
 			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)
 		}
 
 		cmd.SetContext(ctx)
+
+		// The banner is human-only decoration on stdout. A machine mode or --json
+		// commits stdout to one JSON document, and agent harnesses often run on a
+		// PTY, so the TTY check inside banner alone is not enough.
+		if !state.IsMachine() && !boolFlag(cmd, "json") {
+			app.banner(cmd)
+		}
 		return nil
 	}
 }
 
-// flagValue returns the string value of a persistent flag if present and set,
-// else "". Safe to call for flags a given root may not define.
+// flagValue returns the string value of the ROOT's persistent session flag
+// (--context/--mode/--theme) if defined, else "". Safe to call for flags a given
+// root may not define. It deliberately skips cmd.Flags(): a subcommand-local
+// flag of the same name would resolve there instead, turning a command's own
+// option into session state (#1412). The api tree's no-shadowing test keeps
+// such a local flag from ever being registered.
 func flagValue(cmd *cobra.Command, name string) string {
-	if f := cmd.Flags().Lookup(name); f != nil {
+	if f := cmd.Root().PersistentFlags().Lookup(name); f != nil {
 		return f.Value.String()
 	}
 	return ""

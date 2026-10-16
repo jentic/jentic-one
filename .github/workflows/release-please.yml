@@ -66,7 +66,10 @@ jobs:
 
       # When release-please opens/updates its "chore(main): release X.Y.Z" PR,
       # the version bump can invalidate generated artifacts (the control-plane
-      # OpenAPI spec + the UI client and Go CLI client derived from it).
+      # OpenAPI spec + the UI client and Go CLI client derived from it, and the
+      # docs-SPA / CLI copies of the hand-curated broker spec, whose
+      # info.version release-please bumps in place via its
+      # x-release-please-version markers).
       # Regenerate them on the PR branch and push back so the Release PR is
       # self-consistent and does not trip the openapi-client-drift /
       # check-cli-gen / conformance gates when merged.
@@ -120,6 +123,10 @@ jobs:
           make sync
           make openapi
 
+          # Refresh the docs-SPA broker artifact (ui/public/broker-openapi.json)
+          # from the broker spec release-please just bumped, or the
+          # broker-reference drift test fails on the Release PR.
+          make broker-reference
           # Refresh the generated UI client from the (possibly updated) spec.
           cd ui && npm ci && npm run codegen
           cd ..

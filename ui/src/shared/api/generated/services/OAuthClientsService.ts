@@ -97,7 +97,7 @@ export class OAuthClientsService {
         id,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
     }): CancelablePromise<void> {
@@ -128,7 +128,7 @@ export class OAuthClientsService {
         id,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
     }): CancelablePromise<OAuthClientResponse> {
@@ -160,7 +160,7 @@ export class OAuthClientsService {
         requestBody,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
         /**
@@ -199,7 +199,7 @@ export class OAuthClientsService {
         id,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
     }): CancelablePromise<OAuthClientRotateSecretResponse> {
@@ -233,7 +233,7 @@ export class OAuthClientsService {
         id,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
     }): CancelablePromise<OAuthClientResponse> {
@@ -272,7 +272,7 @@ export class OAuthClientsService {
         id,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
     }): CancelablePromise<void> {
@@ -306,7 +306,7 @@ export class OAuthClientsService {
         requestBody,
     }: {
         /**
-         * Internal ID of the OAuth client (not its public `client_id`).
+         * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
          */
         id: string,
         /**

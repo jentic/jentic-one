@@ -174,8 +174,7 @@ async def test_plain_reconnect_of_a_shared_credential_is_unaffected(
     challenge = await ConnectService(env).begin(
         narrow,
         ConnectRequest(scopes=["read"]),
-        actor_id=OWNER.sub,
-        actor_type=OWNER.actor_type,
+        identity=OWNER,
         redirect_uri="https://app.example.com/credentials/oauth/callback",
     )
     assert isinstance(challenge, AuthCodeChallenge)

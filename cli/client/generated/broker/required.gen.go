@@ -9,7 +9,11 @@ package broker
 // it — `api describe`'s required_fields come from the runtime spec parse
 // (internal/cli/apispec), so this surface has no in-tree caller by design.
 
+func (AgentDirective) RequiredFields() []string {
+	return []string{"human_readable_instruction", "parameters", "strategy"}
+}
 func (AsyncQueuedResponse) RequiredFields() []string { return []string{"_links", "job_id"} }
+func (CredentialCandidate) RequiredFields() []string { return []string{"id", "last4", "name"} }
 func (HealthResponse) RequiredFields() []string      { return []string{"status"} }
 func (HeldExecutionAcceptedResponse) RequiredFields() []string {
 	return []string{"_links", "agent_directive", "expires_at", "held_execution_id", "review_url", "status"}

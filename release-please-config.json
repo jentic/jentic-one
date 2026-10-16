@@ -58,6 +58,10 @@
         {
           "type": "generic",
           "path": "deploy/helm/jentic-one/charts/postgresql/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "openapi/broker/broker.openapi.yaml"
         }
       ]
     }

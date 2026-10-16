@@ -18,6 +18,7 @@ import (
 	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/spf13/cobra"
@@ -122,7 +123,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
 		Args: exactNamedArgs("<METHOD:url | METHOD:/path>", "target"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.executeE(cmd, opts, args[0])
+			return cmdcore.WithStoppedInstanceHint(cmd, app.Err, app.executeE(cmd, opts, args[0]))
 		},
 	}
 

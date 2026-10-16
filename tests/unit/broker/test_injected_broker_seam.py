@@ -204,7 +204,7 @@ async def test_async_path_invokes_injected_broker() -> None:
             "execution_id": "exec_test0000000000000000",
             "trace_id": "a" * 32,
             "toolkit_id": "tk_test000000000000000000",
-            "operation_id": "getThing",
+            "operation": {"id": "getThing", "path": "/v1/things", "method": "GET"},
             "api_vendor": "example",
             "api_name": "api",
             "api_version": "1.0.0",
@@ -288,10 +288,8 @@ def test_ctx_from_metadata_mints_a_valid_trace_id_for_garbage() -> None:
 
 
 def test_ctx_from_metadata_rebuilds_operation() -> None:
-    """The metadata's ``operation`` dict rebuilds a full OperationInfo; a legacy
-    flat ``operation_id`` (jobs enqueued before the dict existed) folds into an
-    id-only one; the dict wins when both ride together (dual-write payloads);
-    and no operation keys at all leave the context operation-less."""
+    """The metadata's ``operation`` dict rebuilds a full OperationInfo, and no
+    ``operation`` dict leaves the context operation-less."""
 
     def _ctx(metadata: dict[str, Any]) -> ExecuteRequestContext:
         return _ctx_from_metadata(
@@ -307,17 +305,5 @@ def test_ctx_from_metadata_rebuilds_operation() -> None:
 
     full = _ctx({"operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}})
     assert full.operation == OperationInfo(id="op_x", path="/v1/things/{id}", method="GET")
-
-    legacy = _ctx({"operation_id": "op_legacy"})
-    assert legacy.operation == OperationInfo(id="op_legacy", path=None, method=None)
-
-    both = _ctx(
-        {
-            "operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"},
-            "operation_id": "op_x",
-        }
-    )
-    assert both.operation is not None
-    assert both.operation.path == "/v1/things/{id}"
 
     assert _ctx({}).operation is None

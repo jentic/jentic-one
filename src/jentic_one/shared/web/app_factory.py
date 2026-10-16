@@ -40,7 +40,10 @@ from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
-from jentic_one.shared.web.errors import request_validation_error_handler
+from jentic_one.shared.web.errors import (
+    request_validation_error_handler,
+    unhandled_exception_handler,
+)
 from jentic_one.shared.web.health import RootHealthResponse
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
@@ -600,6 +603,7 @@ def create_surface_app(
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, unhandled_exception_handler)
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -672,6 +676,7 @@ def create_combined_app(
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(Exception, unhandled_exception_handler)
 
     @root.get(
         "/health",

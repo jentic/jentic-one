@@ -220,8 +220,8 @@
               "path": "jentic context create",
               "use": "create \u003cname\u003e",
               "short": "Create a context binding an environment + identity + mode",
-              "long": "Create a context — a named binding of an environment (--env), an identity\n(--identity), and a mode (--mode, default human). Contexts are what commands\nact through; --use activates the new one immediately. Most people never run\nthis directly — `jentic register --url …` creates the trio for you.",
-              "example": "  jentic context create prod --env prod --identity crawler --use\n  jentic context create local --env local --identity laptop --mode agent",
+              "long": "Create a context — a named binding of an environment (--env), an identity\n(--identity), and a mode (--context-mode, default human). Contexts are what\ncommands act through; --use activates the new one immediately. --context-mode\nis the mode SAVED in the context; the global --mode is this invocation's own\nsession mode, and agent mode fences this command. Most people never run this\ndirectly — `jentic register --url …` creates the trio for you.",
+              "example": "  jentic context create prod --env prod --identity crawler --use\n  jentic context create local --env local --identity laptop --context-mode agent",
               "aliases": [
                 "add"
               ],
@@ -230,6 +230,11 @@
                   "name": "context",
                   "type": "string",
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "context-mode",
+                  "type": "string",
+                  "usage": "Interaction mode to save in this context: human|agent (default human)"
                 },
                 {
                   "name": "env",
@@ -250,7 +255,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent (default human)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1056,6 +1061,12 @@
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
+                },
+                {
                   "name": "mode",
                   "type": "string",
                   "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
@@ -1291,8 +1302,13 @@
                 {
                   "name": "format",
                   "type": "string",
-                  "default": "markdown",
-                  "usage": "output format: markdown, json, or openapi"
+                  "usage": "output format: markdown, json, or openapi (default: json in agent mode or when piped, else markdown)"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON (shorthand for --format json)"
                 },
                 {
                   "name": "mode",
@@ -1323,6 +1339,12 @@
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
+                },
+                {
                   "name": "mode",
                   "type": "string",
                   "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
@@ -1344,6 +1366,12 @@
                   "name": "context",
                   "type": "string",
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
                 },
                 {
                   "name": "mode",
@@ -1370,6 +1398,12 @@
                   "name": "context",
                   "type": "string",
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
                 },
                 {
                   "name": "mode",

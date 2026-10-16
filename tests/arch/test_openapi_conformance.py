@@ -6,7 +6,8 @@ test regenerates it in-process and asserts byte-equality with the committed
 file, so a route or model change that isn't accompanied by ``make openapi``
 fails CI. The broker spec is hand-curated and validity-checked; its docs-SPA
 artifact (``ui/public/broker-openapi.json``, see ``tools/broker_reference``) is
-drift-checked against it here too.
+drift-checked against it here too, and its ``info.version`` is pinned to the
+release version in ``pyproject.toml``.
 
 Validation is fully **offline**: the broker spec's external problem-details
 ``$ref``s resolve from vendored copies under
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -36,11 +38,13 @@ from tools.openapi_export import (
     UI_SPEC_PATH,
     dump_spec_yaml,
     published_spec,
+    ui_client_spec,
 )
 
 from jentic_one.shared.web.openapi_meta import PUBLISHED_SERVERS
 
 OPENAPI_DIR = Path(__file__).resolve().parent.parent.parent / "openapi"
+REPO_ROOT = OPENAPI_DIR.parent
 
 SPECS = [
     ("broker", OPENAPI_DIR / "broker" / "broker.openapi.yaml"),
@@ -227,7 +231,7 @@ def test_ui_client_schema_matches_generated(generated_control_spec: dict[str, An
     whitespace differences while still asserting the document matches.
     """
     actual = json.loads(UI_SPEC_PATH.read_text(encoding="utf-8"))
-    if actual != generated_control_spec:
+    if actual != ui_client_spec(generated_control_spec):
         _drift_failure(
             "ui/openapi.json is out of date with the FastAPI app. "
             "Regenerate it with `make openapi` (then `cd ui && npm run codegen`) and commit."
@@ -253,6 +257,41 @@ def test_broker_reference_artifact_matches_source() -> None:
             "openapi/broker/broker.openapi.yaml. Regenerate it with "
             "`make broker-reference` and commit the result."
         )
+
+
+@pytest.mark.arch
+def test_broker_spec_version_tracks_release() -> None:
+    """The hand-curated broker spec must carry the current release version.
+
+    Unlike the control spec (generated from ``__version__``), the broker spec is
+    bumped by release-please through ``x-release-please-version`` markers (see
+    ``release-please-config.json``). This pins ``info.version`` to
+    ``pyproject.toml`` so a dropped marker — or a hand edit — can't let the
+    published broker contract drift from the release it ships with.
+    """
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    release = project["project"]["version"]
+    spec = load_broker_spec()
+    assert spec["info"]["version"] == release, (
+        f"broker spec info.version {spec['info']['version']!r} != pyproject version "
+        f"{release!r}. Keep the `# x-release-please-version` marker on the version "
+        "lines in openapi/broker/broker.openapi.yaml so release-please bumps them."
+    )
+    health = spec["components"]["schemas"]["HealthResponse"]["properties"]["version"]
+    assert health["examples"] == [release], (
+        "broker HealthResponse.version example must track the release version "
+        "(it carries an x-release-please-version marker)."
+    )
+    health_schema_examples = spec["components"]["schemas"]["HealthResponse"]["examples"]
+    assert all(ex["version"] == release for ex in health_schema_examples), (
+        "broker HealthResponse schema-level example version must track the release "
+        "version (it carries an x-release-please-version marker)."
+    )
+    ok_200 = spec["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]
+    assert ok_200["examples"]["healthy"]["value"]["version"] == release, (
+        "broker GET /health `healthy` example version must track the release version "
+        "(it carries an x-release-please-version marker)."
+    )
 
 
 @pytest.mark.arch

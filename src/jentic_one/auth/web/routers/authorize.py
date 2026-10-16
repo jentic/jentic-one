@@ -1149,7 +1149,12 @@ def _render_approval_pending_page(
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
-@router.get("/authorize", dependencies=[Depends(check_rate_limit)], response_model=None)
+@router.get(
+    "/authorize",
+    dependencies=[Depends(check_rate_limit)],
+    response_model=None,
+    include_in_schema=False,
+)
 async def authorize_endpoint(
     request: Request,
     response_type: str = Query(
@@ -1517,6 +1522,7 @@ async def approval_decision_endpoint(
 
 @router.get(
     "/oauth/callback",
+    include_in_schema=False,
     operation_id="authorizeOauthCallback",
     name="authorize_oauth_callback",
     dependencies=[Depends(check_rate_limit)],
@@ -2021,7 +2027,12 @@ def _render_agent_options(
     return "\n".join(blocks)
 
 
-@router.get("/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(check_rate_limit)])
+@router.get(
+    "/oauth/consent",
+    response_class=HTMLResponse,
+    dependencies=[Depends(check_rate_limit)],
+    include_in_schema=False,
+)
 async def consent_page(
     request: Request,
     ch: str = Query(
@@ -2211,23 +2222,26 @@ async def _render_agent_consent_page(
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
-@router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)])
+@router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)], include_in_schema=False)
 async def consent_submit(
     request: Request,
     consent_token: str = Form(
         ...,
         json_schema_extra=SENSITIVE,
         description="Single-use consent handle embedded in the consent page.",
+        examples=[ex.OPAQUE_TOKEN],
     ),
     action: str = Form(
         ...,
         description="`approve` or `deny`; any value other than `deny` is treated as approval.",
+        examples=["approve"],
     ),
     agent_id: str | None = Form(
         default=None,
         description=(
             "ID of the agent to connect the client to; sent only by the agent-picker consent page."
         ),
+        examples=[ex.AGENT_ID],
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
@@ -2428,14 +2442,18 @@ async def consent_agent_create(
         ...,
         json_schema_extra=SENSITIVE,
         description="Single-use consent handle embedded in the consent page.",
+        examples=[ex.OPAQUE_TOKEN],
     ),
     create_state: str = Form(
         ...,
         json_schema_extra=SENSITIVE,
         description="Signed single-use agent-creation token embedded in the consent page.",
+        examples=[ex.SIGNED_FLOW_STATE],
     ),
     agent_name: str = Form(
-        ..., description="Name for the new agent; surrounding whitespace is trimmed."
+        ...,
+        description="Name for the new agent; surrounding whitespace is trimmed.",
+        examples=["invoice-reconciler"],
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),

@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +25,7 @@ func newCatalogCmd(app *app) *cobra.Command {
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.catalogBrowse(cmd.Context())
+			return app.catalogBrowse(cmd.Context(), cmdcore.JSONOrPretty(cmd, false))
 		},
 	}
 
@@ -48,6 +47,7 @@ func newCatalogListCmd(app *app) *cobra.Command {
 		Short: "List catalog entries",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogList(cmd.Context(), o, "")
 		},
 	}
@@ -66,6 +66,7 @@ func newCatalogSearchCmd(app *app) *cobra.Command {
 			if len(args) == 1 {
 				query = args[0]
 			}
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogList(cmd.Context(), o, query)
 		},
 	}
@@ -80,6 +81,7 @@ func newCatalogShowCmd(app *app) *cobra.Command {
 		Short: "Show a catalog entry and preview its operations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogShow(cmd.Context(), o, args[0])
 		},
 	}
@@ -96,6 +98,7 @@ func newCatalogImportCmd(app *app) *cobra.Command {
 		Short: "Import a catalog entry into the local registry (auto-promotes to live)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogImport(cmd.Context(), o, args[0])
 		},
 	}
@@ -118,6 +121,7 @@ func newCatalogOutdatedCmd(app *app) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.outdated = true
+			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogList(cmd.Context(), o, "")
 		},
 	}
@@ -129,17 +133,24 @@ func newCatalogOutdatedCmd(app *app) *cobra.Command {
 }
 
 func newCatalogRefreshCmd(app *app) *cobra.Command {
-	return &cobra.Command{
+	var jsonFlag bool
+	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Refresh the catalog manifest from upstream (requires org:admin)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.catalogRefresh(cmd.Context())
+			return app.catalogRefresh(cmd.Context(), cmdcore.JSONOrPretty(cmd, jsonFlag))
 		},
 	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "emit JSON instead of formatted output")
+	return cmd
 }
 
 // ── option structs ───────────────────────────────────────────────────────────
+//
+// Each json field is the resolved output decision, not the raw flag: RunE
+// folds --json through cmdcore.JSONOrPretty so agent mode (and a piped stdout
+// in default mode) emits the JSON envelope without needing --json.
 
 type catalogListOptions struct {
 	registered     bool
@@ -179,9 +190,11 @@ type catalogImportOptions struct {
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
-func (a *app) catalogBrowse(ctx context.Context) error {
-	if !term.IsTerminal(os.Stdin.Fd()) {
-		return a.catalogList(ctx, &catalogListOptions{limit: 50}, "")
+// catalogBrowse mirrors apisBrowse: the TUI only runs for a person at a
+// terminal; machine output or a non-interactive stdin gets the list instead.
+func (a *app) catalogBrowse(ctx context.Context, asJSON bool) error {
+	if asJSON || !browserInteractive() {
+		return a.catalogList(ctx, &catalogListOptions{limit: 50, json: asJSON}, "")
 	}
 	return a.runCatalogBrowser(ctx)
 }
@@ -258,7 +271,7 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 	preview, perr := client.Preview(ctx, apiID, 0, limit, o.tag)
 
 	if o.json {
-		out := map[string]any{"entry": entry}
+		out := map[string]any{"schema_version": apiEnvelopeSchemaVersion, "entry": entry}
 		if perr == nil {
 			out["preview"] = preview
 		}
@@ -320,11 +333,15 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 	}
 
 	if o.json {
+		revisions := result.Revisions
+		if revisions == nil {
+			revisions = []catalogImportRevision{}
+		}
 		return cmdcore.WriteJSON(a.Out, map[string]any{
 			"schema_version": apiEnvelopeSchemaVersion,
 			"job_id":         jobID,
 			"status":         job.Status,
-			"revisions":      result.Revisions,
+			"revisions":      revisions,
 			"promoted":       promoted,
 		})
 	}
@@ -410,7 +427,7 @@ func (a *app) promoteRevisions(ctx context.Context, client *catalogClient, resul
 
 // ── refresh ──────────────────────────────────────────────────────────────────
 
-func (a *app) catalogRefresh(ctx context.Context) error {
+func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
@@ -422,6 +439,15 @@ func (a *app) catalogRefresh(ctx context.Context) error {
 			return fmt.Errorf("refresh requires org:admin: %s", he.Detail())
 		}
 		return catalogListErr(err)
+	}
+	if asJSON {
+		return cmdcore.WriteJSON(a.Out, ux.Result{
+			SchemaVersion: apiEnvelopeSchemaVersion,
+			Status:        ux.StatusUpdated,
+			Resource:      "catalog",
+			Message:       fmt.Sprintf("Catalog refreshed: %d entries", count),
+			Fields:        map[string]any{"count": count},
+		})
 	}
 	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog refreshed: %d entries", count))
 	return nil
