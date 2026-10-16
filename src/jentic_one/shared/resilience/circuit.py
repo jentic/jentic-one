@@ -117,9 +117,16 @@ class CircuitBreaker:
         if ok or total < self._min_calls:
             return
         if failures / total >= self._failure_ratio:
-            await self._store.set_if_absent(
-                f"{_OPEN_PREFIX}{host}", _OPEN_VALUE, ttl_s=self._cooldown_s
-            )
+            try:
+                await self._store.set_if_absent(
+                    f"{_OPEN_PREFIX}{host}", _OPEN_VALUE, ttl_s=self._cooldown_s
+                )
+            except StateBackendCapacityError:
+                # The window crossed the threshold but the circuit cannot open:
+                # calls to this host keep flowing until the namespace frees up.
+                _logger.warning(
+                    "circuit_breaker_record_skipped", host=host, reason="open_latch_refused"
+                )
 
 
 __all__ = ["CircuitBreaker", "CircuitDecision", "CircuitState"]
