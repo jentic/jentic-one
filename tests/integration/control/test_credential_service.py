@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
@@ -1086,6 +1087,7 @@ async def test_refresh_refuses_internal_token_url_outside_allowlist(
     assert sent == []
 
 
+@pytest.mark.usefixtures("uncached_dns")
 async def test_refresh_refuses_rebind_outside_allowlist(
     integration_config: AppConfig, clean_credentials: None
 ) -> None:
@@ -1108,3 +1110,66 @@ async def test_refresh_refuses_rebind_outside_allowlist(
     assert exc_info.value.status == 0
     assert "blocked address range" in exc_info.value.body
     assert sent == []
+
+
+@contextmanager
+def _lookup_threads() -> Iterator[list[int]]:
+    """Record the thread every ``_INTERNAL_HOST`` lookup runs on (answer: ``_INTERNAL_IP``)."""
+    real = socket.getaddrinfo
+    threads: list[int] = []
+
+    def _fake(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == _INTERNAL_HOST:
+            threads.append(threading.get_ident())
+            return _addrinfo(_INTERNAL_IP)
+        return real(host, *args, **kwargs)
+
+    with patch.object(socket, "getaddrinfo", side_effect=_fake):
+        yield threads
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_create_oauth2_applies_control_egress_off_the_event_loop(
+    integration_config: AppConfig, clean_credentials: None, control: dict[str, Any], allowed: bool
+) -> None:
+    """Create-time ``token_url`` validation resolves off the loop under ``control.egress``."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        with _lookup_threads() as threads:
+            if allowed:
+                await svc.create(_oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY)
+            else:
+                with pytest.raises(InvalidCredentialInputError, match="blocked address range"):
+                    await svc.create(_oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY)
+    assert threads
+    assert loop_thread not in threads
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_refresh_applies_control_egress_off_the_event_loop(
+    integration_config: AppConfig, clean_credentials: None, control: dict[str, Any], allowed: bool
+) -> None:
+    """Refresh-time validation and pin resolve off the loop under ``control.egress``."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    async with _context(config) as ctx:
+        credential_id = await _seed_oauth2_row(ctx, token_url=_INTERNAL_TOKEN_URL)
+        with _lookup_threads() as threads, _token_endpoint() as sent:
+            if allowed:
+                result = await _refresh(ctx, credential_id)
+                assert result.access_token == "at-fresh"
+            else:
+                with pytest.raises(TokenExchangeError) as exc_info:
+                    await _refresh(ctx, credential_id)
+                assert "blocked address range" in exc_info.value.body
+    assert len(sent) == (1 if allowed else 0)
+    assert threads
+    assert loop_thread not in threads

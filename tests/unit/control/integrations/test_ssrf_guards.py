@@ -306,15 +306,57 @@ async def test_connect_site_refuses_internal_host_outside_allowlist(
 
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(("call", "error"), _CONNECT_SITES)
+@pytest.mark.usefixtures("uncached_dns")
 async def test_connect_site_pin_refuses_rebind_outside_allowlist(
     call: Callable[..., Awaitable[Any]], error: type[Exception]
 ) -> None:
     # Pre-flight sees an allowlisted address; connect time answers with a
     # private address the allowlist does not cover.
-    answers = iter([_addrinfo("10.50.0.7"), _addrinfo("10.60.0.9")])
+    answers = [_addrinfo("10.50.0.7"), _addrinfo("10.60.0.9")]
+    served: list[list[tuple[Any, ...]]] = []
+
+    def _resolve(*_a: Any, **_k: Any) -> list[tuple[Any, ...]]:
+        served.append(answers[len(served)])
+        return served[-1]
+
     with (
-        patch.object(socket, "getaddrinfo", side_effect=lambda *_a, **_k: next(answers)),
+        patch.object(socket, "getaddrinfo", side_effect=_resolve),
         pytest.raises(error) as exc_info,
     ):
         await call(_INTERNAL_URL, _ALLOWLIST)
     _assert_refused_before_request(exc_info.value)
+    # Both answers were handed out: pre-flight accepted the first, the pin
+    # refused the second (no cached answer bridged the two lookups).
+    assert served == answers
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(("call", "error"), _CONNECT_SITES)
+async def test_connect_site_applies_allowlist_off_the_event_loop(
+    call: Callable[..., Awaitable[Any]], error: type[Exception]
+) -> None:
+    # The allowlist is honoured on the async validation path: every lookup for
+    # the allowlisted internal host runs in a worker thread and the request is
+    # still sent.
+    loop_thread = threading.get_ident()
+    lookup_threads: list[int] = []
+    sent: list[httpx.Request] = []
+
+    def _resolve(*_a: Any, **_k: Any) -> list[tuple[Any, ...]]:
+        lookup_threads.append(threading.get_ident())
+        return _addrinfo("10.50.0.7")
+
+    def _record(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return _vendor_reply(request)
+
+    with (
+        patch.object(socket, "getaddrinfo", side_effect=_resolve),
+        patch.object(
+            httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_record)
+        ),
+    ):
+        await call(_INTERNAL_URL, _ALLOWLIST)
+    assert len(sent) == 1
+    assert lookup_threads
+    assert loop_thread not in lookup_threads
