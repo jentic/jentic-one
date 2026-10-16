@@ -122,6 +122,10 @@ class ExecutionHandler:
             # Same reason: without a live actor read, the identity used for
             # injection could not reflect a disable that lands after enqueue.
             raise ValueError("credential_injector requires an actor_status reader")
+        if actor_status is not None and execution_authorizer is None:
+            # The live actor read runs only after the run-time authorizer
+            # allows the job; a reader on its own would never be consulted.
+            raise ValueError("actor_status requires an execution_authorizer")
         self._executor = executor
         self._authorizer = execution_authorizer
         self._actor_status = actor_status
