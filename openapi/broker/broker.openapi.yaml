@@ -75,7 +75,8 @@ info:
     - `GET /events` / `GET /events/stream` — audit event feed.
 
     Request and response bodies are not persisted by default. Execution
-    metadata is retained for 30 days (configurable). Body capture is
+    metadata is kept until the operator removes it; there is no
+    automatic retention window to configure yet. Body capture is
     explicit opt-in. Async response bodies live in a short-lived
     pickup buffer collected via `/jobs/{id}/result`, not in the audit
     store.
