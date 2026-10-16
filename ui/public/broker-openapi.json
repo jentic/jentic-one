@@ -108,7 +108,7 @@
             ]
           ],
           "items": {
-            "pattern": "^[a-z0-9-]+:[^=:]+:[^=]+=(?:rev_[A-Za-z0-9]+|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$",
+            "pattern": "^[a-z0-9-]+:[^=:]+:[^=]+=(?:rev_[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$",
             "type": "string"
           },
           "type": "array"
@@ -763,14 +763,25 @@
         "content": {
           "application/problem+json": {
             "examples": {
-              "unknown_revision_pin": {
-                "summary": "Jentic-Revision pins a revision that does not exist.",
+              "invalid_revision_pin": {
+                "summary": "A Jentic-Revision value is not of the form vendor:name:version=<revision_id>.",
                 "value": {
-                  "detail": "Unknown revision pin: api.example.com/main/9.9.9",
+                  "detail": "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)",
                   "error_origin": "broker",
                   "instance": "/api.example.com/v1/users",
                   "status": 422,
-                  "title": "Unknown revision pin: api.example.com/main/9.9.9",
+                  "title": "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)",
+                  "type": "invalid_revision_pin"
+                }
+              },
+              "unknown_revision_pin": {
+                "summary": "Jentic-Revision pins a revision that does not exist.",
+                "value": {
+                  "detail": "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 422,
+                  "title": "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
                   "type": "unknown_revision_pin"
                 }
               }
