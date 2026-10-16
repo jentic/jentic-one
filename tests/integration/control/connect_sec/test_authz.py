@@ -13,7 +13,7 @@ import json
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
@@ -28,7 +28,7 @@ from jentic_one.shared.auth.permission_catalog import (
     OWNER_CREDENTIALS_READ,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 from tests.integration.control.connect_sec.support import (
     ADMIN,
     AGENT,
@@ -37,6 +37,7 @@ from tests.integration.control.connect_sec.support import (
     FOREIGN_AGENT_ID,
     KEY_SCHEME,
     OTHER_OWNER,
+    OTHER_OWNER_ID,
     OWNER,
     OWNER_ID,
     OWNER_NO_AGENTS_WRITE,
@@ -316,3 +317,102 @@ async def test_agent_naming_another_agent_is_refused_in_the_service(env: Context
         await svc(env).create_session(
             vendor_key="", agent_id=SIBLING_AGENT_ID, identity=AGENT, api_target=TARGET
         )
+
+
+_INACTIVE_STATUSES = [ActorStatus.DISABLED, ActorStatus.ARCHIVED, ActorStatus.REJECTED]
+_OWN_INACTIVE_ID = "agnt_sec_own_inactive"
+_FOREIGN_INACTIVE_ID = "agnt_sec_foreign_inactive"
+_OWNERLESS_ID = "agnt_sec_ownerless"
+
+
+async def _seed_agent(ctx: Context, agent_id: str, *, owner_id: str | None, status: str) -> None:
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status)"
+                " VALUES (:id, :id, :registered_by, :owner, :status)"
+            ),
+            {
+                "id": agent_id,
+                "registered_by": owner_id or OTHER_OWNER_ID,
+                "owner": owner_id,
+                "status": status,
+            },
+        )
+
+
+async def _ask_for(ctx: Context, identity: Identity, agent_id: str) -> Any:
+    async with client(ctx, identity) as http:
+        return await http.post("/integrations:connect", json={**API_BODY, "agent_id": agent_id})
+
+
+@pytest.mark.parametrize("status", _INACTIVE_STATUSES)
+async def test_owner_naming_their_own_inactive_agent_is_409_and_writes_nothing(
+    env: Context, status: ActorStatus
+) -> None:
+    """Such a session could never be confirmed, so it is refused before anything is written."""
+    await import_spec(env, KEY_SCHEME)
+    await _seed_agent(env, _OWN_INACTIVE_ID, owner_id=OWNER_ID, status=status.value)
+    before = await _session_and_credential_counts(env)
+    refused = await _ask_for(env, OWNER, _OWN_INACTIVE_ID)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["type"] == "connect_session_agent_inactive"
+    assert await _session_and_credential_counts(env) == before
+
+
+@pytest.mark.parametrize("status", _INACTIVE_STATUSES)
+@pytest.mark.parametrize("caller", [OWNER, OWNER_NO_AGENTS_WRITE], ids=["owner", "no-agents-write"])
+async def test_foreign_inactive_agent_is_400_not_409(
+    env: Context, status: ActorStatus, caller: Identity
+) -> None:
+    """Ownership is settled before status, so a foreign agent's status never leaks.
+
+    The refusal is the same as for a missing agent: 409 (or the 403 an owner
+    without ``agents:write`` gets for their own agent) would tell the caller
+    the agent exists and what state it is in.
+    """
+    await import_spec(env, KEY_SCHEME)
+    await _seed_agent(env, _FOREIGN_INACTIVE_ID, owner_id=OTHER_OWNER_ID, status=status.value)
+    before = await _session_and_credential_counts(env)
+    refused = await _ask_for(env, caller, _FOREIGN_INACTIVE_ID)
+    missing = await _ask_for(env, caller, "agnt_sec_missing")
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["type"] == "connect_session_agent_not_found"
+    assert (refused.status_code, refused.json()["type"]) == (
+        missing.status_code,
+        missing.json()["type"],
+    )
+    assert await _session_and_credential_counts(env) == before
+
+
+async def test_ownerless_agent_is_400_for_a_non_admin(env: Context) -> None:
+    """An agent with no owner has nobody to match; only ``org:admin`` may name it."""
+    await import_spec(env, KEY_SCHEME)
+    await _seed_agent(env, _OWNERLESS_ID, owner_id=None, status=ActorStatus.ACTIVE.value)
+    before = await _session_and_credential_counts(env)
+    refused = await _ask_for(env, OWNER, _OWNERLESS_ID)
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["type"] == "connect_session_agent_not_found"
+    assert await _session_and_credential_counts(env) == before
+    allowed = await _ask_for(env, ADMIN, _OWNERLESS_ID)
+    assert allowed.status_code == 201, allowed.text
+
+
+async def test_owner_who_could_never_approve_cannot_start_a_session_for_their_agent(
+    env: Context,
+) -> None:
+    """Confirming for an agent takes ``credentials:write`` and ``agents:write``.
+
+    An owner holding only ``credentials:write`` would otherwise open a session
+    in their agent's name that they can never confirm. They can still connect
+    an unbound credential.
+    """
+    await import_spec(env, KEY_SCHEME)
+    before = await _session_and_credential_counts(env)
+    refused = await _ask_for(env, OWNER_NO_AGENTS_WRITE, AGENT_ID)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["type"] == "connect_session_confirmation_forbidden"
+    assert await _session_and_credential_counts(env) == before
+    async with client(env, OWNER_NO_AGENTS_WRITE) as http:
+        unbound = await http.post("/integrations:connect", json=API_BODY)
+    assert unbound.status_code == 201, unbound.text
