@@ -76,12 +76,12 @@ info:
 
     Execution records store metadata only — never request or response
     bodies. An async call's upstream response body is stored as the job
-    result and stays readable from `/jobs/{id}/result` until it is
-    removed; only an approved (held) execution's result expires, after
+    result and stays readable from `/jobs/{id}/result` indefinitely;
+    only an approved (held) execution's result expires, after
     `held_executions.result_retention_seconds`. Execution records,
-    events and audit entries are kept indefinitely: there is no API or
-    setting to prune them yet, so trim them at the database level (see
-    the operations monitoring guide).
+    events, audit entries and other job results are kept indefinitely:
+    there is no API or setting to prune them yet, so trim them at the
+    database level (see the operations monitoring guide).
 
 servers:
   - url: https://broker.your-instance.example

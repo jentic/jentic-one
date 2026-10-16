@@ -186,7 +186,8 @@ def conflict(description: str = "Conflict") -> dict[int | str, dict[str, Any]]:
 
 
 def gone(description: str = "Gone") -> dict[int | str, dict[str, Any]]:
-    """A 410 entry for one-time / self-closing routes (e.g. first-run setup)."""
+    """A 410 entry for one-time / self-closing routes (e.g. first-run setup) or a
+    resource past its retention window (e.g. an expired held-execution result)."""
     return {410: _entry(description)}
 
 
