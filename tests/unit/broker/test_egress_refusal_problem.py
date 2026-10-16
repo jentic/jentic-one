@@ -33,7 +33,7 @@ from jentic_one.broker.adapters.runners.retry import RetryRunner
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     OperationNotFoundError,
-    UpstreamTimeoutError,
+    UpstreamTransportError,
     UpstreamUrlNotAllowedError,
     upstream_url_not_allowed,
 )
@@ -665,14 +665,16 @@ def _nxdomain(*_a: Any, **_k: Any) -> Any:
 async def test_connect_time_unresolvable_host_is_a_connect_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A host the pinning transport cannot resolve is a typed, pre-send connect
-    # failure (504), never an unhandled ValueError (a 500).
+    # A host the pinning transport cannot resolve is a typed, pre-send 502
+    # connect failure, like a refused connection; never an unhandled
+    # ValueError (a 500).
     monkeypatch.setattr(socket, "getaddrinfo", _nxdomain)
     runner, seen = _pinned_runner(_SUBNET_ONLY)
-    with pytest.raises(UpstreamTimeoutError) as exc_info:
+    with pytest.raises(UpstreamTransportError) as exc_info:
         await runner.run(RunnerRequest(method="GET", url="https://gone.example.com/v1"))
     assert exc_info.value.type == "upstream_connect_failed"
     assert exc_info.value.pre_send is True
+    assert broker_error_problem(exc_info.value)["status"] == 502
     assert seen == []
 
 
@@ -682,10 +684,12 @@ async def test_connect_time_stream_unresolvable_host_is_a_connect_failure(
 ) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", _nxdomain)
     runner, seen = _pinned_runner(_SUBNET_ONLY)
-    with pytest.raises(UpstreamTimeoutError) as exc_info:
+    with pytest.raises(UpstreamTransportError) as exc_info:
         async with runner.stream(RunnerRequest(method="GET", url="https://gone.example.com/v1")):
             pass
     assert exc_info.value.type == "upstream_connect_failed"
+    assert exc_info.value.pre_send is True
+    assert broker_error_problem(exc_info.value)["status"] == 502
     assert seen == []
 
 
