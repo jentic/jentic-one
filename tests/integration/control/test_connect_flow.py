@@ -733,12 +733,15 @@ async def test_inflight_connect_discards_grant_minted_before_token_url_move(
     assert view.details.connected is False
 
 
-async def test_connect_session_finalise_discards_grant_minted_before_token_url_move(
+async def test_credential_mode_finalise_discards_grant_minted_before_token_url_move(
     integration_context: Context, clean_connect_tables: None
 ) -> None:
-    """Pins #1425: the connect-session finalise write re-checks the token
-    endpoint under the refresh lock too, and discards a grant exchanged at
-    an origin the credential has since moved off."""
+    """Pins #1425: the shared finalise write (here through the credential-mode
+    entry, which has no session to fail) re-checks the token endpoint under
+    the refresh lock and discards a grant exchanged at an origin the
+    credential has since moved off. The session path, which turns this into
+    a ``token_url_moved`` failure, is covered in
+    ``test_connect_session_api_targets.py``."""
     ctx = integration_context
     _patch_provider_registry(ctx, "my_oauth", _RecordingOAuth2())
     credential_id = await _connected_then_moved(ctx)

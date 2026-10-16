@@ -19,7 +19,10 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 import structlog
 from fastapi import FastAPI
@@ -1276,6 +1279,74 @@ async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
     async with env.admin_db.session() as session:
         audit = (await session.execute(select(AuditEntry))).scalars().all()
     assert all(client_secret not in json.dumps(e.after, default=str) for e in audit)
+
+
+async def test_session_callback_discards_grant_minted_before_token_url_move(env: Context) -> None:
+    """Pins #1425 on the session finalise path: a cross-origin token_url edit
+    that commits while the callback's code exchange is in flight fails the
+    session with ``token_url_moved``. The grant minted at the old origin is
+    never stored, and like every failed session the pending credential is
+    deleted and the outcome is recorded."""
+    await _import(env, _OAUTH_SCHEME)
+    created = await _connect(env, requested_scopes=["read"])
+    confirmed = await _svc(env).confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=OwnClientConfirm(
+            client_id="my-own-client",
+            client_secret=SecretStr("own-client-secret-" + "Q" * 16),
+            authorize_url="https://auth.widgets.example/authorize",
+            token_url="https://auth.widgets.example/token",
+            confirmed_scopes=["read"],
+            checks=_checks(await _digest(env, created.session_id)),
+        ),
+        identity=_OWNER,
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    row = await _row(env, created.session_id)
+    assert row is not None
+    credential_id = row.credential_id
+    raw_state = parse_qs(urlsplit(confirmed.authorize_url).query)["state"][0]
+    posted_to: list[str] = []
+
+    class _ExchangeWhileTokenUrlMoves:
+        """The vendor answers the exchange; the cross-origin edit commits first."""
+
+        async def __aenter__(self) -> _ExchangeWhileTokenUrlMoves:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def post(self, url: str, **_kwargs: object) -> httpx.Response:
+            posted_to.append(url)
+            await CredentialService(env).update(
+                credential_id,
+                CredentialUpdate(
+                    type=CredentialType.OAUTH2,
+                    token_url="https://login.other.example.org/token",
+                    client_secret="moved-secret",  # pragma: allowlist secret
+                ),
+                identity=_OWNER,
+            )
+            return httpx.Response(
+                200, json={"access_token": "at-stale", "refresh_token": "rt-stale"}
+            )
+
+    with patch("httpx.AsyncClient", return_value=_ExchangeWhileTokenUrlMoves()):
+        result = await _svc(env).complete_from_callback(raw_state=raw_state, code="the-code")
+
+    assert (result.status, result.error_code) == ("failed", "token_url_moved")
+    assert posted_to == ["https://auth.widgets.example/token"]
+    async with env.control_db.session() as session:
+        assert await ConnectSessionRepository.get_by_id(session, created.session_id) is None
+        assert await CredentialRepository.get_by_id(session, credential_id) is None
+        assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("failed", "token_url_moved")
 
 
 # ---------------------------------------------------------------------------
