@@ -106,6 +106,22 @@ class OAuthAppChangedError(ConnectSessionServiceError):
         self.session_id = session_id
 
 
+class TokenEndpointMovedError(ConnectSessionServiceError):
+    """The credential's token_url moved to another origin during the code exchange.
+
+    The grant minted at the old origin is discarded, not stored: the next
+    refresh would present its refresh token to the new origin. The
+    credential needs a reconnect.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"credential {credential_id!r} token_url moved to another origin while "
+            "connecting; reconnect the credential"
+        )
+        self.credential_id = credential_id
+
+
 class CredentialMissingCreatorError(ConnectSessionServiceError):
     """A credential with no ``created_by`` cannot finalise a connect flow.
 

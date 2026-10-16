@@ -27,6 +27,10 @@ class ProvisionResult(BaseModel):
     expires_at: datetime | None = None
     scope: str | None = None
     provider_account_ref: str | None = None
+    # The token endpoint the code was exchanged at, when the provider has one.
+    # The token write re-checks it against the credential's current endpoint
+    # (``token_endpoint.minted_at_current_origin``).
+    token_url: str | None = None
 
 
 class RefreshResult(BaseModel):
