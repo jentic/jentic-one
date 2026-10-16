@@ -1,8 +1,9 @@
-"""Async broker egress code must not resolve DNS on the event loop (#1700).
+"""Async egress code must not resolve DNS on the event loop (#1700).
 
 ``validate_upstream_url`` and ``resolve_and_validate`` call the blocking
 ``socket.getaddrinfo``; inside an ``async def`` a slow resolver stalls every
-in-flight request. The broker and the execution-job worker use the async twins
+in-flight request. The broker, the execution-job worker, and the registry's
+spec / catalog fetchers use the async twins
 (``validate_upstream_url_async`` / ``resolve_and_validate_async``) instead.
 """
 
@@ -17,7 +18,7 @@ from .conftest import SRC_ROOT, python_files_in
 
 _BLOCKING_RESOLVERS = frozenset({"validate_upstream_url", "resolve_and_validate"})
 
-_SCANNED_ROOTS = (SRC_ROOT / "broker", SRC_ROOT / "shared" / "jobs")
+_SCANNED_ROOTS = (SRC_ROOT / "broker", SRC_ROOT / "shared" / "jobs", SRC_ROOT / "registry")
 
 
 def _called_name(node: ast.Call) -> str | None:
@@ -44,7 +45,7 @@ def _violations(path: Path) -> list[str]:
 
 
 @pytest.mark.arch
-def test_no_blocking_dns_resolution_in_async_broker_code() -> None:
+def test_no_blocking_dns_resolution_in_async_egress_code() -> None:
     violations: list[str] = []
     for root in _SCANNED_ROOTS:
         for py_file in python_files_in(root):

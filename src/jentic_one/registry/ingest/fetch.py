@@ -16,7 +16,7 @@ from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
 class InlineSource(BaseModel):
@@ -355,7 +355,7 @@ async def load_specification(
         source_filename: str | None = source.filename
     else:
         try:
-            validated_url = validate_upstream_url(source.url, cfg.egress)
+            validated_url = await validate_upstream_url_async(source.url, cfg.egress)
         except ValueError as exc:
             raise IngestStageError(f"unsafe URL rejected: {exc}") from exc
 
@@ -375,7 +375,7 @@ async def load_specification(
                     # Resolve relative Location headers against the current URL.
                     next_url = urljoin(validated_url, location)
                     try:
-                        validated_url = validate_upstream_url(next_url, cfg.egress)
+                        validated_url = await validate_upstream_url_async(next_url, cfg.egress)
                     except ValueError as exc:
                         raise IngestStageError(f"unsafe URL rejected: {exc}") from exc
                     resp = await client.get(validated_url)
