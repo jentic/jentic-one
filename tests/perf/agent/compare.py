@@ -187,11 +187,16 @@ def failures(p: dict[str, Any]) -> list[str]:
         if not isinstance(row, dict):
             continue
         label = row.get("config") or row.get("case") or row.get("variant") or "row"
+        if row.get("valid") is False:
+            # The classic tools' own verdict (--min-ok): covers every repeat and side.
+            reasons = "; ".join(map(str, row.get("invalid_reasons") or [])) or "no reason recorded"
+            out.append(f"{label}: marked invalid ({reasons})")
         if _ratio_below_one(row.get("ok_ratio")):
             out.append(f"{label}: ok_ratio {row['ok_ratio']:.3f}")
-        broker = row.get("broker")
-        if isinstance(broker, dict) and _ratio_below_one(broker.get("ok_ratio")):
-            out.append(f"{label}: broker ok_ratio {broker['ok_ratio']:.3f}")
+        for side in ("broker", "direct"):
+            summary = row.get(side)
+            if isinstance(summary, dict) and _ratio_below_one(summary.get("ok_ratio")):
+                out.append(f"{label}: {side} ok_ratio {summary['ok_ratio']:.3f}")
         ok, requests = row.get("ok"), row.get("requests")
         if isinstance(ok, int) and isinstance(requests, int) and ok != requests:
             out.append(f"{label}: {ok}/{requests} ok")
@@ -273,7 +278,12 @@ def m_cpu(b: dict[str, Any], h: dict[str, Any]) -> list[Metric]:
 
 def m_overhead(b: dict[str, Any], h: dict[str, Any]) -> list[Metric]:
     def idx(p: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        return {f"{r['case']}@{r['rate']}": r for r in p["rows"] if r.get("overhead")}
+        # mean_ms is None when oha recorded no successful latency (bench_overhead).
+        return {
+            f"{r['case']}@{r['rate']}": r
+            for r in p["rows"]
+            if (r.get("overhead") or {}).get("mean_ms") is not None
+        }
 
     bi, hi = idx(b), idx(h)
     return [

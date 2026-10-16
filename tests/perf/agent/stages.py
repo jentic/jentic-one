@@ -36,6 +36,7 @@ from tests.perf.agent.base import (
     internal_url,
     md_table,
     pct,
+    require_fresh,
     require_ok,
     require_patched,
     wait_quiet,
@@ -97,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     env = env_or_fail()
+    # Warm-up + the timed window, plus the traced-broker recreate and restore.
+    require_fresh(env, callers=[args.caller], run_s=args.duration + 180)
     url = internal_url(env, args.vendor)
     token = env.caller(args.caller).token
     overrides = {"PERF_TRACE_FUNCS": args.funcs} if args.funcs else {}

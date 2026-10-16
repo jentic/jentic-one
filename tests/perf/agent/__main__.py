@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
 import sys
@@ -39,12 +40,15 @@ from tests.perf.agent.base import (
     git_dirty,
     md_table,
     proxy_url,
+    require_fresh,
     require_ok,
+    run_lock,
 )
-from tests.perf.common import REPO_ROOT, compose, git_sha
+from tests.perf.common import DEFAULT_IMAGE, REPO_ROOT, compose, git_sha
 
 REQUIRED = ("postgres", "app", "broker", "smoke-upstream")
-IMAGE = "jentic-one/app:perf"
+#: The image the compose stack runs (``PERF_IMAGE`` overrides it, as in run metadata).
+IMAGE = os.environ.get("PERF_IMAGE", DEFAULT_IMAGE)
 #: Set by ``make perf-build`` (tests/perf/Makefile).
 REVISION_LABEL = "org.opencontainers.image.revision"
 DIRTY_LABEL = "dev.jentic.perf.src-dirty"
@@ -74,6 +78,12 @@ def doctor_checks() -> list[tuple[str, bool, str, str]]:
     try:
         env = env_or_fail()
         rows.append(("perf env (.perf-env.json)", True, env.created_at or "present", ""))
+        try:
+            # A probe needs a few minutes of validity; each probe re-checks for its own length.
+            require_fresh(env, callers=None, run_s=0)
+            rows.append(("tokens fresh (5 min margin)", True, "", ""))
+        except PrereqError as exc:
+            rows.append(("tokens fresh (5 min margin)", False, str(exc)[:160], exc.fix))
         try:
             resp = httpx.post(
                 proxy_url(env),
@@ -239,13 +249,21 @@ def cmd_cpu(argv: list[str]) -> int:
     p.add_argument("--caller", choices=("jak", "at", "jwt"), default="jak")
     p.add_argument("--vendor", default="perf-noauth")
     args = p.parse_args(argv)
-    stem, load = pyspy_profile.capture(
-        vendor=args.vendor,
-        caller=args.caller,
-        concurrency=args.concurrency,
-        duration=args.duration,
-        rate=200,
-    )
+    try:
+        # min_ok=1.0: a profile with any failed request profiles the failure.
+        stem, load = pyspy_profile.capture(
+            vendor=args.vendor,
+            caller=args.caller,
+            concurrency=args.concurrency,
+            duration=args.duration,
+            rate=200,
+            min_ok=1.0,
+        )
+    except pyspy_profile.LoadError as exc:
+        raise PrereqError(f"cpu load: {exc}", "make perf-agent-doctor") from exc
+    except SystemExit as exc:
+        # Stale tokens, the run lock held, or no broker: all fixable prerequisites.
+        raise PrereqError(str(exc.code), "make perf-agent-doctor") from None
     raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
     require_ok(load, "cpu load")
     summary = pyspy_profile.analyse(raw)
@@ -358,6 +376,9 @@ def locust_run(scenario: str, users: int, seconds: int, mode: str, streaming: bo
             "--no-deps",
             "-e",
             f"PERF_STREAMING={'true' if streaming else 'false'}",
+            "-e",
+            # The locustfile's own token guard: this run's length, not the 600 s default.
+            f"PERF_RUN_S={seconds}",
             "locust-master",
             "-f",
             "/work/tests/perf/locustfile.py",
@@ -440,6 +461,10 @@ def cmd_resilience(argv: list[str]) -> int:
     p.add_argument("--scenarios", default=",".join(SCENARIOS))
     args = p.parse_args(argv)
     scenarios = tuple(s for s in args.scenarios.split(",") if s)
+    runs = sum(1 for _, _, vs in RES_VARIANTS for sc in vs if sc in scenarios)
+    # Locust users pick any caller and the admin token; each run also recreates
+    # the broker (~1 min).
+    require_fresh(env_or_fail(), callers=None, admin=True, run_s=runs * (args.seconds + 60))
     results: list[dict[str, Any]] = []
     logs: dict[str, list[dict[str, Any]]] = {}
     for mode, overrides, variant_scenarios in RES_VARIANTS:
@@ -564,20 +589,26 @@ def cmd_resilience(argv: list[str]) -> int:
 # --------------------------------------------------------------------------- dispatch
 
 
-def _probe(fn: Callable[[list[str]], int]) -> Callable[[list[str]], int]:
+def _probe(fn: Callable[[list[str]], int], *, lock: str | None) -> Callable[[list[str]], int]:
+    """Pre-flight, then run ``fn`` under the suite run lock (``lock=None``: ``fn`` takes it)."""
+
     def run(argv: list[str]) -> int:
         preflight()
-        return fn(argv)
+        if lock is None:
+            return fn(argv)
+        with run_lock(lock):
+            return fn(argv)
 
     return run
 
 
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "doctor": cmd_doctor,
-    "sql": _probe(sqltrace.main),
-    "stages": _probe(stages.main),
-    "cpu": _probe(cmd_cpu),
-    "resilience": _probe(cmd_resilience),
+    "sql": _probe(sqltrace.main, lock="agent-sql"),
+    "stages": _probe(stages.main, lock="agent-stages"),
+    # pyspy_profile.capture holds the lock itself (it is also the perf-profile tool).
+    "cpu": _probe(cmd_cpu, lock=None),
+    "resilience": _probe(cmd_resilience, lock="agent-resilience"),
     "compare": compare.main,
 }
 

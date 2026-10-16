@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
+from tests.perf import common
 from tests.perf.agent import base, compare
 from tests.perf.agent.base import EXIT_REGRESSION, PrereqError
 from tests.perf.agent.compare import Metric, m_dbcost, m_stages
+from tests.perf.common import Caller, PerfEnv
 
 
 @pytest.mark.parametrize(
@@ -171,3 +173,56 @@ def test_failures_detects_classic_ok_ratio() -> None:
     capacity = {"rows": [{"config": "1x2", "ok_ratio": 0.5}, {"config": "2x4", "ok_ratio": 1.0}]}
     assert compare.failures(capacity) == ["1x2: ok_ratio 0.500"]
     assert compare.failures({"data": {"load": {"ok_ratio": 1.0}}}) == []
+
+
+def test_failures_honours_classic_valid_flag_and_direct_side() -> None:
+    overhead = {
+        "rows": [
+            {
+                "case": "noauth",
+                "valid": False,
+                "invalid_reasons": ["broker#1: ok_ratio 0.400 < 0.99"],
+                "broker": {"ok_ratio": 1.0},
+                "direct": {"ok_ratio": 0.9},
+            },
+            {"case": "bearer", "valid": True, "broker": {"ok_ratio": 1.0}},
+        ]
+    }
+    assert compare.failures(overhead) == [
+        "noauth: marked invalid (broker#1: ok_ratio 0.400 < 0.99)",
+        "noauth: direct ok_ratio 0.900",
+    ]
+
+
+def test_overhead_rows_without_a_mean_are_not_compared() -> None:
+    def run(mean: float | None) -> dict[str, Any]:
+        return {"rows": [{"case": "c", "rate": 10, "overhead": {"mean_ms": mean}}]}
+
+    assert compare.m_overhead(run(None), run(2.0)) == []
+    assert [m.key for m in compare.m_overhead(run(1.0), run(2.0))] == ["c@10 overhead mean ms"]
+
+
+# --------------------------------------------------------------------------- suite guards
+
+
+def test_require_fresh_turns_stale_tokens_into_a_prereq() -> None:
+    env = PerfEnv(app_url="a", broker_url="b", upstream_url="u", agent_id="ag")
+    env.callers = {"jak": Caller("jak", "jak_x", "ag", expires_at=1.0)}
+    with pytest.raises(PrereqError, match="jak caller") as exc:
+        base.require_fresh(env, callers=["jak"], run_s=60)
+    assert exc.value.fix == "make perf-provision"
+
+
+def test_run_lock_refuses_while_another_perf_tool_holds_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(common, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(common, "LOCK_FILE", tmp_path / ".perf.lock")
+    with (
+        common.exclusive_run("bench_overhead"),
+        pytest.raises(PrereqError, match="bench_overhead"),
+        base.run_lock("agent-sql"),
+    ):
+        pytest.fail("ran under someone else's lock")
+    with base.run_lock("agent-sql"):
+        pass

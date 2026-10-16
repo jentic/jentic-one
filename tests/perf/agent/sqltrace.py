@@ -44,6 +44,7 @@ from tests.perf.agent.base import (
     hook_stats,
     md_table,
     proxy_url,
+    require_fresh,
     require_patched,
     wait_quiet,
 )
@@ -106,6 +107,8 @@ def drive(
     n: int, warmup: int, caller: str, vendor: str
 ) -> tuple[str, list[dict[str, Any]], dict[str, int]]:
     env = env_or_fail()
+    # Sequential calls (~0.05 s apart) plus the traced-broker recreate.
+    require_fresh(env, callers=[caller], run_s=(warmup + n) * 0.5 + 120)
     url = proxy_url(env, vendor)
     token = env.caller(caller).token
     prefix = f"perf-sql-{uuid.uuid4().hex[:6]}"

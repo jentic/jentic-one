@@ -14,7 +14,7 @@ import json
 import os
 import subprocess
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +27,7 @@ from tests.perf.common import (
     RESULTS_DIR,
     PerfEnv,
     compose,
+    exclusive_run,
     git_sha,
     upstream_base,
     variant_snapshot,
@@ -168,6 +169,27 @@ def env_or_fail() -> PerfEnv:
         raise PrereqError(
             "tests/perf/results/.perf-env.json missing", "make perf-up && make perf-provision"
         ) from exc
+
+
+def require_fresh(
+    env: PerfEnv, *, callers: Iterable[str] | None, run_s: float, admin: bool = False
+) -> None:
+    """Refuse a probe whose tokens expire before it can finish (fast 401s, not data)."""
+    try:
+        env.check_fresh(callers=callers, admin=admin, run_s=run_s)
+    except SystemExit as exc:
+        raise PrereqError(str(exc.code), "make perf-provision") from None
+
+
+@contextlib.contextmanager
+def run_lock(tool: str) -> Iterator[None]:
+    """Hold the suite-wide run lock, so no other perf tool reconfigures the stack meanwhile."""
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(exclusive_run(tool))
+        except SystemExit as exc:
+            raise PrereqError(str(exc.code), "wait for the other perf tool to finish") from None
+        yield
 
 
 def proxy_url(env: PerfEnv, vendor: str = "perf-noauth", path: str = ECHO_PATH) -> str:

@@ -101,6 +101,8 @@ question. Each prints markdown — tables, mechanically derived highlights with
 missing, harness failure or a run where any request failed (the output names
 the fix), `3` regression (`compare`). `make` reports any failing recipe as 2,
 so read the `RESULT:` / `PREREQUISITE:` line rather than the exit status.
+Like the classic tools, the probes hold the suite run lock (`results/.perf.lock`)
+and refuse to start on tokens that would expire before they finish.
 
 | Target | Answers | Knobs |
 | ------ | ------- | ----- |
