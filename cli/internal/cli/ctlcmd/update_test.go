@@ -3,6 +3,7 @@ package ctlcmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -379,7 +380,7 @@ func TestUpdateBrewRecordsCaskVersion(t *testing.T) {
 		wantDiverged     bool
 		wantSkillRefresh int
 	}{
-		{"cask reached latest", "0.28.0", "0.28.0", true, 1},
+		{"cask reached latest", "0.28.0", "v0.28.0", true, 1},
 		{"cask lags the release", "0.26.0", "v0.26.0", false, 0},
 		{"cask version unreadable", "", "v0.26.0", true, 1},
 	}
@@ -387,6 +388,7 @@ func TestUpdateBrewRecordsCaskVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := testApp(t)
 			saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.26.0")
+			before := backdateManifest(t, a)
 			f := stubUpdateFlow(t, "v0.28.0")
 			f.stackErr = errors.New("migrations failed: exit status 1")
 			upgrades := stubBrew(t, tt.cask)
@@ -405,7 +407,126 @@ func TestUpdateBrewRecordsCaskVersion(t *testing.T) {
 			if f.skillRefresh != tt.wantSkillRefresh {
 				t.Errorf("skill refreshes = %d, want %d", f.skillRefresh, tt.wantSkillRefresh)
 			}
+			// Nothing landed (lagging or unreadable cask): the manifest is not
+			// rewritten at all, installed_at included.
+			if tt.cask != "0.28.0" && !bytes.Equal(manifestBytes(t, a), before) {
+				t.Errorf("manifest rewritten although no CLI version landed:\n%s", manifestBytes(t, a))
+			}
 		})
+	}
+}
+
+// backdateManifest rewrites install.json with an old installed_at and returns
+// its bytes. Save stamps installed_at at second precision, so without this a
+// rewrite in the same second would be byte-identical and go unnoticed.
+func backdateManifest(t *testing.T, a *app) []byte {
+	t.Helper()
+	m := loadManifest(t, a)
+	m.InstalledAt = "2000-01-01T00:00:00Z"
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(a.Paths.ManifestPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// manifestBytes returns install.json verbatim.
+func manifestBytes(t *testing.T, a *app) []byte {
+	t.Helper()
+	b, err := os.ReadFile(a.Paths.ManifestPath())
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	return b
+}
+
+// A brew install with no install manifest (brew alone, no `jenticctl
+// install`) must not get one created by the CLI half: `jenticctl status`
+// keeps reporting "no install manifest", and the next run reads the brew
+// binary's own version.
+func TestUpdateBrewWithoutManifestCreatesNone(t *testing.T) {
+	a := testApp(t)
+	stubUpdateFlow(t, "v0.28.0")
+	upgrades := stubBrew(t, "0.28.0")
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true, cliOnly: true}); err != nil {
+		t.Fatalf("updateE: %v", err)
+	}
+	if *upgrades != 1 {
+		t.Fatalf("brew upgrades = %d, want 1", *upgrades)
+	}
+	if _, err := os.Stat(a.Paths.ManifestPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("install.json created by a brew CLI update (stat err = %v)", err)
+	}
+}
+
+// brew upgrades the CLI out-of-band, so a stale recorded cli_version must not
+// shadow the stamped version of the brew binary that is actually running.
+func TestUpdateBrewPrefersRunningBinaryVersion(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.28.0")
+	f := stubUpdateFlow(t, "v0.28.0")
+	upgrades := stubBrew(t, "0.28.0")
+	origVersion := version
+	t.Cleanup(func() { version = origVersion })
+	version = "0.28.0"
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE: %v", err)
+	}
+	if out := a.Out.(*bytes.Buffer).String(); !strings.Contains(out, "Up to date (v0.28.0).") {
+		t.Errorf("verdict ignored the running brew binary's version:\n%s", out)
+	}
+	if *upgrades != 0 || len(f.stackBuilds) != 0 {
+		t.Errorf("brew upgrades = %d, stack builds = %v; want nothing to do", *upgrades, f.stackBuilds)
+	}
+}
+
+// useRealStackRebuild routes the stack half through the real updateStack
+// (after stubUpdateFlow faked it), so the stack step's own checks run.
+func useRealStackRebuild(t *testing.T) {
+	t.Helper()
+	rebuildStack = (*app).updateStack
+}
+
+// TestUpdateNoStackInstallUpdatesCLIOnly: a CLI-only install (no deploy mode,
+// no install config) has no stack to diverge from. A combined run updates the
+// CLI and succeeds instead of reporting a fake CLI/stack divergence whose
+// suggested retry would then claim "Up to date"; an explicit --stack-only is
+// refused.
+func TestUpdateNoStackInstallUpdatesCLIOnly(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, "", "v0.26.0", "")
+	f := stubUpdateFlow(t, "v0.28.0")
+	useRealStackRebuild(t)
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE on a CLI-only install: %v", err)
+	}
+	out := a.Out.(*bytes.Buffer).String()
+	if len(f.cliSwaps) != 1 {
+		t.Errorf("CLI swaps = %v, want one", f.cliSwaps)
+	}
+	for _, want := range []string{"not installed", "CLI update available: v0.26.0 → v0.28.0\n", "no stack installed; updating the CLI only"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Stack update runs forward-only migrations") {
+		t.Errorf("stack half ran on an install with no stack:\n%s", out)
+	}
+
+	err := a.updateE(context.Background(), &updateOptions{yes: true, stackOnly: true})
+	if err == nil || !strings.Contains(err.Error(), "no stack installed") {
+		t.Errorf("--stack-only on a CLI-only install = %v, want a no-stack error", err)
+	}
+	var diverged *stackDivergedError
+	if errors.As(err, &diverged) {
+		t.Errorf("--stack-only reported a divergence: %v", err)
 	}
 }
 
@@ -473,6 +594,8 @@ func TestUpdateVerdict(t *testing.T) {
 		{"both current", "v0.28.0", "v0.28.0", "Up to date (v0.28.0)."},
 		{"diverged: stack behind a current CLI", "v0.28.0", "v0.26.0", "Stack update available: v0.26.0 → v0.28.0 (the CLI is already at v0.28.0)"},
 		{"cli behind a current stack", "v0.26.0", "v0.28.0", "CLI update available: v0.26.0 → v0.28.0 (the stack is already at v0.28.0)"},
+		{"cli behind, no stack installed", "v0.26.0", "", "CLI update available: v0.26.0 → v0.28.0"},
+		{"cli current, no stack installed", "v0.28.0", "", "Up to date (v0.28.0)."},
 		{"lockstep behind", "v0.26.0", "v0.26.0", "Update available: v0.26.0 → v0.28.0"},
 		{"lockstep behind, unprefixed cli version", "0.26.0", "v0.26.0", "Update available: 0.26.0 → v0.28.0"},
 		{"both behind at different versions", "v0.27.0", "v0.26.0", "Update available: CLI v0.27.0 and stack v0.26.0 → v0.28.0"},
@@ -540,8 +663,10 @@ func TestUpdatePinnedRefKeepsCLIHalf(t *testing.T) {
 
 // TestUpdateStackFailureAfterCLISwapReportsDivergence: when the stack half fails
 // after the CLI was swapped, the command exits 1 with an error that says the
-// CLI moved but the stack did not, keeps the port-conflict cause, and gives the
-// exact retry command. The stack ref stays at the old build (#943).
+// CLI moved but the stack did not reach the target, names the last successful
+// stack build without claiming it is intact, keeps the port-conflict cause and
+// the stage hint, and gives the exact retry command. The stack ref stays at
+// the old build (#943).
 func TestUpdateStackFailureAfterCLISwapReportsDivergence(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -558,9 +683,9 @@ func TestUpdateStackFailureAfterCLISwapReportsDivergence(t *testing.T) {
 			outsideCheckout(t)
 			saveManifest(t, a, config.ModeLocal, "v0.26.0", "v0.26.0")
 			f := stubUpdateFlow(t, "v0.28.0")
-			f.stackErr = withPortConflict(errors.New("migrations failed: exit status 1"),
+			f.stackErr = &stackStageError{hint: hintDockerImageRebuilt, err: withPortConflict(errors.New("migrations failed: exit status 1"),
 				"Error response from daemon: driver failed programming external connectivity on endpoint jentic-db-1: "+
-					"Bind for 0.0.0.0:5432 failed: port is already allocated")
+					"Bind for 0.0.0.0:5432 failed: port is already allocated")}
 
 			code, stderr := runUpdateCmd(t, a, tt.args...)
 
@@ -572,7 +697,8 @@ func TestUpdateStackFailureAfterCLISwapReportsDivergence(t *testing.T) {
 			}
 			for _, want := range []string{
 				tt.wantCLI,
-				"the stack update failed, so the stack is still at v0.26.0",
+				"the stack was not updated to v0.28.0 (last successful stack build: v0.26.0)",
+				hintDockerImageRebuilt,
 				"host port 5432 is already in use",
 				"docker ps --filter publish=5432",
 				tt.wantRetry,
@@ -616,6 +742,8 @@ func TestUpdatePreflightPortHolderBlocksCLISwap(t *testing.T) {
 	f := stubUpdateFlow(t, "v0.28.0")
 	f.portHolders = []install.PortHolder{{Port: "5432", Container: "dev-db-1", Project: "dev"}}
 
+	before := backdateManifest(t, a)
+
 	err := a.updateE(context.Background(), &updateOptions{yes: true})
 	if err == nil {
 		t.Fatal("updateE succeeded despite a foreign port holder")
@@ -628,6 +756,120 @@ func TestUpdatePreflightPortHolderBlocksCLISwap(t *testing.T) {
 	if len(f.cliSwaps) != 0 || len(f.stackBuilds) != 0 {
 		t.Errorf("update ran past the preflight: cli=%v stack=%v", f.cliSwaps, f.stackBuilds)
 	}
+	if !bytes.Equal(manifestBytes(t, a), before) {
+		t.Errorf("\"nothing was updated\" but the manifest changed:\n%s", manifestBytes(t, a))
+	}
+}
+
+// The stack-only re-run (CLI already at latest, stack behind) skips the
+// combined preflight, so the stack step's own preflight must still catch a
+// foreign port holder before the image build.
+func TestUpdateStackOnlyRerunPreflightsPortHolder(t *testing.T) {
+	tests := []struct {
+		name string
+		opts updateOptions
+	}{
+		{"CLI-skip re-run", updateOptions{yes: true}},
+		{"explicit --stack-only", updateOptions{yes: true, stackOnly: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t)
+			saveManifest(t, a, config.ModeDocker, "v0.28.0", "v0.26.0")
+			if err := os.WriteFile(a.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+				t.Fatalf("write compose: %v", err)
+			}
+			stubDaemonUp(t)
+			f := stubUpdateFlow(t, "v0.28.0")
+			useRealStackRebuild(t)
+			f.portHolders = []install.PortHolder{{Port: "5432", Container: "dev-db-1", Project: "dev"}}
+			origBuild := buildStackImages
+			t.Cleanup(func() { buildStackImages = origBuild })
+			buildStackImages = func(install.BuildPlan, io.Writer) error {
+				t.Fatal("image build must not run past a failed preflight")
+				return nil
+			}
+			before := backdateManifest(t, a)
+
+			opts := tt.opts
+			err := a.updateE(context.Background(), &opts)
+			if err == nil || !strings.Contains(err.Error(), "nothing was updated") || !strings.Contains(err.Error(), "dev-db-1") {
+				t.Fatalf("err = %v, want the port-holder preflight error", err)
+			}
+			if len(f.cliSwaps) != 0 || f.portLookups != 1 {
+				t.Errorf("cli swaps = %v, port lookups = %d; want none and 1", f.cliSwaps, f.portLookups)
+			}
+			if !bytes.Equal(manifestBytes(t, a), before) {
+				t.Errorf("manifest changed after a failed preflight:\n%s", manifestBytes(t, a))
+			}
+		})
+	}
+}
+
+// Each stack step that already changed on-disk state reports it, so the
+// operator does not start a half-updated stack; a failure before any change
+// carries no hint.
+func TestUpdateStackStageHints(t *testing.T) {
+	fail := errors.New("boom")
+	tests := []struct {
+		name     string
+		mode     string
+		build    error // local venv rebuild or docker image build
+		migrate  error
+		up       error
+		wantHint string
+	}{
+		{"docker image build fails", config.ModeDocker, fail, nil, nil, ""},
+		{"docker migrations fail", config.ModeDocker, nil, fail, nil, hintDockerImageRebuilt},
+		{"docker compose up fails", config.ModeDocker, nil, nil, fail, hintDockerMigrationsRan},
+		{"local rebuild fails", config.ModeLocal, fail, nil, nil, hintLocalRebuildFailed},
+		{"local migrations fail", config.ModeLocal, nil, fail, nil, hintLocalMigrateFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t)
+			outsideCheckout(t)
+			for _, p := range []string{a.Paths.ComposePath(), a.Paths.InstallConfigPath()} {
+				if err := os.WriteFile(p, []byte("services: {}\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stubStackSteps(t, tt.build, tt.migrate, tt.up)
+
+			err := a.updateStack(context.Background(), tt.mode, install.BackendPostgres, "v0.28.0", false, true)
+			if !errors.Is(err, fail) {
+				t.Fatalf("err = %v, want the step failure", err)
+			}
+			var stage *stackStageError
+			gotHint := ""
+			if errors.As(err, &stage) {
+				gotHint = stage.hint
+			}
+			if gotHint != tt.wantHint {
+				t.Errorf("stage hint = %q, want %q", gotHint, tt.wantHint)
+			}
+			if tt.wantHint != "" && !strings.Contains(err.Error(), tt.wantHint) {
+				t.Errorf("error text omits the hint: %v", err)
+			}
+		})
+	}
+}
+
+// stubStackSteps fakes the local and docker stack steps with the given results.
+func stubStackSteps(t *testing.T, build, migrate, up error) {
+	t.Helper()
+	origUv, origLocal, origLocalMig := ensureUv, buildLocalStack, runLocalMigrations
+	origImages, origMig, origUp := buildStackImages, runComposeMigrations, composeUp
+	t.Cleanup(func() {
+		ensureUv, buildLocalStack, runLocalMigrations = origUv, origLocal, origLocalMig
+		buildStackImages, runComposeMigrations, composeUp = origImages, origMig, origUp
+	})
+	ensureUv = func(io.Writer) {}
+	buildLocalStack = func(install.BuildPlan, io.Writer) error { return build }
+	runLocalMigrations = func(context.Context, io.Writer, string, string) error { return migrate }
+	buildStackImages = func(install.BuildPlan, io.Writer) error { return build }
+	runComposeMigrations = func(io.Writer, string) error { return migrate }
+	composeUp = func(io.Writer, string) error { return up }
 }
 
 // A failing port lookup must not block the update: it is skipped (and said so),

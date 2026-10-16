@@ -75,6 +75,15 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		return err
 	}
 	brewManaged := isBrewManaged(ctlTarget)
+	// brew upgrades the CLI out-of-band, so a recorded cli_version can lag the
+	// binary brew installed; the running binary's stamped version is the truth.
+	if brewManaged && isStampedVersion(version) {
+		cliVersion = version
+	}
+
+	// A CLI-only install (tools/install.sh or brew, never `jenticctl install`)
+	// has no stack: no deploy mode recorded and no install config on disk.
+	stackInstalled := manifest.Mode != "" || proc.FileExists(a.Paths.InstallConfigPath())
 
 	fmt.Fprint(a.Out, a.BrandHeader(ctx, opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
@@ -82,7 +91,9 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	// Surface the stack's own recorded build separately from the CLI's. They
 	// advance independently, and a silent divergence is exactly what left users
 	// on a stale stack with no visible cause (#943).
-	if stackRef := manifest.ResolvedStackRef(); stackRef != "" {
+	if !stackInstalled {
+		fmt.Fprintln(a.Out, theme.Field("stack", "not installed"))
+	} else if stackRef := manifest.ResolvedStackRef(); stackRef != "" {
 		fmt.Fprintln(a.Out, theme.Field("stack", stackRef))
 	}
 	if !found {
@@ -110,7 +121,11 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 
 	if latestKnown {
 		fmt.Fprintln(a.Out, theme.Field("latest", latest))
-		a.printVerdict(cliVersion, stackVersion, latest)
+		verdictStack := stackVersion
+		if !stackInstalled {
+			verdictStack = "" // no stack to be behind
+		}
+		a.printVerdict(cliVersion, verdictStack, latest)
 	} else {
 		fmt.Fprintln(a.Out, theme.Field("latest", "unknown"))
 		fmt.Fprintln(a.Out, theme.Warnf("  %v", latestErr))
@@ -122,6 +137,18 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 
 	doCLI := !opts.stackOnly
 	doStack := !opts.cliOnly
+
+	// With no stack installed there is nothing for the stack half to update.
+	// An explicit --stack-only is refused; a combined run updates the CLI only,
+	// so a missing stack is never reported as a CLI/stack divergence.
+	if doStack && !stackInstalled {
+		if opts.stackOnly {
+			return fmt.Errorf("no stack installed: %s not found — run `jenticctl install` first", a.Paths.InstallConfigPath())
+		}
+		doStack = false
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Dim.Render("  no stack installed; updating the CLI only (run `jenticctl install` to set one up)"))
+	}
 
 	// A brew-managed CLI is never swapped by us — the CLI half delegates to
 	// `brew upgrade jentic` (flyctl-style) so brew's bookkeeping stays
@@ -209,8 +236,8 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 			// that actually moved past the recorded version counts as an update.
 			// An unreadable cask version is assumed to have moved (brew succeeded).
 			cliUpdated = caskVersion == "" || update.NewerAvailable(cliVersion, caskVersion)
-			if cliUpdated {
-				landed = config.CLIUpdate{Version: caskVersion}
+			if cliUpdated && caskVersion != "" {
+				landed = config.CLIUpdate{Version: "v" + strings.TrimPrefix(caskVersion, "v")}
 			}
 		} else {
 			if landed, err = swapCLI(a, ctx, repo, ref, ctlTarget); err != nil {
@@ -218,26 +245,25 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 			}
 			cliUpdated = true
 		}
-		// Record what the CLI half installed before the stack half runs, so a
-		// stack failure leaves the manifest naming the new CLI and the old
-		// stack — the next run's verdict and CLI-skip read these (#976).
-		a.recordCLIUpdate(landed)
-		cliLanded = landed.Version
-		// A new CLI can ship a new skill body (transport-error recovery, envelope
-		// parsing, per-BC guidance — plan.md Phase 6 "skill lifecycle"). Refresh
-		// every INSTALLED skill so old-CLI guidance can't linger, respecting the
-		// user-edit guard (edited blocks are skipped + warned, never clobbered
-		// without --force). Best-effort: the binaries are already swapped, so a
-		// skill-refresh failure must not fail the update — it only leaves skills
-		// a `jentic skill update` away.
 		if cliUpdated {
+			// Record what the CLI half installed before the stack half runs, so
+			// a stack failure leaves the manifest naming the new CLI and the old
+			// stack — the next run's verdict and CLI-skip read these (#976).
+			a.recordCLIUpdate(landed)
+			cliLanded = landed.Version
+			// A new CLI can ship new skill bodies, so refresh every INSTALLED
+			// skill to keep the old CLI's guidance from lingering, respecting the
+			// user-edit guard (edited blocks are skipped + warned, never
+			// clobbered without --force). Best-effort: the binaries are already
+			// swapped, so a skill-refresh failure must not fail the update — it
+			// only leaves skills a `jentic skill update` away.
 			refreshSkills(a)
 		}
 	}
 	if doStack {
 		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted); err != nil {
 			if cliUpdated {
-				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), stackVersion, stackRetryCommand(ref, pinned))
+				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), ref, stackVersion, stackRetryCommand(ref, pinned))
 			}
 			return err
 		}
@@ -250,7 +276,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 }
 
 // Package-level seams over update's external effects (release lookup, CLI
-// swap, skill refresh, stack rebuild, Docker calls) so the update flow can be
+// swap, skill refresh, stack rebuild, local build and migrations, Docker calls) so the update flow can be
 // tested end to end without network, binaries, or a Docker daemon. Tests that
 // swap these globals must not run with t.Parallel().
 var (
@@ -266,6 +292,9 @@ var (
 	foreignPortHolders   = install.ForeignPortHolders
 	buildStackImages     = install.BuildPlan.BuildImages
 	runComposeMigrations = install.RunComposeMigrations
+	ensureUv             = install.EnsureUv
+	buildLocalStack      = install.BuildPlan.Execute
+	runLocalMigrations   = install.RunMigrations
 )
 
 // preflightDockerStack checks what the Docker stack rebuild needs before any
@@ -296,26 +325,52 @@ func (a *app) preflightDockerStack(ctx context.Context) error {
 }
 
 // stackDivergedError reports a stack half that failed after the CLI half
-// already succeeded, leaving the two at different versions. It names both
-// versions and the exact command that finishes the update, so the skew is
-// never silent (#976).
+// already succeeded, leaving the two at different versions. It names the CLI
+// target, the stack target it did not reach, the last stack build that did
+// succeed, and the exact command that finishes the update, so the skew is
+// never silent (#976). It does not claim the old stack is intact: the stack
+// half is not atomic, and the cause carries a stackStageError hint when a
+// step already changed the stack's on-disk state.
 type stackDivergedError struct {
 	cliTarget    string
+	stackTarget  string
 	stackVersion string
 	retry        string
 	err          error
 }
 
-func newStackDivergedError(err error, cliTarget, stackVersion, retry string) *stackDivergedError {
-	return &stackDivergedError{cliTarget: cliTarget, stackVersion: stackVersion, retry: retry, err: err}
+func newStackDivergedError(err error, cliTarget, stackTarget, stackVersion, retry string) *stackDivergedError {
+	return &stackDivergedError{cliTarget: cliTarget, stackTarget: stackTarget, stackVersion: stackVersion, retry: retry, err: err}
 }
 
 func (e *stackDivergedError) Error() string {
-	return fmt.Sprintf("the CLI was updated %s but the stack update failed, so the stack is still at %s: %v\n"+
-		"fix the cause above, then finish the update with `%s`", e.cliTarget, e.stackVersion, e.err, e.retry)
+	return fmt.Sprintf("the CLI was updated %s but the stack was not updated to %s (last successful stack build: %s): %v\n"+
+		"fix the cause above, then finish the update with `%s`", e.cliTarget, e.stackTarget, e.stackVersion, e.err, e.retry)
 }
 
 func (e *stackDivergedError) Unwrap() error { return e.err }
+
+// stackStageError is a stack-half failure after a step that already changed
+// the stack's on-disk state (rebuilt venv or image, stopped app, applied
+// migrations). The hint tells the operator what that state is and what not to
+// do before the update is finished, since the stack is then neither the old
+// build nor the new one.
+type stackStageError struct {
+	hint string
+	err  error
+}
+
+func (e *stackStageError) Error() string { return fmt.Sprintf("%v\n%s", e.err, e.hint) }
+
+func (e *stackStageError) Unwrap() error { return e.err }
+
+// Stage hints for stackStageError.
+const (
+	hintLocalRebuildFailed  = "the local environment may be partly rebuilt; finish the update before running `jenticctl start`"
+	hintLocalMigrateFailed  = "the app is stopped and its environment is already rebuilt; finish the update before running `jenticctl start`"
+	hintDockerImageRebuilt  = "the stack image is already rebuilt; don't start the stack until the update finishes"
+	hintDockerMigrationsRan = "the stack image is already rebuilt and migrations have run; don't start the stack until the update finishes"
+)
 
 // cliTargetLabel words where the CLI half landed for the divergence message:
 // a brew-managed CLI reaches whatever the cask ships, not necessarily ref.
@@ -402,6 +457,7 @@ func (a *app) refreshSkillsAfterUpdate() {
 func (a *app) recordStackBuild(ref string) {
 	m, _, err := config.LoadManifest(a.Paths)
 	if err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record stack version: %v", err))
 		return
 	}
 	if err := m.RecordStackBuild(a.Paths, ref); err != nil {
@@ -410,12 +466,23 @@ func (a *app) recordStackBuild(ref string) {
 }
 
 // recordCLIUpdate persists what the CLI half just installed (see
-// config.Manifest.RecordCLIUpdate). Best-effort: the binaries are already in
-// place, so a manifest write failure is warned, not fatal — it only costs a
-// redundant CLI swap next time.
+// config.Manifest.RecordCLIUpdate) into the existing install manifest.
+// Without one there is nothing to correct — the next run reads the new
+// binary's build-time version — so no manifest is created (a CLI-only or
+// brew install keeps reporting "no install manifest"). An empty update (brew
+// could not report the cask version) records nothing. Best-effort: the
+// binaries are already in place, so a manifest failure is warned, not fatal —
+// it only costs a redundant CLI swap next time.
 func (a *app) recordCLIUpdate(u config.CLIUpdate) {
-	m, _, err := config.LoadManifest(a.Paths)
+	if u == (config.CLIUpdate{}) {
+		return
+	}
+	m, found, err := config.LoadManifest(a.Paths)
 	if err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record CLI version: %v", err))
+		return
+	}
+	if !found {
 		return
 	}
 	if err := m.RecordCLIUpdate(a.Paths, u); err != nil {
@@ -498,7 +565,7 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) (confi
 
 	// Prefer a DOWNLOAD-AND-SWAP when `ref` resolves to a real published release
 	// (no compiler, no clone). Fall back to the from-source rebuild for forks /
-	// dev refs / a tag without published assets — unchanged behaviour.
+	// dev refs / a tag without published assets.
 	staged, cleanup, fromDownload, err := acquireCLI(a, ctx, repo, ref)
 	if cleanup != nil {
 		defer cleanup()
@@ -748,48 +815,49 @@ func (a *app) updateStack(ctx context.Context, mode, db, ref string, pinned, pre
 // migrations, and restarts the app if it was running. For the SQLite backend it
 // snapshots the *.db files first and rolls them back if the migration fails, so
 // a broken forward-only migration can't leave the operator with a half-migrated
-// database and no recovery (CLI-V2 Phase 6 lifecycle hardening). Postgres keeps
-// the documented pg_dump warning above — an in-CLI dump of an operator-managed
-// server is out of scope.
+// database and no recovery. Postgres keeps the documented pg_dump warning
+// above — an in-CLI dump of an operator-managed server is out of scope.
+// A failure after the rebuild started returns a stackStageError: the source
+// and venv are no longer the last successful build.
 func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool) error {
 	configPath := a.Paths.InstallConfigPath()
 	if !proc.FileExists(configPath) {
 		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
 	}
 
-	install.EnsureUv(a.Out)
+	ensureUv(a.Out)
 	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderHeader())
-	if err := plan.Execute(a.Out); err != nil {
-		return fmt.Errorf("rebuild failed: %w", err)
+	if err := buildLocalStack(plan, a.Out); err != nil {
+		return &stackStageError{hint: hintLocalRebuildFailed, err: fmt.Errorf("rebuild failed: %w", err)}
 	}
 
-	// Stop the app BEFORE snapshotting + migrating (F1, review round-3 #7). A
-	// forward-only Alembic migration against a live, WAL-mode SQLite DB — with a
-	// backup that couldn't cleanly capture the in-flight WAL — is the inconsistent
-	// half-state the rollback net exists to prevent. Stopping first makes the
-	// snapshot self-contained and the migration the sole writer. Restart happens
-	// after a successful migration (or is left stopped on failure, having rolled
-	// back). If it wasn't running, we don't start it — matching prior behaviour.
+	// Stop the app BEFORE snapshotting + migrating. A forward-only Alembic
+	// migration against a live, WAL-mode SQLite DB — with a backup that couldn't
+	// cleanly capture the in-flight WAL — is the inconsistent half-state the
+	// rollback net exists to prevent. Stopping first makes the snapshot
+	// self-contained and the migration the sole writer. Restart happens after a
+	// successful migration (or is left stopped on failure, having rolled back).
+	// An app that wasn't running is not started.
 	wasRunning := a.stopLocalIfRunning(ctx)
 
 	// Snapshot the SQLite files before the forward-only migration so a failure
 	// rolls back to the pre-migration state rather than stranding a half-applied
 	// schema. Shared with first-`install` via MigrateWithRollback so the two
-	// rollback paths cannot drift (P1-E).
+	// rollback paths cannot drift.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	if err := update.MigrateWithRollback(
 		a.Paths.DataDir(),
 		db == install.BackendSQLite,
-		func() error { return install.RunMigrations(ctx, a.Out, plan.VenvPython(), configPath) },
+		func() error { return runLocalMigrations(ctx, a.Out, plan.VenvPython(), configPath) },
 		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
 		func() {
 			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-update state"))
 		},
 	); err != nil {
-		return err
+		return &stackStageError{hint: hintLocalMigrateFailed, err: err}
 	}
 
 	if wasRunning {
@@ -830,33 +898,35 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, preflig
 		return fmt.Errorf("image build failed: %w", err)
 	}
 
-	// The migration one-shot and `up` are the steps that bind host ports; tee
-	// their output so a bind failure becomes a named port conflict rather than
-	// the daemon's raw networking error (#976).
+	// The image build overwrote the stack's fixed image tag, so any later
+	// failure leaves `jenticctl start` running the new image; the stage hint
+	// says so. The migration one-shot and `up` are the steps that bind host
+	// ports; tee their output so a bind failure becomes a named port conflict
+	// rather than the daemon's raw networking error (#976).
 	configPath := a.Paths.InstallConfigPath()
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	tail := &tailBuffer{}
 	if err := runComposeMigrations(io.MultiWriter(a.Out, tail), composePath); err != nil {
-		return withPortConflict(fmt.Errorf("migrations failed: %w", err), tail.String())
+		return &stackStageError{hint: hintDockerImageRebuilt, err: withPortConflict(fmt.Errorf("migrations failed: %w", err), tail.String())}
 	}
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
 	tail = &tailBuffer{}
 	if err := composeUp(io.MultiWriter(a.Out, tail), composePath); err != nil {
-		return withPortConflict(fmt.Errorf("docker compose up: %w", err), tail.String())
+		return &stackStageError{hint: hintDockerMigrationsRan, err: withPortConflict(fmt.Errorf("docker compose up: %w", err), tail.String())}
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (docker)."))
 	return nil
 }
 
 // stopLocalIfRunning stops the local app if it is running and reports whether it
-// was. Split out of the old restartLocalIfRunning (F1, review round-3 #7) so the
-// update flow can stop the app BEFORE snapshotting + migrating the SQLite
-// database — migrating a live, WAL-mode DB and then trying to roll back a .db
-// whose committed pages still live in an uncheckpointed WAL is exactly the
-// inconsistent half-state the rollback net is meant to prevent.
+// was. It is separate from the restart so the update flow can stop the app
+// BEFORE snapshotting + migrating the SQLite database — migrating a live,
+// WAL-mode DB and then trying to roll back a .db whose committed pages still
+// live in an uncheckpointed WAL is exactly the inconsistent half-state the
+// rollback net is meant to prevent.
 func (a *app) stopLocalIfRunning(ctx context.Context) bool {
 	_, running, _ := proc.LivePID(a.Paths.AppPIDPath())
 	if !running {
@@ -944,6 +1014,8 @@ func (v updateVerdict) message(cliVersion, stackVersion, latest string) string {
 			return fmt.Sprintf("Update available: %s → %s", cliVersion, latest)
 		}
 		return fmt.Sprintf("Update available: CLI %s and stack %s → %s", cliVersion, stackVersion, latest)
+	case v.cliBehind && stackVersion == "":
+		return fmt.Sprintf("CLI update available: %s → %s", cliVersion, latest)
 	case v.cliBehind:
 		return fmt.Sprintf("CLI update available: %s → %s (the stack is already at %s)", cliVersion, latest, latest)
 	case v.stackBehind:
@@ -983,6 +1055,12 @@ func defaultRef(v string) string {
 		return "main"
 	}
 	return v
+}
+
+// isStampedVersion reports whether a build-time version was stamped by a real
+// build rather than left at the plain `go build` placeholder.
+func isStampedVersion(v string) bool {
+	return v != "" && v != "dev" && v != "none"
 }
 
 func firstNonEmpty(vals ...string) string {
