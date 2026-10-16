@@ -15,6 +15,14 @@ Two TTLs guard against a poison-pill (a pending claim must be short):
 - ``done_ttl_s`` — the **long** replay window the record is promoted to once
   :meth:`complete` stores the real response.
 
+A request that fails before it has a response to store gives its claim back
+with :meth:`release`, so the client's same-key retry re-claims ``FRESH`` at
+once instead of waiting out ``pending_ttl_s``. Every claim carries a random
+token and the release is a compare-and-delete on the exact pending record, so a
+slow request whose claim already expired can never release a newer claim on the
+same key. The pending TTL stays the crash guard for a request that never gets
+to release (process killed, store unreachable).
+
 Per-caller keyspace (``idem:{caller}:{key}``) stops one caller replaying
 another's response; ``caller`` is the resolved ``actor_id``, never the raw
 token.
@@ -24,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
@@ -34,11 +43,12 @@ from jentic_one.shared.state.backend import AtomicStore, KeyValueStore
 
 @runtime_checkable
 class IdempotencyStateStore(KeyValueStore, AtomicStore, Protocol):
-    """The store roles idempotency needs: ``get``/``set`` (KV) + ``set_if_absent`` (atomic).
+    """The store roles idempotency needs: ``get``/``set`` (KV) + the atomic claim/release.
 
     A narrow union (ISP) over the shared-state backend — the claim is an atomic
-    ``set_if_absent``; the pending read and the DONE promotion are plain KV
-    ``get``/``set``. Both the memory and Redis backends satisfy it.
+    ``set_if_absent`` and its release an atomic ``delete_if_equals``; the
+    pending read and the DONE promotion are plain KV ``get``/``set``. Both the
+    memory and Redis backends satisfy it.
     """
 
 
@@ -76,12 +86,28 @@ class StoredResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class IdempotencyClaim:
+    """The pending claim a ``FRESH`` :meth:`SharedStateIdempotencyStore.begin` took.
+
+    ``record`` is the exact pending value written to the store (it embeds the
+    claim's random token); :meth:`SharedStateIdempotencyStore.release` deletes
+    the slot only while it still holds these bytes.
+    """
+
+    caller: str
+    key: str
+    record: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class IdempotencyOutcome:
     """The result of a :meth:`SharedStateIdempotencyStore.begin` claim attempt."""
 
     state: IdempotencyState
     stored: StoredResponse | None = None
     retry_after_s: int = 0
+    claim: IdempotencyClaim | None = None
+    """Set only on ``FRESH``: the claim this request now owns."""
 
 
 def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -117,9 +143,14 @@ class SharedStateIdempotencyStore:
         matching ``DONE`` record ⇒ ``REPLAY`` with the stored response.
         """
         slot = self._slot(caller, key)
-        claim = json.dumps({"phase": _PHASE_PENDING, "fp": fingerprint}).encode()
+        claim = json.dumps(
+            {"phase": _PHASE_PENDING, "fp": fingerprint, "tok": secrets.token_hex(16)}
+        ).encode()
         if await self._store.set_if_absent(slot, claim, ttl_s=self._pending_ttl):
-            return IdempotencyOutcome(IdempotencyState.FRESH)
+            return IdempotencyOutcome(
+                IdempotencyState.FRESH,
+                claim=IdempotencyClaim(caller=caller, key=key, record=claim),
+            )
 
         existing = await self._store.get(slot)
         if existing is None:
@@ -167,6 +198,16 @@ class SharedStateIdempotencyStore:
         slot = self._slot(caller, key)
         await self._store.set(slot, json.dumps(record).encode(), ttl_s=self._done_ttl)
 
+    async def release(self, claim: IdempotencyClaim) -> bool:
+        """Give back a pending claim whose request ends without a stored response.
+
+        A compare-and-delete on the exact pending record: it is a no-op when the
+        claim already expired and another request re-claimed the key, or when
+        the record was promoted to ``DONE``. Returns whether the claim was
+        released. Store errors propagate; the caller decides how to degrade.
+        """
+        return await self._store.delete_if_equals(self._slot(claim.caller, claim.key), claim.record)
+
     def _retry_after(self) -> int:
         # Round the short claim TTL up to whole seconds for the Retry-After hint.
         return max(1, int(self._pending_ttl + 0.999))
@@ -191,6 +232,7 @@ class SharedStateIdempotencyStore:
 
 
 __all__ = [
+    "IdempotencyClaim",
     "IdempotencyOutcome",
     "IdempotencyState",
     "IdempotencyStateStore",

@@ -80,6 +80,17 @@ async def test_set_if_absent_second_claim_fails(backend: RedisStateBackend) -> N
     assert await backend.get(key) == b"first"
 
 
+async def test_delete_if_equals_is_compare_and_delete(backend: RedisStateBackend) -> None:
+    """Only the holder of the exact value deletes it; anyone else is a no-op."""
+    key = f"idem:{uuid.uuid4().hex}"
+    assert await backend.set_if_absent(key, b"mine", ttl_s=30.0) is True
+    assert await backend.delete_if_equals(key, b"someone-else") is False
+    assert await backend.get(key) == b"mine"
+    assert await backend.delete_if_equals(key, b"mine") is True
+    assert await backend.get(key) is None
+    assert await backend.delete_if_equals(key, b"mine") is False
+
+
 async def test_incr_with_ttl_accumulates(backend: RedisStateBackend) -> None:
     key = f"count:{uuid.uuid4().hex}"
     assert await backend.incr_with_ttl(key, ttl_s=30.0) == 1

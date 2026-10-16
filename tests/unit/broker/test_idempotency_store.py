@@ -8,6 +8,8 @@ Exercises the full claim/replay state machine over the in-process memory backend
 - a retry while the original is still pending is ``IN_PROGRESS`` with a ``Retry-After``,
 - callers are isolated (one caller's key never replays another's),
 - a short pending TTL frees a crashed claim before the long replay window,
+- a released claim re-claims ``FRESH``, and a stale releaser (whose claim expired
+  and was re-claimed) can't release the newer claim,
 - sensitive response headers are scrubbed and oversized bodies are dropped.
 """
 
@@ -114,6 +116,53 @@ async def test_pending_claim_expires_before_replay_window() -> None:
     assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
     clock.advance(11.0)
     assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
+
+
+@pytest.mark.asyncio
+async def test_released_claim_lets_the_retry_reclaim_fresh() -> None:
+    store = _store(MemoryStateBackend(clock=_Clock()))
+
+    first = await store.begin("agent-1", "key-1", "fp-a")
+    assert first.claim is not None
+    assert await store.release(first.claim) is True
+    assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.FRESH
+
+
+@pytest.mark.asyncio
+async def test_stale_releaser_cannot_release_a_newer_claim() -> None:
+    """A request whose claim expired and was re-claimed must not free the new claim."""
+    clock = _Clock()
+    store = _store(MemoryStateBackend(clock=clock), pending_ttl_s=10.0)
+
+    stale = await store.begin("agent-1", "key-1", "fp-a")
+    clock.advance(11.0)
+    newer = await store.begin("agent-1", "key-1", "fp-a")
+    assert newer.state is IdempotencyState.FRESH
+    assert stale.claim is not None and newer.claim is not None
+
+    assert await store.release(stale.claim) is False
+    assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.IN_PROGRESS
+    assert await store.release(newer.claim) is True
+
+
+@pytest.mark.asyncio
+async def test_release_after_complete_keeps_the_stored_response() -> None:
+    store = _store(MemoryStateBackend(clock=_Clock()))
+
+    first = await store.begin("agent-1", "key-1", "fp-a")
+    await store.complete("agent-1", "key-1", "fp-a", status_code=200, headers={}, body=b"ok")
+    assert first.claim is not None
+    assert await store.release(first.claim) is False
+    assert (await store.begin("agent-1", "key-1", "fp-a")).state is IdempotencyState.REPLAY
+
+
+@pytest.mark.asyncio
+async def test_only_fresh_carries_a_claim() -> None:
+    store = _store(MemoryStateBackend(clock=_Clock()))
+
+    assert (await store.begin("agent-1", "key-1", "fp-a")).claim is not None
+    assert (await store.begin("agent-1", "key-1", "fp-a")).claim is None
+    assert (await store.begin("agent-1", "key-1", "fp-b")).claim is None
 
 
 @pytest.mark.asyncio

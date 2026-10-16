@@ -13,6 +13,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime
@@ -82,6 +83,7 @@ from jentic_one.broker.services.execution.service import (
     run_execution,
 )
 from jentic_one.broker.services.idempotency import (
+    IdempotencyClaim,
     IdempotencyState,
     SharedStateIdempotencyStore,
     StoredResponse,
@@ -507,7 +509,86 @@ async def _handle(
     runner: UpstreamRunner,
     idempotency: SharedStateIdempotencyStore | None,
 ) -> Response:
-    """Thin web-edge adapter — see module docstring."""
+    """Thin web-edge adapter — see module docstring.
+
+    Owns the lifetime of the request's Idempotency-Key claim: whatever way the
+    request ends (an error of any class, or cancellation when the client goes
+    away) before the execution has an outcome, the claim is released so the
+    client's same-key retry runs again instead of answering
+    ``409 idempotency_in_progress`` until the pending TTL lapses (#1710).
+    """
+    lease = _ClaimLease()
+    try:
+        return await _handle_request(
+            request,
+            method,
+            ctx,
+            identity,
+            credential_deriver,
+            agent_rule_evaluator,
+            runner,
+            idempotency,
+            lease,
+        )
+    finally:
+        await lease.release_unsettled()
+
+
+class _ClaimLease:
+    """The Idempotency-Key claim a buffered request holds until it has an outcome.
+
+    Released for every failure that ends the request first: the failure classes
+    that reach here (circuit open, transport errors, timeouts, credential-state
+    errors such as ``424``/``401``, an unexpected bug, cancellation) all leave no
+    stored response, and policy denials and validation errors are raised before
+    the claim is taken. Once the execution has returned an outcome the lease is
+    settled and never released — the response is stored by ``complete``, or, if
+    storing it fails, the claim falls back to its pending TTL rather than
+    inviting an immediate duplicate of a call the upstream already answered.
+    """
+
+    __slots__ = ("_claim", "_store")
+
+    def __init__(self) -> None:
+        self._store: SharedStateIdempotencyStore | None = None
+        self._claim: IdempotencyClaim | None = None
+
+    def hold(self, store: SharedStateIdempotencyStore, claim: IdempotencyClaim) -> None:
+        self._store, self._claim = store, claim
+
+    def settle(self) -> None:
+        self._store = self._claim = None
+
+    async def release_unsettled(self) -> None:
+        """Release a still-held claim; never raises over the request's own outcome.
+
+        Shielded so a cancelled request still finishes the (single, atomic)
+        release. A store failure is logged and the claim is left to its pending
+        TTL — the original error keeps propagating.
+        """
+        store, claim = self._store, self._claim
+        self.settle()
+        if store is None or claim is None:
+            return
+        try:
+            await asyncio.shield(store.release(claim))
+        except Exception as exc:
+            # Class name only: a store error message can carry its connection URL.
+            logger.warning("idempotency_claim_release_failed", error_type=type(exc).__name__)
+
+
+async def _handle_request(
+    request: Request,
+    method: str,
+    ctx: Context,
+    identity: Identity,
+    credential_deriver: CredentialDeriverProtocol,
+    agent_rule_evaluator: AgentRuleEvaluatorProtocol,
+    runner: UpstreamRunner,
+    idempotency: SharedStateIdempotencyStore | None,
+    lease: _ClaimLease,
+) -> Response:
+    """The request flow :func:`_handle` runs under its claim lease."""
     if request.headers.get("upgrade"):
         raise UpgradeNotSupportedError(
             detail="Protocol upgrade not supported by the broker.",
@@ -682,6 +763,8 @@ async def _handle(
             )
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
+        if outcome_idem.claim is not None:
+            lease.hold(idempotency, outcome_idem.claim)
 
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(
@@ -721,6 +804,8 @@ async def _handle(
             signing=injection.signing,
             has_idempotency_key=bool(idem_key),
         )
+    # The execution has an outcome: from here the claim is completed, never released.
+    lease.settle()
 
     response = _assemble_response(outcome, ctx_req)
     if idempotency is not None and idem_key and fp is not None:

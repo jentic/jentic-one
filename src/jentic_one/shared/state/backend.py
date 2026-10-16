@@ -66,6 +66,15 @@ class AtomicStore(Protocol):
 
     async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool: ...
 
+    async def delete_if_equals(self, key: str, expected: bytes) -> bool:
+        """Atomically delete *key* only while it still holds *expected*.
+
+        The release half of a ``set_if_absent`` claim: a holder whose claim
+        expired and was re-claimed by someone else holds a different value, so
+        it can never delete the newer claim. Returns whether a key was deleted.
+        """
+        ...
+
     async def aclose(self) -> None: ...
 
 
@@ -139,6 +148,15 @@ class MemoryStateBackend:
         if self._live_entry(key) is not None:
             return False
         self._kv[key] = _Entry(value=value, expires_at=self._clock() + ttl_s)
+        return True
+
+    async def delete_if_equals(self, key: str, expected: bytes) -> bool:
+        # No await between the read and the delete, so the compare-and-delete
+        # is atomic on the single-threaded event loop.
+        entry = self._live_entry(key)
+        if entry is None or entry.value != expected:
+            return False
+        del self._kv[key]
         return True
 
     async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
