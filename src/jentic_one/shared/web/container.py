@@ -56,7 +56,10 @@ class AppContainer:
     ``None`` here means "let the broker surface build its own default per
     request"). ``extra_routers`` and ``extra_installers`` run against the root app
     *after* the built-in surfaces are wired, so a caller mounts its
-    routers/handlers last and never shadows a built-in route.
+    routers/handlers last and never shadows a built-in route. The one exception
+    is a surface's root ``/{name:path}`` catch-all (the standalone broker's
+    forward proxy): it is included after the extensions so it cannot shadow
+    them.
     ``extra_lifespans`` are entered inside the app lifespan after
     ``ctx.startup()`` (and any surface-owned ``extra_lifespan``) and exited in
     reverse order during shutdown — the async counterpart of

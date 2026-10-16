@@ -105,7 +105,10 @@ register_pipeline_stage(
 
 Start from the default container and add your `Broker` and any extra
 routers/installers. Extra routers and installers run **after** all built-in
-surfaces, so they mount last and never shadow a built-in route.
+surfaces, so they mount last and never shadow a built-in route. The exception
+is a surface's root `/{name:path}` catch-all (the standalone broker's forward
+proxy), which `create_surface_app` includes after the extensions so it never
+shadows an extra router either.
 
 ```python
 from fastapi import APIRouter

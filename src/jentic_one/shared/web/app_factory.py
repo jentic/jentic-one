@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -16,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from starlette.routing import Route
 
 from jentic_one import __version__
 from jentic_one.registry.services.import_service import ImportHandler
@@ -104,14 +106,38 @@ def mount_metrics_endpoint(app: FastAPI) -> None:
     ``/{upstream_url:path}``) — otherwise the catch-all shadows the scrape
     endpoint.
 
-    The mount causes Starlette to redirect the bare "/metrics" path to
-    "/metrics/" with a 307. The `local-prom-app.yaml` overlay therefore sets
-    `prometheus.io/path` to "/metrics/" with the trailing slash — keep them in
-    sync.
+    The exposition is served at "/metrics/"; the bare "/metrics" path answers a
+    307 to it. Starlette's own trailing-slash redirect only fires when *no*
+    route matches, and the broker's catch-all matches everything, so the bare
+    path gets an explicit redirect route registered alongside the mount. The
+    `local-prom-app.yaml` overlay sets `prometheus.io/path` to "/metrics/" with
+    the trailing slash — keep them in sync.
     """
     metrics_app = make_metrics_asgi_app()
     if metrics_app is not None:
+        app.add_route("/metrics", _redirect_to_metrics_slash, include_in_schema=False)
         app.mount("/metrics", metrics_app)
+
+
+async def _redirect_to_metrics_slash(request: Request) -> Response:
+    """307 the bare "/metrics" path to the "/metrics/" exposition mount."""
+    return RedirectResponse(request.url.replace(path="/metrics/"), status_code=307)
+
+
+_ROOT_CATCH_ALL_RE = re.compile(r"/\{[^{}/:]+:path\}")
+
+
+def _has_root_catch_all(router: APIRouter) -> bool:
+    """Whether ``router`` carries a root-level ``/{name:path}`` route.
+
+    Such a route (the broker's forward proxy) matches every path, so Starlette
+    — which matches in registration order — never reaches anything included
+    after it.
+    """
+    return any(
+        isinstance(route, Route) and _ROOT_CATCH_ALL_RE.fullmatch(route.path) is not None
+        for route in router.routes
+    )
 
 
 def attach_http_observability(app: FastAPI, *, mount_metrics: bool = True) -> None:
@@ -595,7 +621,16 @@ def create_surface_app(
     # Prometheus scrape endpoint (when enabled), mounted ahead of the surface
     # routers for the same reason: the broker catch-all must not shadow it.
     mount_metrics_endpoint(app)
+    # A surface router carrying a root /{name:path} catch-all (the broker's
+    # forward proxy) is held back and included last — after the container
+    # extension seam — so it shadows neither an injected extra router nor an
+    # installer-added route. Every other surface router still precedes the
+    # extensions, so an extension never shadows a built-in route.
+    catch_all_routers: list[tuple[APIRouter, Sequence[str]]] = []
     for router, _prefix, tags in routers:
+        if _has_root_catch_all(router):
+            catch_all_routers.append((router, tags))
+            continue
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
     # Public, schema-visible backend-identity endpoint so a client (MCP server,
     # CLI, agent) can tell which backend it is bound to — cloud vs. local. Off
@@ -618,6 +653,10 @@ def create_surface_app(
         )
     for installer in container.extra_installers:
         installer(app, ctx)
+    for catch_all_router, catch_all_tags in catch_all_routers:
+        app.include_router(
+            catch_all_router, tags=list(catch_all_tags), responses=COMMON_ERROR_RESPONSES
+        )
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
