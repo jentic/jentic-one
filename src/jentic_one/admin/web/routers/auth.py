@@ -16,7 +16,6 @@ from jentic_one.admin.web.deps import (
     get_invite_service,
     get_user_service,
 )
-from jentic_one.admin.web.login_rate_limit import enforce_login_rate_limit
 from jentic_one.admin.web.schemas.auth import (
     ChangePasswordRequest,
     CreateAdminRequest,
@@ -29,6 +28,10 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.auth import extract_credential
+from jentic_one.shared.web.login_rate_limit import (
+    LOGIN_RATE_LIMIT_DETAIL,
+    enforce_login_rate_limit,
+)
 from jentic_one.shared.web.openapi_responses import (
     PUBLIC_ERROR_RESPONSES,
     gone,
@@ -43,7 +46,10 @@ router = APIRouter()
     summary="Log in",
     responses=too_many_requests(
         "Too many login attempts from this caller IP or for this account email; "
-        "retry after the `Retry-After` delay."
+        "retry after the `Retry-After` delay.",
+        detail=LOGIN_RATE_LIMIT_DETAIL,
+        instance="/auth/login",
+        rate_limit_headers=True,
     ),
 )
 async def login(

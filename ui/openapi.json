@@ -32305,8 +32305,8 @@
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "Too many requests; retry after the indicated delay.",
-                  "instance": "/example/path",
+                  "detail": "Too many login attempts; retry after the indicated delay.",
+                  "instance": "/auth/login",
                   "status": 429,
                   "title": "Too Many Requests",
                   "type": "rate_limit_exceeded"
@@ -32316,7 +32316,28 @@
                 }
               }
             },
-            "description": "Too many login attempts from this caller IP or for this account email; retry after the `Retry-After` delay."
+            "description": "Too many login attempts from this caller IP or for this account email; retry after the `Retry-After` delay.",
+            "headers": {
+              "RateLimit-Limit": {
+                "description": "Bucket capacity (burst) of the limit that was exceeded.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "description": "Tokens left in the bucket (always 0 on a 429).",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds to wait before the bucket holds a token again.",
+                "schema": {
+                  "minimum": 1.0,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {

@@ -18,11 +18,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from jentic_one.admin.repos import OAuthClientRepository, UserRepository
+from jentic_one.admin.repos import OAuthClientRepository, UserRepository, UserSecretRepository
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import authorize, local_login, oauth
-from jentic_one.shared.config import PlatformClientConfig
+from jentic_one.shared.config import AdminLoginRateLimitConfig, PlatformClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.state.backend import MemoryStateBackend
 from tests.integration.auth.conftest import (
@@ -261,6 +261,60 @@ async def test_lockout_is_shared_with_password_login(
         )
         assert resp.status_code == 200
         assert "Invalid email or password." in resp.text
+
+
+async def test_email_bucket_is_shared_with_password_login(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The form submit spends the same per-email bucket as ``POST /auth/login``.
+
+    Once the bucket is dry the form re-renders with a 429 and ``Retry-After``
+    before the credential check, so the throttled attempt is never counted.
+    """
+    ctx = local_login_ctx
+    monkeypatch.setattr(
+        ctx.config.admin.auth,
+        "login_rate_limit",
+        AdminLoginRateLimitConfig(email_rpm=1, email_burst=2),
+    )
+    user_id, email = await seed_password_user(ctx, "usr_local_login_email_bucket")
+
+    app = _make_app(ctx)
+    async with _web_client(app) as client:
+        for variant in (email, email.upper()):
+            fields = await _walk_to_login_form(
+                client,
+                client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+                redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            )
+            resp = await client.post(
+                "/login", data={"email": variant, "password": "wrong-password", **fields}
+            )
+            assert resp.status_code == 200
+            assert "Invalid email or password." in resp.text
+
+        fields = await _walk_to_login_form(
+            client,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        )
+        resp = await client.post(
+            "/login", data={"email": email, "password": SEED_PASSWORD, **fields}
+        )
+        assert resp.status_code == 429
+        assert int(resp.headers["retry-after"]) >= 1
+        assert resp.headers["content-type"].startswith("text/html")
+        assert "Too many sign-in attempts" in resp.text
+        # The re-rendered form carries a fresh, usable nonce.
+        assert _form_fields(resp.text)["csrf"] != fields["csrf"]
+
+    async with ctx.admin_db.session() as session:
+        secret = await UserSecretRepository.get_by_user_id(session, user_id)
+    assert secret is not None
+    assert secret.failed_login_count == 2
 
 
 async def test_must_change_password_blocks_flow_until_rotated(

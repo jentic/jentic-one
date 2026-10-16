@@ -25,7 +25,8 @@ type AdminAuthConfig struct {
 	// this bounds a single token, not the session.
 	JwtTtlSeconds int `json:"jwt_ttl_seconds,omitempty,omitzero" yaml:"jwt_ttl_seconds,omitempty" mapstructure:"jwt_ttl_seconds,omitempty"`
 
-	// Per-IP and per-email rate limits on ``POST /auth/login``.
+	// Per-IP and per-email rate limits on the password logins (``POST /auth/login``
+	// and the ``/authorize`` local-login form).
 	LoginRateLimit *AdminLoginRateLimitConfig `json:"login_rate_limit,omitempty,omitzero" yaml:"login_rate_limit,omitempty" mapstructure:"login_rate_limit,omitempty"`
 
 	// Absolute cap on a web session: refresh re-mints the login JWT only while ``now
@@ -50,6 +51,9 @@ func (j *AdminAuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["failed_login_lockout_threshold"]; !ok || v == nil {
 		plain.FailedLoginLockoutThreshold = 5
+	}
+	if 1 > plain.FailedLoginLockoutThreshold {
+		return fmt.Errorf("field %s: must be >= %v", "failed_login_lockout_threshold", 1)
 	}
 	if v, ok := raw["jwt_secret"]; !ok || v == nil {
 		plain.JwtSecret = ""
@@ -109,14 +113,17 @@ func (j *AdminInviteConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Pre-auth rate limits on “POST /auth/login“.
+// Pre-auth rate limits on the password logins.
 //
-// Two token buckets guard every attempt: one per caller IP (bounds password
-// spraying from one host) and one per normalised email (bounds a distributed
-// guessing burst against one account, on top of the failed-login lockout).
-// The caller IP honours “auth.oauth_rate_limit.trusted_proxies“. Buckets
-// live on the shared-state backend (“broker.resilience.backend“): per
-// process for “memory“, cluster-wide for “redis“.
+// Applies to both doors that verify an account password: “POST /auth/login“
+// and the local-login form submit on the “/authorize“ flow (one shared set
+// of buckets). Two token buckets guard every attempt: one per caller IP
+// (bounds password spraying from one host; IPv6 callers are bucketed per
+// “/64“) and one per normalised email (bounds a distributed guessing burst
+// against one account, on top of the failed-login lockout). The caller IP
+// honours “auth.oauth_rate_limit.trusted_proxies“. Buckets live on the
+// shared-state backend (“broker.resilience.backend“): per process for
+// “memory“, cluster-wide for “redis“.
 type AdminLoginRateLimitConfig struct {
 	// Burst allowance (bucket capacity) for the per-email login bucket.
 	EmailBurst int `json:"email_burst,omitempty,omitzero" yaml:"email_burst,omitempty" mapstructure:"email_burst,omitempty"`
@@ -124,7 +131,8 @@ type AdminLoginRateLimitConfig struct {
 	// Sustained login attempts/minute allowed per account email.
 	EmailRpm int `json:"email_rpm,omitempty,omitzero" yaml:"email_rpm,omitempty" mapstructure:"email_rpm,omitempty"`
 
-	// Enforce the ``POST /auth/login`` rate limits (429 when exhausted).
+	// Enforce the password-login rate limits (``POST /auth/login`` answers 429, the
+	// local-login form re-renders with 429, when exhausted).
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
 	// Burst allowance (bucket capacity) for the per-IP login bucket.
@@ -1853,11 +1861,15 @@ type OAuthRateLimitConfig struct {
 	// registration (``POST /oauth-clients``).
 	RegistrationRpm int `json:"registration_rpm,omitempty,omitzero" yaml:"registration_rpm,omitempty" mapstructure:"registration_rpm,omitempty"`
 
-	// Socket IPs of reverse proxies whose ``X-Forwarded-For`` header is honored when
-	// deriving the per-client rate-limit identity. Empty (default) means the socket
-	// address is used as-is — behind a reverse proxy every request then carries the
-	// proxy's IP and all clients share one bucket, so list the proxy IPs when
-	// deploying behind one.
+	// IP addresses or CIDR ranges (e.g. ``10.0.0.0/8``) of reverse proxies whose
+	// ``X-Forwarded-For`` header is honored when deriving the per-client rate-limit
+	// identity — for the OAuth endpoints and for the password logins (``POST
+	// /auth/login``, see ``admin.auth.login_rate_limit``, and the local-login form).
+	// Empty (default) means the socket address is used as-is — behind a reverse proxy
+	// every request then carries the proxy's IP and all clients share one bucket, so
+	// list the proxy addresses or ranges when deploying behind one. Accepts a YAML
+	// list or a comma-separated string; an entry that is not an IP address or CIDR
+	// range fails config validation.
 	TrustedProxies []string `json:"trusted_proxies,omitempty,omitzero" yaml:"trusted_proxies,omitempty" mapstructure:"trusted_proxies,omitempty"`
 }
 
