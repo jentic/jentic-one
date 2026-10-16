@@ -53,6 +53,11 @@ from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
+from jentic_one.control.services.credentials.errors import (
+    AgentBindingNotFoundError,
+    CredentialNotFoundError,
+)
+from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     ConnectSessionService,
@@ -78,6 +83,7 @@ from jentic_one.control.services.vendors.service import (
     VendorNotConfiguredError,
     VendorRegistryService,
 )
+from jentic_one.control.web.routers.credentials import binding_access_response
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import approvals
 from jentic_one.mcp import execute as ex
@@ -1907,6 +1913,43 @@ async def handle_request_connection(
     return tool_result(env.ctx, payload)
 
 
+# ── show_access ───────────────────────────────────────────────────────────────
+
+_SHOW_ACCESS_PARAMS = [ParamSpec("credential_id", "string")]
+
+
+async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
+    """GET /credentials/{cid}/agents/{me}/permissions in-process (Go: ``handleShowAccess``).
+
+    The calling agent's own binding to ``credential_id``, in the route's wire
+    shape. A credential it is not bound to, or whose binding is suspended
+    (which hides the credential from the agent), is RESOLVE_FAILED pointing
+    at whoami.
+    """
+    args = normalize_tool_args(arguments, _SHOW_ACCESS_PARAMS)
+    credential_id = args.get("credential_id", "")
+    if not credential_id:
+        raise invalid_params(
+            'show_access requires "credential_id", e.g. {"credential_id": "cred_…"}'
+        )
+    require_permissions(env.identity, ["credentials:read", "owner:credentials:read"])
+    try:
+        access = await CredentialService(env.ctx).get_binding_access(
+            credential_id, env.identity.sub, identity=env.identity
+        )
+    except (CredentialNotFoundError, AgentBindingNotFoundError):
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"no active credential binding for {credential_id!r}",
+            actionable="check whoami (`jentic whoami`) for your credential bindings and their "
+            "credential ids; a suspended binding is hidden until your operator resumes it",
+            next_tool="whoami",
+        ) from None
+    payload = binding_access_response(access).model_dump(mode="json", by_alias=True)
+    payload["schema_version"] = SCHEMA_VERSION
+    return tool_result(env.ctx, payload)
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 #: name → handler for every tool this mount serves (must cover
@@ -1921,6 +1964,7 @@ HANDLERS: dict[str, Handler] = {
     "execute_read": handle_execute_read,
     "get_execution_result": handle_get_execution_result,
     "request_connection": handle_request_connection,
+    "show_access": handle_show_access,
 }
 
 

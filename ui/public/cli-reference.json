@@ -1723,6 +1723,56 @@
           ]
         },
         {
+          "name": "access",
+          "path": "jentic access",
+          "use": "access",
+          "short": "Show what your credential bindings let you do",
+          "group_title": "APIs",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "show",
+              "path": "jentic access show",
+              "use": "show \u003ccredential_id\u003e",
+              "short": "Show your access through one credential: rules, rule set, scopes, suspension",
+              "long": "show answers with what your binding to the credential grants: its\npermission rules with their ids (data), the shared rule set it points at\n(whose rules apply instead of data), the credential's granted OAuth scopes,\nand whether the binding is suspended. Credential ids come from whoami.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "search",
           "path": "jentic search",
           "use": "search \u003cquery\u003e",

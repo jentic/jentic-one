@@ -31,7 +31,8 @@ LANE = "http"
 
 #: The tools this mount serves — the subset of the pinned surface whose
 #: dispatch is clean in-process (registry search/inspect/catalog + the catalog
-#: import loop, admin jobs, auth whoami, the connect-session create leg) or a
+#: import loop, admin jobs, auth whoami, the connect-session create leg, the
+#: agent's binding access read) or a
 #: server-side broker proxy (the execute family). ``get_started`` never ports
 #: — it diagnoses *the local machine's* CLI setup, and over HTTP there is no
 #: local machine; it stays stdio-only.
@@ -45,6 +46,7 @@ SERVED_TOOLS: tuple[str, ...] = (
     "search_catalog",
     "import_api",
     "request_connection",
+    "show_access",
 )
 
 

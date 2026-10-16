@@ -34,7 +34,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
-from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.service import BindingAccess, CredentialService
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
     StateError,
@@ -519,6 +519,24 @@ def _to_permission_rule(
     )
 
 
+def binding_access_response(access: BindingAccess) -> BindingAccessResponse:
+    """Project a binding's access onto the wire shape (shared with the MCP mount)."""
+    rule_set = None
+    if access.rule_set is not None:
+        rule_set = BindingRuleSetSchema(
+            id=access.rule_set.id,
+            name=access.rule_set.name,
+            curated=access.rule_set.curated,
+            rules=[_to_permission_rule(r) for r in access.rule_set_rules],
+        )
+    return BindingAccessResponse(
+        data=[_to_permission_rule(r) for r in access.rules],
+        rule_set=rule_set,
+        granted_scopes=access.granted_scopes,
+        suspended=access.suspended,
+    )
+
+
 @router.get(
     "/credentials/{credential_id}/agents/{agent_id}/permissions",
     operation_id="listAgentCredentialPermissions",
@@ -550,20 +568,7 @@ async def list_agent_permissions(
     read its own binding.
     """
     access = await svc.get_binding_access(credential_id, agent_id, identity=identity)
-    rule_set = None
-    if access.rule_set is not None:
-        rule_set = BindingRuleSetSchema(
-            id=access.rule_set.id,
-            name=access.rule_set.name,
-            curated=access.rule_set.curated,
-            rules=[_to_permission_rule(r) for r in access.rule_set_rules],
-        )
-    return BindingAccessResponse(
-        data=[_to_permission_rule(r) for r in access.rules],
-        rule_set=rule_set,
-        granted_scopes=access.granted_scopes,
-        suspended=access.suspended,
-    )
+    return binding_access_response(access)
 
 
 @router.put(

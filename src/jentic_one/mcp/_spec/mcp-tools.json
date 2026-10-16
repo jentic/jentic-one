@@ -322,6 +322,26 @@
         "type": "object"
       },
       "annotations": {}
+    },
+    {
+      "name": "show_access",
+      "title": "Show your access through a credential",
+      "description": "Show what your binding to one credential lets you do: its permission rules with their ids (data, first match wins, default deny), the shared rule set it points at (whose rules apply instead of data), the credential's granted OAuth scopes, and whether the binding is suspended. Example: {\"credential_id\": \"cred_…\"} — credential ids come from whoami's bindings. Call it before asking for a change to your access, and when such a request fails. A credential you are not bound to (or whose binding is suspended) is not found: call whoami to list your bindings.",
+      "input_schema": {
+        "properties": {
+          "credential_id": {
+            "description": "The credential whose binding to read (required), e.g. \"cred_…\" from whoami's credential bindings.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "read_only_hint": true
+      }
     }
   ]
 }
