@@ -15,9 +15,8 @@ however, type their dependency on the one role they need.
 
 from __future__ import annotations
 
-import heapq
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -25,10 +24,46 @@ import structlog
 
 _logger = structlog.get_logger(__name__)
 
-# Default bounds for :class:`MemoryStateBackend`. A sweep walks every entry, so
-# it runs at most once per interval (on a write), not per call.
+# Default per-namespace bounds for :class:`MemoryStateBackend`'s key/value
+# store. A sweep walks every entry, so it runs at most once per interval on a
+# write, plus at most once per ``_FULL_SWEEP_MIN_INTERVAL_S`` when a namespace
+# is full.
 DEFAULT_MEMORY_MAX_ENTRIES = 100_000
+DEFAULT_MEMORY_MAX_BYTES = 64 * 1024 * 1024
 DEFAULT_MEMORY_SWEEP_INTERVAL_S = 30.0
+_FULL_SWEEP_MIN_INTERVAL_S = 1.0
+# Approximate per-entry cost on top of the key and value bytes: the dict slot,
+# the key ``str`` and value ``bytes`` object headers and the ``_Entry``.
+_ENTRY_OVERHEAD_BYTES = 200
+
+
+class StateBackendCapacityError(Exception):
+    """A write was refused because its key namespace is full of live entries.
+
+    Raised by :class:`MemoryStateBackend` instead of evicting a live entry: an
+    evicted idempotency claim or replay marker would make the next
+    ``set_if_absent`` for that key succeed, so the guard would fail open.
+    Callers must refuse the request that needed the write (for example with a
+    503), never treat it as a fresh claim.
+    """
+
+    def __init__(self, namespace: str, *, retry_after_s: int) -> None:
+        super().__init__(f"shared-state namespace {namespace!r} is full")
+        self.namespace = namespace
+        self.retry_after_s = retry_after_s
+
+
+@dataclass(frozen=True, slots=True)
+class NamespaceBudget:
+    """Entry-count and approximate byte budget for one key namespace."""
+
+    max_entries: int
+    max_bytes: int
+
+
+def key_namespace(key: str) -> str:
+    """The namespace a key is budgeted under: its prefix up to the first ``:``."""
+    return key.split(":", 1)[0] if ":" in key else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,10 +127,19 @@ class SharedStateBackend(KeyValueStore, RateLimitStore, AtomicStore, Protocol):
 
 @dataclass(slots=True)
 class _Entry:
-    """A stored value with its monotonic-clock expiry deadline."""
+    """A stored value with its monotonic-clock expiry deadline and budgeted size."""
 
     value: bytes
     expires_at: float
+    size: int
+
+
+@dataclass(slots=True)
+class _Usage:
+    """Live accounting for one key namespace."""
+
+    entries: int = 0
+    bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -129,17 +173,27 @@ class MemoryStateBackend:
     A ``clock`` callable (defaulting to :func:`time.monotonic`) can be injected
     to make TTL and token-bucket refill behaviour deterministic in tests.
 
-    Memory stays bounded for keys that are written once and never read again
-    (JWT-bearer ``jti`` replay records, idempotency claims):
+    The key/value store is bounded per key namespace (:func:`key_namespace`,
+    the key's prefix up to its first ``:``, e.g. ``idem``, ``login-csrf``):
 
     * an expired entry is dropped when it is read, and every write at least
       ``sweep_interval_s`` after the last sweep drops every expired entry and
       every token bucket that has refilled to full;
-    * a write that would take the key/value store past ``max_entries`` sweeps
-      first and, if every remaining entry is still live, evicts the entries
-      closest to expiry (a tenth of the bound at a time). That trades the last seconds of those
-      records' TTL for a hard memory ceiling, and logs a warning — a process
-      that reaches it needs a larger bound or the redis backend.
+    * each namespace has an entry-count budget and an approximate byte budget
+      (key + value + a fixed per-entry overhead). A write that would take its
+      namespace past either budget sweeps expired entries first and, if the
+      namespace is still full, is refused with
+      :class:`StateBackendCapacityError`. A live entry is never evicted, so a
+      claim or replay marker cannot be dropped early and re-claimed.
+
+    Budgets are per namespace, so filling one key kind (for example
+    unauthenticated login CSRF nonces) refuses only writes of that kind and
+    never starves idempotency claims or ``jti`` replay records. The key/value
+    store's memory is therefore bounded by roughly the sum of the byte budgets
+    of the namespaces in use (sizes are approximate: key + value + a fixed
+    per-entry overhead). Token buckets are not budgeted: each is a fixed-size
+    record kept only until it has refilled, so they are bounded by request
+    rate times refill time.
     """
 
     def __init__(
@@ -147,30 +201,59 @@ class MemoryStateBackend:
         *,
         clock: Callable[[], float] = time.monotonic,
         max_entries: int = DEFAULT_MEMORY_MAX_ENTRIES,
+        max_bytes: int = DEFAULT_MEMORY_MAX_BYTES,
+        namespace_budgets: Mapping[str, NamespaceBudget] | None = None,
         sweep_interval_s: float = DEFAULT_MEMORY_SWEEP_INTERVAL_S,
     ) -> None:
-        if max_entries < 1:
-            raise ValueError(f"max_entries must be positive, got {max_entries}")
+        default = NamespaceBudget(max_entries=max_entries, max_bytes=max_bytes)
+        budgets = dict(namespace_budgets or {})
+        for name, budget in {"": default, **budgets}.items():
+            if budget.max_entries < 1:
+                raise ValueError(
+                    f"max_entries must be positive, got {budget.max_entries} for {name!r}"
+                )
+            if budget.max_bytes < 1:
+                raise ValueError(f"max_bytes must be positive, got {budget.max_bytes} for {name!r}")
         self._clock = clock
-        self._max_entries = max_entries
+        self._default_budget = default
+        self._budgets = budgets
         self._sweep_interval_s = sweep_interval_s
+        self._retry_after_s = max(1, int(sweep_interval_s + 0.999))
         self._kv: dict[str, _Entry] = {}
+        self._usage: dict[str, _Usage] = {}
         self._buckets: dict[str, _Bucket] = {}
         self._next_sweep_at = clock() + sweep_interval_s
+        self._last_full_sweep_at = float("-inf")
+        self._refusal_logged_at: dict[str, float] = {}
+
+    def _budget(self, namespace: str) -> NamespaceBudget:
+        return self._budgets.get(namespace, self._default_budget)
+
+    def _delete(self, key: str) -> None:
+        entry = self._kv.pop(key)
+        usage = self._usage[key_namespace(key)]
+        usage.entries -= 1
+        usage.bytes -= entry.size
 
     def _live_entry(self, key: str) -> _Entry | None:
-        """Return the entry for *key* if present and not expired, else evict it."""
+        """Return the entry for *key* if present and not expired, else drop it."""
         entry = self._kv.get(key)
         if entry is None:
             return None
         if entry.expires_at <= self._clock():
-            del self._kv[key]
+            self._delete(key)
             return None
         return entry
 
     def _sweep(self, now: float) -> None:
         """Drop every expired entry and every bucket that has refilled to full."""
         self._kv = {k: e for k, e in self._kv.items() if e.expires_at > now}
+        usage: dict[str, _Usage] = {}
+        for key, entry in self._kv.items():
+            ns_usage = usage.setdefault(key_namespace(key), _Usage())
+            ns_usage.entries += 1
+            ns_usage.bytes += entry.size
+        self._usage = usage
         self._buckets = {k: b for k, b in self._buckets.items() if b.full_at > now}
         self._next_sweep_at = now + self._sweep_interval_s
 
@@ -178,32 +261,64 @@ class MemoryStateBackend:
         if now >= self._next_sweep_at:
             self._sweep(now)
 
-    def _store(self, key: str, entry: _Entry, now: float) -> None:
-        """Write *entry*, sweeping on schedule and keeping the store within ``max_entries``."""
+    def _fits(self, key: str, namespace: str, size: int) -> bool:
+        budget = self._budget(namespace)
+        usage = self._usage.get(namespace, _Usage())
+        existing = self._kv.get(key)
+        entries = usage.entries + (0 if existing is not None else 1)
+        used_bytes = usage.bytes - (existing.size if existing is not None else 0) + size
+        return entries <= budget.max_entries and used_bytes <= budget.max_bytes
+
+    def _refuse(self, namespace: str, now: float) -> StateBackendCapacityError:
+        # One warning per namespace per sweep interval: a flood of refused
+        # writes must not become a flood of log lines.
+        last = self._refusal_logged_at.get(namespace)
+        if last is None or now - last >= self._sweep_interval_s:
+            self._refusal_logged_at[namespace] = now
+            budget = self._budget(namespace)
+            usage = self._usage.get(namespace, _Usage())
+            _logger.warning(
+                "memory_state_backend_capacity_refused",
+                namespace=namespace,
+                entries=usage.entries,
+                approx_bytes=usage.bytes,
+                max_entries=budget.max_entries,
+                max_bytes=budget.max_bytes,
+                detail=(
+                    "the in-process state backend namespace is full of live "
+                    "entries, so new writes to it are refused (callers answer "
+                    "503) until entries expire. Raise "
+                    "broker.resilience.backend.memory budgets for this namespace, "
+                    "shorten the TTL of what it stores, or use the redis backend."
+                ),
+            )
+        return StateBackendCapacityError(namespace, retry_after_s=self._retry_after_s)
+
+    def _store(self, key: str, value: bytes, expires_at: float, now: float) -> None:
+        """Write *value* under *key*, or raise when its namespace budget is spent.
+
+        A namespace that is full sweeps expired entries first (at most once
+        per ``_FULL_SWEEP_MIN_INTERVAL_S``, so a flood of refused writes does
+        not pay a full scan each). Nothing live is ever evicted.
+
+        Raises:
+            StateBackendCapacityError: The namespace is still full after the sweep.
+        """
         self._maybe_sweep(now)
-        if key not in self._kv and len(self._kv) >= self._max_entries:
-            self._sweep(now)
-            overflow = len(self._kv) - self._max_entries + 1
-            if overflow > 0:
-                # Free a tenth of the bound at once so a sustained flood pays
-                # the O(n) selection once per batch, not on every write.
-                overflow = max(overflow, self._max_entries // 10)
-                soonest = heapq.nsmallest(
-                    overflow, self._kv.items(), key=lambda item: item[1].expires_at
-                )
-                for evicted, _ in soonest:
-                    del self._kv[evicted]
-                _logger.warning(
-                    "memory_state_backend_capacity_evicted",
-                    evicted=overflow,
-                    max_entries=self._max_entries,
-                    detail=(
-                        "the in-process state backend is full of live entries; the "
-                        "ones closest to expiry were dropped early. Use the redis "
-                        "backend for this load."
-                    ),
-                )
-        self._kv[key] = entry
+        namespace = key_namespace(key)
+        size = len(key) + len(value) + _ENTRY_OVERHEAD_BYTES
+        if not self._fits(key, namespace, size):
+            if now - self._last_full_sweep_at >= _FULL_SWEEP_MIN_INTERVAL_S:
+                self._last_full_sweep_at = now
+                self._sweep(now)
+            if not self._fits(key, namespace, size):
+                raise self._refuse(namespace, now)
+        if key in self._kv:
+            self._delete(key)
+        self._kv[key] = _Entry(value=value, expires_at=expires_at, size=size)
+        usage = self._usage.setdefault(namespace, _Usage())
+        usage.entries += 1
+        usage.bytes += size
 
     async def get(self, key: str) -> bytes | None:
         entry = self._live_entry(key)
@@ -211,13 +326,13 @@ class MemoryStateBackend:
 
     async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
         now = self._clock()
-        self._store(key, _Entry(value=value, expires_at=now + ttl_s), now)
+        self._store(key, value, now + ttl_s, now)
 
     async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
         if self._live_entry(key) is not None:
             return False
         now = self._clock()
-        self._store(key, _Entry(value=value, expires_at=now + ttl_s), now)
+        self._store(key, value, now + ttl_s, now)
         return True
 
     async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
@@ -233,7 +348,7 @@ class MemoryStateBackend:
         # A fresh window resets the TTL; an existing counter keeps its deadline
         # so a sliding burst can't indefinitely extend the window.
         expires_at = entry.expires_at if entry is not None else now + ttl_s
-        self._store(key, _Entry(value=str(new_value).encode(), expires_at=expires_at), now)
+        self._store(key, str(new_value).encode(), expires_at, now)
         return new_value
 
     async def token_bucket(

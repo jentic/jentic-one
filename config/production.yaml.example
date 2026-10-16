@@ -184,6 +184,14 @@ broker:
       # backend: redis
       # redis_url: rediss://user:pass@redis.example.com:6379/0
       # redis_key_prefix: jentic:prod:
+      # Bounds for the memory backend, per key namespace (the key prefix before
+      # the first ":"). A namespace full of live entries refuses new writes
+      # (the request gets a 503) instead of evicting a live entry.
+      # memory:
+      #   max_entries_per_namespace: 100000
+      #   max_bytes_per_namespace: 67108864   # 64 MiB
+      #   namespaces:
+      #     idem: {max_entries: 1000000, max_bytes: 268435456}  # the built-in default
 
 admin:
   auth:

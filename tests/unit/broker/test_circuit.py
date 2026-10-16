@@ -84,3 +84,15 @@ async def test_per_host_isolation() -> None:
     assert not (await breaker.allow("bad.example.com")).allowed
     # A different host has its own counters/latch.
     assert (await breaker.allow("good.example.com")).allowed
+
+
+@pytest.mark.asyncio
+async def test_record_skips_when_the_store_is_full() -> None:
+    """A refused counter write after the upstream call never fails the request."""
+    backend = MemoryStateBackend(clock=_Clock(), max_entries=1)
+    breaker = _breaker(backend)
+    await breaker.record("a.example.com", ok=True)
+
+    await breaker.record("b.example.com", ok=False)
+
+    assert (await breaker.allow("b.example.com")).allowed
