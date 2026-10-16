@@ -1,4 +1,15 @@
-"""Token refresh service — lazy single-flight refresh for OAuth2 credentials."""
+"""Token refresh service — lazy single-flight refresh for OAuth2 credentials.
+
+Expiry semantics: ``oauth_tokens.expires_at`` (and so
+``ResolvedCredential.token_expires_at``) is the access token's true expiry as
+the vendor reported it (``issued_at + expires_in``) — providers never
+subtract a safety margin when they compute it. The provider's
+``expiry_skew_seconds`` is applied exactly once, here, at comparison time: a
+token is fresh while ``expires_at - skew > now``. A stored expiry that
+already has the skew subtracted still compares safely — it refreshes up to
+one skew earlier than needed, and that refresh rewrites it with the true
+expiry.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +40,14 @@ logger = structlog.get_logger(__name__)
 _sqlite_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 _DEFAULT_EXPIRY_SKEW_SECONDS = 60
+
+
+def _is_fresh(expires_at: datetime | None, skew: timedelta, now: datetime) -> bool:
+    """True when a token with true expiry ``expires_at`` is usable beyond ``skew``.
+
+    The single place the skew is applied — see the module docstring.
+    """
+    return expires_at is None or expires_at - skew > now
 
 
 class TokenRefresher:
@@ -62,9 +81,7 @@ class TokenRefresher:
     def _is_valid(resolved: ResolvedCredential, skew: timedelta) -> bool:
         if resolved.encrypted_access_token is None:
             return False
-        if resolved.token_expires_at is None:
-            return True
-        return resolved.token_expires_at - skew > datetime.now(UTC)
+        return _is_fresh(resolved.token_expires_at, skew, datetime.now(UTC))
 
     async def _refresh_with_lock(
         self, resolved: ResolvedCredential, skew: timedelta, caller: str
@@ -79,57 +96,56 @@ class TokenRefresher:
     ) -> str:
         lock = _sqlite_locks[resolved.credential_id]
         async with lock:
-            return await self._double_check_and_refresh(resolved, skew, caller)
+            return await self._refresh_locked(resolved, skew, caller, advisory_lock=False)
 
     async def _refresh_postgres(
         self, resolved: ResolvedCredential, skew: timedelta, caller: str
     ) -> str:
-        async with self._ctx.control_db.transaction() as session:
-            await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
+        return await self._refresh_locked(resolved, skew, caller, advisory_lock=True)
 
-            row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
-            if (
-                row is not None
-                and row.encrypted_access_token
-                and (row.expires_at is None or row.expires_at - skew > datetime.now(UTC))
-            ):
-                return self._ctx.encryption.decrypt(row.encrypted_access_token)
-
-            fresh_token = await self._do_refresh(resolved, caller)
-
-            encrypted_access = self._ctx.encryption.encrypt(fresh_token.access_token)
-            encrypted_refresh = (
-                self._ctx.encryption.encrypt(fresh_token.refresh_token)
-                if fresh_token.refresh_token
-                else None
-            )
-            updated = await OAuthTokenRepository.update_tokens(
-                session,
-                resolved.credential_id,
-                encrypted_access_token=encrypted_access,
-                encrypted_refresh_token=encrypted_refresh,
-                expires_at=fresh_token.expires_at,
-                scope=fresh_token.scope,
-            )
-            if updated is None:
-                logger.error(
-                    "refresh_token_row_missing",
-                    credential_id=resolved.credential_id,
-                )
-
-            return fresh_token.access_token
-
-    async def _double_check_and_refresh(
-        self, resolved: ResolvedCredential, skew: timedelta, caller: str
+    async def _refresh_locked(
+        self,
+        resolved: ResolvedCredential,
+        skew: timedelta,
+        caller: str,
+        *,
+        advisory_lock: bool,
     ) -> str:
+        """Double-check and refresh while holding the single-flight lock.
+
+        ``resolved`` is a snapshot read before the lock, so another holder may
+        have refreshed — and rotated the refresh token — in the meantime. The
+        row re-read under the lock is authoritative for both the freshness
+        check and the refresh token sent to the vendor: replaying a
+        rotated-out refresh token gets ``invalid_grant``, and providers that
+        detect refresh-token reuse revoke the whole grant.
+        """
         async with self._ctx.control_db.transaction() as session:
+            if advisory_lock:
+                await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
             row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
-            if (
-                row is not None
-                and row.encrypted_access_token
-                and (row.expires_at is None or row.expires_at - skew > datetime.now(UTC))
-            ):
-                return self._ctx.encryption.decrypt(row.encrypted_access_token)
+            if row is not None and row.encrypted_access_token:
+                now = datetime.now(UTC)
+                if _is_fresh(row.expires_at, skew, now):
+                    return self._ctx.encryption.decrypt(row.encrypted_access_token)
+                # Every encryption draws a fresh nonce, so a ciphertext that
+                # differs from the snapshot's means the row was rewritten after
+                # the snapshot (another holder refreshed, or a reconnect
+                # landed). That token is the newest the vendor issued; use it
+                # until it actually expires rather than refreshing again inside
+                # the skew window, which would burn another rotation (and loop
+                # for tokens whose lifetime is shorter than the skew).
+                if row.encrypted_access_token != resolved.encrypted_access_token and (
+                    row.expires_at is None or row.expires_at > now
+                ):
+                    return self._ctx.encryption.decrypt(row.encrypted_access_token)
+                resolved = resolved.model_copy(
+                    update={
+                        "encrypted_access_token": row.encrypted_access_token,
+                        "encrypted_refresh_token": row.encrypted_refresh_token,
+                        "token_expires_at": row.expires_at,
+                    }
+                )
 
             fresh_token = await self._do_refresh(resolved, caller)
 
