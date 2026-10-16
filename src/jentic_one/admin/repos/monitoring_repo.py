@@ -75,20 +75,24 @@ class UsageQueryFilters:
         """The same filters applied to execution jobs.
 
         An execution job carries its attribution in its payload and its actor
-        on ``created_by``. The ``status`` filter names a terminal execution
-        status, which an unfinished job never has, so it excludes every job.
+        on ``created_by``. Two filters can never match an unfinished job, so
+        each excludes every job:
+
+        - ``toolkit_id`` is legacy. Toolkits were removed (#1498) and no
+          execution job is attributed to one since, so the filter only
+          narrows historical ``execution_records``.
+        - ``status`` names a terminal execution status, which an unfinished
+          job never has.
         """
         clauses: list[ColumnElement[bool]] = []
-        if self.toolkit_id is not None:
-            clauses.append(Job.payload["toolkit_id"].as_string() == self.toolkit_id)
+        if self.toolkit_id is not None or self.status is not None:
+            clauses.append(false())
         if self.api_vendor is not None:
             clauses.append(Job.payload["api_vendor"].as_string() == self.api_vendor)
         if self.api_name is not None:
             clauses.append(Job.payload["api_name"].as_string() == self.api_name)
         if self.actor_id is not None:
             clauses.append(Job.created_by == self.actor_id)
-        if self.status is not None:
-            clauses.append(false())
         return clauses
 
 
