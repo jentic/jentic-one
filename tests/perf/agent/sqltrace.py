@@ -12,7 +12,12 @@ traced with ``PERF_TRACE=sql`` and prints, per request:
   COMMIT/ROLLBACK) with ``file:line`` for every step;
 * ``EXPLAIN (ANALYZE, BUFFERS)`` for the costliest SELECTs, executed in-container
   as the plane's own role with the captured parameters inside a rolled-back
-  transaction.
+  transaction. Statements with a truncated parameter, and CTEs that write, are
+  skipped with a note rather than planned with the wrong values.
+
+Bind parameter values are captured only when ``EXPLAIN`` runs, used in memory,
+and never written to the artifact; the raw trace files are deleted when the
+traced broker stops. Any non-200 response aborts the run (exit 2).
 
 Timings come from a traced broker: use them for ranking, not as absolutes.
 """
@@ -30,12 +35,16 @@ from typing import Any
 import httpx
 
 from tests.perf.agent.base import (
+    PrereqError,
     Report,
     TraceTail,
     broker_variant,
     env_or_fail,
+    hook_manifest,
+    hook_stats,
     md_table,
     proxy_url,
+    require_patched,
     wait_quiet,
 )
 from tests.perf.common import compose
@@ -46,6 +55,10 @@ CACHE_VARIANTS = {
 }
 WRITE_RE = re.compile(r"^\s*(INSERT|UPDATE|DELETE)", re.I)
 SELECT_RE = re.compile(r"^\s*(SELECT|WITH)", re.I)
+#: A data-modifying CTE: ``EXPLAIN ANALYZE`` would execute the write.
+CTE_WRITE_RE = re.compile(r"\b(INSERT|UPDATE|DELETE|MERGE)\b", re.I)
+#: Hook targets the SQL accounting cannot do without.
+REQUIRED_TARGETS = ("shared.db.session:DatabaseSession",)
 PG_TYPES = {
     "str": "text",
     "int": "bigint",
@@ -58,8 +71,17 @@ PG_TYPES = {
     "list": "text[]",
     "tuple": "text[]",
     "dict": "jsonb",
+    "bytes": "bytea",
     "NoneType": "text",
 }
+
+
+def pg_type(ptype: str) -> str:
+    """Postgres type for a hook ``ptype`` (``list[UUID]`` -> ``uuid[]``)."""
+    head, sep, inner = ptype.partition("[")
+    if sep and head in ("list", "tuple"):
+        return PG_TYPES.get(inner.rstrip("]"), "text") + "[]"
+    return PG_TYPES.get(ptype, "text")
 
 
 def normalize(sql: str) -> str:
@@ -80,7 +102,9 @@ def top_site(site: str) -> str:
 # --------------------------------------------------------------------------- drive
 
 
-def drive(n: int, warmup: int, caller: str, vendor: str) -> tuple[str, list[dict[str, Any]]]:
+def drive(
+    n: int, warmup: int, caller: str, vendor: str
+) -> tuple[str, list[dict[str, Any]], dict[str, int]]:
     env = env_or_fail()
     url = proxy_url(env, vendor)
     token = env.caller(caller).token
@@ -101,10 +125,14 @@ def drive(n: int, warmup: int, caller: str, vendor: str) -> tuple[str, list[dict
             statuses[resp.status_code] += 1
             time.sleep(0.05)
         wait_quiet(2.0)
-    events = [e for e in tail.read() if str(e.get("rid", "")).startswith(prefix)]
+    events = tail.read()
+    by_status = {str(k): v for k, v in sorted(statuses.items())}
     if statuses.get(200, 0) != n:
-        print(f"warning: non-200 responses: {dict(statuses)}")
-    return prefix, events
+        raise PrereqError(
+            f"non-200 responses {by_status}: the run measured a failing path",
+            "make perf-agent-doctor   # stale tokens, or a broken broker",
+        )
+    return prefix, events, by_status
 
 
 # --------------------------------------------------------------------------- analyse
@@ -201,11 +229,16 @@ def statement_groups(reqs: dict[str, list[dict[str, Any]]]) -> list[dict[str, An
                 "chain": evs[0].get("site", ""),
                 "sql": sql,
                 "sample": {"sql": evs[0]["sql"], "ptypes": evs[0].get("ptypes", [])},
-                "_params": evs[0].get("params", []),
+                "_params": evs[0].get("params"),
             }
         )
     out.sort(key=lambda g: (-g["ms_per_req"], -g["calls_per_req"]))
     return out
+
+
+def strip_params(evs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Events without bind parameter values (fit for an artifact)."""
+    return [{k: v for k, v in e.items() if k != "params"} for e in evs]
 
 
 def timeline(evs: list[dict[str, Any]]) -> list[list[Any]]:
@@ -229,28 +262,58 @@ def timeline(evs: list[dict[str, Any]]) -> list[list[Any]]:
 # --------------------------------------------------------------------------- explain
 
 
-def _literal(value: Any, ptype: str) -> str:
+def _quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _array_item(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    text = str(value).lower() if isinstance(value, bool) else str(value)
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _literal(value: Any) -> str:
+    """A SQL literal for one captured bind value (see the hook's ``_param_value``)."""
     if value is None:
         return "NULL"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
-    text = str(value)
-    if ptype in ("list", "tuple"):
-        items = text.strip("[]()").split(",")
-        text = "{" + ",".join(i.strip().strip("'\"") for i in items if i.strip()) + "}"
-    return "'" + text.replace("'", "''") + "'"
+    if isinstance(value, list):
+        return _quote("{" + ",".join(_array_item(v) for v in value) + "}")
+    if isinstance(value, dict) and "bytes_hex" in value:
+        return f"'\\x{value['bytes_hex']}'::bytea"
+    return _quote(str(value))
+
+
+def explain_skip_reason(group: dict[str, Any]) -> str:
+    """Why EXPLAIN would mislead (or write) for this group; empty = safe to run."""
+    sql = group["sample"]["sql"]
+    if not SELECT_RE.match(sql):
+        return "not a SELECT"
+    if sql.lstrip()[:4].upper() == "WITH" and CTE_WRITE_RE.search(sql):
+        return "data-modifying CTE (EXPLAIN ANALYZE would execute the write)"
+    params = group["_params"]
+    if group["sample"]["ptypes"] and params is None:
+        return "parameters not captured"
+    if any(isinstance(p, dict) and p.get("truncated") for p in params or []):
+        return "a parameter was too long to capture; the plan would use a different value"
+    return ""
 
 
 def explain(group: dict[str, Any]) -> str:
+    skip = explain_skip_reason(group)
+    if skip:
+        return f"(EXPLAIN skipped: {skip})"
     sql = group["sample"]["sql"]
     ptypes: list[str] = group["sample"]["ptypes"]
-    params: list[Any] = group["_params"]
+    params: list[Any] = group["_params"] or []
     plane = group["plane"]
-    types = ", ".join(PG_TYPES.get(t, "text") for t in ptypes)
+    types = ", ".join(pg_type(t) for t in ptypes)
     stmt = f"PREPARE perf_q({types}) AS {sql}" if ptypes else f"PREPARE perf_q AS {sql}"
-    args = ", ".join(_literal(v, t) for v, t in zip(params, ptypes, strict=False))
+    args = ", ".join(_literal(v) for v in params)
     execute = f"EXECUTE perf_q({args})" if ptypes else "EXECUTE perf_q"
     script = (
         f"BEGIN; SET LOCAL search_path TO {plane}, public; {stmt}; "
@@ -294,8 +357,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--explain", type=int, default=5, help="EXPLAIN the top N SELECTs")
     args = parser.parse_args(argv)
 
-    with broker_variant(CACHE_VARIANTS[args.cache], trace="sql"):
-        _, events = drive(args.n, args.warmup, args.caller, args.vendor)
+    overrides = CACHE_VARIANTS[args.cache]
+    with broker_variant(overrides, trace="sql", trace_params=args.explain > 0):
+        prefix, all_events, statuses = drive(args.n, args.warmup, args.caller, args.vendor)
+        manifest = hook_manifest()
+        require_patched(manifest, REQUIRED_TARGETS)
+        events = [e for e in all_events if str(e.get("rid", "")).startswith(prefix)]
         reqs = by_request(events)
         planes = plane_table(reqs)
         groups = statement_groups(reqs)
@@ -308,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         f"Broker SQL per call — {args.caller}, {args.cache} cache, {args.vendor}, "
         f"{len(reqs)} requests",
         mode="traced (PERF_TRACE=sql)",
+        variant=overrides,
     )
     total = {
         k: round(sum(p[k] for p in planes), 2)
@@ -315,6 +383,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     rep.data = {
         "args": vars(args),
+        "statuses": statuses,
+        "hook": {**manifest, **hook_stats(all_events)},
         "requests": len(reqs),
         "totals_per_req": total,
         "planes": planes,
@@ -327,6 +397,12 @@ def main(argv: list[str] | None = None) -> int:
         f"{total['pings']} pre-pings, {total['transactions']} transactions, "
         f"{total['writes']} writes, {total['zero_row_selects']} zero-row SELECTs"
     )
+    stats = rep.data["hook"]
+    if stats["errors"] or stats["dropped"]:
+        rep.highlights.append(
+            f"WARNING: the hook swallowed {stats['errors']} listener errors and dropped "
+            f"{stats['dropped']} events; counts may be low"
+        )
     for g in groups[:3]:
         rep.highlights.append(
             f"Costliest: {g['plane']} {g['calls_per_req']}x/req {g['ms_per_req']} ms/req "
@@ -411,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         counts = sorted(reqs.items(), key=lambda kv: len(kv[1]))
         rid, evs = counts[len(counts) // 2]
         rep.data["timeline_rid"] = rid
-        rep.data["timeline"] = evs
+        rep.data["timeline"] = strip_params(evs)
         rep.section(
             f"Timeline of a median request ({rid})",
             md_table(["+ms", "plane", "event / SQL", "rows", "ms", "callsite"], timeline(evs)),

@@ -14,9 +14,10 @@ PERF_TIME ?= 2m
 PERF_CLASSES ?= BrokerEchoUser
 PERF_WORKERS_LOCUST ?= 2
 
-# Agent probe knobs (all optional): N, CALLER, CACHE, VENDOR, C, DURATION,
-# FUNCS, SECONDS, SCENARIOS, BASE, HEAD, TOLERANCE.
+# Agent probe knobs (all optional): N, CALLER, CACHE, VENDOR, EXPLAIN, C, DURATION,
+# FUNCS, SECONDS, SCENARIOS, BASE, HEAD, TOLERANCE, FORCE.
 agent_opt = $(if $($(1)),$(2) $($(1)))
+agent_flag = $(if $($(1)),$(2))
 
 .PHONY: help build up provision overhead dbcost capacity profile ui load obs report down \
 	agent-doctor agent-sql agent-stages agent-cpu agent-resilience agent-compare
@@ -25,20 +26,28 @@ help: ## Show perf targets (humans, then agents)
 	@printf "Perf suite (tests/perf). From the repo root use: make perf-<target>\n\n"
 	@printf "Stack / humans:\n"
 	@awk 'BEGIN {FS = ":.*##"} /^[a-z][a-z-]*:.*?## / && $$1 !~ /^agent-/ { printf "  \033[36mperf-%-17s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
-	@printf "\nAgent probes (markdown on stdout, last line ARTIFACT: <json>; exit 0 ok, 2 prereq, 3 regression):\n"
+	@printf "\nAgent probes (markdown on stdout, last line ARTIFACT: <json>; the module exits 0 ok,\n"
+	@printf "  2 prereq/not comparable, 3 regression; via make any failure is non-zero, so read the RESULT: line):\n"
 	@awk 'BEGIN {FS = ":.*##"} /^agent-[a-z-]*:.*?## / { printf "  \033[36mperf-%-17s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@printf "\nAgent loop: perf-agent-doctor -> a probe -> read tables + cited file:line -> fix ->\n"
-	@printf "  perf-agent-compare BASE=<artifact> (exit 3 = regressed). File issues with gh using\n"
+	@printf "  perf-agent-compare BASE=<artifact> (RESULT: REGRESSED = regressed). File issues with gh using\n"
 	@printf "  .github/ISSUE_TEMPLATE/*.yml; dedupe with gh issue list --search ... --state all.\n"
+	@printf "  Artifacts and traces can hold request data: quote the markdown tables in issues, never raw JSON.\n"
 
 # ─── stack ───────────────────────────────────────────────────────────────────
 
+# Provenance labels: perf-agent-doctor compares them with the checkout.
+SRC_PATHS := src pyproject.toml uv.lock
+
 build: ## Build jentic-one/app:perf from this checkout (rebuild after src changes)
 	$(MAKE) -C $(ROOT) build-base
-	cd $(ROOT) && docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:perf .
+	cd $(ROOT) && docker build -f deploy/docker/app.Dockerfile \
+		--label org.opencontainers.image.revision=$$(git rev-parse HEAD) \
+		--label dev.jentic.perf.src-dirty=$$(if [ -n "$$(git status --porcelain -- $(SRC_PATHS))" ]; then echo true; else echo false; fi) \
+		-t jentic-one/app:perf .
 
 up: ## Start db + migrate + app + broker + upstream harness
-	@mkdir -p $(ROOT)/tests/perf/results
+	@mkdir -p $(ROOT)/tests/perf/results/agent/trace
 	$(COMPOSE) up -d --wait postgres migrate app broker smoke-upstream
 
 provision: ## Vendors, credentials, bindings, callers -> results/.perf-env.json
@@ -85,11 +94,11 @@ report: ## Render results/*.json into results/report.html
 
 # ─── agent probes ────────────────────────────────────────────────────────────
 
-agent-doctor: ## Pre-flight: stack healthy, tokens valid, image built from this src (prints fixes)
+agent-doctor: ## Pre-flight: stack healthy, tokens valid, broker clean, image built from this src (prints fixes)
 	@$(AGENT) doctor
 
-agent-sql: ## SQL per call: sessions/pings/tx per plane, statements by (SQL, file:line), timeline, EXPLAIN [N CALLER CACHE=warm|cold VENDOR] ~1 min
-	@$(AGENT) sql $(call agent_opt,N,-n) $(call agent_opt,CALLER,--caller) $(call agent_opt,CACHE,--cache) $(call agent_opt,VENDOR,--vendor)
+agent-sql: ## SQL per call: sessions/pings/tx per plane, statements by (SQL, file:line), timeline, EXPLAIN [N CALLER CACHE=warm|cold VENDOR EXPLAIN=5] ~1 min
+	@$(AGENT) sql $(call agent_opt,N,-n) $(call agent_opt,CALLER,--caller) $(call agent_opt,CACHE,--cache) $(call agent_opt,VENDOR,--vendor) $(call agent_opt,EXPLAIN,--explain)
 
 agent-stages: ## Per-stage ms (auth, discover, creds, upstream, persist) + event-loop lag under load [C DURATION FUNCS=mod:Qual,...] ~1 min
 	@$(AGENT) stages $(call agent_opt,C,--concurrency) $(call agent_opt,DURATION,--duration) $(call agent_opt,CALLER,--caller) $(call agent_opt,VENDOR,--vendor) $(call agent_opt,FUNCS,--funcs)
@@ -100,5 +109,6 @@ agent-cpu: ## py-spy at saturation: CPU by subsystem + hottest jentic_one file:l
 agent-resilience: ## Fault scenarios x streaming/buffered: failures + broker error/warning logs grouped [SECONDS SCENARIOS] ~5 min
 	@$(AGENT) resilience $(call agent_opt,SECONDS,--seconds) $(call agent_opt,SCENARIOS,--scenarios)
 
-agent-compare: ## Diff two artifacts of one kind; exit 3 on regression [BASE=<json> HEAD=<json> TOLERANCE=0.1]
-	@$(AGENT) compare --base $(BASE) $(call agent_opt,HEAD,--head) $(call agent_opt,TOLERANCE,--tolerance)
+agent-compare: ## Diff two artifacts of one kind; exit 3 on regression, 2 if not comparable [BASE=<json> HEAD=<json> TOLERANCE=0.1 FORCE=1]
+	$(if $(BASE),,$(error BASE=<artifact> is required: make perf-agent-compare BASE=tests/perf/results/agent/<stamp>-sql.json))
+	@$(AGENT) compare --base $(BASE) $(call agent_opt,HEAD,--head) $(call agent_opt,TOLERANCE,--tolerance) $(call agent_flag,FORCE,--force)

@@ -11,6 +11,9 @@ stages split into ``.enter`` (e.g. upstream header wait) and ``.body``
 Also reports event-loop lag (a 10 ms sleeper's overshoot): high p99 lag means
 something blocks the loop — correlate with ``make perf-agent-cpu``.
 
+Every request must return 200 (otherwise exit 2), and the hook must have
+patched ``_handle``; targets it could not patch are listed under "Hook targets".
+
 Drill down with ``FUNCS=module:Qual.name,...`` (module relative to
 ``jentic_one``), e.g. ``FUNCS=broker.services.credentials.orchestrator:inject``.
 """
@@ -28,9 +31,13 @@ from tests.perf.agent.base import (
     TraceTail,
     broker_variant,
     env_or_fail,
+    hook_manifest,
+    hook_stats,
     internal_url,
     md_table,
     pct,
+    require_ok,
+    require_patched,
     wait_quiet,
 )
 from tests.perf.bench_overhead import Case, oha_args, run_oha, start_oha, stop_oha, summarise
@@ -98,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
         with broker_variant(overrides, trace="stages"):
             run_oha(oha_args(url, Case("warm"), token, n=50, conns=4, rate=None))
             wait_quiet()
+            # After warm-up so lazily imported targets have loaded.
+            manifest = hook_manifest()
+            require_patched(manifest, (HANDLER,))
             tail = TraceTail()
             raw = run_oha(
                 oha_args(
@@ -111,18 +121,22 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             wait_quiet(2.0)
-            result = analyse(tail.read())
+            events = tail.read()
+            result = analyse(events)
     finally:
         stop_oha()
     load = summarise(raw, 200)
+    require_ok(load, "stages load")
 
     rep = Report(
         "stages",
         f"Broker stage latency — c={args.concurrency}, {args.duration:g}s, {args.caller}, "
         f"{args.vendor}",
         mode="traced (PERF_TRACE=stages)",
+        variant=overrides,
     )
-    rep.data = {"args": vars(args), "load": load, **result}
+    stats = hook_stats(events)
+    rep.data = {"args": vars(args), "load": load, "hook": {**manifest, **stats}, **result}
     lag = result["loop_lag"]
     rep.highlights.append(
         f"{load.get('rps', 0):.0f} rps, client p50 {load.get('p50_ms', 0):.1f} ms; "
@@ -137,6 +151,16 @@ def main(argv: list[str] | None = None) -> int:
         f"Event-loop lag p99 {lag['p99_ms']} ms, max {lag['max_ms']} ms, "
         f"{lag['over_5ms_pct']}% of 10 ms ticks late by >5 ms"
     )
+    if manifest["missing"]:
+        rep.highlights.append(
+            f"WARNING: {len(manifest['missing'])} stage target(s) not patched "
+            "(renamed, or module never imported); see Hook targets"
+        )
+    if stats["errors"] or stats["dropped"]:
+        rep.highlights.append(
+            f"WARNING: the hook swallowed {stats['errors']} errors and dropped "
+            f"{stats['dropped']} events; stage counts may be low"
+        )
     rep.section(
         "Stages",
         md_table(
@@ -156,6 +180,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
         note="wall time under load, traced broker; stages nest; `.body` runs after the "
         "handler returns (streaming), so it is not part of the handler share",
+    )
+    rep.section(
+        "Hook targets",
+        md_table(
+            ["target", "patched"],
+            [[t, "yes" if t in manifest["patched"] else "NO"] for t in manifest["targets"]],
+        ),
+        note="NO = renamed or never imported: that stage has no row above",
     )
     rep.section(
         "Event-loop lag",

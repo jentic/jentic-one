@@ -11,6 +11,7 @@ Commands: doctor, sql, stages, cpu, resilience, compare.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import subprocess
@@ -23,11 +24,14 @@ from typing import Any
 
 import httpx
 
+from jentic_one.shared.redaction import redact_mapping
 from tests.perf import pyspy_profile
 from tests.perf.agent import compare, sqltrace, stages
 from tests.perf.agent.base import (
     BROKER_HOST,
     EXIT_PREREQ,
+    SRC_PATHS,
+    TRACE_ENV_KEYS,
     PrereqError,
     Report,
     broker_variant,
@@ -35,10 +39,15 @@ from tests.perf.agent.base import (
     git_dirty,
     md_table,
     proxy_url,
+    require_ok,
 )
 from tests.perf.common import REPO_ROOT, compose, git_sha
 
 REQUIRED = ("postgres", "app", "broker", "smoke-upstream")
+IMAGE = "jentic-one/app:perf"
+#: Set by ``make perf-build`` (tests/perf/Makefile).
+REVISION_LABEL = "org.opencontainers.image.revision"
+DIRTY_LABEL = "dev.jentic.perf.src-dirty"
 
 # --------------------------------------------------------------------------- doctor
 
@@ -81,37 +90,79 @@ def doctor_checks() -> list[tuple[str, bool, str, str]]:
     except PrereqError as exc:
         rows.append(("perf env (.perf-env.json)", False, str(exc), exc.fix))
 
-    image = "jentic-one/app:perf"
-    inspect = subprocess.run(
-        ["docker", "image", "inspect", image, "--format", "{{.Created}}"],
+    rows.append(broker_env_check())
+    rows.append(image_check())
+    return rows
+
+
+def _docker_inspect(*args: str) -> str | None:
+    proc = subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def broker_env_drift(expected: dict[str, Any], actual: dict[str, str]) -> list[str]:
+    """Keys whose value in the running broker differs from a clean ``make perf-up``."""
+    drift = []
+    for key in sorted(expected):
+        want = "" if expected[key] is None else str(expected[key])
+        have = actual.get(key, "")
+        if want != have:
+            drift.append(f"{key}={have!r} (clean: {want!r})")
+    return drift
+
+
+def broker_env_check() -> tuple[str, bool, str, str]:
+    """Is the running broker the clean one (not traced, not a probe variant, current image)?"""
+    name, fix = "broker clean (env + image)", "make perf-up   # recreates the broker from compose"
+    try:
+        cid = compose("ps", "-q", "broker", capture=True).strip()
+        # Compose resolves ${PERF_*} the way perf-up would, with the trace hook off.
+        rendered = compose(
+            "config", "--format", "json", env=dict.fromkeys(TRACE_ENV_KEYS, ""), capture=True
+        )
+    except RuntimeError as exc:
+        return name, False, str(exc)[:120], fix
+    if not cid:
+        return name, False, "broker not running", fix
+    expected = json.loads(rendered)["services"]["broker"].get("environment") or {}
+    env_json = _docker_inspect("inspect", cid, "--format", "{{json .Config.Env}}")
+    if env_json is None:
+        return name, False, "docker inspect failed", fix
+    actual = dict(item.partition("=")[::2] for item in json.loads(env_json))
+    problems = broker_env_drift(expected, actual)
+    running = _docker_inspect("inspect", cid, "--format", "{{.Image}}")
+    built = _docker_inspect("image", "inspect", IMAGE, "--format", "{{.Id}}")
+    if running and built and running != built:
+        problems.append(f"runs an older {IMAGE} build")
+    return name, not problems, "; ".join(problems)[:300] or "matches compose", fix
+
+
+def image_check() -> tuple[str, bool, str, str]:
+    """Was ``IMAGE`` built from this checkout's ``src`` (by its revision label)?"""
+    name, fix = f"image {IMAGE} vs src", "make perf-build && make perf-up"
+    labels_json = _docker_inspect("image", "inspect", IMAGE, "--format", "{{json .Config.Labels}}")
+    if labels_json is None:
+        return f"image {IMAGE}", False, "not built", fix
+    labels = json.loads(labels_json) or {}
+    rev = labels.get(REVISION_LABEL, "")
+    if not rev:
+        return name, False, f"no {REVISION_LABEL} label (build with make perf-build)", fix
+    diff = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--quiet", rev, "HEAD", "--", *SRC_PATHS],
         capture_output=True,
-        text=True,
         check=False,
     )
-    if inspect.returncode != 0:
-        rows.append((f"image {image}", False, "not built", "make perf-build && make perf-up"))
-    else:
-        created = inspect.stdout.strip()[:19]
-        last_src = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "log", "-1", "--format=%cI", "--", "src", "uv.lock"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip()[:19]
-        stale = bool(last_src) and last_src > created
-        dirty = git_dirty()
-        detail = f"built {created}Z; last src commit {last_src}"
-        if dirty:
-            detail += "; src has uncommitted changes (not in the image)"
-        rows.append(
-            (
-                f"image {image} vs src",
-                not stale and not dirty,
-                detail,
-                "make perf-build && make perf-up   # rebuild so the broker runs this checkout",
-            )
-        )
-    return rows
+    problems = []
+    if diff.returncode == 1:
+        problems.append(f"src changed since the image's commit {rev[:9]}")
+    elif diff.returncode != 0:
+        problems.append(f"image commit {rev[:9]} is not in this checkout")
+    if labels.get(DIRTY_LABEL) == "true":
+        problems.append("image was built from uncommitted src")
+    if git_dirty(SRC_PATHS):
+        problems.append("src has uncommitted changes (not in the image)")
+    detail = "; ".join(problems) or f"built from {rev[:9]}, src unchanged since"
+    return name, not problems, detail, fix
 
 
 def cmd_doctor(_: list[str]) -> int:
@@ -138,12 +189,12 @@ def cmd_doctor(_: list[str]) -> int:
 
 
 def preflight() -> None:
-    hard = [r for r in doctor_checks() if not r[1] and not r[0].startswith("image")]
+    rows = doctor_checks()
+    hard = [r for r in rows if not r[1] and not r[0].startswith("image")]
     if hard:
         lines = "\n".join(f"  - {c}: {d}  ->  {f}" for c, _, d, f in hard)
         raise PrereqError(f"perf stack not ready:\n{lines}", hard[0][3])
-    stale = [r for r in doctor_checks() if not r[1] and r[0].startswith("image")]
-    for c, _, d, f in stale:
+    for c, _, d, f in (r for r in rows if not r[1] and r[0].startswith("image")):
         print(f"warning: {c}: {d}\n  fix: {f}\n", file=sys.stderr)
 
 
@@ -196,6 +247,7 @@ def cmd_cpu(argv: list[str]) -> int:
         rate=200,
     )
     raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
+    require_ok(load, "cpu load")
     summary = pyspy_profile.analyse(raw)
     hot = line_hotspots(raw)
     svg = (pyspy_profile.OUT_DIR / f"{stem}.svg").relative_to(REPO_ROOT)
@@ -273,6 +325,19 @@ SCENARIOS = tuple(dict.fromkeys(s for _, _, ss in RES_VARIANTS for s in ss))
 #: Deepest ``jentic_one`` frame in a logged traceback (where it escaped our code).
 TB_FRAME_RE = re.compile(r'File "[^"]*/(jentic_one/[^"]+)", line (\d+), in (\w+)')
 LOG_LEVELS = ("error", "warning", "critical")
+#: The only log fields kept in an artifact sample: where and what failed, never
+#: request payloads, headers or identifiers beyond the request id.
+SAMPLE_FIELDS = (
+    "event",
+    "level",
+    "logger",
+    "error_type",
+    "request_id",
+    "status_code",
+    "filename",
+    "lineno",
+    "exception",
+)
 
 
 def locust_run(scenario: str, users: int, seconds: int, mode: str, streaming: bool) -> Path:
@@ -318,29 +383,8 @@ def locust_run(scenario: str, users: int, seconds: int, mode: str, streaming: bo
 def read_csv(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
-    lines = path.read_text().splitlines()
-    if not lines:
-        return []
-    header = lines[0].split(",")
-    out = []
-    for line in lines[1:]:
-        cells = next(iter([_split_csv(line)]))
-        out.append(dict(zip(header, cells, strict=False)))
-    return out
-
-
-def _split_csv(line: str) -> list[str]:
-    cells, cur, quoted = [], "", False
-    for ch in line:
-        if ch == '"':
-            quoted = not quoted
-        elif ch == "," and not quoted:
-            cells.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    cells.append(cur)
-    return cells
+    with path.open(newline="") as fh:
+        return list(csv.DictReader(fh))
 
 
 def broker_logs(since: str) -> list[dict[str, Any]]:
@@ -373,7 +417,7 @@ def group_logs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups[key].append(e)
     rows = []
     for (level, event, where, etype), evs in groups.items():
-        sample = {k: v for k, v in evs[0].items() if k not in ("timestamp",)}
+        sample = redact_mapping({k: evs[0][k] for k in SAMPLE_FIELDS if k in evs[0]})
         rows.append(
             {
                 "level": level,

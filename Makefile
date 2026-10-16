@@ -9,6 +9,8 @@ BUILD_DIR := build
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@printf "\n"
+	@$(MAKE) --no-print-directory -C tests/perf help
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
 

@@ -101,7 +101,7 @@ services:
       # Traced-broker hook (tests/perf/agent): inert unless PYTHONPATH points
       # at /perf-hooks and PERF_TRACE is set (make perf-agent-sql / -stages).
       - ./agent/hooks:/perf-hooks:ro
-      - ./results/agent:/out
+      - ./results/agent/trace:/out/trace
     # Variant knobs: each PERF_* maps onto a JENTIC__* override. Defaults equal
     # config.perf.yaml / product defaults, so an unset PERF_* is a no-op.
     environment:
@@ -123,6 +123,7 @@ services:
       PYTHONPATH: ${PERF_HOOKS_PATH:-}
       PERF_TRACE: ${PERF_TRACE:-}
       PERF_TRACE_FUNCS: ${PERF_TRACE_FUNCS:-}
+      PERF_TRACE_PARAMS: ${PERF_TRACE_PARAMS:-}
       PERF_TRACE_OUT: /out/trace
       PERF_WORKERS: ${PERF_WORKERS:-1}
     # One worker runs the normal entrypoint; N>1 needs the uvicorn factory path

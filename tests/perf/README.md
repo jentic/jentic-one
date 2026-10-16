@@ -98,17 +98,18 @@ Targeted diagnostics for a coding agent (or a human) chasing a specific
 question. Each prints markdown — tables, mechanically derived highlights with
 `file:line`, and `NEXT:` suggestions — then `ARTIFACT: <json>` as its last line
 (full data under `results/agent/`). Exit codes: `0` ran, `2` prerequisite
-missing (the output names the fix), `3` regression (`compare`; `make` itself
-reports a failing recipe as 2, so `compare` also prints `RESULT: REGRESSED`).
+missing, harness failure or a run where any request failed (the output names
+the fix), `3` regression (`compare`). `make` reports any failing recipe as 2,
+so read the `RESULT:` / `PREREQUISITE:` line rather than the exit status.
 
 | Target | Answers | Knobs |
 | ------ | ------- | ----- |
-| `perf-agent-doctor` | Is the stack up, are the tokens valid, was `jentic-one/app:perf` built from this checkout? | — |
-| `perf-agent-sql` | Which SQL does one call run, from which line? Sessions / pre-pings / transactions / zero-row SELECTs / read-only COMMITs per plane; statements grouped by (SQL, callsite); a median request's timeline; `EXPLAIN (ANALYZE, BUFFERS)` of the costliest SELECTs. | `N CALLER CACHE=warm\|cold VENDOR` |
+| `perf-agent-doctor` | Is the stack up, are the tokens valid, is the running broker the clean one (no trace hook or probe variant left on), and was `jentic-one/app:perf` built from this checkout's commit (image revision label vs `git`)? | — |
+| `perf-agent-sql` | Which SQL does one call run, from which line? Sessions / pre-pings / transactions / zero-row SELECTs / read-only COMMITs per plane; statements grouped by (SQL, callsite); a median request's timeline; `EXPLAIN (ANALYZE, BUFFERS)` of the costliest SELECTs. | `N CALLER CACHE=warm\|cold VENDOR EXPLAIN=5` |
 | `perf-agent-stages` | Where does a call's wall time go? p50/p99/mean per stage (identity, discovery, authorization, credential resolution, upstream headers vs body, persistence, events) and event-loop lag, under closed-loop load. | `C DURATION CALLER VENDOR FUNCS=mod:Qual,...` |
 | `perf-agent-cpu` | Which lines burn CPU at saturation? py-spy subsystem shares plus the hottest `jentic_one` `file:line` (deepest own frame and inclusive), and the flamegraph path. | `C DURATION CALLER VENDOR` |
 | `perf-agent-resilience` | Do faults behave? Disconnect / always-503 / idempotent replay / async jobs per streaming mode, retry with the breaker off; Locust assertion failures and broker error logs grouped by event + traceback location. | `SECONDS SCENARIOS` |
-| `perf-agent-compare` | Did my change help? Diffs two artifacts of one kind (agent `sql`/`stages`/`cpu`, or classic `overhead`/`capacity`/`dbcost`/`profile`); counts compare exactly, timings with a tolerance. | `BASE HEAD TOLERANCE` |
+| `perf-agent-compare` | Did my change help? Diffs two artifacts of one kind (agent `sql`/`stages`/`cpu`, or classic `overhead`/`capacity`/`dbcost`/`profile`); refuses (exit 2) runs that failed or differ in knobs. | `BASE HEAD TOLERANCE FORCE=1` |
 
 The loop: `perf-agent-doctor` → a probe → read the tables and the cited lines
 → change the code → `make perf-build && make perf-up` → the same probe →
@@ -124,6 +125,36 @@ Traced timings carry the hook's overhead: use them to rank, and the classic
 benches for absolute numbers. ORM statements execute in SQLAlchemy greenlets
 that inherit the context but not the caller's frames, so callsites come from a
 contextvar set where our code opens a session or calls `execute`/`get`/`flush`.
+The writer thread keeps file I/O off the event loop, but serialising events
+still takes the GIL, so a traced broker is slower than a clean one. Each traced
+broker writes `<pid>.hook.json` listing its patch targets; `stages` prints them
+and exits 2 if it could not wrap `_handle`, so a renamed function is never a
+silent gap.
+
+**Compare thresholds.** `perf-agent-compare` first checks the two runs are
+comparable: every request returned 200, and the probe arguments, `PERF_*`
+variant and broker mode match (`FORCE=1` overrides and says why). Then:
+
+| Metric | Regresses when |
+| ------ | -------------- |
+| `sql` statements / sessions / transactions per request (sequential calls) | any increase |
+| `dbcost` statements / transactions / writes per call | `> +0.1`/call (absorbs `pg_stat_statements` rounding; `+1` regresses) |
+| `stages` calls per request (closed loop, ends mid-flight) | `> ±0.05` |
+| means, rps, CPU shares | beyond `TOLERANCE` (10 %) and a small absolute floor |
+| p99, event-loop lag p99, capacity p99 | never — reported as `info` |
+
+Tails are informational because each comes from a single run, and the p99 of a
+20 s single-worker run can move by more than 10 % between identical runs (the
+A/A spread is not calibrated here). To gate on a tail, repeat both runs and
+compare the medians yourself.
+
+**Request data in artifacts.** Bind parameter values are captured only while
+`perf-agent-sql` runs `EXPLAIN`; they stay in memory and the trace JSONL is
+deleted when the traced broker stops. Artifacts keep SQL text, parameter
+*types*, call sites, and a whitelisted subset of each grouped log record (event,
+level, error type, request id, location, traceback). That can still include
+identifiers, so quote the markdown tables in issues and never paste raw
+artifacts or traces into a public tracker.
 
 ## Stack variants
 
