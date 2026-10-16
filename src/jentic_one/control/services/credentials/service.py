@@ -1504,10 +1504,13 @@ class CredentialService:
             occ = None if is_device_code else credential.oauth_client_credential
             connected: bool | None = None
             if is_auth_code or is_device_code:
-                # Managed providers (e.g. Pipedream) complete connect by
-                # stamping `provider_account_ref` without a local token row —
-                # the ref alone means the sign-in finished.
-                if credential.provider_account_ref:
+                # A provider that connects as an account reference (e.g.
+                # Pipedream) holds no local token row — the ref alone means
+                # the sign-in finished. On any other provider the ref is a
+                # display name only, and the token row decides.
+                if credential.provider_account_ref and self._ctx.providers.mints_from_account_ref(
+                    credential.provider
+                ):
                     connected = True
                 else:
                     # oauth_token is selectin-eager on the ORM, so this is free.

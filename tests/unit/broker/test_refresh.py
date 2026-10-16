@@ -61,6 +61,9 @@ def _make_ctx(
     provider_mock = MagicMock()
     provider_mock._expiry_skew_seconds = 60
     ctx.providers.get.return_value = provider_mock
+    # A provider that keeps its grant in ``oauth_tokens`` unless a test says
+    # otherwise.
+    ctx.providers.mints_from_account_ref.return_value = False
 
     mock_backend = MagicMock()
     mock_backend.dialect_name = "sqlite"
@@ -167,6 +170,7 @@ async def test_no_access_token_triggers_refresh() -> None:
     provider_mock._expiry_skew_seconds = 60
     provider_mock.refresh = AsyncMock(return_value=refresh_result)
     ctx.providers.get.return_value = provider_mock
+    ctx.providers.mints_from_account_ref.return_value = True
 
     with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
         mock_repo.get_by_credential = AsyncMock(return_value=None)
@@ -176,18 +180,25 @@ async def test_no_access_token_triggers_refresh() -> None:
         token = await refresher.ensure_fresh(resolved=resolved, caller="test")
 
     assert token == "minted-token"
+    ctx.providers.mints_from_account_ref.assert_called_with("direct_oauth2")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("revoked", [False, True], ids=["row-missing", "row-revoked"])
-async def test_missing_grant_under_lock_needs_reconnect(revoked: bool) -> None:
+@pytest.mark.parametrize("provider_account_ref", [None, "alice"], ids=["no-ref", "echo-ref"])
+async def test_missing_grant_under_lock_needs_reconnect(
+    revoked: bool, provider_account_ref: str | None
+) -> None:
     """A token row gone (or revoked) by the time the lock is held means the
     grant was dropped: the refresh fails as needs-reconnect and the
-    snapshot's refresh token is never handed to the provider."""
+    snapshot's refresh token is never handed to the provider. An
+    identity-echo ``provider_account_ref`` on a provider that keeps its grant
+    in ``oauth_tokens`` does not change that."""
     resolved = _make_resolved(
         encrypted_access_token="enc:expired",
         encrypted_refresh_token="enc:old-rt",
         token_expires_at=datetime.now(UTC) - timedelta(minutes=5),
+        provider_account_ref=provider_account_ref,
     )
     ctx = _make_ctx()
     _setup_transaction(ctx)

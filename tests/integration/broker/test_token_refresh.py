@@ -117,7 +117,9 @@ def _install_vendor(
     return vendor
 
 
-async def _seed(ctx: Context, *, access: str, refresh: str) -> None:
+async def _seed(
+    ctx: Context, *, access: str, refresh: str, provider_account_ref: str | None = None
+) -> None:
     """Seed a credential whose access token expired five minutes ago."""
     async with ctx.control_db.transaction() as session:
         session.add(
@@ -129,6 +131,7 @@ async def _seed(ctx: Context, *, access: str, refresh: str) -> None:
                 api_name=_API.name,
                 api_version=_API.version,
                 provider=_PROVIDER,
+                provider_account_ref=provider_account_ref,
             )
         )
         await session.flush()
@@ -300,21 +303,32 @@ async def _move_token_url(ctx: Context) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "provider_account_ref", [None, "alice"], ids=["no-ref", "identity-echo-ref"]
+)
 async def test_refresh_after_token_url_move_needs_reconnect(
-    integration_context: Context, clean_tokens: None, monkeypatch: pytest.MonkeyPatch
+    integration_context: Context,
+    clean_tokens: None,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_account_ref: str | None,
 ) -> None:
     """Pins #1425: a snapshot taken before a cross-origin token_url move must
     not present its refresh token anywhere once the move has dropped the
-    grant; the refresh fails as needs-reconnect without a vendor call."""
+    grant; the refresh fails as needs-reconnect without a vendor call. A
+    connect-session finalise writes the identity-echo display name into
+    ``provider_account_ref``; on a provider that keeps its grant in
+    ``oauth_tokens`` that ref does not stand in for the dropped row."""
     ctx = integration_context
     vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
+    await _seed(ctx, access="at-0", refresh="rt-0", provider_account_ref=provider_account_ref)
     stale = await _snapshot(ctx)
 
     await _move_token_url(ctx)
 
     with pytest.raises(RefreshInvalidGrantError):
         await TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="t")
+    with pytest.raises(RefreshInvalidGrantError):
+        await TokenRefresher(ctx).ensure_fresh(resolved=await _snapshot(ctx), caller="t")
     assert vendor.sent_to == []
 
 

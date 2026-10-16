@@ -30,6 +30,19 @@ class CredentialProvider(Protocol):
     def managed(self) -> bool: ...
 
     @property
+    def mints_from_account_ref(self) -> bool:
+        """Whether a connected grant is an account reference, not a local token row.
+
+        True for providers (e.g. Pipedream) whose connect stores only
+        ``provider_account_ref`` and whose refresh mints from it. False for
+        providers that keep the grant in ``oauth_tokens``: for those a
+        missing token row means the credential must be reconnected, whatever
+        ``provider_account_ref`` holds (connect-session finalise writes the
+        identity-echo display name there).
+        """
+        ...
+
+    @property
     def supported_types(self) -> list[CredentialType]: ...
 
     def supports(self, wire_type: CredentialType) -> bool: ...
