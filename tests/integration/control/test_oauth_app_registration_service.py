@@ -457,6 +457,80 @@ async def test_create_authorization_code_honours_control_egress_allowlist(
                 await _create()
 
 
+def _corp_egress_config(base: AppConfig) -> AppConfig:
+    return base.model_copy(
+        update={
+            "control": ControlSurfaceConfig.model_validate(
+                {"egress": {"allowed_private_subnets": ["10.50.0.0/16"]}}
+            )
+        }
+    )
+
+
+@pytest.mark.usefixtures("clean_registrations")
+@pytest.mark.parametrize(
+    ("endpoint", "accepted"),
+    [("https://10.50.0.7/token", True), ("https://10.60.0.7/token", False)],
+    ids=["allowlisted", "not-allowlisted"],
+)
+async def test_create_device_authorization_honours_control_egress_allowlist(
+    integration_config: AppConfig, endpoint: str, accepted: bool
+) -> None:
+    async with Context(_corp_egress_config(integration_config)) as ctx:
+        svc = OAuthAppRegistrationService(ctx)
+
+        async def _create() -> OAuthAppRegistrationView:
+            return await svc.create_device_authorization(
+                name="In-network DA",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id="cid",
+                authorization_endpoint="https://ex/d",
+                token_endpoint=endpoint,
+                default_scopes=None,
+                identity=_ADMIN,
+            )
+
+        if accepted:
+            assert (await _create()).token_endpoint == endpoint
+        else:
+            with pytest.raises(InvalidOAuthAppRegistrationInputError, match="token_endpoint"):
+                await _create()
+
+
+@pytest.mark.usefixtures("clean_registrations")
+@pytest.mark.parametrize(
+    ("token_url", "accepted"),
+    [("https://10.50.0.7/token", True), ("https://10.60.0.7/token", False)],
+    ids=["allowlisted", "not-allowlisted"],
+)
+async def test_update_authorization_code_honours_control_egress_allowlist(
+    integration_config: AppConfig, token_url: str, accepted: bool
+) -> None:
+    async with Context(_corp_egress_config(integration_config)) as ctx:
+        svc = OAuthAppRegistrationService(ctx)
+        reg = await svc.create_authorization_code(
+            name="AC",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=_TEST_SECRET_PLAINTEXT,
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+            identity=_ADMIN,
+        )
+        if accepted:
+            updated = await svc.update(reg.id, token_url=token_url, identity=_ADMIN)
+            assert updated.token_url == token_url
+        else:
+            with pytest.raises(InvalidOAuthAppRegistrationInputError, match="token_url"):
+                await svc.update(reg.id, token_url=token_url, identity=_ADMIN)
+            assert (await svc.get(reg.id)).token_url == "https://ex/t"
+
+
 @pytest.mark.usefixtures("clean_registrations")
 async def test_create_device_authorization_rejects_unsafe_urls(
     integration_context: Context,

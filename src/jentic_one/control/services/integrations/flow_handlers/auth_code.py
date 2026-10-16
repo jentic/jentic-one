@@ -55,7 +55,7 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.config import bind_origin, resolved_control_egress
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_strict_pinned_transport
+from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
@@ -273,7 +273,7 @@ class AuthCodeFlowHandler:
 
         try:
             async with httpx.AsyncClient(
-                timeout=30.0, transport=build_strict_pinned_transport(egress)
+                timeout=30.0, transport=build_always_pinned_transport(egress)
             ) as client:
                 response = await client.post(
                     safe_url,

@@ -143,7 +143,7 @@ def build_pinned_transport(egress: EgressConfig | None) -> httpx.AsyncBaseTransp
     return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)
 
 
-def build_strict_pinned_transport(egress: EgressConfig | None = None) -> httpx.AsyncBaseTransport:
+def build_always_pinned_transport(egress: EgressConfig | None = None) -> httpx.AsyncBaseTransport:
     """Build a DNS-pinning transport that always pins, whatever the policy says.
 
     For the control plane's OAuth token / device-authorization / identity-probe

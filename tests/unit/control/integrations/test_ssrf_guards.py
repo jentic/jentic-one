@@ -5,7 +5,7 @@ exchange, identity echo) is fronted by ``validate_upstream_url`` so that a
 mis-configured or tampered upstream cannot aim a platform-issued request at a
 private / loopback / cloud-metadata target. These tests pin the guard at each
 call site: an unsafe URL must raise the site's typed error BEFORE any HTTP is
-opened. Each site also connects through the strict DNS-pinning transport, so a
+opened. Each site also connects through the always-on DNS-pinning transport, so a
 host that re-resolves to a blocked address — or does not resolve at all — at
 connect time is refused with the same typed error. An operator's control-plane
 egress allowlist applies to both checks, and nothing beyond it.

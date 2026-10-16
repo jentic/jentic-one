@@ -19,7 +19,7 @@ import httpx
 import structlog
 
 from jentic_one.shared.config import EgressConfig, VendorIdentityProbeConfig
-from jentic_one.shared.egress import build_strict_pinned_transport
+from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.url_validation import validate_upstream_url
 
 _logger = structlog.get_logger(__name__)
@@ -68,7 +68,7 @@ async def echo_identity(
 
     try:
         async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_strict_pinned_transport(egress)
+            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
         ) as client:
             response = await client.request(
                 probe.method,
