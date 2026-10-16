@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -13,7 +14,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.execution.service import default_broker, run_execution
+from jentic_one.broker.services.execution.service import (
+    default_broker,
+    persist_streaming_execution,
+    run_execution,
+)
+from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
 
 
@@ -116,3 +122,67 @@ async def test_execution_started_and_finished_log_events() -> None:
     event_names = [entry.kwargs.get("event") or entry.args[0] for entry in factory.logger.calls]
     assert "execution_started" in event_names
     assert "execution_finished" in event_names
+
+
+class _SubMillisecondRunner(UpstreamRunner):
+    async def run(self, request: RunnerRequest) -> RunnerResult:
+        return RunnerResult(
+            status_code=200, headers={}, body=b"ok", content_type="text/plain", duration_ms=0.4
+        )
+
+
+@pytest.mark.asyncio
+async def test_buffered_duration_histogram_records_fractional_ms() -> None:
+    """The histogram gets the fractional upstream ms; the persisted record truncates to int."""
+    histogram = MagicMock()
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ) as mock_record,
+        patch("jentic_one.broker.services.execution.service._execution_duration", histogram),
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=AsyncMock(),
+            broker=default_broker(_SubMillisecondRunner()),
+            actor_id="agt_abc123",
+            actor_type="agent",
+        )
+
+    histogram.record.assert_called_once_with(0.4, {"operation": "getThing"})
+    assert mock_record.call_args.kwargs["duration_ms"] == 0
+
+
+@pytest.mark.asyncio
+async def test_streaming_duration_histogram_records_fractional_ms() -> None:
+    """The streaming path records fractional ms and persists the truncated int."""
+    histogram = MagicMock()
+    with (
+        patch(
+            "jentic_one.broker.services.execution.service.record_execution",
+            new_callable=AsyncMock,
+        ) as mock_record,
+        patch(
+            "jentic_one.broker.services.execution.service.emit_event",
+            new_callable=AsyncMock,
+        ),
+        patch("jentic_one.broker.services.execution.service._execution_duration", histogram),
+    ):
+        await persist_streaming_execution(
+            AsyncMock(),
+            execution_id="exec_test123",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.COMPLETED,
+            http_status=200,
+            duration_ms=1.9,
+            error=None,
+            ctx_req=_ctx_req(),
+            actor_id="agt_stream",
+            actor_type="agent",
+        )
+
+    histogram.record.assert_called_once_with(1.9, {"operation": "getThing"})
+    assert mock_record.call_args.kwargs["duration_ms"] == 1
