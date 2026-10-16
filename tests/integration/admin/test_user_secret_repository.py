@@ -11,6 +11,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository, UserSecretRepository
+from jentic_one.admin.repos.user_secret_repo import FailedLoginOutcome
 from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
@@ -104,18 +105,18 @@ async def test_record_failed_login(admin_db: DatabaseSession, test_user: str) ->
 
     lock_time = datetime.now(UTC) + timedelta(minutes=15)
     async with admin_db.session() as session:
-        count = await UserSecretRepository.record_failed_login(
+        outcome = await UserSecretRepository.record_failed_login(
             session, test_user, lockout_threshold=3, locked_until=lock_time, now=datetime.now(UTC)
         )
         await session.commit()
-        assert count == 1
+        assert outcome == FailedLoginOutcome(failed_login_count=1, locked_until=None)
 
     async with admin_db.session() as session:
-        count = await UserSecretRepository.record_failed_login(
+        outcome = await UserSecretRepository.record_failed_login(
             session, test_user, lockout_threshold=3, locked_until=lock_time, now=datetime.now(UTC)
         )
         await session.commit()
-        assert count == 2
+        assert outcome == FailedLoginOutcome(failed_login_count=2, locked_until=None)
 
     # Below the threshold the account stays unlocked.
     async with admin_db.session() as session:
@@ -135,7 +136,7 @@ async def test_record_failed_login_locks_at_threshold(
 
     lock_time = datetime.now(UTC) + timedelta(minutes=15)
     async with admin_db.session() as session:
-        counts = [
+        outcomes = [
             await UserSecretRepository.record_failed_login(
                 session,
                 test_user,
@@ -146,7 +147,11 @@ async def test_record_failed_login_locks_at_threshold(
             for _ in range(2)
         ]
         await session.commit()
-    assert counts == [1, 2]
+    # The locking increment returns exactly the lock it applied.
+    assert outcomes == [
+        FailedLoginOutcome(failed_login_count=1, locked_until=None),
+        FailedLoginOutcome(failed_login_count=2, locked_until=lock_time),
+    ]
 
     async with admin_db.session() as session:
         secret = await UserSecretRepository.get_by_user_id(session, test_user)
@@ -211,7 +216,7 @@ async def test_record_failed_login_after_expired_lock_starts_fresh_count(
 
     after_expiry = t0 + timedelta(minutes=16)
     async with admin_db.session() as session:
-        count = await UserSecretRepository.record_failed_login(
+        outcome = await UserSecretRepository.record_failed_login(
             session,
             test_user,
             lockout_threshold=threshold,
@@ -219,7 +224,7 @@ async def test_record_failed_login_after_expired_lock_starts_fresh_count(
             now=after_expiry,
         )
         await session.commit()
-    assert count == 1
+    assert outcome == FailedLoginOutcome(failed_login_count=1, locked_until=None)
 
     async with admin_db.session() as session:
         secret = await UserSecretRepository.get_by_user_id(session, test_user)
@@ -239,7 +244,7 @@ async def test_record_failed_login_during_active_lock_does_not_extend_it(
         await UserSecretRepository.record_failed_login(
             session, test_user, lockout_threshold=1, locked_until=lock_time, now=t0
         )
-        count = await UserSecretRepository.record_failed_login(
+        outcome = await UserSecretRepository.record_failed_login(
             session,
             test_user,
             lockout_threshold=1,
@@ -247,7 +252,8 @@ async def test_record_failed_login_during_active_lock_does_not_extend_it(
             now=t0 + timedelta(seconds=1),
         )
         await session.commit()
-    assert count == 2
+    # The straggler gets the earlier, still-active lock back — not its own.
+    assert outcome == FailedLoginOutcome(failed_login_count=2, locked_until=lock_time)
 
     async with admin_db.session() as session:
         secret = await UserSecretRepository.get_by_user_id(session, test_user)
@@ -256,41 +262,44 @@ async def test_record_failed_login_during_active_lock_does_not_extend_it(
         assert abs((secret.locked_until - lock_time).total_seconds()) < 1
 
 
-async def test_reset_failed_logins(admin_db: DatabaseSession, test_user: str) -> None:
+async def test_record_failed_login_locks_row_already_past_lowered_threshold(
+    admin_db: DatabaseSession, test_user: str
+) -> None:
+    """A row already past a lowered threshold locks on its next failure and says so."""
+    t0 = datetime.now(UTC)
+    lock_time = t0 + timedelta(minutes=15)
     async with admin_db.session() as session:
         await UserSecretRepository.create(session, user_id=test_user, created_by="usr_test")
-        await session.commit()
-
-    async with admin_db.session() as session:
-        for _ in range(2):
+        for _ in range(4):
             await UserSecretRepository.record_failed_login(
-                session,
-                test_user,
-                lockout_threshold=5,
-                locked_until=datetime.now(UTC) + timedelta(minutes=15),
-                now=datetime.now(UTC),
+                session, test_user, lockout_threshold=5, locked_until=lock_time, now=t0
             )
+        outcome = await UserSecretRepository.record_failed_login(
+            session, test_user, lockout_threshold=3, locked_until=lock_time, now=t0
+        )
+        await session.commit()
+    assert outcome == FailedLoginOutcome(failed_login_count=5, locked_until=lock_time)
+
+
+async def test_unlock_clears_lock_and_counter(admin_db: DatabaseSession, test_user: str) -> None:
+    now = datetime.now(UTC)
+    async with admin_db.session() as session:
+        await UserSecretRepository.create(session, user_id=test_user, created_by="usr_test")
+        await UserSecretRepository.record_failed_login(
+            session,
+            test_user,
+            lockout_threshold=1,
+            locked_until=now + timedelta(minutes=15),
+            now=now,
+        )
         await session.commit()
 
     async with admin_db.session() as session:
-        secret = await UserSecretRepository.reset_failed_logins(session, test_user)
+        secret = await UserSecretRepository.unlock(session, test_user)
         await session.commit()
         assert secret is not None
         assert secret.failed_login_count == 0
-
-
-async def test_lock_until(admin_db: DatabaseSession, test_user: str) -> None:
-    lock_time = datetime.now(UTC) + timedelta(minutes=30)
-    async with admin_db.session() as session:
-        await UserSecretRepository.create(session, user_id=test_user, created_by="usr_test")
-        await session.commit()
-
-    async with admin_db.session() as session:
-        secret = await UserSecretRepository.lock_until(session, test_user, locked_until=lock_time)
-        await session.commit()
-        assert secret is not None
-        assert secret.locked_until is not None
-        assert abs((secret.locked_until - lock_time).total_seconds()) < 1
+        assert secret.locked_until is None
 
 
 async def test_operations_on_nonexistent_user(
@@ -311,10 +320,4 @@ async def test_operations_on_nonexistent_user(
         assert not await UserSecretRepository.reset_failed_logins_unless_locked(
             session, "usr_noone", now=datetime.now(UTC)
         )
-        assert await UserSecretRepository.reset_failed_logins(session, "usr_noone") is None
-        assert (
-            await UserSecretRepository.lock_until(
-                session, "usr_noone", locked_until=datetime.now(UTC)
-            )
-            is None
-        )
+        assert await UserSecretRepository.unlock(session, "usr_noone") is None
