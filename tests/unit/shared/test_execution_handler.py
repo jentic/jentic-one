@@ -575,6 +575,15 @@ def test_handler_refuses_an_injector_without_an_actor_status_reader() -> None:
         )
 
 
+def test_handler_refuses_an_actor_status_reader_without_an_authorizer() -> None:
+    """A live actor reader with no run-time authorizer to gate it fails closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    with pytest.raises(ValueError, match="actor_status requires an execution_authorizer"):
+        ExecutionHandler(executor=executor, actor_status=_FakeActorStatus())
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("actor_type", "authority", "reason", "problem_type", "status", "reads"),
