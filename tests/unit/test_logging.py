@@ -110,13 +110,9 @@ def test_http_wire_trace_toggle_lifts_the_httpcore_clamp() -> None:
             "logging": {"http_wire_trace": True},
         }
     )
-    try:
-        configure_logging(config)
-        assert logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
-        assert logging.getLogger("hpack.hpack").isEnabledFor(logging.DEBUG)
-    finally:
-        logging.getLogger("httpcore").setLevel(logging.INFO)
-        logging.getLogger("hpack").setLevel(logging.INFO)
+    configure_logging(config)
+    assert logging.getLogger("httpcore.http11").isEnabledFor(logging.DEBUG)
+    assert logging.getLogger("hpack.hpack").isEnabledFor(logging.DEBUG)
 
 
 def test_http2_header_encoding_never_logs_header_values_at_debug(
