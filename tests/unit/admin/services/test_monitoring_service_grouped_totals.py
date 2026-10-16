@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Coroutine, Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from jentic_one.admin.services.monitoring_service import (
     MonitoringService,
     UsageFilters,
     UsageTopKey,
+    _CacheEntry,
     _GroupedTotalsCacheEntry,
     _UsageCacheEntry,
 )
@@ -223,7 +225,7 @@ async def test_grouped_totals_cache_is_bounded(repo: dict[str, AsyncMock]) -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["get_grouped_totals", "get_usage_stats"])
+@pytest.mark.parametrize("method", ["get_grouped_totals", "get_usage_stats", "get_execution_stats"])
 async def test_miss_evicts_and_stamps_with_post_query_time(
     repo: dict[str, AsyncMock], method: str
 ) -> None:
@@ -235,26 +237,92 @@ async def test_miss_evicts_and_stamps_with_post_query_time(
     """
     svc = _svc()
     post_query = 100.0 + _CACHE_TTL_SECONDS
-    stale_key: tuple[object, ...]
+    stale_key: object
     call: Coroutine[Any, Any, object]
     if method == "get_grouped_totals":
-        cache: dict[tuple[object, ...], object] = svc._grouped_totals_cache  # type: ignore[assignment]
+        cache: dict[Any, Any] = svc._grouped_totals_cache
         stale_key = (_GROUPED_TOTALS_KEY_TAG, 1, 2, GroupBy.API, 10, UsageFilters())
         cache[stale_key] = _GroupedTotalsCacheEntry(result=(), cached_at=99.0)
         call = svc.get_grouped_totals(since=0, until=86400, group_by=GroupBy.AGENT, limit=10)
-    else:
-        cache = svc._usage_cache  # type: ignore[assignment]
+    elif method == "get_usage_stats":
+        cache = svc._usage_cache
         stale_key = (1, 2, GroupBy.API, 10, UsageFilters())
         cache[stale_key] = _UsageCacheEntry(result=MagicMock(), cached_at=99.0)
         repo["overall_stats"].return_value = MagicMock(
             total=0, success=0, failed=0, avg_ms=0.0, p50_ms=None, p95_ms=None
         )
         call = svc.get_usage_stats(since=0, until=86400, group_by=GroupBy.AGENT, top_limit=10)
+    else:
+        cache = svc._cache
+        stale_key = 14
+        cache[stale_key] = _CacheEntry(result=MagicMock(), cached_at=99.0)
+        call = svc.get_execution_stats(7)
 
-    with patch("jentic_one.admin.services.monitoring_service.time") as mock_time:
+    with (
+        patch(f"{_REPO}.daily_buckets", new_callable=AsyncMock, return_value=[]),
+        patch(f"{_REPO}.top_operations", new_callable=AsyncMock, return_value=[]),
+        patch("jentic_one.admin.services.monitoring_service.time") as mock_time,
+    ):
         mock_time.monotonic.side_effect = [100.0, 100.0, post_query]
         await call
 
     assert stale_key not in cache
     (entry,) = cache.values()
-    assert entry.cached_at == post_query  # type: ignore[attr-defined]
+    assert entry.cached_at == post_query
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get_grouped_totals", "get_usage_stats", "get_execution_stats"])
+async def test_lock_recheck_uses_the_clock_after_the_wait(
+    repo: dict[str, AsyncMock], method: str
+) -> None:
+    """The double-checked TTL test inside the lock uses a clock read taken after the wait.
+
+    The fast path reads 100 and finds nothing. While the call waits for the lock,
+    another caller stores an entry at 101. The lock is acquired at 101 + TTL, when
+    that entry has already expired. A check against the pre-wait reading (100)
+    would serve it; the call must re-query instead.
+    """
+    svc = _svc()
+    lock: asyncio.Lock
+    cache: dict[Any, Any]
+    key: object
+    entry: object
+    call: Coroutine[Any, Any, object]
+    if method == "get_grouped_totals":
+        lock, cache = svc._grouped_totals_lock, cast(dict[Any, Any], svc._grouped_totals_cache)
+        key = (_GROUPED_TOTALS_KEY_TAG, 0, 86400, GroupBy.AGENT, 10, UsageFilters())
+        entry = _GroupedTotalsCacheEntry(result=(), cached_at=101.0)
+        call = svc.get_grouped_totals(since=0, until=86400, group_by=GroupBy.AGENT, limit=10)
+    elif method == "get_usage_stats":
+        lock, cache = svc._usage_lock, cast(dict[Any, Any], svc._usage_cache)
+        key = (0, 86400, GroupBy.AGENT, 10, UsageFilters())
+        entry = _UsageCacheEntry(result=MagicMock(), cached_at=101.0)
+        repo["overall_stats"].return_value = MagicMock(
+            total=0, success=0, failed=0, avg_ms=0.0, p50_ms=None, p95_ms=None
+        )
+        call = svc.get_usage_stats(since=0, until=86400, group_by=GroupBy.AGENT, top_limit=10)
+    else:
+        lock, cache = svc._locks.setdefault(7, asyncio.Lock()), cast(dict[Any, Any], svc._cache)
+        key = 7
+        entry = _CacheEntry(result=MagicMock(), cached_at=101.0)
+        call = svc.get_execution_stats(7)
+
+    lock_time = 101.0 + _CACHE_TTL_SECONDS
+    with (
+        patch(f"{_REPO}.daily_buckets", new_callable=AsyncMock, return_value=[]) as daily,
+        patch(f"{_REPO}.top_operations", new_callable=AsyncMock, return_value=[]),
+        patch("jentic_one.admin.services.monitoring_service.time") as mock_time,
+    ):
+        mock_time.monotonic.side_effect = [100.0, lock_time, lock_time + 1]
+        await lock.acquire()
+        task = asyncio.create_task(call)
+        await asyncio.sleep(0)  # the call takes the fast path, then waits on the lock
+        cache[key] = entry  # a concurrent caller stores its result meanwhile
+        lock.release()
+        await task
+
+    queried = daily if method == "get_execution_stats" else repo["grouped_top"]
+    queried.assert_awaited_once()
+    assert cache[key] is not entry
+    assert cache[key].cached_at == lock_time + 1

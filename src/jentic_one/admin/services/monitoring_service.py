@@ -111,7 +111,7 @@ class _GroupedTotalsCacheEntry:
 _GROUPED_TOTALS_KEY_TAG = "grouped_totals"
 
 
-def _evict_stale(cache: dict[tuple[Any, ...], Any], now: float) -> None:
+def _evict_stale(cache: dict[Any, Any], now: float) -> None:
     """Drop expired entries, then the oldest ones until there is room for one more."""
     expired = [k for k, v in cache.items() if (now - v.cached_at) >= _CACHE_TTL_SECONDS]
     for k in expired:
@@ -151,12 +151,16 @@ class MonitoringService:
 
         lock = self._locks.setdefault(days, asyncio.Lock())
         async with lock:
+            # Re-sampled for the same reason as in get_usage_stats.
+            now = time.monotonic()
             entry = self._cache.get(days)
             if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
                 _cache_hits.add(1)
                 return entry.result
             result = await self._query(days)
-            self._cache[days] = _CacheEntry(result=result, cached_at=time.monotonic())
+            stored_at = time.monotonic()
+            _evict_stale(self._cache, stored_at)
+            self._cache[days] = _CacheEntry(result=result, cached_at=stored_at)
             _cache_misses.add(1)
             logger.debug("monitoring_cache_miss", days=days)
             return result
