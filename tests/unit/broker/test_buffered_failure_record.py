@@ -9,7 +9,10 @@
   a registry it skips the record rather than write inside the router's open
   transaction.
 * Only an exception the app answers with a 500 is classified: one an app
-  handler maps to a 4xx or a 503 is re-raised untouched.
+  handler maps to a 4xx or a 503 is re-raised untouched. The classifier is
+  checked against the real broker app, whose handler set is pinned.
+* A lost unmapped-failure record is counted as ``failed`` on
+  ``app.background_tasks``, never as ``completed``.
 * A ``BrokerError`` record stores the elapsed time as ``duration_ms``, as a
   stream that fails to open does.
 """
@@ -17,20 +20,24 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
 from jentic.problem_details import ProblemDetailException
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
-from jentic_one.broker.core.exceptions import UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import BrokerError, UpstreamTimeoutError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.services.execution.service import (
@@ -38,13 +45,15 @@ from jentic_one.broker.services.execution.service import (
     default_broker,
     run_execution,
 )
-from jentic_one.broker.web.errors import install_broker_error_handlers
+from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.broker.web.routers import execute as execute_router
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import AppConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.web import background_tasks as background_tasks_module
 from jentic_one.shared.web.background_tasks import install_background_tasks
-from jentic_one.shared.web.errors import unhandled_exception_handler
 
 _DELAY_S = 0.03
 
@@ -238,13 +247,35 @@ async def _handle_unavailable(_request: Request, _exc: Exception) -> JSONRespons
     return JSONResponse({"status": 503}, status_code=503)
 
 
-def _broker_like_app() -> FastAPI:
-    app = FastAPI()
-    install_broker_error_handlers(app)
-    app.add_exception_handler(ProblemDetailException, AsyncMock())
-    app.add_exception_handler(_UnavailableError, _handle_unavailable)
-    app.add_exception_handler(Exception, unhandled_exception_handler)
-    return app
+@pytest.fixture()
+def broker_app(sample_config_dict: dict[str, Any]) -> Iterator[FastAPI]:
+    """The real standalone broker app (never started, so no DB is reached)."""
+    app_config = AppConfig.model_validate(sample_config_dict)
+    ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"], app_config))
+    app = create_broker_app(ctx)
+    try:
+        yield app
+    finally:
+        FastAPIInstrumentor.uninstrument_app(app)
+
+
+def test_broker_app_handler_set_is_the_one_the_classifier_was_checked_against(
+    broker_app: FastAPI,
+) -> None:
+    """A new handler on the broker app must be checked against the classifier.
+
+    ``_server_error_classifier`` reads a dedicated handler's status from
+    ``exc.status_code``; a handler that answers 500 for an exception without
+    one would classify as not-a-500 and drop the count and the record.
+    """
+    assert set(broker_app.exception_handlers) == {
+        Exception,
+        StarletteHTTPException,
+        RequestValidationError,
+        WebSocketRequestValidationError,
+        BrokerError,
+        ProblemDetailException,
+    }
 
 
 @pytest.mark.parametrize(
@@ -252,13 +283,18 @@ def _broker_like_app() -> FastAPI:
     [
         (_UnmappedError("boom"), True),
         (ProblemDetailException(status_code=500, detail="boom"), True),
+        (StarletteHTTPException(status_code=500), True),
         (ProblemDetailException(status_code=404, detail="missing"), False),
         (StarletteHTTPException(status_code=409), False),
         (_UnavailableError("db down"), False),
     ],
 )
-def test_server_error_classifier_follows_the_apps_handlers(exc: Exception, expected: bool) -> None:
-    assert execute_router._server_error_classifier(_broker_like_app())(exc) is expected
+def test_server_error_classifier_follows_the_apps_handlers(
+    broker_app: FastAPI, exc: Exception, expected: bool
+) -> None:
+    # Stands in for #1727's 503 handler for an unavailable database.
+    broker_app.add_exception_handler(_UnavailableError, _handle_unavailable)
+    assert execute_router._server_error_classifier(broker_app)(exc) is expected
 
 
 class _MappedRunner(UpstreamRunner):
@@ -267,7 +303,7 @@ class _MappedRunner(UpstreamRunner):
 
 
 @pytest.mark.asyncio
-async def test_a_handler_mapped_exception_is_reraised_untouched() -> None:
+async def test_a_handler_mapped_exception_is_reraised_untouched(broker_app: FastAPI) -> None:
     recorder = AsyncMock()
     with (
         patch.object(service_module._executions_total, "add") as count,
@@ -277,9 +313,40 @@ async def test_a_handler_mapped_exception_is_reraised_untouched() -> None:
         await _run(
             _MappedRunner(),
             on_unmapped_failure=recorder,
-            is_server_error=execute_router._server_error_classifier(_broker_like_app()),
+            is_server_error=execute_router._server_error_classifier(broker_app),
         )
 
     recorder.assert_not_awaited()
     count.assert_not_called()
     assert not [e for e in logs if e["event"] == "execution_failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_given_up_before_the_transaction_counts_as_failed() -> None:
+    """``outcome=completed`` on ``kind=unmapped_failure_persist`` means the record landed.
+
+    Anything that keeps the record from being written (here the admin
+    transaction refusing to open) raises out of ``_persist_unmapped_failure``,
+    so the registry counts it as ``failed``, the lost-record signal
+    ``docs/operations/monitoring.md`` documents for this kind.
+    """
+    app = Starlette()
+    registry = install_background_tasks(app)
+    request = Request({"type": "http", "app": app})
+    ctx = MagicMock()
+    ctx.config.broker.streaming_persist_timeout_s = 5.0
+
+    def _refuse(_ctx: Any) -> Any:
+        raise TimeoutError("no admin connection within the backlog budget")
+
+    recorder = execute_router._unmapped_failure_recorder(request, ctx, _ctx_req(), _identity())
+    with (
+        patch.object(execute_router, "_off_request_admin_transaction", _refuse),
+        patch.object(background_tasks_module._task_outcomes, "add") as outcomes,
+        patch.object(execute_router, "persist_unmapped_failure", new_callable=AsyncMock) as write,
+    ):
+        await recorder(_failure())
+        await registry.drain(5)
+
+    write.assert_not_awaited()
+    outcomes.assert_called_once_with(1, {"kind": "unmapped_failure_persist", "outcome": "failed"})
