@@ -5,7 +5,9 @@ decision (``RegistryService.find_draft_match``); that is covered against a real
 database and real broker auth in
 ``tests/integration/broker/test_draft_revision_hint.py``. These cover the
 broker's pure branches: rendering each pin outcome, keeping the request's own
-pins, the best-effort fallback and a resolver that breaks the protocol.
+pins, and the best-effort fallback — including for an ``AttributeError`` or
+``TypeError`` raised inside the lookup. Protocol conformance is checked at
+injection (``tests/unit/broker/test_registry_resolver_wiring.py``).
 """
 
 from __future__ import annotations
@@ -65,20 +67,18 @@ async def test_probe_failure_falls_back_to_the_generic_404() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolver_breaking_the_protocol_is_not_swallowed() -> None:
-    """A resolver without ``find_draft_match`` is a wiring bug, not a miss."""
+@pytest.mark.parametrize("error", [AttributeError("row.host_regex"), TypeError("bad row")])
+async def test_a_bug_inside_the_lookup_falls_back_to_the_generic_404(error: Exception) -> None:
+    """An ``AttributeError``/``TypeError`` raised by the registry is a failed lookup, not a 500."""
+    resolver = AsyncMock()
+    resolver.find_draft_match.side_effect = error
 
-    class _NoDraftMatch:
-        pass
+    err = await unregistered_operation_error(
+        resolver, method="GET", url=_URL, identity=_identity(), pins={}
+    )
 
-    with pytest.raises(AttributeError):
-        await unregistered_operation_error(
-            _NoDraftMatch(),  # type: ignore[arg-type]
-            method="GET",
-            url=_URL,
-            identity=_identity(),
-            pins={},
-        )
+    assert err.detail == UNREGISTERED_URL_DETAIL
+    assert err.directive is None
 
 
 @pytest.mark.asyncio

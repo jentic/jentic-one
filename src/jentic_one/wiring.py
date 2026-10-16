@@ -43,6 +43,7 @@ from jentic_one.shared.broker.protocols import (
     DraftRevisionMatch,
     ResolveResult,
     RevisionPinResult,
+    require_registry_resolver,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -100,8 +101,14 @@ class InProcessRegistryResolver:
 
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
-    """Inject the in-process registry resolver onto the broker app state."""
-    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
+    """Inject the in-process registry resolver onto the broker app state.
+
+    The resolver is checked against ``RegistryResolverProtocol`` here, once, so
+    the broker's per-request calls can treat any failure as a failed lookup.
+    """
+    app.state.broker_registry_resolver = require_registry_resolver(
+        InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
+    )
 
 
 class InProcessCatalogAutoImporter:
