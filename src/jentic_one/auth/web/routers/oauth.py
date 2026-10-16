@@ -138,8 +138,14 @@ def get_token_service(ctx: Context = Depends(get_ctx)) -> TokenService:
     return TokenService(ctx)
 
 
-def get_assertion_service(ctx: Context = Depends(get_ctx)) -> AssertionService:
-    return AssertionService(ctx)
+def get_assertion_service(request: Request, ctx: Context = Depends(get_ctx)) -> AssertionService:
+    # The jti replay record lives on the auth surface's shared-state backend,
+    # so a replayed assertion is refused by every process sharing it. Without
+    # one the service keeps its process-wide cache (a per-call fallback
+    # backend would remember nothing).
+    backend: object = getattr(request.app.state, "auth_state_backend", None)
+    replay_store = backend if isinstance(backend, SharedStateBackend) else None
+    return AssertionService(ctx, replay_store=replay_store)
 
 
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:

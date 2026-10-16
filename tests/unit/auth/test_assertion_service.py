@@ -12,8 +12,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jwt.algorithms import OKPAlgorithm
 
+from jentic_one.auth.services import assertion_service
 from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 
 def _make_ctx() -> MagicMock:
@@ -225,6 +227,41 @@ async def test_verify_rejects_replayed_jti(
     assertion2 = _make_assertion(private_key, jti="same-jti")
     with pytest.raises(InvalidGrantError, match="invalid"):
         await svc.verify_and_exchange(assertion2)
+
+
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_replay_store_refuses_a_jti_first_seen_by_another_process(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The jti record lives on the shared-state store, not in process memory.
+
+    Two ``server.workers`` processes share the store but not the in-process
+    cache; a replay answered by the second must still be refused.
+    """
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
+    token_svc_instance = MagicMock()
+    token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))
+    mock_token_svc_cls.return_value = token_svc_instance
+    shared = MemoryStateBackend()
+
+    first_worker = AssertionService(ctx, replay_store=shared)
+    await first_worker.verify_and_exchange(_make_assertion(private_key, jti="cross-worker-jti"))
+
+    # A fresh process starts with an empty in-process cache.
+    monkeypatch.setattr(assertion_service, "_jti_cache", None)
+    second_worker = AssertionService(ctx, replay_store=shared)
+    with pytest.raises(InvalidGrantError, match="invalid"):
+        await second_worker.verify_and_exchange(
+            _make_assertion(private_key, jti="cross-worker-jti")
+        )
 
 
 async def test_verify_rejects_non_eddsa_algorithm() -> None:

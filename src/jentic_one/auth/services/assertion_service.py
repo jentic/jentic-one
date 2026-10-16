@@ -16,8 +16,12 @@ from jentic_one.shared.auth import resolve_agent_key
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.state.backend import AtomicStore
 
 _INVALID = "Assertion is invalid"
+
+# Namespace of the JWT-bearer jti replay records on the shared-state backend.
+_JTI_KEY_PREFIX = "auth:jwt_bearer_jti:"
 
 # Returned only after the assertion's signature has verified, so the caller has
 # proven possession of the registered private key. A distinct detail is what
@@ -31,7 +35,13 @@ _DEFAULT_MAX_TTL = 300
 
 
 class _JTICache:
-    """In-process JTI replay cache with lazy TTL eviction."""
+    """In-process JTI replay cache with lazy TTL eviction.
+
+    The fallback when no shared-state backend is wired (a bare service in
+    tests, an app without the auth surface's install step). The auth surface
+    passes its ``broker.resilience.backend`` store instead, so every process
+    sharing that backend sees the same replay record.
+    """
 
     def __init__(self, max_ttl: int) -> None:
         self._max_ttl = max_ttl
@@ -66,9 +76,19 @@ def _get_jti_cache(max_ttl: int) -> _JTICache:
 class AssertionService:
     """Verifies JWT Bearer assertions and exchanges them for opaque token pairs."""
 
-    def __init__(self, ctx: Context) -> None:
+    def __init__(self, ctx: Context, *, replay_store: AtomicStore | None = None) -> None:
         self._ctx = ctx
-        self._jti_cache = _get_jti_cache(ctx.config.auth.assertion_max_ttl_seconds)
+        self._max_ttl = ctx.config.auth.assertion_max_ttl_seconds
+        self._replay_store = replay_store
+        self._jti_cache = _get_jti_cache(self._max_ttl)
+
+    async def _claim_jti(self, jti: str) -> bool:
+        """Record ``jti`` as used; False when it was already used (a replay)."""
+        if self._replay_store is None:
+            return self._jti_cache.check_and_insert(jti)
+        return await self._replay_store.set_if_absent(
+            f"{_JTI_KEY_PREFIX}{jti}", b"1", ttl_s=float(self._max_ttl)
+        )
 
     async def verify_and_exchange(
         self, assertion: str, *, request_base_url: str | None = None
@@ -155,7 +175,7 @@ class AssertionService:
                 raise InvalidGrantError(_INVALID)
 
             jti = payload.get("jti")
-            if not jti or not self._jti_cache.check_and_insert(jti):
+            if not jti or not await self._claim_jti(jti):
                 raise InvalidGrantError(_INVALID)
 
             grants = await ActorPermissionGrantRepository.list_for_actor(
