@@ -1227,31 +1227,47 @@ class CredentialService:
 
         return CredentialPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
+    @staticmethod
+    async def _get_updatable(
+        session: Any,
+        credential_id: str,
+        payload: CredentialUpdate,
+        access_filters: Sequence[Any],
+    ) -> Credential:
+        """Load a credential the caller can see, rejecting a change of ``type``."""
+        credential = await CredentialRepository.get_by_id(
+            session, credential_id, filters=access_filters
+        )
+        if credential is None:
+            raise CredentialNotFoundError(credential_id)
+        if payload.type != to_wire(StoredCredentialType(credential.type)):
+            raise ImmutableFieldError("type")
+        return credential
+
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
         """Update/rotate a credential.
 
-        Payload-only checks, including the DNS-resolving ``token_url``
-        validation, run before the write transaction opens so no resolver
-        call holds a DB write lock.
+        Payload-only checks run first. The DNS-resolving ``token_url``
+        validation runs before the write transaction opens, so no resolver
+        call holds a DB write lock, and after a read-only existence and type
+        check, so not-found and type-mismatch errors take precedence over an
+        invalid ``token_url``. The transaction repeats that check against the
+        row it writes.
         """
         self._validate_update_fields(payload)
-        validated_token_url = await self._validate_update_token_url(payload)
         access_filters = build_access_filters(identity, Credential)
+        validated_token_url: str | None = None
+        if payload.type == CredentialType.OAUTH2 and payload.token_url is not None:
+            async with self._ctx.control_db.session() as session:
+                await self._get_updatable(session, credential_id, payload, access_filters)
+            validated_token_url = await self._validate_update_token_url(payload)
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
-            credential = await CredentialRepository.get_by_id(
-                session, credential_id, filters=access_filters
-            )
-            if credential is None:
-                raise CredentialNotFoundError(credential_id)
+            credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
             before_state = self._audit_snapshot(credential)
-
-            wire_type = to_wire(StoredCredentialType(credential.type))
-            if payload.type != wire_type:
-                raise ImmutableFieldError("type")
 
             # The api_key parameter binding (field_name/location) is derived from
             # the API spec at create time and must not drift afterwards — a wrong
@@ -1384,16 +1400,16 @@ class CredentialService:
                     )
                     changed = True
 
-            credential = await CredentialRepository.get_by_id(session, credential_id)
-            assert credential is not None
+            updated = await CredentialRepository.get_by_id(session, credential_id)
+            assert updated is not None
             if changed:
-                credential.updated_at = datetime.now(UTC)
+                updated.updated_at = datetime.now(UTC)
             await session.flush()
             names = await OAuthAppRegistrationRepository.get_names_by_ids(
-                session, _registration_ids([credential])
+                session, _registration_ids([updated])
             )
-            view = self._to_redacted(credential, registration_names=names)
-            after_state = self._audit_snapshot(credential)
+            view = self._to_redacted(updated, registration_names=names)
+            after_state = self._audit_snapshot(updated)
             after_state.update(self._rotation_markers(payload))
             if oauth_token_dropped:
                 after_state["oauth_token_dropped"] = True
@@ -1629,6 +1645,13 @@ class CredentialService:
                 "Changing the token_url origin (scheme, host or port) requires "
                 "re-entering client_secret in the same request"
             )
+        if cross_origin:
+            # Serialise with the broker's single-flight refresh before any
+            # write: a refresh already holding the lock finishes against the
+            # stored origin, and the next one finds the token row gone (and
+            # fails as needs-reconnect) rather than presenting the old refresh
+            # token to the new origin.
+            await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
         await OAuthClientCredentialRepository.update(
             session,
             credential_id,
@@ -1675,7 +1698,11 @@ class CredentialService:
         )
         if dfc is None:
             raise _no_client_config_error()
-        if dfc.encrypted_device_code is not None:
+        # A flow past its expiry can no longer complete; it only lingers until
+        # the poll scanner retires it, so it must not keep the edit blocked.
+        if dfc.encrypted_device_code is not None and (
+            dfc.device_code_expires_at is None or dfc.device_code_expires_at > datetime.now(UTC)
+        ):
             raise InvalidCredentialInputError(
                 "A device authorization flow is in progress for this credential; "
                 "retry once it completes or expires"
