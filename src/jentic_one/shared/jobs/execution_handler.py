@@ -61,7 +61,7 @@ from jentic_one.shared.models.actors import origin_or_none
 from jentic_one.shared.models.events import EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.url import apply_server_variables
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger(__name__)
 
@@ -165,7 +165,7 @@ class ExecutionHandler:
         if body_b64:
             body = base64.b64decode(body_b64)
 
-        upstream_url = validate_upstream_url(upstream_url, self._egress)
+        upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
 
         # Run-time re-authorization (before any credential is touched). The
         # enqueue-time selection rides along only as the disambiguation input;
@@ -233,7 +233,7 @@ class ExecutionHandler:
             credential_name = injection.credential_name
             signing = injection.signing
             if injection.server_variables or server_variable_defaults:
-                upstream_url = validate_upstream_url(upstream_url, self._egress)
+                upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
 
         status = ExecutionStatus.COMPLETED
         http_status: int | None = None

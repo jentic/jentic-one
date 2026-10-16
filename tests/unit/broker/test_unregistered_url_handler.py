@@ -16,7 +16,7 @@ Proves the contract points of the seam (see
   raises ``operation_not_found`` exactly as today; the **pinned-revision** miss
   never invokes the handler (that miss is a caller pin error on a registered
   API, not an unregistered flow); and the handler receives the **validated**
-  URL (the egress contract's ordering — hook after ``validate_upstream_url``).
+  URL (the egress contract's ordering — hook after ``validate_upstream_url_async``).
 - **Failure isolation**: a raising handler falls through to the documented 404
   (never a 500) and the failure is counted (``outcome="error"``) and logged; a
   deliberate ``ProblemDetailException`` propagates; ``CancelledError``
@@ -64,7 +64,7 @@ from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 _RAW_URL = "https://api.example.com/v1/things"
 #: What the fake validator returns — distinct from the raw reconstruction so a
-#: handler receiving it proves the hook runs *after* ``validate_upstream_url``.
+#: handler receiving it proves the hook runs *after* ``validate_upstream_url_async``.
 _VALIDATED_URL = "https://validated.example.com/v1/things"
 
 
@@ -425,11 +425,11 @@ def _marker_validator(monkeypatch: pytest.MonkeyPatch) -> None:
     half of the egress contract) without a DNS lookup in a unit test.
     """
 
-    def _validate(raw_url: str, egress: Any = None) -> str:
+    async def _validate(raw_url: str, egress: Any = None) -> str:
         assert raw_url == _RAW_URL
         return _VALIDATED_URL
 
-    monkeypatch.setattr(execute_mod, "validate_upstream_url", _validate)
+    monkeypatch.setattr(execute_mod, "validate_upstream_url_async", _validate)
 
 
 async def _run_handle(request: Request) -> Response:
@@ -449,7 +449,7 @@ async def _run_handle(request: Request) -> Response:
 @pytest.mark.usefixtures("_marker_validator")
 async def test_route_handler_short_circuits_unregistered_url() -> None:
     """Unregistered URL + handler → the handler's response, carrying the
-    validated URL (hook strictly after ``validate_upstream_url``)."""
+    validated URL (hook strictly after ``validate_upstream_url_async``)."""
     reply = Response(content=b"handled", status_code=200, media_type="text/plain")
     spy = _SpyHandler(reply)
     response = await _run_handle(_asgi_request(_MissResolver(), spy))
