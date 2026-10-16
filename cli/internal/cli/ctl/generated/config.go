@@ -377,12 +377,21 @@ type CatalogConfig struct {
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
 
+	// How long a failed catalog preview fetch (upstream unavailable, oversized or
+	// unparseable spec) is remembered per spec URL before it is retried, so repeated
+	// previews of a broken spec do not refetch it on every request. Zero retries on
+	// the next request. Ignored when the preview cache is disabled.
+	PreviewCacheFailureTtlSeconds int `json:"preview_cache_failure_ttl_seconds,omitempty,omitzero" yaml:"preview_cache_failure_ttl_seconds,omitempty" mapstructure:"preview_cache_failure_ttl_seconds,omitempty"`
+
 	// Maximum number of catalog spec projections held in memory per process (least
 	// recently used evicted first). Zero disables the cache.
 	PreviewCacheMaxEntries int `json:"preview_cache_max_entries,omitempty,omitzero" yaml:"preview_cache_max_entries,omitempty" mapstructure:"preview_cache_max_entries,omitempty"`
 
 	// How long a catalog preview's upstream spec projection is reused before
-	// refetching. Zero disables the cache.
+	// refetching. Zero disables the cache. The cache is per process: `POST
+	// /catalog:refresh` clears it only on the process that serves the refresh, so
+	// other workers or replicas can serve the previous projection until this TTL
+	// expires.
 	PreviewCacheTtlSeconds int `json:"preview_cache_ttl_seconds,omitempty,omitzero" yaml:"preview_cache_ttl_seconds,omitempty" mapstructure:"preview_cache_ttl_seconds,omitempty"`
 
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
@@ -418,6 +427,12 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["manifest_url"]; !ok || v == nil {
 		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
+	}
+	if v, ok := raw["preview_cache_failure_ttl_seconds"]; !ok || v == nil {
+		plain.PreviewCacheFailureTtlSeconds = 30
+	}
+	if 0 > plain.PreviewCacheFailureTtlSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "preview_cache_failure_ttl_seconds", 0)
 	}
 	if v, ok := raw["preview_cache_max_entries"]; !ok || v == nil {
 		plain.PreviewCacheMaxEntries = 16
@@ -1540,7 +1555,9 @@ type IngestConfig struct {
 	FetchTimeoutS float64 `json:"fetch_timeout_s,omitempty,omitzero" yaml:"fetch_timeout_s,omitempty" mapstructure:"fetch_timeout_s,omitempty"`
 
 	// Cap on the raw `POST /apis` request body (all sources together). Unset means
-	// twice `max_spec_bytes`. Each inline source's content is separately capped at
+	// twice `max_spec_bytes`, which covers one maximum-size inline spec with typical
+	// JSON-string escaping; raise it for batches of heavily escaped specs (`\uXXXX`
+	// or HTML-escaped content). Each inline source's content is separately capped at
 	// `max_spec_bytes`.
 	MaxImportRequestBytes interface{} `json:"max_import_request_bytes,omitempty,omitzero" yaml:"max_import_request_bytes,omitempty" mapstructure:"max_import_request_bytes,omitempty"`
 
@@ -3293,9 +3310,37 @@ type VendorScopeConfig struct {
 	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
+type VendorScopeConfigClassification string
+
 const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
 const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
 const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
@@ -3321,36 +3366,6 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 		plain.Description = ""
 	}
 	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
-
-type VendorScopeConfigClassification string
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
-	}
-	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
@@ -3436,3 +3451,5 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	*j = WorkerConfig(plain)
 	return nil
 }
+
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig

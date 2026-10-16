@@ -254,12 +254,15 @@ class Context:
         ``CatalogService`` is built per request, so the cache lives here to be
         shared across every ``GET /catalog/{id}/operations`` on this process.
         Sized by ``catalog.preview_cache_*``; lazily constructed on first access.
+        It is per process only: ``POST /catalog:refresh`` clears this process's
+        copy, while other workers or replicas keep theirs until the TTL expires.
         """
         if self._catalog_preview_cache is None:
             cfg = self._config.catalog
             self._catalog_preview_cache = AsyncTTLCache(
                 max_entries=cfg.preview_cache_max_entries,
                 ttl_seconds=cfg.preview_cache_ttl_seconds,
+                failure_ttl_seconds=cfg.preview_cache_failure_ttl_seconds,
             )
         return self._catalog_preview_cache
 

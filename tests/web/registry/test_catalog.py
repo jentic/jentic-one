@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from collections.abc import AsyncGenerator, Iterator
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -26,10 +26,10 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.app import create_app
-from jentic_one.shared import ttl_cache
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import encode_catalog_cursor
+from jentic_one.shared.ttl_cache import AsyncTTLCache
 from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
 
@@ -544,12 +544,20 @@ def test_catalog_refresh_invalidates_preview_cache(admin_client: TestClient) -> 
 
 
 def test_preview_refetches_after_ttl_expiry(
-    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [1000.0]
-    monkeypatch.setattr(ttl_cache, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    cfg = web_context.config.catalog
+    ttl = cfg.preview_cache_ttl_seconds
+    # Inject the clock through the cache itself rather than patching a module global.
+    monkeypatch.setattr(
+        web_context,
+        "_catalog_preview_cache",
+        AsyncTTLCache(
+            max_entries=cfg.preview_cache_max_entries, ttl_seconds=ttl, clock=lambda: now[0]
+        ),
+    )
     admin_client.post("/catalog:refresh")
-    ttl = admin_client.app.state.ctx.config.catalog.preview_cache_ttl_seconds  # type: ignore[attr-defined]
 
     admin_client.get("/catalog/stripe.com/operations")
     now[0] += ttl - 1
@@ -560,6 +568,18 @@ def test_preview_refetches_after_ttl_expiry(
     r = admin_client.get("/catalog/stripe.com/operations")
     assert r.status_code == 200
     assert len(_SPEC_FETCHES) == 2
+
+
+def test_preview_failure_is_remembered_for_failure_ttl(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spec that fails to load is not refetched on every preview within the failure TTL."""
+    monkeypatch.setattr(sys.modules[__name__], "_spec", lambda: ["not", "an", "object"])
+    admin_client.post("/catalog:refresh")
+    first = admin_client.get("/catalog/stripe.com/operations")
+    second = admin_client.get("/catalog/stripe.com/operations")
+    assert first.status_code == second.status_code == 502
+    assert len(_SPEC_FETCHES) == 1
 
 
 def test_preview_cache_disabled_by_zero_ttl(
