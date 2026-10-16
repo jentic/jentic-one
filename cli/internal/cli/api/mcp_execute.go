@@ -931,7 +931,7 @@ func (s *mcpServer) attachHeldResult(ctx context.Context, client heldResultClien
 // heldResultClient is the one generated-client method attachHeldResult
 // needs — a seam so tests can drive the result fetch without the whole SDK.
 type heldResultClient interface {
-	GetHeldExecutionResultWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...control.RequestEditorFn) (*control.GetHeldExecutionResultHTTPResp, error)
+	GetHeldExecutionResultWithResponse(ctx context.Context, heldExecutionID string, reqEditors ...control.RequestEditorFn) (*control.GetHeldExecutionResultHTTPResp, error)
 }
 
 // jobPollPayload polls one job — GET /jobs/{id}, plus GET /jobs/{id}/result

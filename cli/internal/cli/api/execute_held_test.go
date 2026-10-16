@@ -309,11 +309,14 @@ func TestExecuteWaitRejectsATimeoutAboveTheMaximum(t *testing.T) {
 func TestParseHeldTimeout(t *testing.T) {
 	for in, want := range map[string]time.Duration{
 		"30s": 30 * time.Second, "1m": time.Minute, "30": 30 * time.Second, "0": 0, "0s": 0,
-		"5m": 5 * time.Minute, "300": 5 * time.Minute, " 45 ": 45 * time.Second, "1500ms": 1500 * time.Millisecond,
+		"5m": 5 * time.Minute, "300": 5 * time.Minute, "1500ms": 1500 * time.Millisecond,
 	} {
 		if got, err := parseHeldTimeout(in); err != nil || got != want {
 			t.Errorf("parseHeldTimeout(%q) = %v, %v; want %v", in, got, err, want)
 		}
+	}
+	if got, err := parseHeldTimeout(" 45 "); err != nil || got != 45*time.Second {
+		t.Errorf("parseHeldTimeout(\" 45 \") = %v, %v; want 45s (surrounding spaces trimmed)", got, err)
 	}
 	for _, in := range []string{"5m1s", "301", "1h", "-1", "-5s", "", "ten"} {
 		if _, err := parseHeldTimeout(in); err == nil {
@@ -448,8 +451,10 @@ func TestExecutionsPollTimeoutOnAPendingHoldExits3(t *testing.T) {
 	if !strings.Contains(coded.Actionable, reviewURL) || !strings.Contains(coded.Actionable, "jentic executions poll held_held1") {
 		t.Errorf("actionable = %q", coded.Actionable)
 	}
-	for _, want := range []string{"Still held after 20ms", "held execution: held_held1", "open: " + reviewURL,
-		"then: jentic executions poll held_held1"} {
+	for _, want := range []string{
+		"Still held after 20ms", "held execution: held_held1", "open: " + reviewURL,
+		"then: jentic executions poll held_held1",
+	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
@@ -466,8 +471,10 @@ func TestExecutionsPollZeroTimeoutChecksOnce(t *testing.T) {
 }
 
 func TestExecutionsPollAcceptsBareSeconds(t *testing.T) {
-	s := &heldStack{state: "approved", status: "completed", resultType: "application/json",
-		result: `{"execution_id":"exec_9","status":"completed","http_status":200,"duration_ms":1,"body_b64":""}`}
+	s := &heldStack{
+		state: "approved", status: "completed", resultType: "application/json",
+		result: `{"execution_id":"exec_9","status":"completed","http_status":200,"duration_ms":1,"body_b64":""}`,
+	}
 	srv := s.serve(t)
 	if _, stderr, err := runHeld(t, srv, "executions", "poll", "held_held1", "--timeout", "45", "--json"); err != nil {
 		t.Fatalf("--timeout 45: %v\n%s", err, stderr)
@@ -502,8 +509,10 @@ func TestExecutionsPollTransportErrorKeepsTheHeldExecution(t *testing.T) {
 	if !strings.Contains(coded.Actionable, reviewURL) || !strings.Contains(coded.Actionable, "jentic executions poll held_held1") {
 		t.Errorf("actionable = %q", coded.Actionable)
 	}
-	for _, want := range []string{"Could not read held execution held_held1", "open: " + reviewURL,
-		"then: jentic executions poll held_held1"} {
+	for _, want := range []string{
+		"Could not read held execution held_held1", "open: " + reviewURL,
+		"then: jentic executions poll held_held1",
+	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

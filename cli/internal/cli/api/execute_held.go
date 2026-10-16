@@ -61,12 +61,12 @@ func parseHeldTimeout(s string) (time.Duration, error) {
 	} else {
 		parsed, perr := time.ParseDuration(s)
 		if perr != nil {
-			return 0, fmt.Errorf("want a duration like 30s or 1m, or a number of seconds like 30")
+			return 0, errors.New("want a duration like 30s or 1m, or a number of seconds like 30")
 		}
 		d = parsed
 	}
 	if d < 0 {
-		return 0, fmt.Errorf("must not be negative (0 checks once and answers at once)")
+		return 0, errors.New("must not be negative (0 checks once and answers at once)")
 	}
 	if d > heldWaitMax {
 		return 0, fmt.Errorf("%s exceeds the maximum of %s; poll again later instead of waiting longer", d, heldWaitMax)

@@ -241,8 +241,12 @@ func TestMCPGetExecutionResult_HeldPayloadKeys(t *testing.T) {
 		status        string
 		wantDirective bool
 	}{
-		{"held", true}, {"queued", true}, {"running", true},
-		{"completed", false}, {"failed", false}, {"cancelled", false},
+		{"held", true},
+		{"queued", true},
+		{"running", true},
+		{"completed", false},
+		{"failed", false},
+		{"cancelled", false},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			srv, _, _ := heldServers(t, tc.status)
@@ -358,7 +362,7 @@ func TestMCPGetExecutionResult_RequiresExactlyOneID(t *testing.T) {
 
 func TestMCPGetExecutionResult_TransportErrorKeepsTheHeldExecution(t *testing.T) {
 	var polls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if polls.Add(1) > 1 {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			_ = conn.Close()
