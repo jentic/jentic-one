@@ -898,6 +898,8 @@ async def test_handler_lifecycle_write_failure_still_returns_the_upstream_result
     failed = [e for e in logs if e["event"] == "queued_execution_lifecycle_write_failed"]
     assert len(failed) == 1
     assert failed[0]["error_type"] == type(error).__name__
+    # A swallowed bug keeps its traceback; a DB error (SQL + params) does not.
+    assert failed[0]["exc_info"] is (error if isinstance(error, TypeError) else False)
 
 
 @pytest.mark.asyncio
@@ -966,6 +968,46 @@ async def test_handler_unpersisted_record_reports_the_real_upstream_result() -> 
     assert len(logged) == 1
     assert logged[0]["error_type"] == "DatabaseUnavailableError"
     assert logged[0]["http_status"] == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cause", "runner_failed", "label", "traceback"),
+    [
+        pytest.param(DatabaseUnavailableError("lost"), False, "record", False, id="db-write"),
+        pytest.param(TypeError("bad argument"), False, "record", True, id="bug-in-write"),
+        pytest.param(RuntimeError("runner crashed"), True, "runner", True, id="runner-crash"),
+    ],
+)
+async def test_handler_unpersisted_record_counts_and_logs_what_failed(
+    cause: Exception, runner_failed: bool, label: str, traceback: bool
+) -> None:
+    """A crashed call counts as ``write=runner``, not as a failed record write,
+    and a swallowed bug keeps its traceback while a DB error does not."""
+    exc = ExecutionRecordNotPersistedError(
+        None, upstream_error=type(cause).__name__, runner_failed=runner_failed
+    )
+    exc.__cause__ = cause
+    handler = ExecutionHandler(executor=_RaisingExecutor(exc))
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch("jentic_one.shared.jobs.execution_handler._record_write_failure") as counted,
+        patch("jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock),
+    ):
+        result = await handler.execute(
+            "job-unpersisted-label",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    counted.assert_called_once_with(label)
+    logged = [e for e in logs if e["event"] == "queued_execution_record_not_persisted"]
+    assert len(logged) == 1
+    assert logged[0]["exc_info"] is (exc if traceback else False)
 
 
 @pytest.mark.asyncio

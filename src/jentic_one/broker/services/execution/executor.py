@@ -111,6 +111,9 @@ class PipelineExecutor(UpstreamExecutor):
             raise ExecutionRecordNotPersistedError(
                 _exec_result(kept) if kept is not None else None,
                 upstream_error=_failure_reason(broker.error),
+                # The call raised a non-BrokerError: run_execution persists
+                # nothing for it, so no record write was attempted.
+                runner_failed=exc is broker.error,
             ) from exc
         return _exec_result(outcome)
 

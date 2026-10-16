@@ -37,7 +37,7 @@ import structlog
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
-from jentic_one.shared.db.connectivity import redact_sql
+from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
 from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
@@ -80,17 +80,34 @@ _write_failures: Counter | None = None
 
 
 def _record_write_failure(write: str) -> None:
-    """Count a failed post-outcome write; ``write`` is ``record`` or ``lifecycle``."""
+    """Count a post-dispatch failure that left a queued execution's rows unwritten.
+
+    ``write`` is ``record`` (the ``executions`` record was not written),
+    ``lifecycle`` (the lifecycle events were not written), or ``runner`` (the
+    dispatched call itself crashed, so no record write was attempted).
+    """
     global _write_failures
     if _write_failures is None:
         _write_failures = get_meter("jentic_one.jobs").create_counter(
             "jentic_one.jobs.execution_write_failed",
             description=(
-                "Queued-execution writes that failed after the job's outcome was "
-                "settled; the job still completed with its real result."
+                "Queued-execution post-dispatch failures that left the executions "
+                "record (write=record) or lifecycle events (write=lifecycle) "
+                "unwritten, or a dispatched call that crashed before any record "
+                "write (write=runner); the job still completed with its real result."
             ),
         )
     _write_failures.add(1, {"write": write})
+
+
+def _traceback_if_safe(exc: BaseException) -> BaseException | bool:
+    """``exc_info`` for a swallowed post-dispatch error: its traceback, unless unsafe.
+
+    A bug swallowed here is otherwise untraceable, so it is logged with its
+    traceback. A database error anywhere in the chain is not: its message can
+    carry the SQL statement and bound parameters.
+    """
+    return False if involves_database_error(exc) else exc
 
 
 #: Result problem of a held payload this worker has no keyset to decrypt.
@@ -324,13 +341,14 @@ class ExecutionHandler:
                 error_msg = f"Upstream returned {http_status}"
         except ExecutionRecordNotPersistedError as exc:
             cause = exc.__cause__
-            _record_write_failure("record")
+            _record_write_failure("runner" if exc.runner_failed else "record")
             logger.error(
                 "queued_execution_record_not_persisted",
                 job_id=job_id,
                 execution_id=execution_id,
                 error_type=type(cause).__name__ if cause is not None else None,
                 http_status=exc.result.status_code if exc.result is not None else None,
+                exc_info=_traceback_if_safe(exc),
             )
             if exc.result is None:
                 status = ExecutionStatus.FAILED
@@ -488,6 +506,7 @@ class ExecutionHandler:
                 job_id=job_id,
                 execution_id=execution_id,
                 error_type=type(exc).__name__,
+                exc_info=_traceback_if_safe(exc),
             )
 
     async def _emit_lifecycle(

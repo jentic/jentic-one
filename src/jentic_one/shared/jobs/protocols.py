@@ -196,17 +196,24 @@ class ExecutionRecordNotPersistedError(Exception):
     connection, driver error, a bug), or the call dying without a record.
     ``result`` is the verbatim upstream result when the call returned one, and
     ``None`` otherwise; ``upstream_error`` is then the broker's failure reason.
-    It is distinct from a pipeline failure so the worker reports what the
-    upstream actually did, and never requeues a job whose upstream side effect
-    may already have happened.
+    ``runner_failed`` is true when the dispatched call itself crashed (a
+    non-``BrokerError``), so no record write was attempted. It is distinct
+    from a pipeline failure so the worker reports what the upstream actually
+    did, and never requeues a job whose upstream side effect may already have
+    happened.
     """
 
     def __init__(
-        self, result: UpstreamExecResult | None, *, upstream_error: str | None = None
+        self,
+        result: UpstreamExecResult | None,
+        *,
+        upstream_error: str | None = None,
+        runner_failed: bool = False,
     ) -> None:
         super().__init__("execution record not persisted")
         self.result = result
         self.upstream_error = upstream_error
+        self.runner_failed = runner_failed
 
 
 class UpstreamExecutor(Protocol):

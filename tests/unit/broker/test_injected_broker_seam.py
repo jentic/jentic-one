@@ -276,6 +276,7 @@ async def test_async_path_record_write_failure_carries_the_upstream_result(
     assert db.opened == 1
     assert caught.value.__cause__ is error
     assert caught.value.upstream_error == upstream_error
+    assert caught.value.runner_failed is False
     if expected_status is None:
         assert caught.value.result is None
     else:
@@ -307,6 +308,7 @@ async def test_async_path_non_broker_error_after_dispatch_is_not_retryable() -> 
     assert len(broker.calls) == 1
     assert caught.value.result is None
     assert caught.value.upstream_error == "RuntimeError"
+    assert caught.value.runner_failed is True
     assert isinstance(caught.value.__cause__, RuntimeError)
 
 
