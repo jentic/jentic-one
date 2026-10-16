@@ -102,7 +102,13 @@ DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunne
 - **`RetryRunner`** — retries only when safe: the failure happened before
   the request was sent, or the method is idempotent, or the caller supplied
   an idempotency key. Exponential backoff with full jitter; honors
-  `Retry-After` on 429/503; never retries a streaming response.
+  `Retry-After` on 429/503; never retries a streaming response. When it
+  gives up after an earlier attempt that may have reached the upstream,
+  the error it re-raises says so, so a final connect failure or open
+  circuit never reads as "nothing was sent". A keyed request's
+  idempotency claim relies on that: it is released only when no attempt
+  can have reached the upstream, and otherwise the failure is stored and
+  replayed to the same key (see `broker/web/claim_lease.py`).
 - **`CircuitBreakerRunner`** — a per-upstream-host breaker over the shared
   state backend (memory or Redis), so one failing vendor cannot burn the
   budget of every call.

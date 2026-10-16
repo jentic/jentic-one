@@ -229,6 +229,32 @@ paths:
       response. If the same key is reused with a different request
       body or upstream URL, the broker returns `409 Conflict`.
 
+      A keyed request that **fails** is handled by whether the upstream
+      may have acted on it:
+
+      - **Nothing reached the upstream** — a connect failure
+        (`upstream_connect_failed`), an open circuit (`circuit_open`),
+        an unavailable runner, or an error raised before the upstream
+        call (e.g. a credential that is not provisioned, cannot be
+        decrypted, or needs reconnecting). The key is freed at once:
+        retrying with the same key runs the request again.
+      - **The upstream may have acted** — a read timeout
+        (`upstream_timeout`), a connection dropped after the request was
+        sent (`upstream_transport_error`), an oversized response
+        (`upstream_response_too_large`), the overall deadline
+        (`deadline_exceeded`), or an upstream answer the broker could
+        not record. The failure (or the upstream answer) is stored and
+        replayed to the same key like any other response, so a same-key
+        retry never sends the call upstream twice. If the upstream may
+        have acted but there is nothing to store (the request was
+        cancelled, or an unexpected broker error), the key stays
+        `idempotency_in_progress` until the pending claim lapses (the
+        `Retry-After` delay on that `409`).
+
+      To run a call again after an ambiguous failure, send it with a
+      **new** `Idempotency-Key` — that is the explicit opt-in to a
+      possible second execution.
+
       ### Proxied upstream headers
 
       On synchronous `200` responses, upstream API response headers are
@@ -684,8 +710,12 @@ components:
       description: |
         Optional caller-supplied key to make this request idempotent.
         If present, the broker dedupes against the key for 24 hours
-        and replays the original response on retry. UUIDv4 recommended.
-        See the `Idempotency` section above for full semantics.
+        and replays the original response on retry. A failure that
+        provably never reached the upstream frees the key at once; a
+        failure after the request may have reached the upstream is
+        replayed too, so re-running it takes a new key. UUIDv4
+        recommended. See the `Idempotency` section above for full
+        semantics.
       example: 5f9c8b2e-7a4d-4e1f-9c3a-1b2d3e4f5a6b
       schema:
         type: string
@@ -1391,8 +1421,11 @@ components:
           credential, or body). Reusing a key for a different request is
           rejected; pick a new key.
         - `idempotency_in_progress` — a request with this `Idempotency-Key`
-          is still being processed. The response carries a `Retry-After`
-          header; retry after that delay to obtain the replayed result.
+          is still being processed, or an earlier request with it ended
+          while the upstream may have been acting on it and with no
+          response to replay (cancelled mid-call). The response carries a
+          `Retry-After` header; retry after that delay to obtain the
+          replayed result, or use a new key to run the call again.
       content:
         application/problem+json:
           schema:
