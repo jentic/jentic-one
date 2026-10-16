@@ -22,9 +22,13 @@ interface Options extends Omit<RenderOptions, 'wrapper'> {
 export function renderWithProviders(ui: ReactElement, options: Options = {}) {
 	const { route = '/', path, ...renderOptions } = options;
 
+	// `gcTime: Infinity`: StrictMode (enabled in setup.ts) unmounts and remounts
+	// every effect, which briefly leaves a query with no observer. A finite
+	// gcTime can collect it in that gap and fire a second fetch on remount. The
+	// client is per-render, so nothing outlives the test.
 	const queryClient = new QueryClient({
 		defaultOptions: {
-			queries: { retry: false, gcTime: 0 },
+			queries: { retry: false, gcTime: Infinity },
 			mutations: { retry: false },
 		},
 	});

@@ -20,7 +20,14 @@ document.documentElement.dataset.theme = 'light';
 // testing-library's 1s default and fail every retry of the same loaded run
 // (e.g. the AgentRail feed assertions). Passing queries are unaffected — they
 // resolve as soon as the element appears; only genuine failures wait longer.
-configure({ asyncUtilTimeout: 5_000 });
+//
+// `reactStrictMode` mounts every `render`/`renderHook` tree under a root-level
+// <StrictMode>, so effects run mount → unmount → remount as they do in dev. In
+// React 19 strict effect semantics only engage when StrictMode is the root
+// element passed to `createRoot().render()`; a <StrictMode> inside a test
+// wrapper sits below RTL's root and is a silent no-op. A test that has to
+// observe single-mount behaviour can pass `reactStrictMode: false` to `render`.
+configure({ asyncUtilTimeout: 5_000, reactStrictMode: true });
 
 beforeAll(async () => {
 	await worker.start({ onUnhandledFrame: 'warn' });

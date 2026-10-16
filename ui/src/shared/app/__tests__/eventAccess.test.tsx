@@ -118,9 +118,14 @@ describe('Activity rail — caller without event access', () => {
 		renderShell(<AgentRail />, { withAuth: false });
 
 		expect(await screen.findByTestId('rail-forbidden')).toBeInTheDocument();
-		// The reconnect backoff starts at 1s; wait past it.
+		// StrictMode's effect replay opens (and aborts) one subscription before
+		// the live one, so the wire count at the refusal is the baseline: no
+		// reconnect may follow it. The reconnect backoff starts at 1s; wait past it.
+		const atRefusal = calls.stream;
+		expect(atRefusal).toBeGreaterThan(0);
+		expect(atRefusal).toBeLessThanOrEqual(2);
 		await new Promise((r) => setTimeout(r, 2500));
-		expect(calls.stream).toBe(1);
+		expect(calls.stream).toBe(atRefusal);
 		expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument();
 	});
 });
