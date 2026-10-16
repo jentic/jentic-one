@@ -18,8 +18,8 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.exceptions import (
-    BrokerError,
     CircuitOpenError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
 )
@@ -96,15 +96,15 @@ class _DroppingStream:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("exc", "error_cls", "error_type"),
+    ("exc", "error_type"),
     [
-        (httpx.RemoteProtocolError("peer closed"), BrokerError, "upstream_transport_error"),
-        (httpx.ReadError("reset"), BrokerError, "upstream_transport_error"),
-        (httpx.ReadTimeout("stalled"), UpstreamTimeoutError, "upstream_timeout"),
+        (httpx.RemoteProtocolError("peer closed"), "upstream_transport_error"),
+        (httpx.ReadError("reset"), "upstream_transport_error"),
+        (httpx.ReadTimeout("stalled"), "upstream_timeout"),
     ],
 )
 async def test_stream_midbody_transport_error_is_a_domain_error(
-    exc: httpx.HTTPError, error_cls: type[BrokerError], error_type: str
+    exc: httpx.HTTPError, error_type: str
 ) -> None:
     """Pins #1712: a mid-body ``httpx`` failure never escapes the runner raw."""
 
@@ -113,14 +113,15 @@ async def test_stream_midbody_transport_error_is_a_domain_error(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         runner = HttpRunner(client)
-        with pytest.raises(error_cls) as raised:
+        with pytest.raises(UpstreamBodyInterruptedError) as raised:
             async with runner.stream(
                 RunnerRequest(method="GET", url="https://api.example.com/x")
             ) as result:
                 async for _ in result.aiter:
                     pass
     assert raised.value.type == error_type
-    assert raised.value.extra == {"error_type": type(exc).__name__}
+    assert raised.value.transport_error == type(exc).__name__
+    assert raised.value.extra == {}
     assert raised.value.__cause__ is None
     assert str(exc) not in raised.value.detail
 

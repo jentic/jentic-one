@@ -42,6 +42,7 @@ from jentic_one.broker.core.exceptions import (
     TooManyCandidatesError,
     UnauthorizedRevisionPinError,
     UpgradeNotSupportedError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     UpstreamUrlNotAllowedError,
@@ -75,6 +76,9 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     UpstreamTimeoutError: 504,
     DeadlineExceededError: 504,
     UpstreamResponseTooLargeError: 502,
+    # Raised after the status line is sent, so normally never rendered; a
+    # transport failure on the upstream leg is a gateway error if it ever is.
+    UpstreamBodyInterruptedError: 502,
     RunnerSchemeUnsupportedError: 501,
     RunnerUnavailableError: 503,
 }

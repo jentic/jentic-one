@@ -37,6 +37,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     BrokerError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     switch_toolkit_directive,
@@ -279,26 +280,27 @@ class HttpRunner(UpstreamRunner):
         """The streaming passthrough's body: :meth:`_cap_iter` with transport errors mapped.
 
         A failure here happens after the response has started (the upstream
-        dropped or stalled partway through the body), so it is raised as a
-        domain error for the streaming edge to log, abort and record — never as
-        a raw ``httpx`` exception. ``extra["error_type"]`` names the transport
-        failure class (the message is never surfaced, see
-        :func:`_transport_error_detail`).
+        dropped or stalled partway through the body), so it is raised as
+        :class:`UpstreamBodyInterruptedError` for the streaming edge to log,
+        abort and record — never as a raw ``httpx`` exception, and never as the
+        open-phase error a failure before the headers maps to. Its
+        ``transport_error`` names the failure class; the message is never
+        surfaced (see :func:`_transport_error_detail`).
         """
         try:
             async for chunk in self._cap_iter(resp.aiter_raw(), resp.status_code):
                 yield chunk
         except httpx.TimeoutException as exc:
-            raise UpstreamTimeoutError(
+            raise UpstreamBodyInterruptedError(
                 detail="The upstream stopped sending the response body within the deadline.",
                 type="upstream_timeout",
-                extra={"error_type": type(exc).__name__},
+                transport_error=type(exc).__name__,
             ) from None
         except httpx.HTTPError as exc:
-            raise BrokerError(
+            raise UpstreamBodyInterruptedError(
                 detail=_transport_error_detail(exc),
                 type="upstream_transport_error",
-                extra={"error_type": type(exc).__name__},
+                transport_error=type(exc).__name__,
             ) from None
 
     @contextlib.asynccontextmanager
