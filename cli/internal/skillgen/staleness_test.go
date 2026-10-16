@@ -257,3 +257,102 @@ func TestInstalledStatesDedupesSharedTargets(t *testing.T) {
 		t.Errorf("shared block operators = %v, want [codex generic]", got)
 	}
 }
+
+// TestApplyRefusesToDowngradeNewerInstall: an install recording a newer
+// version than the content being applied is left byte-for-byte intact (an
+// older CLI must not downgrade it) unless Force; a user edit still reports
+// first, since it needs --force whatever the version.
+func TestApplyRefusesToDowngradeNewerInstall(t *testing.T) {
+	for _, op := range []string{"claude", "hermes", "generic"} {
+		t.Run(op, func(t *testing.T) {
+			env := stalenessEnv(t)
+			ad, _ := DefaultRegistry().Resolve(op)
+			bundled := BundledVersion("jentic")
+			if _, err := Apply(ad, withVersion(t, "999"), env, ApplyOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			target := ad.Target(ad.DefaultScope(), "jentic", env)
+			before, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, dry := range []bool{true, false} {
+				out, err := Apply(ad, jenticContent(t), env, ApplyOptions{DryRun: dry})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !out.NewerInstalled || out.Changed || out.InstalledVersion != "999" || out.AppliedVersion != bundled {
+					t.Errorf("dry=%v outcome = %+v, want NewerInstalled 999 over %s and no change", dry, out, bundled)
+				}
+			}
+			after, _ := os.ReadFile(target)
+			if string(after) != string(before) {
+				t.Error("a newer install must not be rewritten without Force")
+			}
+			if st := mustInstalled(t, ad, env); st.Freshness != FreshnessNewer {
+				t.Errorf("freshness = %q, want newer", st.Freshness)
+			}
+
+			out, err := Apply(ad, jenticContent(t), env, ApplyOptions{Force: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.NewerInstalled || !out.Changed {
+				t.Errorf("forced outcome = %+v, want a downgrade write", out)
+			}
+			if st := mustInstalled(t, ad, env); st.Freshness != FreshnessCurrent {
+				t.Errorf("after forced apply freshness = %q, want current", st.Freshness)
+			}
+		})
+	}
+
+	t.Run("user edits report first", func(t *testing.T) {
+		env := stalenessEnv(t)
+		ad, _ := DefaultRegistry().Resolve("claude")
+		if _, err := Apply(ad, withVersion(t, "999"), env, ApplyOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		target := ad.Target(ad.DefaultScope(), "jentic", env)
+		if err := os.WriteFile(target, []byte("my notes\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := Apply(ad, jenticContent(t), env, ApplyOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !out.UserEdits || out.NewerInstalled {
+			t.Errorf("outcome = %+v, want UserEdits (not NewerInstalled)", out)
+		}
+	})
+}
+
+// TestProbeAllMatchesPerAdapterProbes: the single probe pass yields exactly
+// the per-operator rows InstallStatesForSkills reports and the deduplicated
+// set InstalledStates reports.
+func TestProbeAllMatchesPerAdapterProbes(t *testing.T) {
+	env := stalenessEnv(t)
+	reg := DefaultRegistry()
+	for _, op := range []string{"claude", "generic"} {
+		ad, _ := reg.Resolve(op)
+		if _, err := Apply(ad, jenticContent(t), env, ApplyOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := ProbeAll(reg, env)
+	for _, ad := range reg.Adapters() {
+		want := InstallStatesForSkills(ad, BundledNames(), env)
+		got := p.ByOperator[ad.Operator()]
+		if len(got) != len(want) {
+			t.Fatalf("%s: %d rows, want %d", ad.Operator(), len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s row %d = %+v, want %+v", ad.Operator(), i, got[i], want[i])
+			}
+		}
+	}
+	if len(p.Installed) != 2 {
+		t.Errorf("installed artifacts = %+v, want the claude SKILL.md and the shared AGENTS.md block", p.Installed)
+	}
+}

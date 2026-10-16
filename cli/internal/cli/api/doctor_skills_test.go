@@ -40,7 +40,15 @@ func TestSummarizeSkillFreshness(t *testing.T) {
 		{"shared artifact counted once, all operators named", []skillgen.InstalledSkill{
 			st("jentic", skillgen.FreshnessStale, "1", skillgen.OpCodex, skillgen.OpGeneric),
 		}, agentWarn, []string{"1 of 1", "jentic v1→v6 (codex, generic)"}},
-		{"newer is not stale", []skillgen.InstalledSkill{st("jentic", skillgen.FreshnessNewer, "7")}, agentPass, []string{"up to date"}},
+		{"newer is not stale", []skillgen.InstalledSkill{st("jentic", skillgen.FreshnessNewer, "7")}, agentPass, []string{"none older than the bundled copy", "(1 newer than this CLI — upgrade jentic)"}},
+		{"newer alongside current", []skillgen.InstalledSkill{
+			st("jentic", skillgen.FreshnessNewer, "7"),
+			st("import-new-api", skillgen.FreshnessCurrent, "6"),
+		}, agentPass, []string{"2 installed skill(s)", "(1 newer than this CLI — upgrade jentic)"}},
+		{"newer and stale together", []skillgen.InstalledSkill{
+			st("jentic", skillgen.FreshnessNewer, "7"),
+			st("import-new-api", skillgen.FreshnessStale, "1"),
+		}, agentWarn, []string{"1 of 2", "import-new-api v1→v6", "(1 newer than this CLI — upgrade jentic)"}},
 		{"unknown counted, not failed", []skillgen.InstalledSkill{
 			st("jentic", skillgen.FreshnessUnknown, ""),
 			st("import-new-api", skillgen.FreshnessCurrent, "6"),
@@ -73,21 +81,40 @@ func skillsCheck(t *testing.T, version string) (status, detail string, found boo
 // skillsCheckFor is skillsCheck installing through the given operator.
 func skillsCheckFor(t *testing.T, operator, version string) (status, detail string, found bool) {
 	t.Helper()
+	env := doctorSkillsEnv(t)
+	if version != "" {
+		installJentic(t, env, operator, version)
+	}
+	return runDoctorSkills(t, env)
+}
+
+// doctorSkillsEnv is an isolated home+cwd detection env with HOME pointed at it.
+func doctorSkillsEnv(t *testing.T) skillgen.DetectEnv {
+	t.Helper()
 	home, cwd := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
-	env := skillgen.DetectEnv{Home: home, Cwd: cwd}
-	if version != "" {
-		c, err := skillgen.Bundled("jentic", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		c.Version = version
-		ad, _ := skillgen.DefaultRegistry().Resolve(operator)
-		if _, err := skillgen.Apply(ad, c, env, skillgen.ApplyOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return skillgen.DetectEnv{Home: home, Cwd: cwd}
+}
 
+// installJentic writes the bundled jentic skill through operator, stamped as
+// version.
+func installJentic(t *testing.T, env skillgen.DetectEnv, operator, version string) {
+	t.Helper()
+	c, err := skillgen.Bundled("jentic", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Version = version
+	ad, _ := skillgen.DefaultRegistry().Resolve(operator)
+	if _, err := skillgen.Apply(ad, c, env, skillgen.ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runDoctorSkills runs doctor --json against env and returns the
+// Skills/freshness row, if any.
+func runDoctorSkills(t *testing.T, env skillgen.DetectEnv) (status, detail string, found bool) {
+	t.Helper()
 	app := testApp(t)
 	app.DetectEnv = func() (skillgen.DetectEnv, error) { return env, nil }
 	cmd := newDoctorCmd(app)
@@ -141,15 +168,68 @@ func TestDoctorSkillsCheck(t *testing.T) {
 	})
 }
 
-// TestDoctorSkillsCheckIsReadOnly: probing a stale install must not refresh it.
+// TestDoctorSkillsCheckIsReadOnly: probing stale installs must not touch
+// anything on disk — neither an owned-file install (SKILL.md, sidecar,
+// references) nor the shared AGENTS.md block.
 func TestDoctorSkillsCheckIsReadOnly(t *testing.T) {
-	skillsCheck(t, "1")
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "jentic", ".jentic-skill.json"))
-	if err != nil {
-		t.Fatal(err)
+	env := doctorSkillsEnv(t)
+	installJentic(t, env, "claude", "1")
+	installJentic(t, env, "generic", "1")
+
+	before := snapshotTree(t, env.Home, env.Cwd)
+	if len(before) == 0 {
+		t.Fatal("snapshot found no files; the installs did not land")
 	}
-	if !strings.Contains(string(data), `"version": "1"`) {
-		t.Errorf("doctor rewrote the sidecar:\n%s", data)
+	if status, _, ok := runDoctorSkills(t, env); !ok || status != "warn" {
+		t.Fatalf("doctor row = (%v, %q), want a stale warn", ok, status)
 	}
+	after := snapshotTree(t, env.Home, env.Cwd)
+
+	for path, b := range before {
+		a, ok := after[path]
+		switch {
+		case !ok:
+			t.Errorf("doctor removed %s", path)
+		case a != b:
+			t.Errorf("doctor modified %s", path)
+		}
+	}
+	for path := range after {
+		if _, ok := before[path]; !ok {
+			t.Errorf("doctor created %s", path)
+		}
+	}
+}
+
+// fileState is one file's bytes and modification time.
+type fileState struct {
+	data    string
+	modTime int64
+}
+
+// snapshotTree records every regular file under roots.
+func snapshotTree(t *testing.T, roots ...string) map[string]fileState {
+	t.Helper()
+	out := map[string]fileState{}
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			out[path] = fileState{data: string(data), modTime: info.ModTime().UnixNano()}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return out
 }

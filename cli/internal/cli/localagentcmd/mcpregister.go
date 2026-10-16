@@ -86,33 +86,104 @@ func activeContextName() string {
 	return cfg.ActiveContext
 }
 
+// MCP registration outcome vocabulary for the `skill init` JSON envelope.
+const (
+	mcpActionCreated   = "created"   // the runtime's config file was created with the entry
+	mcpActionUpdated   = "updated"   // the entry was written into an existing config
+	mcpActionUnchanged = "unchanged" // the entry was already current
+	mcpActionPlanned   = "planned"   // dry run: the entry would be written or checked
+	mcpActionError     = "error"     // this runtime failed; see error
+
+	mcpSkippedNoRuntime     = "no_mcp_runtime"         // no selected operator has a detected MCP runtime
+	mcpSkippedNoContext     = "no_active_context"      // nothing to pin with --context yet
+	mcpSkippedNoBinaryPath  = "binary_path_unresolved" // the stable jentic binary path could not be resolved
+	mcpSkippedEnvUnresolved = "env_unresolved"         // home or working directory could not be resolved
+)
+
+// mcpResult is one runtime's MCP registration outcome. Path is the config file
+// written; for claude-code, which registers through the claude CLI, it
+// describes that route instead.
+type mcpResult struct {
+	Runtime string `json:"runtime"`
+	Path    string `json:"path"`
+	Action  string `json:"action"`
+	DryRun  bool   `json:"dry_run"`
+	Error   string `json:"error,omitempty"`
+}
+
+// mcpReport is the `mcp` member of the `skill init` envelope: every runtime
+// considered, and why registration was skipped when it was.
+type mcpReport struct {
+	Results       []mcpResult `json:"results"`
+	SkippedReason string      `json:"skipped_reason,omitempty"`
+}
+
+// emptyMCPReport is the report for a run that selected no targets.
+func emptyMCPReport() *mcpReport {
+	return &mcpReport{Results: []mcpResult{}}
+}
+
+// mcpRegistration is what registerMCPEntries did: the successful outcomes
+// (setup's isolation step acts on them) plus the per-runtime report.
+type mcpRegistration struct {
+	outcomes      []mcpcfg.Outcome
+	results       []mcpResult
+	skippedReason string
+}
+
+// report renders the registration for the JSON envelope; results encode as
+// [] (never null).
+func (r mcpRegistration) report() *mcpReport {
+	rep := &mcpReport{Results: r.results, SkippedReason: r.skippedReason}
+	if rep.Results == nil {
+		rep.Results = []mcpResult{}
+	}
+	return rep
+}
+
+// mcpOutcomeAction maps one successful registration onto the action vocabulary.
+func mcpOutcomeAction(out mcpcfg.Outcome) string {
+	switch {
+	case out.Created:
+		return mcpActionCreated
+	case out.Changed:
+		return mcpActionUpdated
+	default:
+		return mcpActionUnchanged
+	}
+}
+
 // registerMCPEntries writes the MCP entry for every detected runtime among
 // the selected targets and reports each write to the control plane
 // (best-effort). It never returns an error to the caller's main flow — every
 // failure is reported per-runtime and the rest continue; MCP registration
 // must not block the identity/skill provisioning the operator came for.
-// Returns the per-runtime outcomes so setup's isolation step can act on them.
-func (a *Cmd) registerMCPEntries(ctx context.Context, targets []skillTarget, dryRun bool) []mcpcfg.Outcome {
+func (a *Cmd) registerMCPEntries(ctx context.Context, targets []skillTarget, dryRun bool) mcpRegistration {
+	var reg mcpRegistration
 	env, err := a.mcpEnv()
 	if err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("MCP registration skipped: %v", err))
-		return nil
+		reg.skippedReason = mcpSkippedEnvUnresolved
+		return reg
 	}
 	runtimes := mcpRuntimesFor(targets, env)
 	if len(runtimes) == 0 {
-		return nil
+		reg.skippedReason = mcpSkippedNoRuntime
+		return reg
 	}
 
 	ctxName := activeContextName()
 	if ctxName == "" {
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"No active context to pin — skipping MCP entry registration (re-run `jentic setup` once registered)."))
-		return nil
+		reg.skippedReason = mcpSkippedNoContext
+		return reg
 	}
 	binPath, err := mcpcfg.StableBinaryPath()
 	if err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("MCP registration skipped (cannot resolve the jentic binary path): %v", err))
-		return nil
+		reg.skippedReason = mcpSkippedNoBinaryPath
+		return reg
 	}
 	entry := mcpcfg.PlainEntry(binPath, ctxName)
 
@@ -121,49 +192,65 @@ func (a *Cmd) registerMCPEntries(ctx context.Context, targets []skillTarget, dry
 	if dryRun {
 		for _, rt := range runtimes {
 			fmt.Fprintln(a.Out, "  "+theme.Infof("%-16s would write %s", rt, a.mcpTargetLabel(rt, env)))
+			reg.results = append(reg.results, mcpResult{
+				Runtime: string(rt), Path: mcpTargetPath(rt, env), Action: mcpActionPlanned, DryRun: true,
+			})
 		}
-		return nil
+		return reg
 	}
 
-	var outcomes []mcpcfg.Outcome
 	for _, rt := range runtimes {
 		out, werr := a.applyMCPEntry(ctx, rt, env, entry)
 		if werr != nil {
 			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-16s %v", rt, werr))
+			reg.results = append(reg.results, mcpResult{
+				Runtime: string(rt), Path: mcpTargetPath(rt, env), Action: mcpActionError, Error: werr.Error(),
+			})
 			continue
 		}
 		a.reportMCPOutcome(out)
-		outcomes = append(outcomes, out)
+		reg.outcomes = append(reg.outcomes, out)
+		reg.results = append(reg.results, mcpResult{Runtime: string(rt), Path: out.Path, Action: mcpOutcomeAction(out)})
 		if out.Changed || out.Created {
 			a.reportConfigRegistered(ctx, rt)
 		}
 	}
 
-	if len(outcomes) > 1 {
+	if len(reg.outcomes) > 1 {
 		// One agent per runtime (master §3.10): a shared context means shared
 		// audit/permissions/revocation. Suggest, never force.
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"Tip: give each runtime its own agent — register a per-runtime context (e.g. `jentic register --name "+
 				ctxName+"-cursor`), then re-run `jentic setup` with that context active."))
 	}
-	return outcomes
+	return reg
 }
 
 // mcpTargetLabel is the display target for one runtime (dry-run and reports).
 func (a *Cmd) mcpTargetLabel(rt mcpcfg.Runtime, env mcpcfg.Env) string {
+	return prettyPath(mcpTargetPath(rt, env))
+}
+
+// mcpTargetPath is the absolute config path one runtime's entry is written to;
+// for claude-code it describes the claude CLI route.
+func mcpTargetPath(rt mcpcfg.Runtime, env mcpcfg.Env) string {
 	switch rt {
 	case mcpcfg.RuntimeCursor:
-		return prettyPath(mcpcfg.CursorConfigPath(env.Home))
+		return mcpcfg.CursorConfigPath(env.Home)
 	case mcpcfg.RuntimeClaudeDesktop:
-		return prettyPath(mcpcfg.ClaudeDesktopConfigPath(env.Home, env.GOOS))
+		return mcpcfg.ClaudeDesktopConfigPath(env.Home, env.GOOS)
 	case mcpcfg.RuntimeClaudeCode:
-		return "claude mcp add (user scope)"
+		return claudeCodeRoute
 	case mcpcfg.RuntimeCodex:
-		return prettyPath(mcpcfg.CodexConfigPath(env.Home))
+		return mcpcfg.CodexConfigPath(env.Home)
 	default:
 		return string(rt)
 	}
 }
+
+// claudeCodeRoute describes how the claude-code entry is registered: through
+// the claude CLI at user scope, not a config file this CLI writes.
+const claudeCodeRoute = "claude mcp add (user scope)"
 
 // applyMCPEntry writes entry for one runtime via its native mechanism.
 func (a *Cmd) applyMCPEntry(ctx context.Context, rt mcpcfg.Runtime, env mcpcfg.Env, entry mcpcfg.Entry) (mcpcfg.Outcome, error) {
@@ -193,7 +280,7 @@ func (a *Cmd) applyMCPEntry(ctx context.Context, rt mcpcfg.Runtime, env mcpcfg.E
 // directly — so a working entry is only ever removed when a change is
 // genuinely needed. Failures carry claude's own stderr, not a bare exit code.
 func (a *Cmd) runClaudeCodeSteps(ctx context.Context, env mcpcfg.Env, entry mcpcfg.Entry) (mcpcfg.Outcome, error) {
-	out := mcpcfg.Outcome{Runtime: mcpcfg.RuntimeClaudeCode, Path: "claude mcp add (user scope)"}
+	out := mcpcfg.Outcome{Runtime: mcpcfg.RuntimeClaudeCode, Path: claudeCodeRoute}
 	claudePath, err := env.LookPath("claude")
 	if err != nil {
 		return out, fmt.Errorf("claude binary not found on PATH: %w", err)

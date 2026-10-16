@@ -376,7 +376,8 @@ func TestSkillListPrettyShowsEveryInstall(t *testing.T) {
 	app := testApp(t)
 	app.Out = out
 	detected := map[skillgen.Operator]bool{ad.Operator(): true}
-	if err := app.skillListPretty(reg, env, detected, artifactOperators(reg, env)); err != nil {
+	probe := skillgen.ProbeAll(reg, env)
+	if err := app.skillListPretty(reg, env, detected, probe, artifactOperators(probe)); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()

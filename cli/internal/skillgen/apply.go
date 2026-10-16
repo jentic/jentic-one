@@ -18,12 +18,21 @@ type Outcome struct {
 	Changed   bool // the skill content was written/updated
 	Skipped   bool // nothing to do (already up to date)
 	UserEdits bool // an existing install had manual edits (needs --force)
+	// NewerInstalled reports that the existing install records a content
+	// version above the one being applied (written by a newer CLI); it was
+	// left alone, since rewriting it would downgrade it (needs --force).
+	NewerInstalled bool
+	// InstalledVersion and AppliedVersion are the version the existing
+	// install records and the one being applied, set alongside
+	// NewerInstalled so callers can name both.
+	InstalledVersion string
+	AppliedVersion   string
 }
 
 // ApplyOptions controls how Apply writes a skill.
 type ApplyOptions struct {
 	Scope  Scope // user vs project; zero value uses the adapter default
-	Force  bool  // overwrite a user-edited install
+	Force  bool  // overwrite a user-edited install, or downgrade a newer one
 	DryRun bool  // compute the outcome and target but write nothing
 }
 
@@ -31,7 +40,8 @@ type ApplyOptions struct {
 // target, idempotently. For a shared AGENTS.md it splices only that skill's
 // named block, leaving user content and sibling blocks intact; for an
 // owned-file SKILL.md it writes a clean spec file plus a provenance sidecar. It
-// refuses to overwrite a manually-edited install unless Force.
+// refuses to overwrite a manually-edited install, or one recording a newer
+// content version than c (an older CLI must not downgrade it), unless Force.
 func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, error) {
 	scope := opts.Scope
 	if scope == "" {
@@ -46,6 +56,18 @@ func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, e
 	}
 	out.Created = os.IsNotExist(err)
 	norm := []byte(normalizeNewlines(string(existing)))
+
+	if !out.Created && !opts.Force {
+		// The user-edit guard reports first: an edited install needs --force
+		// whatever its version, so it keeps the more specific signal.
+		if installed, edited, v := probeInstall(a, target, norm, c.Name); installed && !edited &&
+			CompareVersions(v, versionToken(c.Version)) == FreshnessNewer {
+			out.NewerInstalled = true
+			out.InstalledVersion = v
+			out.AppliedVersion = versionToken(c.Version)
+			return out, nil
+		}
+	}
 
 	if a.OwnsWholeFile() {
 		return applyOwnedFile(a, c, target, norm, out, opts)

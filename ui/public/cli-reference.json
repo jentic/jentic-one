@@ -2341,7 +2341,7 @@
               "path": "jentic skill init",
               "use": "init",
               "short": "Generate the Jentic skill set for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, --json, agent mode, pipes, agent sessions) it\ndefaults to the detected operators, echoing each resolved path before\nwriting.\n\nWith --json (the default off-TTY and in agent mode) stdout carries one\n{schema_version, results} document with a per-(operator, skill, scope)\noutcome; side reports go to stderr.",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, agent mode, pipes, agent sessions) it\ndefaults to the detected operators, echoing each resolved path before\nwriting.\n\nWith --json (the default off-TTY and in agent mode) stdout carries one\n{schema_version, results, mcp} document with a per-(operator, skill,\nscope) outcome and the MCP registration outcome; side reports go to\nstderr. --json changes only the output shape: on a terminal the\npickers still run (on stderr).\n\nAn install recording a newer skill version than this CLI bundles is\nleft alone (skipped_newer) unless --force.",
               "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --skill jentic --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
@@ -2370,7 +2370,7 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite content you have manually edited"
+                  "usage": "overwrite content you have manually edited, or downgrade an install newer than this CLI's copy"
                 },
                 {
                   "name": "json",
@@ -2449,7 +2449,7 @@
               "path": "jentic skill update",
               "use": "update",
               "short": "Re-render installed skills with the current base URL",
-              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent is reported and left alone unless --force.",
+              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent, and installs recording a newer skill version than this CLI\nbundles, are reported and left alone unless --force.",
               "example": "  jentic skill update\n  jentic skill update --operator claude\n  jentic skill update --skill jentic --force",
               "flags": [
                 {
@@ -2472,7 +2472,7 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite content you have manually edited"
+                  "usage": "overwrite content you have manually edited, or downgrade an install newer than this CLI's copy"
                 },
                 {
                   "name": "json",

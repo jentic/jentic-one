@@ -21,20 +21,36 @@ import (
 // untouched stdout.
 
 type skillJSONResult struct {
-	Operator   string `json:"operator"`
-	Skill      string `json:"skill"`
-	Scope      string `json:"scope"`
-	Path       string `json:"path"`
-	Action     string `json:"action"`
-	DryRun     bool   `json:"dry_run"`
-	UserEdits  bool   `json:"user_edits"`
-	Error      string `json:"error"`
-	AppliedVia string `json:"applied_via"`
+	Operator         string `json:"operator"`
+	Skill            string `json:"skill"`
+	Scope            string `json:"scope"`
+	Path             string `json:"path"`
+	Action           string `json:"action"`
+	DryRun           bool   `json:"dry_run"`
+	UserEdits        bool   `json:"user_edits"`
+	Error            string `json:"error"`
+	AppliedVia       string `json:"applied_via"`
+	InstalledVersion string `json:"installed_version"`
+	AvailableVersion string `json:"available_version"`
+}
+
+type skillJSONMCPResult struct {
+	Runtime string `json:"runtime"`
+	Path    string `json:"path"`
+	Action  string `json:"action"`
+	DryRun  bool   `json:"dry_run"`
+	Error   string `json:"error"`
+}
+
+type skillJSONMCP struct {
+	Results       []skillJSONMCPResult `json:"results"`
+	SkippedReason string               `json:"skipped_reason"`
 }
 
 type skillJSONEnvelope struct {
 	SchemaVersion string            `json:"schema_version"`
 	Results       []skillJSONResult `json:"results"`
+	MCP           *skillJSONMCP     `json:"mcp"`
 }
 
 // skillJSONHarness runs skill subcommands against a fixed home+cwd with
@@ -120,6 +136,11 @@ func TestSkillInitJSONEnvelope(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Jentic skills") {
 		t.Errorf("human heading leaked into JSON stdout:\n%s", stdout)
+	}
+	// generic has no MCP config surface: the mcp member is still present and
+	// says why nothing was registered.
+	if env.MCP == nil || env.MCP.Results == nil || len(env.MCP.Results) != 0 || env.MCP.SkippedReason != "no_mcp_runtime" {
+		t.Errorf("mcp = %+v, want empty results with skipped_reason no_mcp_runtime", env.MCP)
 	}
 
 	// A re-run reports the idempotent no-op.
@@ -245,6 +266,9 @@ func TestSkillMutatingVerbsJSONEmptyResults(t *testing.T) {
 		}
 		if !strings.Contains(stdout, `"results": []`) {
 			t.Errorf("skill %v: empty results must encode as [], got:\n%s", args, stdout)
+		}
+		if env.MCP != nil {
+			t.Errorf("skill %v: only init registers MCP entries, got mcp %+v", args, env.MCP)
 		}
 	}
 }
@@ -424,8 +448,8 @@ func TestSkillListReportsStaleness(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range claudeJenticRows(t, stdout) {
-		if r.Installed && (r.Stale || deref(r.Freshness) != "unknown" || deref(r.InstalledVersion) != "unknown") {
-			t.Errorf("unstamped install row = %+v", r)
+		if r.Installed && (r.Stale || deref(r.Freshness) != "unknown" || r.InstalledVersion != nil) {
+			t.Errorf("unstamped install row = %+v, want freshness unknown and no installed_version", r)
 		}
 	}
 	pretty, _, _ = h.exec(newHumanSkillCmd, "list")
@@ -493,7 +517,7 @@ func stampSharedBlockVersion(t *testing.T, path, v string) {
 	}
 }
 
-// TestSkillListSharedAgentsMDCountedOnce pins the review fix on PR #1670: a
+// TestSkillListSharedAgentsMDCountedOnce pins #1342 for a shared artifact: a
 // stale block in the project AGENTS.md that codex and generic both load is
 // listed under each operator (marked shared) but counted once, matching
 // `jentic doctor`.
@@ -550,9 +574,9 @@ func TestSkillListSharedAgentsMDCountedOnce(t *testing.T) {
 	}
 }
 
-// TestSkillUpdateSharedAgentsMDActsOnce: `skill update` across codex and
-// generic rewrites the shared AGENTS.md once and mirrors that outcome onto
-// the second operator, instead of reporting "updated" then "unchanged".
+// TestSkillUpdateSharedAgentsMDActsOnce pins #830 for a shared artifact: the
+// AGENTS.md that codex and generic both load is touched once, and the second
+// operator's row mirrors that outcome via applied_via.
 func TestSkillUpdateSharedAgentsMDActsOnce(t *testing.T) {
 	h := newSkillJSONHarness(t)
 	h.mustJSON(newHumanSkillCmd, "init", "--operator", "generic", "--skill", "jentic", "--json")

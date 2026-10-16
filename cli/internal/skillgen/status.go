@@ -56,7 +56,12 @@ func (s InstallState) Stale() bool {
 // That is deliberate — "installed" describes the artifact on disk, which both
 // runtimes genuinely load, not which operator name wrote it.
 func InstallStates(a Adapter, name string, env DetectEnv) []InstallState {
-	available := BundledVersion(name)
+	return installStates(a, name, BundledVersion(name), env)
+}
+
+// installStates is InstallStates against an already-resolved bundled version,
+// so a multi-adapter probe parses each bundled skill once.
+func installStates(a Adapter, name, available string, env DetectEnv) []InstallState {
 	states := make([]InstallState, 0, 2)
 	seen := map[string]bool{}
 	for _, scope := range []Scope{a.DefaultScope(), otherScope(a.DefaultScope())} {
@@ -108,24 +113,50 @@ func ArtifactKey(skill, path string) string {
 // attributed to every operator that shares it. Order follows the registry
 // (first operator to reach the artifact), then BundledNames, then scope.
 func InstalledStates(reg *Registry, env DetectEnv) []InstalledSkill {
+	return ProbeAll(reg, env).Installed
+}
+
+// Probe is one read-only pass over every adapter × bundled skill × scope.
+type Probe struct {
+	// ByOperator holds each operator's states (installed or not) in
+	// BundledNames, then scope, order.
+	ByOperator map[Operator][]InstallState
+	// Installed is the deduplicated installed artifacts, as InstalledStates
+	// reports them.
+	Installed []InstalledSkill
+}
+
+// ProbeAll probes every adapter in reg once and returns both the
+// per-operator rows and the deduplicated installed artifacts, so a status
+// surface that needs both never reads the same file twice.
+func ProbeAll(reg *Registry, env DetectEnv) Probe {
 	names := BundledNames()
+	available := make(map[string]string, len(names))
+	for _, name := range names {
+		available[name] = BundledVersion(name)
+	}
+	p := Probe{ByOperator: map[Operator][]InstallState{}}
 	index := map[string]int{}
-	var out []InstalledSkill
 	for _, a := range reg.Adapters() {
-		for _, st := range InstallStatesForSkills(a, names, env) {
+		states := make([]InstallState, 0, len(names)*2)
+		for _, name := range names {
+			states = append(states, installStates(a, name, available[name], env)...)
+		}
+		p.ByOperator[a.Operator()] = states
+		for _, st := range states {
 			if !st.Installed {
 				continue
 			}
 			key := ArtifactKey(st.Skill, st.Path)
 			if i, ok := index[key]; ok {
-				out[i].Operators = append(out[i].Operators, a.Operator())
+				p.Installed[i].Operators = append(p.Installed[i].Operators, a.Operator())
 				continue
 			}
-			index[key] = len(out)
-			out = append(out, InstalledSkill{InstallState: st, Operators: []Operator{a.Operator()}})
+			index[key] = len(p.Installed)
+			p.Installed = append(p.Installed, InstalledSkill{InstallState: st, Operators: []Operator{a.Operator()}})
 		}
 	}
-	return out
+	return p
 }
 
 // probeInstall reports whether skill name is installed in norm at target,

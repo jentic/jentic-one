@@ -1,8 +1,10 @@
 package localagentcmd
 
 import (
+	"fmt"
 	"io"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/spf13/cobra"
@@ -27,6 +29,7 @@ const (
 	skillActionRemoved      = "removed"       // the install was stripped/deleted
 	skillActionNotInstalled = "not_installed" // remove: nothing installed at that scope
 	skillActionUserEdits    = "user_edits"    // manual edits detected; left alone (needs --force)
+	skillActionSkippedNewer = "skipped_newer" // install records a newer version than bundled; left alone (needs --force)
 	skillActionError        = "error"         // this target failed; see error
 )
 
@@ -42,6 +45,11 @@ type skillResult struct {
 	DryRun    bool   `json:"dry_run"`
 	UserEdits bool   `json:"user_edits"`
 	Error     string `json:"error,omitempty"`
+	// InstalledVersion and AvailableVersion name both sides of a
+	// skipped_newer row (the install's recorded version, and the bundled one
+	// a write would have downgraded it to); absent on every other action.
+	InstalledVersion string `json:"installed_version,omitempty"`
+	AvailableVersion string `json:"available_version,omitempty"`
 	// AppliedVia names the operator whose row performed the write when this
 	// operator shares the same artifact (codex and generic both load the
 	// project AGENTS.md): the file is touched once and its outcome mirrored
@@ -84,21 +92,44 @@ func (s sharedArtifacts) record(r skillResult) {
 }
 
 // skillResultsEnvelope is the JSON document init/update/remove write to stdout.
+// It goes through cmdcore.WriteJSON (redacted) rather than ux.Render because
+// its shape follows the cmdcore.JSONOrPretty seam: `--json` under default-human
+// mode must still emit this document, while the Audience renders by mode alone.
 type skillResultsEnvelope struct {
 	SchemaVersion string        `json:"schema_version"`
 	Results       []skillResult `json:"results"`
+	// MCP is init's MCP registration outcome; absent for update/remove,
+	// which never register MCP entries.
+	MCP *mcpReport `json:"mcp,omitempty"`
 }
 
 // writeSkillResults emits the versioned outcome envelope. A nil slice is
-// encoded as [] (never null) so consumers can iterate unconditionally.
-func writeSkillResults(w io.Writer, results []skillResult) error {
+// encoded as [] (never null) so consumers can iterate unconditionally; mcp is
+// nil for the verbs that do not register MCP entries.
+func writeSkillResults(w io.Writer, results []skillResult, mcp *mcpReport) error {
 	if results == nil {
 		results = []skillResult{}
 	}
 	return cmdcore.WriteJSON(w, skillResultsEnvelope{
 		SchemaVersion: skillResultsSchemaVersion,
 		Results:       results,
+		MCP:           mcp,
 	})
+}
+
+// setNewer fills the version pair on a skipped_newer row, so a consumer can
+// see what a forced write would downgrade from and to.
+func (r *skillResult) setNewer(out skillgen.Outcome) {
+	if r.Action != skillActionSkippedNewer {
+		return
+	}
+	r.InstalledVersion = out.InstalledVersion
+	r.AvailableVersion = out.AppliedVersion
+}
+
+// newerInstalledNote is the human wording for a skipped_newer row.
+func newerInstalledNote(installed, available string) string {
+	return fmt.Sprintf("v%s installed is newer than bundled v%s; re-run with --force to downgrade", installed, available)
 }
 
 // applyAction maps one Apply outcome (and its error) onto the closed action
@@ -109,6 +140,8 @@ func applyAction(out skillgen.Outcome, err error) string {
 		return skillActionError
 	case out.UserEdits:
 		return skillActionUserEdits
+	case out.NewerInstalled:
+		return skillActionSkippedNewer
 	case out.Skipped:
 		return skillActionUnchanged
 	case out.Created:
@@ -127,6 +160,8 @@ func updateAction(out skillgen.Outcome, err error) string {
 		return skillActionError
 	case out.UserEdits:
 		return skillActionUserEdits
+	case out.NewerInstalled:
+		return skillActionSkippedNewer
 	case out.Changed:
 		return skillActionUpdated
 	default:
@@ -174,4 +209,15 @@ func wantsJSON(cmd *cobra.Command, jsonFlag bool) bool {
 		return jsonFlag
 	}
 	return cmdcore.JSONOrPretty(cmd, jsonFlag)
+}
+
+// isMachine reports whether the resolved mode is agent or service-account,
+// where the CLI never prompts. Unlike wantsJSON it ignores --json, which
+// only selects the output shape.
+func isMachine(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	st := clictx.FromContext(cmd.Context())
+	return st != nil && st.IsMachine()
 }
