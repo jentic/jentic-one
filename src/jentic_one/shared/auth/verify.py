@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 
 
 async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: object) -> None:
-    """Refuse a user token whose ``users`` row is missing, inactive, or a newer generation.
+    """Refuse a user token whose ``users`` row is missing, deleted, inactive, or a newer generation.
 
     One primary-key read — the same per-verdict cost the opaque ``at_`` path
     pays to re-check its actor row (#1136). Deliberately uncached: a login JWT
@@ -40,6 +40,9 @@ async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: obj
     # subject from a disabled user or a revoked session.
     if status is None:
         logger.warning("jwt_user_inactive", sub=user_id, reason="missing")
+        raise InvalidTokenError("Token subject is not an active user")
+    if status.deleted:
+        logger.warning("jwt_user_inactive", sub=user_id, reason="deleted")
         raise InvalidTokenError("Token subject is not an active user")
     if not status.active:
         logger.warning("jwt_user_inactive", sub=user_id, reason="inactive")

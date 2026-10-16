@@ -39,7 +39,7 @@ async def user_ctx(tmp_path: Path) -> AsyncIterator[MagicMock]:
         await session.execute(
             text(
                 "CREATE TABLE users (id TEXT PRIMARY KEY, active BOOLEAN NOT NULL,"
-                " session_generation INTEGER NOT NULL DEFAULT 0)"
+                " session_generation INTEGER NOT NULL DEFAULT 0, deleted_at DATETIME)"
             )
         )
         for user_id in _USER_IDS:
@@ -170,3 +170,24 @@ async def test_jwt_with_bad_actor_type_rejected(
 
     with pytest.raises(InvalidTokenError):
         await verify_token(token, secret=secret, ctx=mock_ctx)
+
+
+@pytest.mark.asyncio
+async def test_jwt_for_deleted_user_rejected_even_when_row_reads_active(
+    user_ctx: MagicMock,
+) -> None:
+    """Delete is terminal: a row carrying ``deleted_at`` refuses its JWT even if
+    ``active`` reads true, with the current generation on the token."""
+    async with user_ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'usr_1'")
+        )
+    secret = "a" * 32
+    token = issue_jwt(
+        claims={"sub": "usr_1", "actor_type": "user", "permissions": []},
+        secret=secret,
+        ttl_seconds=3600,
+    )
+
+    with pytest.raises(InvalidTokenError):
+        await verify_token(token, secret=secret, ctx=user_ctx)

@@ -26,7 +26,7 @@ import pytest
 import structlog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 
 from jentic_one.__main__ import _build_app
 from jentic_one.admin.core.schema.access_tokens import AccessToken
@@ -43,11 +43,14 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.services import AuthService, UserService
 from jentic_one.admin.services._support.passwords import hash_password
-from jentic_one.admin.services.errors import ConflictError
+from jentic_one.admin.services.errors import ConflictError, InvalidCredentialsError
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.auth import LoginPayload
 from jentic_one.admin.web.routers import events as events_router
+from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
+from jentic_one.broker.repos.actor_status import ActorStatusResolver
+from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.mcp.installer import mcp_lifespan
 from jentic_one.shared.auth.identity import ChangePasswordPayload, Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
@@ -111,6 +114,8 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
             await session.execute(delete(AccessToken).where(AccessToken.actor_id.in_(agents)))
             await session.execute(delete(RefreshToken).where(RefreshToken.actor_id.in_(agents)))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
+            await session.execute(delete(AccessToken).where(AccessToken.actor_id.in_(ids)))
+            await session.execute(delete(RefreshToken).where(RefreshToken.actor_id.in_(ids)))
             await session.execute(
                 delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(ids))
             )
@@ -317,12 +322,23 @@ def _secret(ctx: Context) -> str:
     return ctx.config.admin.auth.jwt_secret.get_secret_value()
 
 
-@pytest.mark.parametrize("reason", ["missing", "inactive", "revoked"])
+async def _mark_deleted_but_active(ctx: Context, user_id: str) -> None:
+    """Stamp ``deleted_at`` while leaving ``active`` true and the generation unchanged.
+
+    The row state a delete overwritten by a concurrent enable would leave: only
+    the deleted marker is left to refuse the user's credentials.
+    """
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(update(User).where(User.id == user_id).values(deleted_at=func.now()))
+
+
+@pytest.mark.parametrize("reason", ["missing", "deleted", "inactive", "revoked"])
 async def test_refusal_logs_reason(
     integration_context: Context, actors: _Actors, reason: str
 ) -> None:
     """Each refusal is the same InvalidTokenError on the wire, but the server-side
-    ``jwt_user_inactive`` line names why: missing row, disabled user, or revoked session."""
+    ``jwt_user_inactive`` line names why: missing row, deleted row, disabled user,
+    or revoked session."""
     ctx = integration_context
     token = await _login(ctx)
     users = UserService(ctx)
@@ -332,6 +348,8 @@ async def test_refusal_logs_reason(
             _secret(ctx),
             300,
         )
+    elif reason == "deleted":
+        await _mark_deleted_but_active(ctx, actors.user_id)
     else:
         await users.disable(actors.user_id, identity=_operator(actors))
         if reason == "revoked":
@@ -342,6 +360,50 @@ async def test_refusal_logs_reason(
 
     refusals = [e for e in logs if e["event"] == "jwt_user_inactive"]
     assert [e["reason"] for e in refusals] == [reason]
+
+
+async def test_deleted_row_refuses_every_credential_even_when_active(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """``deleted_at`` alone refuses a user on every credential path: password
+    login, JWT refresh and verification, and opaque ``at_``/``rt_`` tokens on the
+    auth surface and the broker, even on a row that still reads active."""
+    ctx = integration_context
+    jwt = await _login(ctx)
+    tokens = TokenService(ctx)
+    access, refresh = await tokens.issue_pair(actors.user_id, ActorType.USER, [])
+    resolved = await tokens.resolve_access_token(access)
+    assert resolved is not None and resolved.active
+
+    await _mark_deleted_but_active(ctx, actors.user_id)
+    async with ctx.admin_db.session() as session:
+        row = await UserRepository.get_by_id(session, actors.user_id)
+    assert row is not None and row.active and row.deleted_at is not None
+
+    auth = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await auth.login(LoginPayload(email=_USER_EMAIL, password=_PASSWORD))
+    with pytest.raises(InvalidCredentialsError):
+        await auth.refresh(jwt)
+    with pytest.raises(InvalidTokenError):
+        await verify_token(jwt, secret=_secret(ctx), ctx=ctx)
+
+    resolved = await tokens.resolve_access_token(access)
+    assert resolved is not None and not resolved.active
+    assert (await tokens.introspect(access))["active"] is False
+    assert (await tokens.introspect(refresh))["active"] is False
+    with pytest.raises(InvalidGrantError):
+        await tokens.refresh(refresh)
+
+    brokered = await InProcessTokenResolver(ctx.admin_db).resolve_access_token(access)
+    assert brokered is not None and not brokered.active
+    assert not await ActorStatusResolver(ctx.admin_db).is_active(
+        actor_id=actors.user_id, actor_type=ActorType.USER.value
+    )
+
+    async with _client(ctx, _FULL) as client:
+        _assert_refused(await _get(client, "/users/me", jwt))
+        _assert_refused(await _get(client, "/me", access))
 
 
 @pytest.fixture()
