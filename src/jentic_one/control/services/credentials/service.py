@@ -117,6 +117,7 @@ _REGISTRY_PROBE_TIMEOUT_S = 2.0
 _SIBLING_HINT_LIMIT = 5
 # Update fields where "" is never a valid replacement (``None`` = unchanged).
 _NON_EMPTY_UPDATE_FIELDS = (
+    "name",
     "token",
     "key",
     "username",
@@ -1270,9 +1271,7 @@ class CredentialService:
                 or payload.token_url is not None
                 or payload.scopes is not None
             ):
-                await self._apply_oauth2_update(
-                    session, credential_id, StoredCredentialType(credential.type), payload
-                )
+                await self._apply_oauth2_update(session, credential, payload)
                 changed = True
 
             elif payload.type == CredentialType.SIGV4:
@@ -1449,7 +1448,7 @@ class CredentialService:
                 token_url=(dfc.token_url if dfc else "") or (occ.token_url if occ else ""),
                 grant_type=grant_type,
                 scopes=(
-                    (dfc.granted_scopes if dfc and dfc.granted_scopes else dfc.requested_scopes)
+                    (dfc.granted_scopes or dfc.requested_scopes or None)
                     if dfc
                     else (occ.scope.split() if occ and occ.scope else None)
                 ),
@@ -1502,8 +1501,7 @@ class CredentialService:
     async def _apply_oauth2_update(
         self,
         session: Any,
-        credential_id: str,
-        stored_type: StoredCredentialType,
+        credential: Credential,
         payload: CredentialUpdate,
     ) -> None:
         """Apply each provided OAuth2 client field independently.
@@ -1512,6 +1510,16 @@ class CredentialService:
         the client secret, and token_url is always SSRF-validated when sent.
         ``scopes=[]`` clears the stored scopes; omitting it keeps them.
         """
+        credential_id = credential.id
+        if credential.oauth_app_registration_id is not None:
+            # Shared-registration credentials resolve their client config
+            # (token endpoint, client id/secret, scopes) from the registration
+            # at connect/refresh time, so a per-credential edit would be dead.
+            raise InvalidCredentialInputError(
+                "This oauth2 credential uses a shared app registration; "
+                "edit the registration instead"
+            )
+
         validated_token_url: str | None = None
         if payload.token_url is not None:
             try:
@@ -1519,7 +1527,7 @@ class CredentialService:
             except ValueError as exc:
                 raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
 
-        if stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE:
+        if StoredCredentialType(credential.type) == StoredCredentialType.OAUTH2_DEVICE_CODE:
             # Device flow (RFC 8628) is a public client: there is no secret to
             # rotate, and its client config lives on its own table.
             if payload.client_secret is not None:
@@ -1530,7 +1538,11 @@ class CredentialService:
             if validated_token_url is not None:
                 device_fields["token_url"] = validated_token_url
             if payload.scopes is not None:
-                device_fields["requested_scopes"] = payload.scopes
+                device_fields["requested_scopes"] = payload.scopes or None
+                # ``granted_scopes`` records what the last connect asked for
+                # and takes precedence in the redacted view; it is re-stamped
+                # by the next connect, so drop it or the edit is masked.
+                device_fields["granted_scopes"] = None
             found = (
                 await DeviceAuthorizationCredentialRepository.update_fields(
                     session, credential_id, **device_fields
@@ -1563,7 +1575,7 @@ class CredentialService:
 
     @staticmethod
     def _validate_update_fields(payload: CredentialUpdate) -> None:
-        """Reject empty secret/signing fields — "" is never a valid replacement.
+        """Reject empty name/secret/signing fields — "" is never a valid replacement.
 
         ``None`` means "leave unchanged"; an empty string would otherwise be
         stored and injected as e.g. ``X-Api-Key: `` or ``Basic :pw``.

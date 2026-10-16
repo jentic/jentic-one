@@ -376,6 +376,7 @@ class BearerTokenUpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Stripe live key"],
     )
@@ -412,6 +413,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Stripe live key"],
     )
@@ -466,6 +468,7 @@ class BasicAuthUpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Stripe live key"],
     )
@@ -507,6 +510,7 @@ class OAuth2UpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Stripe live key"],
     )
@@ -553,6 +557,7 @@ class NoAuthUpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Open-Meteo"],
     )
@@ -581,6 +586,7 @@ class Sigv4UpdateRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
+        min_length=1,
         description="New label for the credential; omit to leave unchanged.",
         examples=["Stripe live key"],
     )
