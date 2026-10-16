@@ -49,6 +49,41 @@ def _slash_join(*parts: Any) -> SQLColumnExpression[Any]:
     return expr
 
 
+def _group_key(
+    group_by: str,
+) -> tuple[SQLColumnExpression[Any], list[SQLColumnExpression[Any]]]:
+    """The grouping key expression and its ``GROUP BY`` columns for a dimension.
+
+    The single definition of the grouped-usage key shapes (``vendor/name``,
+    ``{actor_type}/{actor_id}``, …) shared by ``grouped_top`` and
+    ``grouped_trend``, so the trend series always lines up with the top rows.
+    Unknown dimensions fall back to the actor grouping.
+    """
+    if group_by == "api":
+        key_expr = _slash_join(
+            func.coalesce(ExecutionRecord.api_vendor, "unknown"),
+            literal("/"),
+            func.coalesce(ExecutionRecord.api_name, "unknown"),
+        )
+        return key_expr, [ExecutionRecord.api_vendor, ExecutionRecord.api_name]
+    if group_by == "toolkit":
+        # toolkit_id is nullable-legacy (theme-5 Phase 2): direct-binding
+        # executions have none, so pool them under "unknown" like the api
+        # branch does for missing identity axes.
+        return func.coalesce(ExecutionRecord.toolkit_id, "unknown"), [ExecutionRecord.toolkit_id]
+    if group_by == "credential":
+        # credential_id is the direct-binding attribution axis (theme-5
+        # Phase 2); rows without one (legacy toolkit-path executions,
+        # credential-less calls) pool under "unknown" like the toolkit
+        # branch above.
+        return (
+            func.coalesce(ExecutionRecord.credential_id, "unknown"),
+            [ExecutionRecord.credential_id],
+        )
+    key_expr = _slash_join(ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id)
+    return key_expr, [ExecutionRecord.actor_type, ExecutionRecord.actor_id]
+
+
 @dataclass(slots=True, frozen=True)
 class UsageQueryFilters:
     toolkit_id: str | None = None
@@ -356,49 +391,18 @@ class MonitoringRepository:
         limit: int,
         filters: UsageQueryFilters | None = None,
     ) -> list[GroupedTopRow]:
-        key_expr: SQLColumnExpression[Any]
-        label_expr: SQLColumnExpression[Any]
-        group_cols: list[SQLColumnExpression[Any]]
-        if group_by == "api":
-            key_expr = _slash_join(
-                func.coalesce(ExecutionRecord.api_vendor, "unknown"),
-                literal("/"),
-                func.coalesce(ExecutionRecord.api_name, "unknown"),
-            )
-            label_expr = _slash_join(
-                func.coalesce(ExecutionRecord.api_vendor, "unknown"),
-                literal("/"),
-                func.coalesce(ExecutionRecord.api_name, "unknown"),
-            )
-            group_cols = [ExecutionRecord.api_vendor, ExecutionRecord.api_name]
-        elif group_by == "toolkit":
-            # toolkit_id is nullable-legacy (theme-5 Phase 2): direct-binding
-            # executions have none, so pool them under "unknown" like the api
-            # branch does for missing identity axes.
-            key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
-            label_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
-            group_cols = [ExecutionRecord.toolkit_id]
-        elif group_by == "credential":
-            # credential_id is the direct-binding attribution axis (theme-5
-            # Phase 2); rows without one (legacy toolkit-path executions,
-            # credential-less calls) pool under "unknown" like the toolkit
-            # branch above.
-            key_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
-            label_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
-            group_cols = [ExecutionRecord.credential_id]
-        else:
-            key_expr = _slash_join(
-                ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id
-            )
-            label_expr = _slash_join(
-                ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id
-            )
-            group_cols = [ExecutionRecord.actor_type, ExecutionRecord.actor_id]
+        """Per-key totals for the ``limit`` busiest keys of a dimension.
+
+        One grouped aggregate over the window, ordered by volume. This is the
+        whole of ``MonitoringService.get_grouped_totals`` and the top-N half of
+        ``get_usage_stats`` (which adds buckets and per-key trends on top).
+        """
+        key_expr, group_cols = _group_key(group_by)
 
         stmt: Select[Any] = (
             select(
                 key_expr.label("key"),
-                label_expr.label("label"),
+                key_expr.label("label"),
                 func.count().label("total"),
                 func.count()
                 .filter(ExecutionRecord.status == ExecutionStatus.COMPLETED)
@@ -445,21 +449,7 @@ class MonitoringRepository:
         until_epoch = until.timestamp()
         segment_seconds = (until_epoch - cutoff_epoch) / num_points
 
-        key_expr: SQLColumnExpression[Any]
-        if group_by == "api":
-            key_expr = _slash_join(
-                func.coalesce(ExecutionRecord.api_vendor, "unknown"),
-                literal("/"),
-                func.coalesce(ExecutionRecord.api_name, "unknown"),
-            )
-        elif group_by == "toolkit":
-            key_expr = func.coalesce(ExecutionRecord.toolkit_id, "unknown")
-        elif group_by == "credential":
-            key_expr = func.coalesce(ExecutionRecord.credential_id, "unknown")
-        else:
-            key_expr = _slash_join(
-                ExecutionRecord.actor_type, literal("/"), ExecutionRecord.actor_id
-            )
+        key_expr, _ = _group_key(group_by)
 
         epoch_expr = _epoch_seconds(session)
         segment_idx = cast(

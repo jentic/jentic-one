@@ -74,6 +74,18 @@ class UsageStats:
     top: list[dict[str, Any]]
 
 
+@dataclass(slots=True, frozen=True)
+class UsageTopKey:
+    """Totals for one grouping key — a ``UsageStats.top`` row without its trend."""
+
+    key: str
+    label: str
+    total: int
+    success: int
+    failed: int
+    avg_ms: float
+
+
 @dataclass(slots=True)
 class _CacheEntry:
     result: ExecutionStats
@@ -84,6 +96,30 @@ class _CacheEntry:
 class _UsageCacheEntry:
     result: UsageStats
     cached_at: float
+
+
+@dataclass(slots=True)
+class _GroupedTotalsCacheEntry:
+    result: tuple[UsageTopKey, ...]
+    cached_at: float
+
+
+# Leading discriminator on grouped-totals cache keys. They also live in their
+# own dict, but the tag keeps the key self-describing (logs, debugging) and
+# guarantees it can never equal a `get_usage_stats` key even if the two caches
+# are ever merged.
+_GROUPED_TOTALS_KEY_TAG = "grouped_totals"
+
+
+def _evict_stale(cache: dict[tuple[Any, ...], Any], now: float) -> None:
+    """Drop expired entries, then the oldest ones until there is room for one more."""
+    expired = [k for k, v in cache.items() if (now - v.cached_at) >= _CACHE_TTL_SECONDS]
+    for k in expired:
+        del cache[k]
+    if len(cache) >= _USAGE_CACHE_MAX_ENTRIES:
+        oldest_keys = sorted(cache, key=lambda k: cache[k].cached_at)
+        for k in oldest_keys[: len(oldest_keys) - _USAGE_CACHE_MAX_ENTRIES + 1]:
+            del cache[k]
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,6 +139,8 @@ class MonitoringService:
         self._locks: dict[int, asyncio.Lock] = {}
         self._usage_cache: dict[tuple[Any, ...], _UsageCacheEntry] = {}
         self._usage_lock = asyncio.Lock()
+        self._grouped_totals_cache: dict[tuple[Any, ...], _GroupedTotalsCacheEntry] = {}
+        self._grouped_totals_lock = asyncio.Lock()
 
     async def get_execution_stats(self, days: int) -> ExecutionStats:
         now = time.monotonic()
@@ -162,16 +200,7 @@ class MonitoringService:
         top_limit: int = 10,
         filters: UsageFilters | None = None,
     ) -> UsageStats:
-        current_ts = int(datetime.now(tz=UTC).timestamp())
-        # Round the fallback UP to the next minute boundary: requests arriving
-        # within the same 60s window still share an identical cache key, but —
-        # because every aggregate filters `started_at < until` strictly — the
-        # current partial minute is INCLUDED. Flooring here made executions
-        # invisible to the volume chart / KPI for up to a minute while the
-        # executions feed (no upper bound) already listed them (#913).
-        stable_now_ts = (current_ts // 60 + 1) * 60
-        resolved_until = until if until is not None else stable_now_ts
-        resolved_since = since if since is not None else resolved_until - 86400
+        resolved_since, resolved_until = self._resolve_window(since, until)
 
         f = filters or UsageFilters()
         cache_key = (resolved_since, resolved_until, group_by, top_limit, f)
@@ -198,16 +227,112 @@ class MonitoringService:
             )
             return result
 
-    def _evict_stale_usage_entries(self, now: float) -> None:
-        expired = [
-            k for k, v in self._usage_cache.items() if (now - v.cached_at) >= _CACHE_TTL_SECONDS
+    async def get_grouped_totals(
+        self,
+        *,
+        since: int | None,
+        until: int | None,
+        group_by: GroupBy,
+        limit: int,
+        filters: UsageFilters | None = None,
+    ) -> list[UsageTopKey]:
+        """Per-key totals for the ``limit`` busiest keys — no buckets, trends or overall stats.
+
+        The lean counterpart of ``get_usage_stats`` for callers that only need
+        a per-entity breakdown (e.g. executions per agent over 30 days, with
+        ``limit`` in the hundreds): one grouped aggregate query, the same one
+        that produces ``UsageStats.top``, so keys, ordering and totals match
+        it for the same window, ``group_by``, limit and filters.
+
+        The window falls back exactly as in ``get_usage_stats``. Results share
+        its TTL but are cached under their own keys. Unscoped like
+        ``get_usage_stats``: callers gate access (the admin router requires
+        ``org:admin``).
+
+        Raises:
+            ValueError: ``limit`` is less than 1.
+        """
+        if limit < 1:
+            raise ValueError(f"limit must be at least 1, got {limit}")
+        resolved_since, resolved_until = self._resolve_window(since, until)
+
+        f = filters or UsageFilters()
+        cache_key = (_GROUPED_TOTALS_KEY_TAG, resolved_since, resolved_until, group_by, limit, f)
+
+        now = time.monotonic()
+        entry = self._grouped_totals_cache.get(cache_key)
+        if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
+            _cache_hits.add(1)
+            return list(entry.result)
+
+        async with self._grouped_totals_lock:
+            entry = self._grouped_totals_cache.get(cache_key)
+            if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
+                _cache_hits.add(1)
+                return list(entry.result)
+            result = await self._query_grouped_totals(
+                resolved_since, resolved_until, group_by, limit, f
+            )
+            _evict_stale(self._grouped_totals_cache, now)
+            self._grouped_totals_cache[cache_key] = _GroupedTotalsCacheEntry(
+                result=tuple(result), cached_at=time.monotonic()
+            )
+            _cache_misses.add(1)
+            logger.debug(
+                "grouped_totals_cache_miss",
+                group_by=group_by,
+                since=resolved_since,
+                until=resolved_until,
+                limit=limit,
+            )
+            return result
+
+    @staticmethod
+    def _resolve_window(since: int | None, until: int | None) -> tuple[int, int]:
+        """Resolve optional epoch bounds to ``(since, until)``; defaults to the last 24h."""
+        current_ts = int(datetime.now(tz=UTC).timestamp())
+        # Round the fallback UP to the next minute boundary: requests arriving
+        # within the same 60s window still share an identical cache key, but —
+        # because every aggregate filters `started_at < until` strictly — the
+        # current partial minute is INCLUDED. Flooring here made executions
+        # invisible to the volume chart / KPI for up to a minute while the
+        # executions feed (no upper bound) already listed them (#913).
+        stable_now_ts = (current_ts // 60 + 1) * 60
+        resolved_until = until if until is not None else stable_now_ts
+        resolved_since = since if since is not None else resolved_until - 86400
+        return resolved_since, resolved_until
+
+    async def _query_grouped_totals(
+        self,
+        since: int,
+        until: int,
+        group_by: GroupBy,
+        limit: int,
+        filters: UsageFilters | None = None,
+    ) -> list[UsageTopKey]:
+        cutoff = datetime.fromtimestamp(since, tz=UTC)
+        until_dt = datetime.fromtimestamp(until, tz=UTC)
+        repo_filters = self._build_repo_filters(filters)
+
+        async with self._ctx.admin_db.session() as session:
+            rows = await MonitoringRepository.grouped_top(
+                session, cutoff, until_dt, group_by.value, limit, filters=repo_filters
+            )
+
+        return [
+            UsageTopKey(
+                key=r.key,
+                label=r.label,
+                total=r.total,
+                success=r.success,
+                failed=r.failed,
+                avg_ms=r.avg_ms,
+            )
+            for r in rows
         ]
-        for k in expired:
-            del self._usage_cache[k]
-        if len(self._usage_cache) >= _USAGE_CACHE_MAX_ENTRIES:
-            oldest_keys = sorted(self._usage_cache, key=lambda k: self._usage_cache[k].cached_at)
-            for k in oldest_keys[: len(oldest_keys) - _USAGE_CACHE_MAX_ENTRIES + 1]:
-                del self._usage_cache[k]
+
+    def _evict_stale_usage_entries(self, now: float) -> None:
+        _evict_stale(self._usage_cache, now)
 
     @staticmethod
     def _compute_bucket_seconds(window_seconds: int) -> int:
