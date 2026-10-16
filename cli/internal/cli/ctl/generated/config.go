@@ -770,6 +770,13 @@ type DatabaseConfig struct {
 	// Maximum connections in the PostgreSQL connection pool (ignored for SQLite).
 	PoolMax int `json:"pool_max,omitempty,omitzero" yaml:"pool_max,omitempty" mapstructure:"pool_max,omitempty"`
 
+	// PostgreSQL: test each pooled connection on checkout and transparently replace a
+	// dead one. On asyncpg the ping is a full ``BEGIN``/``ROLLBACK`` round trip per
+	// checkout; disabling it saves that round trip but a connection dropped while
+	// idle then fails its first query — keep ``pool_recycle_s`` enabled and below the
+	// server/proxy idle timeout when setting ``false``. Ignored for SQLite.
+	PoolPrePing bool `json:"pool_pre_ping,omitempty,omitzero" yaml:"pool_pre_ping,omitempty" mapstructure:"pool_pre_ping,omitempty"`
+
 	// PostgreSQL: replace a pooled connection once it is this many seconds old, on
 	// its next checkout, so a connection silently dropped by a middlebox or left
 	// behind by a server restart is retired before use. Keep it below any server,
@@ -874,6 +881,9 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pool_max"]; !ok || v == nil {
 		plain.PoolMax = 10
+	}
+	if v, ok := raw["pool_pre_ping"]; !ok || v == nil {
+		plain.PoolPrePing = true
 	}
 	if v, ok := raw["pool_recycle_s"]; !ok || v == nil {
 		plain.PoolRecycleS = 1800

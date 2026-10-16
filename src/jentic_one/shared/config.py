@@ -214,6 +214,17 @@ class DatabaseConfig(BaseModel):
         default=10,
         description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
     )
+    pool_pre_ping: bool = Field(
+        default=True,
+        description=(
+            "PostgreSQL: test each pooled connection on checkout and transparently "
+            "replace a dead one. On asyncpg the ping is a full ``BEGIN``/``ROLLBACK`` "
+            "round trip per checkout; disabling it saves that round trip but a "
+            "connection dropped while idle then fails its first query — keep "
+            "``pool_recycle_s`` enabled and below the server/proxy idle timeout "
+            "when setting ``false``. Ignored for SQLite."
+        ),
+    )
     pool_recycle_s: int = Field(
         default=POOL_RECYCLE_S,
         ge=0,

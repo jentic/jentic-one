@@ -521,6 +521,12 @@
           "title": "Pool Max",
           "type": "integer"
         },
+        "pool_pre_ping": {
+          "default": true,
+          "description": "PostgreSQL: test each pooled connection on checkout and transparently replace a dead one. On asyncpg the ping is a full ``BEGIN``/``ROLLBACK`` round trip per checkout; disabling it saves that round trip but a connection dropped while idle then fails its first query — keep ``pool_recycle_s`` enabled and below the server/proxy idle timeout when setting ``false``. Ignored for SQLite.",
+          "title": "Pool Pre Ping",
+          "type": "boolean"
+        },
         "pool_recycle_s": {
           "default": 1800,
           "description": "PostgreSQL: replace a pooled connection once it is this many seconds old, on its next checkout, so a connection silently dropped by a middlebox or left behind by a server restart is retired before use. Keep it below any server, proxy, or NAT idle timeout on the path. ``0`` disables recycling. Ignored for SQLite.",

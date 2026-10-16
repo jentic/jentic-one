@@ -121,6 +121,30 @@ def test_env_coerces_int(config_file: Path):
     assert config.databases.registry.port == 9999
 
 
+def test_db_pool_pre_ping_and_recycle_default_and_env_override(config_file: Path):
+    default = load_config(config_file).databases.registry
+    assert default.pool_pre_ping is True
+    assert default.pool_recycle_s == 1800
+    env = {
+        "JENTIC__DATABASES__REGISTRY__POOL_PRE_PING": "false",
+        "JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "300",
+        "JENTIC__DATABASES__CONTROL__POOL_RECYCLE_S": "0",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.databases.registry.pool_pre_ping is False
+    assert config.databases.registry.pool_recycle_s == 300
+    assert config.databases.control.pool_recycle_s == 0
+    assert config.databases.admin.pool_pre_ping is True
+    assert config.databases.admin.pool_recycle_s == 1800
+
+
+def test_db_pool_recycle_rejects_negative(config_file: Path):
+    env = {"JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "-1"}
+    with patch.dict(os.environ, env), pytest.raises(ConfigError, match="pool_recycle_s"):
+        load_config(config_file)
+
+
 def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert load_config(config_file).logging.http_wire_trace is False
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):

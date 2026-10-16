@@ -146,7 +146,7 @@ class PostgresBackend(DatabaseBackend):
             )
         kwargs: dict[str, Any] = {
             "pool_size": config.pool_max,
-            "pool_pre_ping": True,
+            "pool_pre_ping": config.pool_pre_ping,
             "connect_args": connect_args,
         }
         # 0 disables recycling; SQLAlchemy's own "never recycle" is -1, so the

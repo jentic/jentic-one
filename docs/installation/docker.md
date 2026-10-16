@@ -140,6 +140,21 @@ the app and broker containers open all three pools — the example above holds
 your instance's `max_connections` (managed-PG entry tiers are often ~100) or
 front Postgres with a pooler like pgbouncer.
 
+**Connection health checks:** by default every pool checkout pings the
+connection (`pool_pre_ping: true`) and transparently replaces one that died
+while idle, pooled connections are recycled once they are 30 minutes old
+(`pool_recycle_s: 1800`), and TCP keepalive is enabled on every connection.
+On asyncpg the ping is a full `BEGIN`/`ROLLBACK` round trip per checkout.
+Latency-sensitive deployments on a stable network can set
+`pool_pre_ping: false` per database to save that round trip; keep
+`pool_recycle_s` below the shortest idle timeout on the path (Postgres
+`idle_session_timeout`, pgbouncer/proxy, cloud NAT or load balancer) so
+connections are retired before anything in between drops them, lowering it
+from the default if any of those cut off sooner. Without pre-ping, a
+connection dropped anyway fails its first query instead of being replaced.
+`pool_recycle_s: 0` disables recycling. Both are ignored for SQLite. See
+[`databases.*.pool_pre_ping`](../reference/config.md#databases).
+
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
 
