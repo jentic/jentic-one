@@ -753,9 +753,10 @@ async def _handle_streaming(
     response-size cap + transfer deadline + client-disconnect teardown owned by
     ``open_streaming_response``.
 
-    Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors). A DB failure is logged + counted but does
-    not affect the already-sent response.
+    Persistence is best-effort: ``_persist_streaming_outcome`` runs exactly once
+    after the streaming body ends — completed, failed mid-body, or cut off by a
+    client disconnect — shielded from cancellation. A DB failure is logged +
+    counted but does not affect the already-sent response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")

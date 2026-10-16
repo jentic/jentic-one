@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import logging.config
@@ -28,6 +29,8 @@ from jentic_one.shared.logging import (
     RequestIDMiddleware,
     add_otel_context,
     configure_logging,
+    install_server_log_filters,
+    mark_response_aborted,
     request_id_ctx,
 )
 from jentic_one.shared.redaction import REDACTED
@@ -513,3 +516,30 @@ def test_access_log_line_reaches_uvicorn_handler_masked(
     out = capsys.readouterr().out
     assert f'"GET /oauth/callback?code={REDACTED}&state={REDACTED} HTTP/1.1" 302' in out
     assert "c_secret" not in out and "s_secret" not in out
+
+
+def _incomplete_response_kept(*, aborted: bool, msg: str) -> bool:
+    """Whether ``uvicorn.error`` keeps ``msg`` in a context that did/didn't abort."""
+    install_server_log_filters()
+    error_logger = logging.getLogger("uvicorn.error")
+    record = error_logger.makeRecord("uvicorn.error", logging.ERROR, __file__, 0, msg, (), None)
+
+    def _check() -> bool:
+        if aborted:
+            mark_response_aborted()
+        return all(f.filter(record) for f in error_logger.filters if isinstance(f, logging.Filter))
+
+    return contextvars.copy_context().run(_check)
+
+
+def test_incomplete_response_line_dropped_only_for_an_aborted_response() -> None:
+    """Pins #1712: the app's deliberate mid-body abort is logged once, structured.
+
+    uvicorn's generic incomplete-response line is suppressed only in the
+    request context that marked its response aborted; elsewhere, and for any
+    other server error line, it is kept.
+    """
+    incomplete = "ASGI callable returned without completing response."
+    assert not _incomplete_response_kept(aborted=True, msg=incomplete)
+    assert _incomplete_response_kept(aborted=False, msg=incomplete)
+    assert _incomplete_response_kept(aborted=True, msg="Exception in ASGI application\n")

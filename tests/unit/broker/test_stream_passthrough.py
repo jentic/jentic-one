@@ -18,6 +18,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.exceptions import (
+    BrokerError,
     CircuitOpenError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
@@ -80,6 +81,48 @@ async def test_stream_size_cap_aborts_and_tears_down_upstream() -> None:
     # which the runner exits on the raise; the edge tests assert the
     # context-unwinding teardown contract directly via a fake stream context.)
     assert stream.consumed < 4
+
+
+class _DroppingStream:
+    """An async byte stream that fails with a transport error after one chunk."""
+
+    def __init__(self, exc: httpx.HTTPError) -> None:
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise self._exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "error_cls", "error_type"),
+    [
+        (httpx.RemoteProtocolError("peer closed"), BrokerError, "upstream_transport_error"),
+        (httpx.ReadError("reset"), BrokerError, "upstream_transport_error"),
+        (httpx.ReadTimeout("stalled"), UpstreamTimeoutError, "upstream_timeout"),
+    ],
+)
+async def test_stream_midbody_transport_error_is_a_domain_error(
+    exc: httpx.HTTPError, error_cls: type[BrokerError], error_type: str
+) -> None:
+    """Pins #1712: a mid-body ``httpx`` failure never escapes the runner raw."""
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_DroppingStream(exc).__aiter__())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(error_cls) as raised:
+            async with runner.stream(
+                RunnerRequest(method="GET", url="https://api.example.com/x")
+            ) as result:
+                async for _ in result.aiter:
+                    pass
+    assert raised.value.type == error_type
+    assert raised.value.extra == {"error_type": type(exc).__name__}
+    assert raised.value.__cause__ is None
+    assert str(exc) not in raised.value.detail
 
 
 # --- web-edge guards (guarded_body / open_streaming_response) ------------------
