@@ -12,6 +12,7 @@ package prompt
 
 import (
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,11 +97,20 @@ var StdinIsTerminal = func() bool { return term.IsTerminal(os.Stdin.Fd()) }
 // context, Esc, and Ctrl-C and discards per-field errors, so the prompt can
 // never be cancelled (jentic-one#841). Those sessions take the same
 // non-interactive path as a piped stdin: commands fall back to their flag /
-// --yes / defaulting behaviour instead of hanging. The comparison is exact on
-// purpose: it mirrors huh's own trigger (os.Getenv("TERM") == "dumb" in
-// huh.NewForm), so any other value keeps huh's normal, cancellable TUI.
+// --yes / defaulting behaviour instead of hanging.
 func Promptable() bool {
-	return os.Getenv("TERM") != "dumb" && StdinIsTerminal()
+	return !dumbTerminal() && StdinIsTerminal()
+}
+
+// dumbTerminal reports whether TERM names the dumb terminal. huh triggers its
+// accessible mode on an exact os.Getenv("TERM") == "dumb"; this check trims
+// whitespace and ignores case, so it is a conservative superset of that
+// trigger. Odd harness spellings (TERM=DUMB, " dumb") take the
+// non-interactive path too, which is always available, rather than risking an
+// uncancellable prompt. Other terminfo names that merely start with "dumb"
+// (e.g. dumb-emacs) are distinct terminals and stay promptable.
+func dumbTerminal() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb")
 }
 
 // NewForm builds a huh form wired to the shared brand theme and key map. Every

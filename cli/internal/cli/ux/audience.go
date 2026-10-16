@@ -42,7 +42,7 @@ type Audience interface {
 
 // promptable reports whether the current session may open an interactive prompt.
 // It delegates to the CLI-wide gate (prompt.Promptable: stdin TTY AND
-// TERM != "dumb", jentic-one#841); mode is checked by the caller — only HumanUX
+// TERM not the dumb terminal — trimmed, case-insensitive; jentic-one#841); mode is checked by the caller — only HumanUX
 // prompts. A non-promptable human session behaves like agent Ask: fail with the
 // missing-flag instruction instead of hanging on a prompt.
 func promptable() bool {
