@@ -9,6 +9,7 @@ import structlog
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import (
     CredentialRepository,
+    OAuthClientCredentialRepository,
     OAuthTokenRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
@@ -147,7 +148,10 @@ class ConnectService:
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
-                if not await minted_at_current_origin(session, credential, result.token_url):
+                current_token_url = await OAuthClientCredentialRepository.current_token_url(
+                    session, credential
+                )
+                if not minted_at_current_origin(result.token_url, current_token_url):
                     logger.warning(
                         "oauth_connect_discarded_token_url_moved",
                         credential_id=state.credential_id,

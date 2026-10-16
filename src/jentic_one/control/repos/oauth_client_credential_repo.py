@@ -6,6 +6,8 @@ from enum import Enum, auto
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 
 
@@ -49,6 +51,24 @@ class OAuthClientCredentialRepository:
         session: AsyncSession, credential_id: str
     ) -> OAuthClientCredential | None:
         return await session.get(OAuthClientCredential, credential_id)
+
+    @staticmethod
+    async def current_token_url(session: AsyncSession, credential: Credential) -> str | None:
+        """The token endpoint an authorization-code *credential* resolves to now.
+
+        The shared app registration's when the credential references one, else
+        the embedded client config's; ``None`` when there is none. Device-flow
+        credentials are not covered: their token_url cannot move to another
+        origin, and is frozen while a flow is pending.
+        """
+        if credential.oauth_app_registration_id is not None:
+            registration = await session.get(
+                OAuthAppRegistration, credential.oauth_app_registration_id
+            )
+            details = registration.authorization_code_details if registration else None
+            return details.token_url if details else None
+        occ = await session.get(OAuthClientCredential, credential.id)
+        return occ.token_url if occ else None
 
     @staticmethod
     async def update(
