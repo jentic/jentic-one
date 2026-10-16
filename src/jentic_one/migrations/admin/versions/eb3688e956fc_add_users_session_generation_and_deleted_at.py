@@ -11,7 +11,10 @@ bump.
 ``deleted_at`` marks a deleted (terminal-but-kept) user. The admin service
 refuses to enable, edit or reset the password of a row that carries it.
 Rows already deleted before this revision are recognised by their tombstone
-email (``deleted-<id>@local``) and backfilled with their ``updated_at``.
+email (``deleted-<id>@local``) on an inactive row and backfilled with their
+``updated_at``. A tombstoned row that was re-enabled before this revision is
+still active and able to log in, so it is left unmarked rather than frozen
+in an active-but-deleted state.
 
 Revision ID: eb3688e956fc
 Revises: c00de2f5d777
@@ -38,7 +41,8 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
     op.execute(
         "UPDATE users SET deleted_at = updated_at"
-        " WHERE deleted_at IS NULL AND email = 'deleted-' || id || '@local'"
+        " WHERE deleted_at IS NULL AND active = false"
+        " AND email = 'deleted-' || id || '@local'"
     )
 
 
