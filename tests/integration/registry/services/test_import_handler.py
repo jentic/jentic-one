@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -30,6 +30,7 @@ from jentic_one.registry.services.overlay_service import OverlayService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.http_doubles import spec_client
 
 pytestmark = pytest.mark.integration
 
@@ -1288,15 +1289,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     # raises DuplicateRevisionError — the real trigger _recover_supersede handles. This proves
     # _recover_supersede resolves identity by url (current_revision_for_source_url), not by a
     # vendor/name/version triple the real path never carries.
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.text = fresh_upstream
-    mock_response.content = fresh_upstream.encode()
-    mock_response.headers = {"content-length": str(len(fresh_upstream.encode()))}
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client = spec_client(fresh_upstream)
 
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client):
         retry = await handler.execute(
@@ -2108,16 +2101,7 @@ async def test_url_source_via_mock(
     _clean_registry: None,
 ) -> None:
     """URL source succeeds when the HTTP fetch is mocked."""
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.text = MINIMAL_OPENAPI
-    mock_response.content = MINIMAL_OPENAPI.encode()
-    mock_response.headers = {"content-length": str(len(MINIMAL_OPENAPI.encode()))}
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client = spec_client(MINIMAL_OPENAPI)
 
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client):
         handler = ImportHandler(integration_context)
@@ -2148,20 +2132,6 @@ async def test_url_source_via_mock(
         assert len(rows) == 1
 
 
-def _mock_spec_client(spec_text: str) -> AsyncMock:
-    """An httpx.AsyncClient double serving ``spec_text`` for any GET."""
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.text = spec_text
-    mock_response.content = spec_text.encode()
-    mock_response.headers = {"content-length": str(len(spec_text.encode()))}
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    return mock_client
-
-
 async def test_catalog_import_lands_clean_identity_from_sub_segment(
     integration_context: Context,
     registry_db: DatabaseSession,
@@ -2189,7 +2159,7 @@ async def test_catalog_import_lands_clean_identity_from_sub_segment(
 
     with patch(
         "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+        return_value=spec_client(MINIMAL_OPENAPI),
     ):
         result = await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
@@ -2234,7 +2204,7 @@ async def test_catalog_identity_conflict_surfaces_as_readable_job_failure(
     with (
         patch(
             "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-            return_value=_mock_spec_client(MINIMAL_OPENAPI),
+            return_value=spec_client(MINIMAL_OPENAPI),
         ),
         pytest.raises(IngestJobError, match="catalog identity conflict"),
     ):
@@ -2283,7 +2253,7 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
     # vendor-doubled `posthog-com-posthog-api`.
     with patch(
         "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+        return_value=spec_client(MINIMAL_OPENAPI),
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
@@ -2327,7 +2297,7 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
     updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
     with patch(
         "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(json.dumps(updated_spec)),
+        return_value=spec_client(json.dumps(updated_spec)),
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
@@ -2360,7 +2330,7 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     """
     with patch(
         "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+        return_value=spec_client(MINIMAL_OPENAPI),
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
@@ -2398,7 +2368,7 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
     with patch(
         "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(json.dumps(updated_spec)),
+        return_value=spec_client(json.dumps(updated_spec)),
     ):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
