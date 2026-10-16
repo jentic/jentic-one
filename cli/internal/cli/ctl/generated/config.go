@@ -250,10 +250,11 @@ type BrokerConfig struct {
 	// ``broker.streaming_persist_max_concurrency`` slots. Past it the record is
 	// abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on
 	// ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``).
-	// The wait runs after the response is complete, and a request no longer holds its
-	// admission slot once its response is complete, so the wait delays neither the
-	// client nor ``/ready``; the timeout bounds how long a stalled admin database can
-	// keep records queued in memory and how long shutdown waits on them.
+	// The wait runs after the response is complete or the client has disconnected,
+	// when the request no longer holds its admission slot, so the wait delays neither
+	// the client nor ``/ready``. The timeout bounds how long a stalled admin database
+	// can keep records queued in memory, including at shutdown; it does not bound the
+	// write itself once a slot is held.
 	StreamingPersistAcquireTimeoutS float64 `json:"streaming_persist_acquire_timeout_s,omitempty,omitzero" yaml:"streaming_persist_acquire_timeout_s,omitempty" mapstructure:"streaming_persist_acquire_timeout_s,omitempty"`
 
 	// Per-process cap on concurrent post-response persists of streaming execution

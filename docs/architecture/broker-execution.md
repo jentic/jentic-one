@@ -205,10 +205,12 @@ persist waits for a slot for at most `broker.streaming_persist_acquire_timeout_s
 and is then abandoned and counted (`reason="backlog_timeout"`); the queue is
 visible as `broker.streaming_execution.persist_pending`. The wait never touches
 admission: a request releases its admission slot as soon as its response is
-complete, so persists queued behind a stalled admin database count neither
-toward `broker.admission.in_flight` nor toward `/ready` saturation, and the
-acquire timeout is what bounds how many records such a stall keeps queued in
-memory and how long shutdown waits on them. Lifecycle events (`EXECUTION_COMPLETED` /
+complete or its client disconnects, so persists queued behind a stalled admin
+database count neither toward `broker.admission.in_flight` nor toward `/ready`
+saturation. The acquire timeout bounds how many records such a stall keeps
+queued in memory and how long a *queued* record holds up shutdown; a persist
+that already holds a slot and is writing has no time limit of its own beyond
+the admin pool's checkout timeout. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

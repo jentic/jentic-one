@@ -178,8 +178,8 @@ record may still have landed),
 `broker.streaming_execution.persist_pending` (streaming persists waiting for,
 or holding, one of the `broker.streaming_persist_max_concurrency` slots — a
 steadily rising `state="waiting"` series means admin writes can't keep up;
-these persists run after the response is complete and are not counted in
-`broker.admission.in_flight`),
+these persists run after the response is complete or the client has
+disconnected, and are not counted in `broker.admission.in_flight`),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
