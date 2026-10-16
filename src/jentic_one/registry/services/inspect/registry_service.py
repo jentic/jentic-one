@@ -30,14 +30,10 @@ from jentic_one.shared.broker.protocols import (
     RevisionPinOutcome,
     RevisionPinResult,
 )
+from jentic_one.shared.broker.revision_label import decode_rev_label
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import OperationInfo
-
-# A ``Jentic-Revision`` value carries the revision id as ``rev_<uuid.hex>`` (the
-# 32-char hyphen-free hex form, which is what the spec ``rev_[A-Za-z0-9]+``
-# pattern admits). Stripping the prefix yields the ``ApiRevision.id`` hex.
-_REV_LABEL_PREFIX = "rev_"
 
 
 class RegistryService:
@@ -108,8 +104,12 @@ class RegistryService:
 
         Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
         the only ownership signal the revision carries today.
+
+        ``rev_label`` is the ``rev_<uuid.hex>`` label the broker's header parser
+        (``broker/core/revisions.py``) derives from every ``Jentic-Revision``
+        value; decoding it yields the ``ApiRevision.id``.
         """
-        revision_id = _parse_rev_label(rev_label)
+        revision_id = decode_rev_label(rev_label)
         if revision_id is None:
             return RevisionPinResult(RevisionPinOutcome.UNKNOWN)
 
@@ -149,14 +149,3 @@ class RegistryService:
                     )
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)
-
-
-def _parse_rev_label(rev_label: str) -> uuid.UUID | None:
-    """Decode a ``rev_<uuid.hex>`` label to its ``ApiRevision.id`` (``None`` if invalid)."""
-    if not rev_label.startswith(_REV_LABEL_PREFIX):
-        return None
-    raw = rev_label[len(_REV_LABEL_PREFIX) :]
-    try:
-        return uuid.UUID(hex=raw)
-    except ValueError:
-        return None
