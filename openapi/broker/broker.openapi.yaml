@@ -74,12 +74,14 @@ info:
       job status and pickup of the upstream body.
     - `GET /events` / `GET /events/stream` — audit event feed.
 
-    Request and response bodies are not persisted by default. Execution
-    metadata is kept until the operator removes it; there is no
-    automatic retention window to configure yet. Body capture is
-    explicit opt-in. Async response bodies live in a short-lived
-    pickup buffer collected via `/jobs/{id}/result`, not in the audit
-    store.
+    Execution records store metadata only — never request or response
+    bodies. An async call's upstream response body is stored as the job
+    result and stays readable from `/jobs/{id}/result` until it is
+    removed; only an approved (held) execution's result expires, after
+    `held_executions.result_retention_seconds`. Execution records,
+    events and audit entries are kept indefinitely: there is no API or
+    setting to prune them yet, so trim them at the database level (see
+    the operations monitoring guide).
 
 servers:
   - url: https://broker.your-instance.example
@@ -1200,8 +1202,8 @@ components:
         `require-approval` permission rule matched (`status: held`; see
         `HeldExecutionAcceptedResponse`). For a queued call, follow
         `_links.self` to the control plane to poll the job and collect the
-        upstream response body once `status` is `completed`. The body is
-        delivered once and then evicted from the platform's pickup buffer.
+        upstream response body once `status` is `completed`. The body
+        stays readable from `/jobs/{id}/result`; it is not removed on read.
       headers:
         Preference-Applied:
           description: RFC 7240 — confirms which processing preference was applied.

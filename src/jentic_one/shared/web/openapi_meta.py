@@ -182,9 +182,12 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   response belongs to the upstream API. Standard headers
   (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
   `traceparent`, `tracestate`) keep their RFC names.
-- **Append-only audit.** Admin / Audit records are never mutated
-  after the fact. They are kept until the operator removes them;
-  there is no automatic retention window to configure yet.
+- **Append-only audit.** Audit entries, execution records and events
+  are never mutated after the fact. They — and finished jobs and their
+  results — are kept indefinitely: there is no API or setting to prune
+  them yet, so trim them at the database level. Approved-execution
+  results are the exception: they expire after
+  `held_executions.result_retention_seconds`.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
   from it. To walk the executions you can see under one logical request, use
@@ -473,9 +476,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "In-flight async-job tracker for both Registry import jobs and Broker "
             "async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — "
             "type-specific result payloads (the imported revisions for `import`, upstream "
-            "response body for `execution`) live under `/jobs/{job_id}/result`. Result "
-            "availability follows the organisation-level retention policy (one-shot or TTL); "
-            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. "
+            "response body for `execution`) live under `/jobs/{job_id}/result`. Results stay "
+            "readable until removed; only an approved execution's result expires (after "
+            "`held_executions.result_retention_seconds`), after which `/jobs/{job_id}/result` "
+            "answers `410 job_result_expired` while the job itself remains. "
             "A job is visible only to the actor that created it, the owner of the agent "
             "that created it, and `org:admin`; to any other caller it is indistinguishable "
             "from a missing job (`404`), including on `:cancel`."
