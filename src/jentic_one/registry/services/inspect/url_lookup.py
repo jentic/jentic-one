@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import structlog
 
+from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.url_index import (
     URL_INDEX_FORMAT_MARKER,
     ServerVariableMatch,
@@ -21,6 +22,7 @@ from jentic_one.registry.core.url_index import (
 )
 from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.repos.url_index_repo import (
+    DraftUrlIndexCandidate,
     OperationContext,
     UrlIndexCandidate,
     UrlIndexRepository,
@@ -130,6 +132,50 @@ class URLLookupService:
                 segment_count=segment_count,
             )
 
+        return None
+
+    async def find_draft_match(self, *, method: str, url: str) -> DraftUrlIndexCandidate | None:
+        """Find a ``draft`` revision whose URL index serves METHOD+URL, or ``None``.
+
+        Explains an unpinned miss: :meth:`resolve` only searches live
+        revisions, so a URL that only a draft defines (an inline or URL import
+        that was never promoted) is unmatched there. Matching follows
+        :meth:`resolve` — normalised host and path, segment count, ``HEAD``
+        falling back to ``GET``, exact-host rows before regex-host rows — but
+        reads draft rows only, in one statement capped at ``MAX_CANDIDATES``
+        rows (newest draft first). It never raises: ties and oversized
+        candidate sets only make the answer best-effort.
+        """
+        parsed = urlparse(url)
+        scheme = parsed.scheme or "https"
+        raw_host = parsed.hostname or ""
+        port = parsed.port
+        host = normalise_host(f"{raw_host}:{port}" if port else raw_host, scheme)
+        path = normalize_path(parsed.path or "/")
+
+        methods = [method.upper()]
+        if methods[0] == "HEAD":
+            methods.append("GET")
+
+        candidates = await UrlIndexRepository.lookup_draft_candidates(
+            self._session,
+            methods=methods,
+            host=host,
+            segment_count=count_segments(path),
+            limit=MAX_CANDIDATES,
+        )
+        for m in methods:
+            of_method = [c for c in candidates if c.row.method == m]
+            pool = [c for c in of_method if c.row.host == host] or [
+                c
+                for c in of_method
+                if c.row.host is None
+                and c.row.host_regex
+                and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
+            ]
+            for candidate in pool:
+                if _serves_path(candidate.row, host=host, path=path):
+                    return candidate
         return None
 
     async def _try_resolve(
@@ -336,6 +382,23 @@ class URLLookupService:
             raise AmbiguousMatchError(len(tied))
 
         return best
+
+
+def _serves_path(row: OperationURLIndex, *, host: str, path: str) -> bool:
+    """True when an index row's path regex (and host groups) accept the request.
+
+    The same acceptance test :meth:`URLLookupService._match_and_rank` applies
+    per candidate, without the ranking.
+    """
+    match = re.fullmatch(row.path_regex, path)
+    if match is None:
+        return False
+    host_groups: dict[str, str | None] = {}
+    if row.host_regex and host:
+        host_match = re.fullmatch(row.host_regex, host, re.IGNORECASE)
+        if host_match is not None:
+            host_groups = host_match.groupdict()
+    return resolve_server_variable_groups(host_groups, match.groupdict()) is not None
 
 
 def _match_rebuilt_servers(

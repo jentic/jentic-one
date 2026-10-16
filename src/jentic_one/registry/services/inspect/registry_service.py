@@ -26,13 +26,14 @@ from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
+    DraftRevisionMatch,
     ResolveResult,
     RevisionPinOutcome,
     RevisionPinResult,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ApiRevisionState
-from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 # A ``Jentic-Revision`` value carries the revision id as ``rev_<uuid.hex>`` (the
 # 32-char hyphen-free hex form, which is what the spec ``rev_[A-Za-z0-9]+``
@@ -78,6 +79,18 @@ class RegistryService:
             server_variables=hit.server_variables,
             server_variable_defaults=hit.server_variable_defaults,
             server_variables_unresolved=hit.server_variables_unresolved,
+        )
+
+    async def find_draft_match(self, *, method: str, url: str) -> DraftRevisionMatch | None:
+        """Name a ``draft`` revision that serves METHOD+URL (one statement), or ``None``."""
+        hit = await URLLookupService(self._session).find_draft_match(method=method, url=url)
+        if hit is None:
+            return None
+        return DraftRevisionMatch(
+            api=APIReference(vendor=hit.vendor, name=hit.name, version=hit.version),
+            revision_id=hit.row.revision_id,
+            submitted_by=hit.submitted_by,
+            origin=hit.origin,
         )
 
     async def resolve_revision_pin(

@@ -1361,6 +1361,16 @@ components:
         the path component refers to a resource the upstream itself
         doesn't recognise. Body is RFC 9457
         `application/problem+json`.
+
+        When no live revision serves the URL but a `draft` (unpromoted)
+        revision does, and the caller holds `apis:read`, the problem keeps
+        `type: operation_not_found` and status 404 but names the draft in
+        `detail` and in a `draft_revision` member (`api`, `revision_id`,
+        `state`, `promoted: false`, `promote_path`), with an
+        `agent_directive`: `modify_headers` carrying the `Jentic-Revision`
+        pin when the caller may pin the draft, otherwise `prompt_human`
+        to ask an operator to promote it. Callers without `apis:read`
+        get the generic body.
       content:
         application/problem+json:
           schema:
@@ -1375,6 +1385,50 @@ components:
                 detail: Operation not found — unregistered upstream URL.
                 error_origin: broker
                 instance: /api.example.com/v1/unknown
+            operation_not_found_draft_only:
+              summary: Only a draft (unpromoted) revision serves the upstream URL.
+              value:
+                type: operation_not_found
+                title: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                status: 404
+                detail: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                draft_revision:
+                  api:
+                    vendor: api.example.com
+                    name: main
+                    version: "1.0.0"
+                  revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                  state: draft
+                  promoted: false
+                  promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                    revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                    promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                    suggested_command: jentic apis promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                  human_readable_instruction: >-
+                    This URL is served only by draft revision
+                    3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of 'api.example.com/main/1.0.0',
+                    which has not been promoted, so unpinned calls do not reach it.
+                    Do not re-import the spec or search for another operation — it is
+                    already registered. Ask your operator to promote it (`jentic apis
+                    promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c`,
+                    needs apis:write), then retry this call.
     Conflict:
       description: |
         Conflict (RFC 9457 `application/problem+json`), distinguished by

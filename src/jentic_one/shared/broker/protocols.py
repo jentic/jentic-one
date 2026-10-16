@@ -70,6 +70,22 @@ class RevisionPinResult:
     revision_id: uuid.UUID | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DraftRevisionMatch:
+    """A ``draft`` revision that serves a METHOD+URL no live revision serves.
+
+    Read only on the broker's unregistered-URL 404 path, to explain the miss.
+    ``submitted_by`` and ``origin`` are the revision's own columns: the broker
+    uses them to decide whether the caller could pin the draft
+    (``Jentic-Revision``) and never puts ``submitted_by`` on the wire.
+    """
+
+    api: APIReference
+    revision_id: uuid.UUID
+    submitted_by: str | None = None
+    origin: str | None = None
+
+
 @runtime_checkable
 class RegistryResolverProtocol(Protocol):
     """Resolves a METHOD+URL to an operation + API identity against the registry.
@@ -98,6 +114,17 @@ class RegistryResolverProtocol(Protocol):
         :class:`RevisionPinResult`; it never raises a registry-specific exception
         across the boundary. The broker maps the outcome to its domain taxonomy
         (``UNKNOWN``/``ARCHIVED`` → 422, ``FORBIDDEN``/``HOST_CHANGE_HELD`` → 403).
+        """
+        ...
+
+    async def find_draft_match(self, *, method: str, url: str) -> DraftRevisionMatch | None:
+        """Find a ``draft`` revision that serves METHOD+URL, or ``None``.
+
+        Uses the same host/path/method matching as the unpinned lookup, but
+        searches ``draft`` revisions only, in one bounded statement. The broker
+        calls it only after an unpinned lookup matched nothing, so a successful
+        call never pays for it; it never raises the lookup errors
+        (ambiguity, too many candidates) — it either names a draft or not.
         """
         ...
 

@@ -83,6 +83,26 @@ class ApiImportRevisionResult(BaseModel):
     api: dict[str, Any]
     revision_id: str
     state: str
+    promoted: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the revision is the one the API serves. False for a `draft`: "
+            "unpinned Broker calls do not reach it until it is promoted. Absent on "
+            "results written before this field existed."
+        ),
+        examples=[False],
+    )
+    promote_path: str | None = Field(
+        default=None,
+        description="Path that promotes the draft (`POST`); present only when `promoted` is false.",
+        examples=[
+            f"/apis/{ex.API_VENDOR}/{ex.API_NAME}/{ex.API_VERSION}/revisions/{ex.REVISION_ID}:promote"
+        ],
+    )
+    promote_hint: str | None = Field(
+        default=None,
+        description="Human-readable note on how to promote; present only when `promoted` is false.",
+    )
 
 
 class ApiImportJobResult(BaseModel):

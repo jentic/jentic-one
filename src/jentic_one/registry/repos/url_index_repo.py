@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, delete, func, select, text
+from sqlalchemy import Select, and_, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import URLIndexEntry
+from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import APIReference
 
 
@@ -54,6 +55,18 @@ class UrlIndexCandidate:
 
 
 _CandidateSelect = Select[tuple[OperationURLIndex, str, str, str, str, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class DraftUrlIndexCandidate:
+    """A URL-index row of a ``draft`` revision plus its API identity and provenance."""
+
+    row: OperationURLIndex
+    vendor: str
+    name: str
+    version: str
+    submitted_by: str | None
+    origin: str | None
 
 
 @dataclass(frozen=True)
@@ -349,6 +362,63 @@ class UrlIndexRepository:
             OperationURLIndex.segment_count == segment_count,
         )
         return await _fetch_candidates(session, stmt)
+
+    @staticmethod
+    async def lookup_draft_candidates(
+        session: AsyncSession,
+        *,
+        methods: list[str],
+        host: str,
+        segment_count: int,
+        limit: int,
+    ) -> list[DraftUrlIndexCandidate]:
+        """Find ``draft``-revision entries for ``host`` (or a regex host) in one statement.
+
+        The exact-host and regex-host candidates the unpinned lookup reads in
+        two statements are read together here (``host = :host OR host IS
+        NULL``), for every method in ``methods``, newest draft first and at most
+        ``limit`` rows. Both ``host`` arms are prefixes of
+        ``ix_operation_url_index_method_host_revision``; the revision and API
+        joins are primary-key lookups.
+        """
+        stmt = (
+            select(
+                OperationURLIndex,
+                Api.vendor,
+                Api.name,
+                Api.version,
+                ApiRevision.submitted_by,
+                ApiRevision.origin,
+            )
+            .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
+            .join(Api, Api.id == ApiRevision.api_id)
+            .where(
+                ApiRevision.state == ApiRevisionState.DRAFT.value,
+                OperationURLIndex.method.in_(methods),
+                or_(
+                    OperationURLIndex.host == host,
+                    and_(
+                        OperationURLIndex.host.is_(None),
+                        OperationURLIndex.host_regex.isnot(None),
+                    ),
+                ),
+                OperationURLIndex.segment_count == segment_count,
+            )
+            .order_by(ApiRevision.created_at.desc(), OperationURLIndex.revision_id)
+            .limit(limit)
+        )
+        rows = (await session.execute(stmt)).all()
+        return [
+            DraftUrlIndexCandidate(
+                row=row,
+                vendor=vendor,
+                name=name,
+                version=version,
+                submitted_by=submitted_by,
+                origin=origin,
+            )
+            for row, vendor, name, version, submitted_by, origin in rows
+        ]
 
     @staticmethod
     async def find_live_hosts_of_other_vendors(

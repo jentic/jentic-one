@@ -546,6 +546,42 @@
                   "title": "Operation not found — unregistered upstream URL.",
                   "type": "operation_not_found"
                 }
+              },
+              "operation_not_found_draft_only": {
+                "summary": "Only a draft (unpromoted) revision serves the upstream URL.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "This URL is served only by draft revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of 'api.example.com/main/1.0.0', which has not been promoted, so unpinned calls do not reach it. Do not re-import the spec or search for another operation — it is already registered. Ask your operator to promote it (`jentic apis promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c`, needs apis:write), then retry this call.",
+                    "parameters": {
+                      "api": {
+                        "name": "main",
+                        "vendor": "api.example.com",
+                        "version": "1.0.0"
+                      },
+                      "promote_path": "/apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote",
+                      "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                      "suggested_command": "jentic apis promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "Operation not found — no live revision serves this URL; it matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API 'api.example.com/main/1.0.0', which is a draft and has not been promoted",
+                  "draft_revision": {
+                    "api": {
+                      "name": "main",
+                      "vendor": "api.example.com",
+                      "version": "1.0.0"
+                    },
+                    "promote_path": "/apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote",
+                    "promoted": false,
+                    "revision_id": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+                    "state": "draft"
+                  },
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 404,
+                  "title": "Operation not found — no live revision serves this URL; it matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API 'api.example.com/main/1.0.0', which is a draft and has not been promoted",
+                  "type": "operation_not_found"
+                }
               }
             },
             "schema": {
@@ -553,7 +589,7 @@
             }
           }
         },
-        "description": "Upstream URL doesn't resolve to a registered API operation, or\nthe path component refers to a resource the upstream itself\ndoesn't recognise. Body is RFC 9457\n`application/problem+json`.\n"
+        "description": "Upstream URL doesn't resolve to a registered API operation, or\nthe path component refers to a resource the upstream itself\ndoesn't recognise. Body is RFC 9457\n`application/problem+json`.\n\nWhen no live revision serves the URL but a `draft` (unpromoted)\nrevision does, and the caller holds `apis:read`, the problem keeps\n`type: operation_not_found` and status 404 but names the draft in\n`detail` and in a `draft_revision` member (`api`, `revision_id`,\n`state`, `promoted: false`, `promote_path`), with an\n`agent_directive`: `modify_headers` carrying the `Jentic-Revision`\npin when the caller may pin the draft, otherwise `prompt_human`\nto ask an operator to promote it. Callers without `apis:read`\nget the generic body.\n"
       },
       "PayloadTooLarge": {
         "content": {
