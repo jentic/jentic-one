@@ -1,20 +1,26 @@
 """Integration tests: a queued execution never runs for an actor that may no longer execute.
 
 Pins #1138. Each test enqueues an execution job the way the async execute
-route does (``enqueue_job``), changes the enqueuing actor through the real
+route does (``enqueue_job``) and changes the enqueuing actor through the real
 ``AgentService`` / ``UserService`` / ``PermissionService`` (disable, delete,
-or revoke the execute permission), then lets the real ``WorkerLoop`` claim
-the job and run it through ``ExecutionHandler`` wired as the broker lifespan
-wires it: the uncached ``QueuedExecutionAuthorizer``, the live
+or revoke the execute permission). The handler is wired as the broker
+lifespan wires it: the uncached ``QueuedExecutionAuthorizer``, the live
 ``ActorStatusResolver`` read. The credential-injection and upstream seams are
 recording stand-ins: what is under test is whether the worker reaches them.
 
-The race tests make the change *after* the authorizer has allowed the job
-and before credentials are resolved — the window the live actor read right
-before injection closes. They call the handler on a session that has not
-written yet (as the worker's does at that point) so the change can commit on
-SQLite too, whose single writer lock the worker's claim transaction would
-otherwise hold.
+A lifecycle disable or delete cancels the actor's *queued* executions in the
+same transaction, so the worker never claims them. The worker's run-time
+checks are the backstop for the jobs that sweep cannot reach: a job already
+claimed (``running``) when the change commits. The claimed-job tests claim
+through the real ``WorkerLoop`` first, then change the actor, then run the
+claimed job.
+
+The race tests make the change *after* the authorizer has allowed a claimed
+job and before credentials are resolved — the window the live actor read
+right before injection closes. They run the handler on a session that has not
+written yet, as the worker's handler transaction has not at that point, so the
+change can commit on SQLite too: a transaction opened with ``BEGIN IMMEDIATE``
+around the handler would hold the single writer lock the change needs.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
@@ -83,7 +90,7 @@ class _RecordingExecutor:
     def __init__(self) -> None:
         self.requests: list[UpstreamExecRequest] = []
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, **_: Any) -> UpstreamExecResult:
         self.requests.append(request)
         return UpstreamExecResult(status_code=200, body=b"{}", content_type=None, duration_ms=1)
 
@@ -269,10 +276,17 @@ async def _revoke_execute(ctx: Context, actor_type: ActorType, actor_id: str) ->
 
 _Change = Callable[[Context, ActorType, str], Awaitable[None]]
 
-#: Each change and the sync-edge denial it must produce: (problem type, HTTP status).
-_CHANGES: list[Any] = [
-    pytest.param(_disable, ("unauthorized", 401), id="disabled"),
-    pytest.param(_revoke_execute, ("insufficient_scope", 403), id="execute_revoked"),
+
+async def _soft_delete_user(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
+    admin_id = await _seed_user(ctx, "deleter", permissions={ORG_ADMIN})
+    await UserService(ctx).delete(actor_id, identity=Identity(sub=admin_id))
+
+
+#: Lifecycle changes that cancel the actor's queued executions (the sync edge's 401).
+_LIFECYCLE_CHANGES: list[Any] = [
+    pytest.param(ActorType.AGENT, _disable, id="agent_disabled"),
+    pytest.param(ActorType.USER, _disable, id="user_disabled"),
+    pytest.param(ActorType.USER, _soft_delete_user, id="user_soft_deleted"),
 ]
 
 
@@ -297,6 +311,28 @@ async def _enqueue(ctx: Context, actor_id: str, actor_type: ActorType) -> str:
         )
 
 
+def _handler(
+    ctx: Context,
+    executor: _RecordingExecutor,
+    injector: _SpyInjector,
+    *,
+    authorizer: ExecutionAuthorizer | None = None,
+) -> ExecutionHandler:
+    """The handler wired as the broker lifespan wires it (``authorizer`` overridable)."""
+    return ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=authorizer or build_queued_execution_authorizer(ctx),
+        actor_status=ActorStatusResolver(ctx.admin_db),
+    )
+
+
+def _worker(ctx: Context, handler: ExecutionHandler) -> WorkerLoop:
+    registry = JobHandlerRegistry()
+    registry.register(JobKind.EXECUTION, handler)
+    return WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())
+
+
 async def _run_worker(
     ctx: Context,
     executor: _RecordingExecutor,
@@ -304,17 +340,39 @@ async def _run_worker(
     *,
     expect_claim: bool = True,
 ) -> None:
-    """One worker tick with the handler wired as the broker lifespan wires it."""
-    handler = ExecutionHandler(
-        executor=executor,
-        credential_injector=injector,
-        execution_authorizer=build_queued_execution_authorizer(ctx),
-        actor_status=ActorStatusResolver(ctx.admin_db),
-    )
-    registry = JobHandlerRegistry()
-    registry.register(JobKind.EXECUTION, handler)
-    claimed = await WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())._tick()
+    """One worker tick: claim, run and complete the oldest queued job."""
+    claimed = await _worker(ctx, _handler(ctx, executor, injector))._tick()
     assert claimed is expect_claim
+
+
+async def _claim(loop: WorkerLoop, job_id: str) -> Any:
+    """Claim ``job_id`` through the worker; the claim commits it as ``running``."""
+    job = await loop._claim_next()
+    assert job is not None
+    assert job.id == job_id
+    assert job.status == JobStatus.RUNNING
+    return job
+
+
+async def _assert_claim_survived(ctx: Context, job_id: str, actor_id: str) -> None:
+    """The lifecycle sweep left the claimed job alone and recorded no cancellation."""
+    async with ctx.admin_db.session() as session:
+        job = await session.get(Job, job_id)
+        sweeps = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.target_id == actor_id,
+                        AuditEntry.reason.like("queued execution jobs cancelled%"),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert job is not None
+    assert job.status == JobStatus.RUNNING
+    assert sweeps == []
 
 
 async def _job_outcome(ctx: Context, job_id: str) -> tuple[Job, JobResult, list[Event]]:
@@ -385,41 +443,73 @@ async def test_queued_job_runs_for_an_actor_that_may_execute(
     assert EventType.EXECUTION_COMPLETED in [e.type for e in events]
 
 
-@pytest.mark.parametrize(
-    ("change", "denial"),
-    [pytest.param(_revoke_execute, ("insufficient_scope", 403), id="execute_revoked")],
-)
 @pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
-async def test_queued_job_denied_when_actor_changed_before_it_runs(
-    integration_context: Context,
-    clean: None,
-    actor_type: ActorType,
-    change: _Change,
-    denial: tuple[str, int],
+async def test_queued_job_denied_when_execute_revoked_before_it_runs(
+    integration_context: Context, clean: None, actor_type: ActorType
 ) -> None:
+    """A revocation leaves the actor active, so nothing cancels the queued job:
+    the worker claims it and denies it with the sync edge's 403."""
     ctx = integration_context
     actor_id = await _seed_actor(ctx, actor_type)
     job_id = await _enqueue(ctx, actor_id, actor_type)
-    await change(ctx, actor_type, actor_id)
+    await _revoke_execute(ctx, actor_type, actor_id)
     executor, injector = _RecordingExecutor(), _SpyInjector()
 
     await _run_worker(ctx, executor, injector)
 
-    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector, denial)
+    _assert_denied(
+        *await _job_outcome(ctx, job_id), executor, injector, ("insufficient_scope", 403)
+    )
 
 
-@pytest.mark.parametrize(("change", "denial"), _CHANGES)
-@pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
-async def test_queued_job_denied_when_actor_changed_after_authorization(
+@pytest.mark.parametrize(("actor_type", "change"), _LIFECYCLE_CHANGES)
+async def test_claimed_job_denied_when_actor_disabled_before_the_handler_runs(
+    integration_context: Context, clean: None, actor_type: ActorType, change: _Change
+) -> None:
+    """A job the worker already claimed is out of the lifecycle sweep's reach
+    (it cancels only ``queued`` jobs): the worker's own run-time check denies
+    it with the sync edge's 401 — no decrypt, no upstream call."""
+    ctx = integration_context
+    actor_id = await _seed_actor(ctx, actor_type)
+    job_id = await _enqueue(ctx, actor_id, actor_type)
+    executor, injector = _RecordingExecutor(), _SpyInjector()
+    handler = _handler(ctx, executor, injector)
+    loop = _worker(ctx, handler)
+    job = await _claim(loop, job_id)
+
+    await change(ctx, actor_type, actor_id)
+    await _assert_claim_survived(ctx, job_id, actor_id)
+    await loop._complete_job(job.id, job.kind, await loop._execute_handler(handler, job))
+
+    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector)
+
+
+@pytest.mark.parametrize(
+    ("actor_type", "change", "denial"),
+    [
+        pytest.param(ActorType.AGENT, _disable, ("unauthorized", 401), id="agent_disabled"),
+        pytest.param(ActorType.USER, _disable, ("unauthorized", 401), id="user_disabled"),
+        pytest.param(
+            ActorType.USER, _soft_delete_user, ("unauthorized", 401), id="user_soft_deleted"
+        ),
+        pytest.param(
+            ActorType.AGENT, _revoke_execute, ("insufficient_scope", 403), id="agent_revoked"
+        ),
+        pytest.param(
+            ActorType.USER, _revoke_execute, ("insufficient_scope", 403), id="user_revoked"
+        ),
+    ],
+)
+async def test_claimed_job_denied_when_actor_changed_after_authorization(
     integration_context: Context,
     clean: None,
     actor_type: ActorType,
     change: _Change,
     denial: tuple[str, int],
 ) -> None:
-    """The change commits after the authorizer allowed the job: the live read
-    right before injection still stops it — no decrypt, no upstream call — and
-    logs the pre-injection denial without any credential material."""
+    """The change commits after the authorizer allowed a claimed job: the live
+    read right before injection still stops it — no decrypt, no upstream call —
+    and logs the pre-injection denial without any credential material."""
     ctx = integration_context
     actor_id = await _seed_actor(ctx, actor_type)
     job_id = await _enqueue(ctx, actor_id, actor_type)
@@ -427,35 +517,29 @@ async def test_queued_job_denied_when_actor_changed_after_authorization(
 
     async def change_now() -> None:
         await change(ctx, actor_type, actor_id)
+        await _assert_claim_survived(ctx, job_id, actor_id)
 
-    handler = ExecutionHandler(
-        executor=executor,
-        credential_injector=injector,
-        execution_authorizer=_ChangesAfterAuthorizing(
-            build_queued_execution_authorizer(ctx), change_now
-        ),
-        actor_status=ActorStatusResolver(ctx.admin_db),
+    handler = _handler(
+        ctx,
+        executor,
+        injector,
+        authorizer=_ChangesAfterAuthorizing(build_queued_execution_authorizer(ctx), change_now),
     )
-    async with ctx.admin_db.session() as session:
-        job = await session.get(Job, job_id)
-        assert job is not None
-        payload, created_by, job_actor_type = job.payload, job.created_by, job.actor_type
+    loop = _worker(ctx, handler)
+    job = await _claim(loop, job_id)
     with structlog.testing.capture_logs() as logs:
         async with ctx.admin_db.session() as session:
             result = await handler.execute(
-                job_id, session, payload=payload, created_by=created_by, actor_type=job_actor_type
+                job.id,
+                session,
+                payload=job.payload,
+                created_by=job.created_by,
+                actor_type=job.actor_type,
             )
             await session.commit()
+    await loop._complete_job(job.id, job.kind, result)
 
-    problem_type, status = denial
-    assert executor.requests == []
-    assert injector.calls == 0
-    assert result.body["status"] == "failed"
-    assert result.body["http_status"] == status
-    assert result.body["problem"]["type"] == problem_type
-    async with ctx.admin_db.session() as session:
-        events = (await session.execute(select(Event).where(Event.job_id == job_id))).scalars()
-        assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    _assert_denied(*await _job_outcome(ctx, job_id), executor, injector, denial)
     [denied] = [
         e
         for e in logs
@@ -463,35 +547,19 @@ async def test_queued_job_denied_when_actor_changed_after_authorization(
     ]
     assert denied["job_id"] == job_id
     assert denied["actor_id"] == actor_id
-    assert denied["reason"] == ("actor_inactive" if status == 401 else "insufficient_scope")
+    assert denied["reason"] == ("actor_inactive" if denial[1] == 401 else "insufficient_scope")
     assert _SECRET not in str(logs)
 
 
-async def _delete_agent(ctx: Context, actor_id: str) -> None:
+async def test_queued_job_denied_when_agent_row_deleted(
+    integration_context: Context, clean: None
+) -> None:
+    """A raw row delete skips the lifecycle sweep; the worker denies the job."""
+    ctx = integration_context
+    actor_id = await _seed_actor(ctx, ActorType.AGENT)
+    job_id = await _enqueue(ctx, actor_id, ActorType.AGENT)
     async with ctx.admin_db.transaction() as session:
         await AgentRepository.delete(session, actor_id)
-
-
-async def _delete_user(ctx: Context, actor_id: str) -> None:
-    admin_id = await _seed_user(ctx, "deleter", permissions={ORG_ADMIN})
-    await UserService(ctx).delete(actor_id, identity=Identity(sub=admin_id))
-
-
-@pytest.mark.parametrize(
-    ("actor_type", "remove"),
-    [(ActorType.AGENT, _delete_agent)],
-    ids=["agent_row_deleted"],
-)
-async def test_queued_job_denied_when_actor_deleted(
-    integration_context: Context,
-    clean: None,
-    actor_type: ActorType,
-    remove: Callable[[Context, str], Awaitable[None]],
-) -> None:
-    ctx = integration_context
-    actor_id = await _seed_actor(ctx, actor_type)
-    job_id = await _enqueue(ctx, actor_id, actor_type)
-    await remove(ctx, actor_id)
     executor, injector = _RecordingExecutor(), _SpyInjector()
 
     await _run_worker(ctx, executor, injector)
@@ -511,23 +579,7 @@ async def test_queued_job_denied_for_an_actor_that_never_existed(
     _assert_denied(*await _job_outcome(ctx, job_id), executor, injector)
 
 
-async def _disable_change(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
-    await _disable(ctx, actor_type, actor_id)
-
-
-async def _soft_delete_user(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
-    await _delete_user(ctx, actor_id)
-
-
-@pytest.mark.parametrize(
-    ("actor_type", "change"),
-    [
-        (ActorType.AGENT, _disable_change),
-        (ActorType.USER, _disable_change),
-        (ActorType.USER, _soft_delete_user),
-    ],
-    ids=["agent_disabled", "user_disabled", "user_soft_deleted"],
-)
+@pytest.mark.parametrize(("actor_type", "change"), _LIFECYCLE_CHANGES)
 async def test_lifecycle_change_cancels_the_queued_job_before_the_worker_claims_it(
     integration_context: Context,
     clean: None,
