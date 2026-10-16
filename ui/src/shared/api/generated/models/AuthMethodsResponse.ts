@@ -8,14 +8,14 @@ import type { OauthClientDcrMethodResponse } from './OauthClientDcrMethodRespons
 /**
  * The login-picker contract: the sign-in options on the process answering.
  *
- * Scope caveat for split deployments: mount-derived flags (``agent_dcr``,
- * ``service_accounts``) describe **this process only** — ``false`` means "not
- * served here", not "does not exist on the deployment"; a sibling tier may
- * serve it (see ``surfaces``).
+ * Scope caveat for split deployments: the mount-derived flag (``agent_dcr``)
+ * describes **this process only** — ``false`` means "not served here", not
+ * "does not exist on the deployment"; a sibling tier may serve it (see
+ * ``surfaces``).
  */
 export type AuthMethodsResponse = {
     /**
-     * Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration); true iff the auth surface is mounted on this process.
+     * Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration with the agent's public JWKS); the registered agent then signs in with the RFC 7523 jwt-bearer assertion grant at urls.token. True iff the auth surface is mounted on this process.
      */
     agent_dcr: EnabledMethodResponse;
     idp: IdpMethodResponse;
@@ -24,9 +24,5 @@ export type AuthMethodsResponse = {
      */
     local_login: EnabledMethodResponse;
     oauth_client_dcr: OauthClientDcrMethodResponse;
-    /**
-     * Operator-managed service accounts (jwt-bearer grant at urls.token); true iff the auth surface is mounted on this process.
-     */
-    service_accounts: EnabledMethodResponse;
 };
 

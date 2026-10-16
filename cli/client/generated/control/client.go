@@ -2179,14 +2179,14 @@ type AuditTargetType string
 
 // AuthMethodsResponse The login-picker contract: the sign-in options on the process answering.
 //
-// Scope caveat for split deployments: mount-derived flags (“agent_dcr“,
-// “service_accounts“) describe **this process only** — “false“ means "not
-// served here", not "does not exist on the deployment"; a sibling tier may
-// serve it (see “surfaces“).
+// Scope caveat for split deployments: the mount-derived flag (“agent_dcr“)
+// describes **this process only** — “false“ means "not served here", not
+// "does not exist on the deployment"; a sibling tier may serve it (see
+// “surfaces“).
 //
-// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true},"service_accounts":{"enabled":true}}
+// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}
 type AuthMethodsResponse struct {
-	// AgentDcr Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration); true iff the auth surface is mounted on this process.
+	// AgentDcr Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration with the agent's public JWKS); the registered agent then signs in with the RFC 7523 jwt-bearer assertion grant at urls.token. True iff the auth surface is mounted on this process.
 	//
 	// Examples: {"enabled":true}
 	AgentDcr EnabledMethodResponse `json:"agent_dcr"`
@@ -2205,11 +2205,6 @@ type AuthMethodsResponse struct {
 	//
 	// Examples: {"approval":"manual","enabled":true}
 	OauthClientDcr OauthClientDcrMethodResponse `json:"oauth_client_dcr"`
-
-	// ServiceAccounts Operator-managed service accounts (jwt-bearer grant at urls.token); true iff the auth surface is mounted on this process.
-	//
-	// Examples: {"enabled":true}
-	ServiceAccounts EnabledMethodResponse `json:"service_accounts"`
 }
 
 // AuthorizationCodeRegistrationCreateRequest Create request for an authorization-code registration.
@@ -2557,16 +2552,16 @@ type BodyConsentAgentCreate struct {
 
 // CapabilitiesAuthResponse Authentication capabilities.
 //
-// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true},"service_accounts":{"enabled":true}}}
+// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}}
 type CapabilitiesAuthResponse struct {
 	// Methods The login-picker contract: the sign-in options on the process answering.
 	//
-	// Scope caveat for split deployments: mount-derived flags (``agent_dcr``,
-	// ``service_accounts``) describe **this process only** — ``false`` means "not
-	// served here", not "does not exist on the deployment"; a sibling tier may
-	// serve it (see ``surfaces``).
+	// Scope caveat for split deployments: the mount-derived flag (``agent_dcr``)
+	// describes **this process only** — ``false`` means "not served here", not
+	// "does not exist on the deployment"; a sibling tier may serve it (see
+	// ``surfaces``).
 	//
-	// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true},"service_accounts":{"enabled":true}}
+	// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}
 	Methods AuthMethodsResponse `json:"methods"`
 }
 
@@ -2596,11 +2591,11 @@ type CapabilitiesInstanceResponseBackend string
 // downstream contributions) and hard-fail only on an unknown
 // “capabilities_version“.
 //
-// Examples: {"auth":{"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true},"service_accounts":{"enabled":true}}},"capabilities_version":1,"features":{"governed_hosts":true,"mcp":true},"instance":{"backend":"remote","canonical_base_url":"https://jentic.example.com"},"surfaces":["admin","auth","control","registry"],"urls":{"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/token"}}
+// Examples: {"auth":{"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}},"capabilities_version":1,"features":{"governed_hosts":true,"mcp":true},"instance":{"backend":"remote","canonical_base_url":"https://jentic.example.com"},"surfaces":["admin","auth","control","registry"],"urls":{"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}}
 type CapabilitiesResponse struct {
 	// Auth Authentication capabilities.
 	//
-	// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true},"service_accounts":{"enabled":true}}}
+	// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}}
 	Auth CapabilitiesAuthResponse `json:"auth"`
 
 	// CapabilitiesVersion Shape version of this document, bumped only when a field is removed, renamed, or retyped. New keys appear without a bump — ignore unknown keys; hard-fail only on a version you do not understand.
@@ -2632,7 +2627,7 @@ type CapabilitiesResponse struct {
 	// resolvable. ``null`` means the corresponding surface or gate is not
 	// available on the process answering this request.
 	//
-	// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/token"}
+	// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}
 	Urls CapabilitiesUrlsResponse `json:"urls"`
 }
 
@@ -2645,7 +2640,7 @@ type CapabilitiesResponse struct {
 // resolvable. “null“ means the corresponding surface or gate is not
 // available on the process answering this request.
 //
-// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/token"}
+// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}
 type CapabilitiesUrlsResponse struct {
 	// AgentRegistration Agent dynamic-registration endpoint (RFC 7591, see auth.methods.agent_dcr); null when the auth surface is not mounted on this process.
 	//
@@ -2682,9 +2677,9 @@ type CapabilitiesUrlsResponse struct {
 	// Examples: https://jentic.example.com/.well-known/oauth-protected-resource
 	ProtectedResourceMetadata *string `json:"protected_resource_metadata"`
 
-	// Token OAuth token endpoint (authorization_code, refresh_token, and the service-account jwt-bearer grant); null when the auth surface is not mounted on this process.
+	// Token OAuth token endpoint (authorization_code, refresh_token, and the agent RFC 7523 jwt-bearer assertion grant); null when the auth surface is not mounted on this process.
 	//
-	// Examples: https://jentic.example.com/token
+	// Examples: https://jentic.example.com/oauth/token
 	Token *string `json:"token"`
 }
 

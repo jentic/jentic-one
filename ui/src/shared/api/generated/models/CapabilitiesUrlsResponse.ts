@@ -42,7 +42,7 @@ export type CapabilitiesUrlsResponse = {
      */
     protected_resource_metadata: (string | null);
     /**
-     * OAuth token endpoint (authorization_code, refresh_token, and the service-account jwt-bearer grant); null when the auth surface is not mounted on this process.
+     * OAuth token endpoint (authorization_code, refresh_token, and the agent RFC 7523 jwt-bearer assertion grant); null when the auth surface is not mounted on this process.
      */
     token: (string | null);
 };

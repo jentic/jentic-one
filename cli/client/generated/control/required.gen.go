@@ -59,7 +59,7 @@ func (AuditResponse) RequiredFields() []string {
 	return []string{"action", "actor_type", "id", "occurred_at", "target_id", "target_type"}
 }
 func (AuthMethodsResponse) RequiredFields() []string {
-	return []string{"agent_dcr", "idp", "local_login", "oauth_client_dcr", "service_accounts"}
+	return []string{"agent_dcr", "idp", "local_login", "oauth_client_dcr"}
 }
 func (AuthorizationCodeRegistrationCreateRequest) RequiredFields() []string {
 	return []string{"api_vendor", "authorize_url", "catalog_api_id", "client_id", "client_secret", "display_name", "flow_kind", "name", "token_url"}

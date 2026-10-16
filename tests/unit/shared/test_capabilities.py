@@ -91,7 +91,6 @@ def test_capabilities_default_body_is_golden(sample_config_dict: dict[str, Any])
                 "local_login": {"enabled": False},
                 "oauth_client_dcr": {"enabled": False, "approval": "manual"},
                 "agent_dcr": {"enabled": True},
-                "service_accounts": {"enabled": True},
             }
         },
         "features": {"mcp": False, "governed_hosts": True},
@@ -172,7 +171,6 @@ def test_capabilities_reflects_surface_composition(sample_config_dict: dict[str,
     assert doc.urls.agent_registration is None
     assert doc.urls.oauth_client_registration is None
     assert doc.auth.methods.agent_dcr.enabled is False
-    assert doc.auth.methods.service_accounts.enabled is False
 
 
 def test_capabilities_governed_hosts_follows_the_registry_mount(
@@ -545,8 +543,6 @@ def test_capabilities_version_is_tied_to_the_document_shape() -> None:
         "auth.methods.oauth_client_dcr",
         "auth.methods.oauth_client_dcr.approval",
         "auth.methods.oauth_client_dcr.enabled",
-        "auth.methods.service_accounts",
-        "auth.methods.service_accounts.enabled",
         "capabilities_version",
         "features",
         "instance",

@@ -224,9 +224,9 @@ class CapabilitiesUrlsResponse(BaseModel):
     )
     token: str | None = Field(
         description="OAuth token endpoint (authorization_code, refresh_token, and "
-        "the service-account jwt-bearer grant); null when the auth surface is not "
-        "mounted on this process.",
-        examples=[f"{ex.BASE_URL}/token"],
+        "the agent RFC 7523 jwt-bearer assertion grant); null when the auth "
+        "surface is not mounted on this process.",
+        examples=[f"{ex.BASE_URL}/oauth/token"],
     )
     agent_registration: str | None = Field(
         description="Agent dynamic-registration endpoint (RFC 7591, see "
@@ -275,10 +275,10 @@ class OauthClientDcrMethodResponse(BaseModel):
 class AuthMethodsResponse(BaseModel):
     """The login-picker contract: the sign-in options on the process answering.
 
-    Scope caveat for split deployments: mount-derived flags (``agent_dcr``,
-    ``service_accounts``) describe **this process only** — ``false`` means "not
-    served here", not "does not exist on the deployment"; a sibling tier may
-    serve it (see ``surfaces``).
+    Scope caveat for split deployments: the mount-derived flag (``agent_dcr``)
+    describes **this process only** — ``false`` means "not served here", not
+    "does not exist on the deployment"; a sibling tier may serve it (see
+    ``surfaces``).
     """
 
     idp: IdpMethodResponse
@@ -293,12 +293,9 @@ class AuthMethodsResponse(BaseModel):
     oauth_client_dcr: OauthClientDcrMethodResponse
     agent_dcr: EnabledMethodResponse = Field(
         description="Anonymous agent self-registration (RFC 7591, POST at "
-        "urls.agent_registration); true iff the auth surface is mounted on this "
-        "process."
-    )
-    service_accounts: EnabledMethodResponse = Field(
-        description="Operator-managed service accounts (jwt-bearer grant at "
-        "urls.token); true iff the auth surface is mounted on this process."
+        "urls.agent_registration with the agent's public JWKS); the registered "
+        "agent then signs in with the RFC 7523 jwt-bearer assertion grant at "
+        "urls.token. True iff the auth surface is mounted on this process."
     )
 
 
@@ -500,7 +497,6 @@ def resolve_capabilities(
                     approval="auto" if mcp_oauth.auto_approve_clients else "manual",
                 ),
                 agent_dcr=EnabledMethodResponse(enabled=auth_mounted),
-                service_accounts=EnabledMethodResponse(enabled=auth_mounted),
             )
         ),
         features=features,

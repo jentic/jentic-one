@@ -2885,7 +2885,7 @@
         "type": "string"
       },
       "AuthMethodsResponse": {
-        "description": "The login-picker contract: the sign-in options on the process answering.\n\nScope caveat for split deployments: mount-derived flags (``agent_dcr``,\n``service_accounts``) describe **this process only** — ``false`` means \"not\nserved here\", not \"does not exist on the deployment\"; a sibling tier may\nserve it (see ``surfaces``).",
+        "description": "The login-picker contract: the sign-in options on the process answering.\n\nScope caveat for split deployments: the mount-derived flag (``agent_dcr``)\ndescribes **this process only** — ``false`` means \"not served here\", not\n\"does not exist on the deployment\"; a sibling tier may serve it (see\n``surfaces``).",
         "examples": [
           {
             "agent_dcr": {
@@ -2901,16 +2901,13 @@
             "oauth_client_dcr": {
               "approval": "manual",
               "enabled": true
-            },
-            "service_accounts": {
-              "enabled": true
             }
           }
         ],
         "properties": {
           "agent_dcr": {
             "$ref": "#/components/schemas/EnabledMethodResponse",
-            "description": "Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration); true iff the auth surface is mounted on this process.",
+            "description": "Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration with the agent's public JWKS); the registered agent then signs in with the RFC 7523 jwt-bearer assertion grant at urls.token. True iff the auth surface is mounted on this process.",
             "examples": [
               {
                 "enabled": true
@@ -2943,23 +2940,13 @@
                 "enabled": true
               }
             ]
-          },
-          "service_accounts": {
-            "$ref": "#/components/schemas/EnabledMethodResponse",
-            "description": "Operator-managed service accounts (jwt-bearer grant at urls.token); true iff the auth surface is mounted on this process.",
-            "examples": [
-              {
-                "enabled": true
-              }
-            ]
           }
         },
         "required": [
           "idp",
           "local_login",
           "oauth_client_dcr",
-          "agent_dcr",
-          "service_accounts"
+          "agent_dcr"
         ],
         "title": "AuthMethodsResponse",
         "type": "object"
@@ -3959,9 +3946,6 @@
               "oauth_client_dcr": {
                 "approval": "manual",
                 "enabled": true
-              },
-              "service_accounts": {
-                "enabled": true
               }
             }
           }
@@ -3983,9 +3967,6 @@
                 },
                 "oauth_client_dcr": {
                   "approval": "manual",
-                  "enabled": true
-                },
-                "service_accounts": {
                   "enabled": true
                 }
               }
@@ -4054,9 +4035,6 @@
                 "oauth_client_dcr": {
                   "approval": "manual",
                   "enabled": true
-                },
-                "service_accounts": {
-                  "enabled": true
                 }
               }
             },
@@ -4083,7 +4061,7 @@
               "broker": "https://broker.jentic.example.com",
               "oauth_client_registration": "https://jentic.example.com/oauth-clients",
               "protected_resource_metadata": "https://jentic.example.com/.well-known/oauth-protected-resource",
-              "token": "https://jentic.example.com/token"
+              "token": "https://jentic.example.com/oauth/token"
             }
           }
         ],
@@ -4105,9 +4083,6 @@
                   },
                   "oauth_client_dcr": {
                     "approval": "manual",
-                    "enabled": true
-                  },
-                  "service_accounts": {
                     "enabled": true
                   }
                 }
@@ -4172,7 +4147,7 @@
                 "broker": "https://broker.jentic.example.com",
                 "oauth_client_registration": "https://jentic.example.com/oauth-clients",
                 "protected_resource_metadata": "https://jentic.example.com/.well-known/oauth-protected-resource",
-                "token": "https://jentic.example.com/token"
+                "token": "https://jentic.example.com/oauth/token"
               }
             ]
           }
@@ -4199,7 +4174,7 @@
             "broker": "https://broker.jentic.example.com",
             "oauth_client_registration": "https://jentic.example.com/oauth-clients",
             "protected_resource_metadata": "https://jentic.example.com/.well-known/oauth-protected-resource",
-            "token": "https://jentic.example.com/token"
+            "token": "https://jentic.example.com/oauth/token"
           }
         ],
         "properties": {
@@ -4317,9 +4292,9 @@
                 "type": "null"
               }
             ],
-            "description": "OAuth token endpoint (authorization_code, refresh_token, and the service-account jwt-bearer grant); null when the auth surface is not mounted on this process.",
+            "description": "OAuth token endpoint (authorization_code, refresh_token, and the agent RFC 7523 jwt-bearer assertion grant); null when the auth surface is not mounted on this process.",
             "examples": [
-              "https://jentic.example.com/token"
+              "https://jentic.example.com/oauth/token"
             ],
             "title": "Token"
           }
@@ -33091,9 +33066,6 @@
                       "oauth_client_dcr": {
                         "approval": "manual",
                         "enabled": true
-                      },
-                      "service_accounts": {
-                        "enabled": true
                       }
                     }
                   },
@@ -33120,7 +33092,7 @@
                     "broker": "https://broker.jentic.example.com",
                     "oauth_client_registration": "https://jentic.example.com/oauth-clients",
                     "protected_resource_metadata": "https://jentic.example.com/.well-known/oauth-protected-resource",
-                    "token": "https://jentic.example.com/token"
+                    "token": "https://jentic.example.com/oauth/token"
                   }
                 },
                 "schema": {
