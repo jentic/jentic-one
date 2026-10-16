@@ -40,6 +40,7 @@ import os
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -61,10 +62,33 @@ def _fail(step: str, detail: str) -> None:
     sys.exit(1)
 
 
-def _expect(step: str, resp: httpx.Response, status: int) -> dict[str, Any]:
+def _expect(
+    step: str, resp: httpx.Response, status: int, *, echo_body: bool = True
+) -> dict[str, Any]:
+    """Return the JSON body, or exit if the status is not ``status``.
+
+    Pass ``echo_body=False`` for requests that carry secret material: a
+    validation error body can echo the submitted input, so only the status
+    code is reported.
+    """
     if resp.status_code != status:
-        _fail(step, f"HTTP {resp.status_code}: {resp.text[:800]}")
+        detail = (
+            resp.text[:800] if echo_body else "<response body withheld: request carried secrets>"
+        )
+        _fail(step, f"HTTP {resp.status_code}: {detail}")
     return resp.json() if resp.content else {}
+
+
+@dataclass
+class Provisioned:
+    """Server-side resources created so far; ``cleanup`` removes whatever is set.
+
+    Each step records an id here the moment the server returns it, so a
+    failure later in the same step still leaves the id visible to cleanup.
+    """
+
+    agent_id: str | None = None
+    credential_id: str | None = None
 
 
 def _material(args: argparse.Namespace) -> SigV4Material:
@@ -104,7 +128,7 @@ def step_direct_probe(args: argparse.Namespace, material: SigV4Material, url: st
     print(f"      ok (HTTP 200, {len(resp.content)} bytes) — signer verified by AWS directly")
 
 
-def step_agent(client: httpx.Client, admin_token: str) -> tuple[str, str]:
+def step_agent(client: httpx.Client, admin_token: str, state: Provisioned) -> str:
     print("[3/6] register + approve a throwaway agent")
     private_key = Ed25519PrivateKey.generate()
     public_raw = private_key.public_key().public_bytes(
@@ -131,6 +155,7 @@ def step_agent(client: httpx.Client, admin_token: str) -> tuple[str, str]:
         201,
     )
     agent_id = reg["client_id"]
+    state.agent_id = agent_id
     _expect(
         "approve",
         client.post(
@@ -164,7 +189,7 @@ def step_agent(client: httpx.Client, admin_token: str) -> tuple[str, str]:
         200,
     )
     print(f"      agent {agent_id} active")
-    return agent_id, tok["access_token"]
+    return str(tok["access_token"])
 
 
 def step_import(client: httpx.Client, admin_token: str, endpoint: str, path: str) -> dict[str, str]:
@@ -222,11 +247,13 @@ def step_import(client: httpx.Client, admin_token: str, endpoint: str, path: str
 def step_provision(
     client: httpx.Client,
     admin_token: str,
-    agent_id: str,
     api: dict[str, str],
     material: SigV4Material,
-) -> str:
+    state: Provisioned,
+) -> None:
     print("[5/6] create sigv4 credential, bind it to the agent")
+    assert state.agent_id
+    agent_id = state.agent_id
     auth = {"Authorization": f"Bearer {admin_token}"}
     cred = _expect(
         "credential create",
@@ -246,8 +273,11 @@ def step_provision(
             },
         ),
         201,
+        echo_body=False,
     )
     credential_id = str(cred["credential"]["credential_id"])
+    # Record before binding so a bind/rules failure still deletes the credential.
+    state.credential_id = credential_id
     _expect(
         "agent↔credential bind",
         client.post(
@@ -269,7 +299,6 @@ def step_provision(
         200,
     )
     print(f"      credential {credential_id} bound to agent {agent_id}")
-    return credential_id
 
 
 def step_broker_execute(broker_url: str, agent_token: str, url: str) -> None:
@@ -284,24 +313,42 @@ def step_broker_execute(broker_url: str, agent_token: str, url: str) -> None:
     print(f"      ok (HTTP 200 via broker) — upstream said: {preview or '<empty body>'}")
 
 
-def cleanup(
-    client: httpx.Client,
-    admin_token: str,
-    *,
-    agent_id: str | None,
-    credential_id: str | None,
-) -> None:
+def _best_effort_delete(
+    client: httpx.Client, what: str, path: str, auth: dict[str, str], **kwargs: Any
+) -> bool:
+    """DELETE ``path``; report (without bodies) and return False on any failure."""
+    try:
+        resp = client.delete(path, headers=auth, **kwargs)
+    except httpx.HTTPError as exc:
+        print(f"      WARNING: {what} cleanup failed: {type(exc).__name__}", file=sys.stderr)
+        return False
+    if resp.status_code >= 400 and resp.status_code != 404:
+        print(f"      WARNING: {what} cleanup failed: HTTP {resp.status_code}", file=sys.stderr)
+        return False
+    return True
+
+
+def cleanup(client: httpx.Client, admin_token: str, state: Provisioned) -> None:
+    """Remove every recorded resource; each delete runs even if an earlier one fails."""
     auth = {"Authorization": f"Bearer {admin_token}"}
-    if credential_id and agent_id:
-        client.delete(
-            f"/agents/{agent_id}/credentials/{credential_id}",
-            headers=auth,
+    if state.credential_id and state.agent_id:
+        _best_effort_delete(
+            client,
+            "binding",
+            f"/agents/{state.agent_id}/credentials/{state.credential_id}",
+            auth,
             params={"purge": "true"},
         )
-    if credential_id:
-        client.delete(f"/credentials/{credential_id}", headers=auth)
-    if agent_id:
-        client.delete(f"/agents/{agent_id}", headers=auth)
+    if state.credential_id and not _best_effort_delete(
+        client, "credential", f"/credentials/{state.credential_id}", auth
+    ):
+        print(
+            f"      WARNING: credential {state.credential_id} still holds live AWS keys — "
+            "delete it manually and consider rotating the keys",
+            file=sys.stderr,
+        )
+    if state.agent_id:
+        _best_effort_delete(client, "agent", f"/agents/{state.agent_id}", auth)
     print("      cleaned up agent / binding / credential (imported API left in place)")
 
 
@@ -329,7 +376,7 @@ def main() -> None:
 
     step_direct_probe(args, material, target)
 
-    agent_id = credential_id = None
+    state = Provisioned()
     with httpx.Client(base_url=args.base_url, timeout=30) as client:
         print("[2/6] admin login")
         login = _expect(
@@ -338,23 +385,20 @@ def main() -> None:
                 "/auth/login", json={"email": args.admin_email, "password": args.admin_password}
             ),
             200,
+            echo_body=False,
         )
         admin_token = login["access_token"]
+        # ``finally`` also runs on the SystemExit raised by ``_fail``.
         try:
-            agent_id, agent_token = step_agent(client, admin_token)
+            agent_token = step_agent(client, admin_token, state)
             api = step_import(client, admin_token, args.endpoint, args.path)
-            credential_id = step_provision(client, admin_token, agent_id, api, material)
+            step_provision(client, admin_token, api, material, state)
             step_broker_execute(args.broker_url, agent_token, target)
         finally:
             if args.keep:
                 print("      --keep set; leaving resources in place")
             else:
-                cleanup(
-                    client,
-                    admin_token,
-                    agent_id=agent_id,
-                    credential_id=credential_id,
-                )
+                cleanup(client, admin_token, state)
 
     print("\nPASS — SigV4 signing verified end-to-end through the broker.")
 
