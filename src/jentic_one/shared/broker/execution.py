@@ -108,9 +108,12 @@ class ExecutionOutcome:
 class StreamingOutcome:
     """Captures the final state of a streaming execution for persistence.
 
-    ``http_status`` is the upstream status line, or ``None`` when the stream
-    failed to open (connect/TLS failure, open circuit, a timeout before the
-    response headers): no upstream response exists to attribute a status to.
+    ``http_status`` is the upstream status line, or ``None`` when no upstream
+    response exists to attribute a status to: the stream failed to open
+    (connect/TLS failure, open circuit, a timeout before the response headers)
+    or the request was cancelled first. ``circuit_open`` marks a stream the
+    circuit breaker refused to open, so the record write can raise the same
+    operator-facing circuit event as the buffered path.
     """
 
     execution_id: str
@@ -119,6 +122,7 @@ class StreamingOutcome:
     duration_ms: int = 0
     error: str | None = None
     bytes_transferred: int = 0
+    circuit_open: bool = False
 
 
 @runtime_checkable

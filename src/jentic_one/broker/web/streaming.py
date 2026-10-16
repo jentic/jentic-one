@@ -22,8 +22,9 @@ the response without its final body frame, so the server closes the connection
 and the client sees a truncated body rather than a clean end. On every outcome
 it then hands the `StreamingOutcome` to the completion callback exactly once —
 the execution record is never lost to a body that raised. A stream that fails
-to open (before any response exists) hands the callback a FAILED outcome with
-no upstream status, then re-raises for the error handler to map. The callback
+to open, or is cancelled before the response headers (before any response
+exists), hands the callback a FAILED outcome with no upstream status, then
+re-raises. The callback
 must return promptly: the router's callback hands the record write to the app's
 background-task registry (`jentic_one.shared.web.background_tasks`), so neither
 a clean end, an abort, nor an error response waits on the database.
@@ -60,10 +61,12 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     BrokerError,
+    CircuitOpenError,
     ErrorOrigin,
     UpstreamBodyInterruptedError,
     UpstreamTimeoutError,
 )
+from jentic_one.broker.core.execution import execution_error
 from jentic_one.broker.core.headers import (
     REGION_MISMATCH_HINT,
     JenticHeader,
@@ -85,7 +88,10 @@ logger = structlog.get_logger(__name__)
 
 
 def _error_type(exc: Exception) -> str:
-    """The failure class to record: a mid-body drop's transport error, else the exception's."""
+    """The failure class to log: a mid-body drop's transport error, else the exception's.
+
+    Logs only — the execution record stores :func:`execution_error`.
+    """
     if isinstance(exc, UpstreamBodyInterruptedError):
         return exc.transport_error
     return type(exc).__name__
@@ -141,7 +147,7 @@ async def guarded_body(
                 raise
             except Exception as exc:
                 if outcome is not None:
-                    outcome.error = f"upstream_error: {_error_type(exc)}"
+                    outcome.error = execution_error(exc)
                 raise
             if outcome is not None:
                 outcome.bytes_transferred += len(chunk)
@@ -324,27 +330,35 @@ async def _deliver_outcome(
 
 
 async def _record_open_failure(
-    exc: Exception,
+    exc: BaseException,
     *,
     execution_id: str,
     started_at_perf: float,
     on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
 ) -> None:
-    """Settle the outcome of a stream that failed before any response existed.
+    """Settle the outcome of a stream that ended before any response existed.
 
     No ``OutcomeStreamingResponse`` is built on this path, so its completion
-    step never runs: this is the outcome's only delivery. The record carries no
-    upstream status and names the failure by its problem ``type`` — the same
-    identifier the caller receives in the problem+json body — or, for an
-    unmapped exception, its class.
+    step never runs: this is the outcome's only delivery. The outcome carries
+    no upstream status. A failure records :func:`execution_error` — the problem
+    ``type`` the caller receives in the problem+json body — and a cancellation
+    records ``cancelled``: it comes from server shutdown or an outer cancel
+    (uvicorn does not cancel a handler when its client disconnects), and on a
+    non-idempotent call the request may already have reached the upstream, so
+    it must not go unrecorded.
+
+    The callback returns promptly (the router's only schedules the write on the
+    app's background-task registry), so the error response never waits on the
+    database.
     """
-    error_type = exc.type if isinstance(exc, BrokerError) else type(exc).__name__
+    cancelled = isinstance(exc, asyncio.CancelledError)
     outcome = StreamingOutcome(
         execution_id=execution_id,
         http_status=None,
         started_at_perf=started_at_perf,
         duration_ms=int((time.perf_counter() - started_at_perf) * 1000),
-        error=f"upstream_error: {error_type}",
+        error="cancelled" if cancelled else execution_error(exc),
+        circuit_open=isinstance(exc, CircuitOpenError),
     )
     await _deliver_outcome(outcome, on_complete)
 
@@ -370,9 +384,10 @@ async def open_streaming_response(
     response body ends, whatever the outcome (completed, failed mid-body,
     client disconnect), before the response returns to the server. A failure
     opening the stream (connect/TLS failure, an open circuit, a timeout before
-    the response headers) delivers a FAILED outcome with no upstream status
-    instead, then propagates unchanged so the caller still gets the mapped
-    problem+json response. It must return promptly — the router's callback
+    the response headers) or a cancellation before them delivers a FAILED
+    outcome with no upstream status instead, then propagates unchanged — the
+    caller still gets the mapped problem+json response, and cancellation
+    semantics are kept. It must return promptly — the router's callback
     only schedules the record write on the app's background-task registry.
     (The parameter name is part of the ``Broker.execute_streaming`` injection
     seam and stays stable.)
@@ -386,14 +401,16 @@ async def open_streaming_response(
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
-    except Exception as exc:
-        await stack.aclose()
-        await _record_open_failure(
-            exc,
-            execution_id=execution_id,
-            started_at_perf=start_perf,
-            on_complete=background_callback,
-        )
+    except (Exception, asyncio.CancelledError) as exc:
+        try:
+            await stack.aclose()
+        finally:
+            await _record_open_failure(
+                exc,
+                execution_id=execution_id,
+                started_at_perf=start_perf,
+                on_complete=background_callback,
+            )
         raise
     except BaseException:
         await stack.aclose()

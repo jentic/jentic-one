@@ -175,7 +175,8 @@ async def _persist_streaming_outcome(
     abandoned (its timeout or the shutdown drain cancels it), is logged and
     counted on ``broker.streaming_execution.persist_failures``; the
     cancellation itself propagates. An outcome with no ``http_status`` (the
-    stream never opened) always carries an ``error`` and records as FAILED.
+    stream never opened, or was cancelled first) always carries an ``error``
+    and records as FAILED.
     """
     status = (
         ExecutionStatus.FAILED
@@ -200,6 +201,7 @@ async def _persist_streaming_outcome(
                 actor_type=actor_type,
                 origin=origin,
                 security_config=ctx.config.security,
+                circuit_open=outcome.circuit_open,
             )
     except asyncio.CancelledError:
         _streaming_persist_failures.add(1)
@@ -773,12 +775,13 @@ async def _handle_streaming(
 
     Persistence is best-effort and never holds the response: once the
     streaming body ends — completed, failed mid-body, or cut off by a client
-    disconnect — or the stream fails to open (a FAILED record with no upstream
-    status), the completion callback schedules ``_persist_streaming_outcome``
-    exactly once on the app's background-task registry and returns, so neither
-    an aborted response nor an error response waits on the database. A DB
-    failure, timeout or shutdown cancellation is logged + counted and never
-    affects the response.
+    disconnect — or the stream fails to open or is cancelled before the
+    response headers (a FAILED record with no upstream status), the completion
+    callback schedules ``_persist_streaming_outcome`` exactly once on the app's
+    background-task registry and returns. Neither an aborted response nor a
+    pre-header error response (a circuit-open fast-fail included) waits on the
+    database. A DB failure, timeout or shutdown cancellation is logged +
+    counted and never affects the response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
@@ -820,10 +823,16 @@ async def _handle_streaming(
     persisted = False
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        # One record per execution id, whichever path settles it first — the
-        # broker owns delivery, so the guard holds for an injected broker too.
+        # One record per execution id, whichever delivery comes first. The
+        # default broker delivers once; an injected broker that delivers again
+        # breaks the seam's contract, so the drop is logged, not silent.
         nonlocal persisted
         if persisted:
+            logger.warning(
+                "streaming_outcome_duplicate_ignored",
+                execution_id=outcome.execution_id,
+                trace_id=ctx_req.trace_id,
+            )
             return
         persisted = True
         persist = _persist_streaming_outcome(

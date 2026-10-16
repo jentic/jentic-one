@@ -19,7 +19,7 @@ from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
-from jentic_one.broker.core.execution import mint_execution_id
+from jentic_one.broker.core.execution import execution_error, mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
@@ -84,6 +84,33 @@ def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
     for h in stale:
         _circuit_event_last_emitted.pop(h, None)
     return True
+
+
+async def _emit_circuit_open_event(
+    session: Any, ctx_req: ExecuteRequestContext, *, actor_id: str, actor_type: str
+) -> None:
+    """Emit the rate-limited ``upstream.circuit_open`` event for a circuit fast-fail.
+
+    Shared by the buffered and streaming paths so either one raises the same
+    operator-facing event, under the same per-host cooldown. A failed emit is
+    logged, never raised.
+    """
+    host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
+    if not _should_emit_circuit_event(host):
+        return
+    try:
+        await emit_event(
+            session,
+            type=EventType.UPSTREAM_CIRCUIT_OPEN,
+            severity=EventSeverity.WARNING,
+            summary=f"Circuit breaker opened for upstream {host}",
+            created_by=actor_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            data={"host": host},
+        )
+    except Exception:
+        logger.warning("emit_circuit_event_failed", host=host)
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
@@ -195,7 +222,15 @@ async def run_execution(
             with jentic_tracestate(tracestate_member):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
-        logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
+        error = execution_error(exc)
+        logger.error(
+            "execution_failed", execution_id=execution_id, error=error, detail=exc.detail[:128]
+        )
+        # No upstream response: counted as a FAILED execution, but no
+        # duration sample — the streaming path applies the same policy.
+        _executions_total.add(
+            1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED}
+        )
         await _persist(
             ctx_req,
             session=session,
@@ -204,7 +239,7 @@ async def run_execution(
             status=ExecutionStatus.FAILED,
             http_status=None,
             duration_ms=0,
-            error=exc.detail[:128],
+            error=error,
             actor_id=actor_id,
             actor_type=actor_type,
             origin=origin,
@@ -213,7 +248,7 @@ async def run_execution(
             session,
             execution_id=execution_id,
             status=ExecutionStatus.FAILED,
-            error_msg=exc.detail[:128],
+            error_msg=error,
             trace_id=ctx_req.trace_id,
             actor_id=actor_id,
             actor_type=actor_type,
@@ -224,21 +259,9 @@ async def run_execution(
             origin=origin,
         )
         if isinstance(exc, CircuitOpenError):
-            host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-            if _should_emit_circuit_event(host):
-                try:
-                    await emit_event(
-                        session,
-                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                        severity=EventSeverity.WARNING,
-                        summary=f"Circuit breaker opened for upstream {host}",
-                        created_by=actor_id,
-                        actor_id=actor_id,
-                        actor_type=actor_type,
-                        data={"host": host},
-                    )
-                except Exception:
-                    logger.warning("emit_circuit_event_failed", host=host)
+            await _emit_circuit_open_event(
+                session, ctx_req, actor_id=actor_id, actor_type=actor_type
+            )
         # The sync router wraps this call in ``ctx.admin_db.transaction()``,
         # which rolls back on any exception. Commit the FAILED record + events
         # now so they survive the re-raise that maps the BrokerError to HTTP.
@@ -352,16 +375,23 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    circuit_open: bool = False,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called once after the streaming response body ends, on every outcome
-    (completed, failed mid-body, client disconnect). Shares metrics
-    instrumentation with the buffered path for observability parity.
+    Called once per streaming execution, on every outcome: after the response
+    body ends (completed, failed mid-body, client disconnect), or when the
+    stream ends before any response exists (it failed to open, or the request
+    was cancelled first — ``http_status`` is ``None``). Metrics follow the
+    buffered path: every execution counts on ``broker.executions.total``, and
+    only one with an upstream response adds a duration sample. A
+    ``circuit_open`` fast-fail also raises ``upstream.circuit_open``, under the
+    buffered path's per-host cooldown.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    if http_status is not None:
+        _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -419,6 +449,8 @@ async def persist_streaming_execution(
         error_tags=error_tags,
         origin=origin,
     )
+    if circuit_open:
+        await _emit_circuit_open_event(session, ctx_req, actor_id=actor_id, actor_type=actor_type)
 
 
 async def _persist(

@@ -208,9 +208,22 @@ the broker logs one `upstream_network_failure` (or `streaming_response_aborted`
 for a size-cap or transfer-deadline cut-off) and closes the connection without
 the final chunk, so an HTTP/1.1 chunked or HTTP/2 client sees a truncated body
 (an HTTP/1.0 client reads a close-delimited body and cannot tell). A streaming
-call whose upstream fails before the response headers (connection refused, a
-TLS failure, an open circuit, a timeout) records one `FAILED` row with no HTTP
-status. Lifecycle events (`EXECUTION_COMPLETED` /
+call that ends before the response headers — its upstream fails (connection
+refused, a TLS failure, a timeout), the circuit breaker fast-fails it, or the
+request is cancelled — records one `FAILED` row with no HTTP status, handed
+to the same registry alongside the error response (best-effort; the error
+response never waits on it). A circuit fast-fail also raises the
+rate-limited `UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path.
+
+The record's `error` uses one vocabulary on every path: the problem `type` the
+caller received for a broker error (`upstream_connect_failed`,
+`upstream_timeout`, `upstream_transport_error` for the upstream;
+`circuit_open`, `deadline_exceeded`, `upstream_response_too_large` for a
+broker decision), `server_error: <ExceptionClass>` for an unmapped failure,
+`Upstream returned <status>` for an upstream 4xx/5xx, and, on the streaming
+path only, `client_disconnect`, `transfer_deadline_exceeded` and `cancelled`.
+A failure with no upstream response counts on `broker.executions.total` but
+adds no `broker.execution.duration_ms` sample. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

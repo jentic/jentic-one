@@ -13,8 +13,12 @@ lifecycle event land in the real admin DB. Covered outcomes:
 * persisting the record fails → the failure is counted, nothing escapes;
 * the upstream fails before the response headers — connection refused, a
   timeout waiting for the headers, an open circuit (#1753) → the client gets
-  the unchanged problem+json error and exactly one FAILED record (no upstream
-  status) plus one ``execution.failed`` event are written before it.
+  the unchanged problem+json error at once, and exactly one FAILED record (no
+  upstream status, the problem ``type`` as its error) plus one
+  ``execution.failed`` event land after it, off the request; an open circuit
+  also raises ``upstream.circuit_open``;
+* an injected broker that delivers an outcome twice → one record and a
+  logged warning.
 """
 
 from __future__ import annotations
@@ -44,9 +48,11 @@ from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.execution.service import _circuit_event_last_emitted
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers import execute as execute_router
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.execution import StreamingOutcome
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import RequestIDMiddleware, install_server_log_filters
 from jentic_one.shared.models import ActorType, ExecutionStatus
@@ -179,6 +185,7 @@ class _Records(logging.Handler):
 
 @dataclass
 class _Served:
+    app: FastAPI
     base_url: str
     logs: list[MutableMapping[str, Any]]
     server_log: _Records
@@ -229,7 +236,13 @@ async def served(
                         assert not task.done(), "uvicorn exited before it started"
                         await asyncio.sleep(0.02)
                 yield _Served(
-                    f"http://127.0.0.1:{port}", logs, server_log, background_tasks, runner, breaker
+                    app,
+                    f"http://127.0.0.1:{port}",
+                    logs,
+                    server_log,
+                    background_tasks,
+                    runner,
+                    breaker,
                 )
             finally:
                 server.should_exit = True
@@ -241,13 +254,38 @@ async def served(
 
 @pytest.fixture()
 async def execution_ids(integration_context: Context) -> AsyncGenerator[list[str], None]:
-    """Execution ids the test produced; their records and events are removed after."""
+    """Execution ids the test produced; their records and events are removed after.
+
+    Also resets the per-host circuit-event cooldown and removes the
+    host-level ``upstream.circuit_open`` events this module's actor raised.
+    """
+    _circuit_event_last_emitted.clear()
     ids: list[str] = []
     yield ids
-    if ids:
-        async with integration_context.admin_db.transaction() as session:
+    async with integration_context.admin_db.transaction() as session:
+        await session.execute(
+            delete(Event).where(
+                Event.type == EventType.UPSTREAM_CIRCUIT_OPEN, Event.actor_id == _IDENTITY.sub
+            )
+        )
+        if ids:
             await session.execute(delete(Event).where(Event.execution_id.in_(ids)))
             await session.execute(delete(ExecutionRecord).where(ExecutionRecord.id.in_(ids)))
+    _circuit_event_last_emitted.clear()
+
+
+async def _circuit_events(ctx: Context, host: str) -> list[Event]:
+    """The ``upstream.circuit_open`` events this module's actor raised for ``host``."""
+    async with ctx.admin_db.session() as session:
+        events = (
+            await session.execute(
+                select(Event).where(
+                    Event.type == EventType.UPSTREAM_CIRCUIT_OPEN,
+                    Event.actor_id == _IDENTITY.sub,
+                )
+            )
+        ).scalars()
+        return [e for e in events if e.data.get("host") == host]
 
 
 async def _records(ctx: Context, execution_id: str) -> list[ExecutionRecord]:
@@ -330,7 +368,7 @@ async def test_midbody_upstream_drop_persists_one_failed_record(
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
     assert records[0].http_status == 200
-    assert records[0].error == "upstream_error: RemoteProtocolError"
+    assert records[0].error == "upstream_transport_error"
     events = await _events(integration_context, execution_id)
     assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
 
@@ -364,11 +402,11 @@ async def test_size_cap_exceeded_midbody_persists_one_failed_record(
     records = await _wait_for_records(integration_context, execution_id)
     assert len(records) == 1
     assert records[0].status == ExecutionStatus.FAILED
-    assert records[0].error == "upstream_error: UpstreamResponseTooLargeError"
+    assert records[0].error == "upstream_response_too_large"
     assert len(await _events(integration_context, execution_id)) == 1
     aborts = [e for e in served.logs if e["event"] == "streaming_response_aborted"]
     assert len(aborts) == 1
-    assert aborts[0]["reason"] == "upstream_error: UpstreamResponseTooLargeError"
+    assert aborts[0]["reason"] == "upstream_response_too_large"
     assert aborts[0]["execution_id"] == execution_id
     assert "request_id" in aborts[0]
     assert _unhandled(served) == []
@@ -512,9 +550,97 @@ async def test_stream_open_failure_persists_one_failed_record(
     record = records[0]
     assert record.status == ExecutionStatus.FAILED
     assert record.http_status is None
-    assert record.error == f"upstream_error: {problem['type']}"
+    # The problem type the caller received — no upstream-blame prefix.
+    assert record.error == problem["type"]
     assert record.actor_id == _IDENTITY.sub
     assert record.trace_id == _TRACE_ID
     events = await _events(integration_context, execution_id)
     assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    circuit_events = await _circuit_events(integration_context, f"127.0.0.1:{upstream.port}")
+    assert len(circuit_events) == (1 if mode == "ok" else 0)
+    assert _unhandled(served) == []
+
+
+async def test_circuit_open_error_response_does_not_wait_on_the_record_write(
+    integration_context: Context,
+    served: _Served,
+    upstream: _Upstream,
+    execution_ids: list[str],
+) -> None:
+    """The fast-fail 503 is answered at once; the slowed record write lands after.
+
+    The write is slowed, not mocked: the real write still runs and lands once,
+    so an error response that waited on it would arrive only after the delay.
+    """
+    write_delay_s = 1.0
+    written_at: list[float] = []
+    real_persist = execute_router._persist_streaming_outcome
+
+    async def _slow_persist(*args: Any, **kwargs: Any) -> None:
+        await asyncio.sleep(write_delay_s)
+        await real_persist(*args, **kwargs)
+        written_at.append(time.monotonic())
+
+    execution_id = mint_execution_id()
+    execution_ids.append(execution_id)
+    await _trip_breaker(served, upstream)
+    with (
+        patch.object(execute_router, "mint_execution_id", return_value=execution_id),
+        patch.object(execute_router, "_persist_streaming_outcome", _slow_persist),
+    ):
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            sent_at = time.monotonic()
+            resp = await client.get("/execute/ok")
+            answered_after = time.monotonic() - sent_at
+        assert resp.status_code == 503
+        assert written_at == []
+        assert served.background_tasks.pending == 1
+        await served.background_tasks.drain(5)
+
+    assert answered_after < write_delay_s / 2
+    assert len(written_at) == 1
+    records = await _records(integration_context, execution_id)
+    assert [(r.status, r.error) for r in records] == [(ExecutionStatus.FAILED, "circuit_open")]
+
+
+class _DoubleDeliveryBroker:
+    """An injected broker that breaks the seam contract by delivering the outcome twice."""
+
+    async def execute_streaming(
+        self,
+        runner: Any,
+        request: Any,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Any = None,
+    ) -> Response:
+        assert background_callback is not None
+        await background_callback(StreamingOutcome(execution_id=execution_id, http_status=200))
+        await background_callback(
+            StreamingOutcome(execution_id=execution_id, http_status=None, error="cancelled")
+        )
+        return Response(b"ok", headers={JenticHeader.EXECUTION_ID.value: execution_id})
+
+
+async def test_a_second_outcome_delivery_is_dropped_and_logged(
+    integration_context: Context, served: _Served, execution_ids: list[str]
+) -> None:
+    """The handler persists one record per execution id; a duplicate is a logged warning."""
+    served.app.state.broker = _DoubleDeliveryBroker()
+    try:
+        async with httpx.AsyncClient(base_url=served.base_url) as client:
+            resp = await client.get("/execute/ok")
+    finally:
+        del served.app.state.broker
+    execution_id = resp.headers[JenticHeader.EXECUTION_ID.value]
+    execution_ids.append(execution_id)
+    await served.background_tasks.drain(5)
+
+    records = await _records(integration_context, execution_id)
+    assert [(r.status, r.http_status) for r in records] == [(ExecutionStatus.COMPLETED, 200)]
+    (duplicate,) = [e for e in served.logs if e["event"] == "streaming_outcome_duplicate_ignored"]
+    assert duplicate["log_level"] == "warning"
+    assert duplicate["execution_id"] == execution_id
     assert _unhandled(served) == []
