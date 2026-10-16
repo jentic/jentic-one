@@ -59,7 +59,9 @@ async def list_permissions(
     "/users/{user_id}/permissions",
     responses=with_responses(
         not_found(),
-        conflict("Would remove org:admin from the last active org:admin"),
+        conflict(
+            "Would remove org:admin from the last active org:admin, or the user has been deleted"
+        ),
     ),
 )
 async def set_user_permissions(
@@ -71,7 +73,10 @@ async def set_user_permissions(
     perm_svc: PermissionService = Depends(get_permission_service),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
-    """Set the assigned permissions for a user."""
+    """Set the assigned permissions for a user.
+
+    A deleted user's permissions cannot be changed (409).
+    """
     await perm_svc.set_assigned(user_id, body.permissions, identity=identity)
     view = await user_svc.get_by_id(user_id)
     return UserResponse(

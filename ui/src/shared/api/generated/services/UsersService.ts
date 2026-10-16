@@ -208,7 +208,9 @@ export class UsersService {
      * The row is retained — the account is anonymized (tombstone email) and
      * deactivated so history and audit references stay resolvable — but the
      * action is terminal: there is no re-enable arm. For the reversible kill
-     * switch use ``:disable`` / ``:enable`` instead.
+     * switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+     * their outstanding invites. Idempotent: deleting an already-deleted user
+     * answers 204 and changes nothing.
      * @returns void
      * @throws ApiError
      */
@@ -318,6 +320,8 @@ export class UsersService {
     /**
      * Set User Permissions
      * Set the assigned permissions for a user.
+     *
+     * A deleted user's permissions cannot be changed (409).
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
@@ -347,7 +351,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `Would remove org:admin from the last active org:admin`,
+                409: `Would remove org:admin from the last active org:admin, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -357,6 +361,8 @@ export class UsersService {
     /**
      * Disable User
      * Disable a user account.
+     *
+     * A deleted user is already permanently inactive and cannot be disabled (409).
      * @returns void
      * @throws ApiError
      */
@@ -379,7 +385,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `The user is the last active org:admin`,
+                409: `The user is the last active org:admin, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

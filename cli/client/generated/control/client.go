@@ -12174,7 +12174,9 @@ type ClientInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites. Idempotent: deleting an already-deleted user
+	// answers 204 and changes nothing.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12219,6 +12221,8 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -12228,6 +12232,8 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -12236,6 +12242,8 @@ type ClientInterface interface {
 	// DisableUser Disable User
 	//
 	// Disable a user account.
+	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
 	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -16982,7 +16990,9 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites. Idempotent: deleting an already-deleted user
+// answers 204 and changes nothing.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17067,6 +17077,8 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -17086,6 +17098,8 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -17104,6 +17118,8 @@ func (c *Client) SetUserPermissions(ctx context.Context, userId string, body Set
 // DisableUser Disable User
 //
 // Disable a user account.
+//
+// A deleted user is already permanently inactive and cannot be disabled (409).
 //
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -28746,7 +28762,9 @@ type ClientWithResponsesInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites. Idempotent: deleting an already-deleted user
+	// answers 204 and changes nothing.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28795,6 +28813,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -28804,6 +28824,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -28812,6 +28834,8 @@ type ClientWithResponsesInterface interface {
 	// DisableUserWithResponse Disable User
 	//
 	// Disable a user account.
+	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -47742,7 +47766,9 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites. Idempotent: deleting an already-deleted user
+// answers 204 and changes nothing.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47815,6 +47841,8 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -47830,6 +47858,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -47844,6 +47874,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithResponse(ctx context.Context
 // DisableUserWithResponse Disable User
 //
 // Disable a user account.
+//
+// A deleted user is already permanently inactive and cannot be disabled (409).
 //
 // Returns a wrapper object for the known response body format(s).
 //

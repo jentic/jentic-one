@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, exists, select
+from sqlalchemy import and_, exists, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -209,20 +209,23 @@ class UserRepository:
         return user
 
     @staticmethod
-    async def mark_deleted(session: AsyncSession, user_id: str, *, email: str) -> User:
+    async def mark_deleted(session: AsyncSession, user_id: str, *, email: str) -> bool:
         """Tombstone the user: anonymize the email, deactivate, stamp ``deleted_at``.
 
-        ``deleted_at`` is the durable delete marker; the anonymized email can be
-        edited later, the marker cannot (the service refuses to edit a deleted user).
+        ``deleted_at`` is the durable delete marker. The write is conditional on
+        it being unset, so an already-deleted row keeps its first timestamp,
+        and a concurrent second delete (which waits on the first's row lock,
+        then re-checks the condition) matches nothing. Returns whether this
+        call marked the row.
         """
-        user = await session.get(User, user_id)
-        if user is None:
-            raise UserNotFoundError(user_id)
-        user.email = email
-        user.active = False
-        user.deleted_at = datetime.now(UTC)
-        await session.flush()
-        return user
+        stmt = (
+            update(User)
+            .where(User.id == user_id, User.deleted_at.is_(None))
+            .values(email=email, active=False, deleted_at=datetime.now(UTC))
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await session.execute(stmt)
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def enable(session: AsyncSession, user_id: str) -> User:
