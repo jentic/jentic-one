@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 
 import httpx
 import pytest
@@ -43,6 +44,35 @@ async def test_returns_verbatim_status_and_body() -> None:
     assert result.body == b"teapot"
     assert result.content_type is not None
     assert result.content_type.startswith("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_duration_ms_keeps_sub_millisecond_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1715: ``duration_ms`` is fractional ms, not truncated to whole ms.
+
+    It feeds the ``broker.upstream.duration`` histogram, whose low-latency
+    buckets are finer than 1 ms; an ``int()`` here would collapse them.
+    """
+    ticks = iter([10.0, 10.0004])
+    monkeypatch.setattr(
+        http_runner_mod, "time", types.SimpleNamespace(perf_counter=lambda: next(ticks))
+    )
+
+    app = FastAPI()
+
+    @app.get("/x")
+    async def x() -> Response:
+        return Response(content=b"ok", status_code=200)
+
+    async with _asgi_client(app) as client:
+        result = await HttpRunner(client).run(
+            RunnerRequest(method="GET", url="http://api.example.com/x")
+        )
+
+    assert isinstance(result.duration_ms, float)
+    assert result.duration_ms == pytest.approx(0.4)
 
 
 @pytest.mark.asyncio
