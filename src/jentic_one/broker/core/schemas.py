@@ -34,6 +34,7 @@ class AsyncQueuedResponseLinks(BaseModel):
 class AsyncQueuedResponse(BaseModel):
     """Response body for 202 async-queued executions."""
 
+    status: Literal["queued"] = "queued"
     job_id: str
     links: AsyncQueuedResponseLinks = Field(serialization_alias="_links")
 

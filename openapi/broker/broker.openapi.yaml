@@ -927,13 +927,22 @@ components:
         collect the upstream response body once `status` is
         `completed`.
       examples:
-        - job_id: job_abc123
+        - status: queued
+          job_id: job_abc123
           _links:
             self: https://control.your-instance.example/jobs/job_abc123
       required:
+        - status
         - job_id
         - _links
       properties:
+        status:
+          type: string
+          title: Status
+          description: Always `queued` on this body; a call held for approval answers `held` instead.
+          enum: [queued]
+          examples:
+            - queued
         job_id:
           type: string
           title: Job Id
@@ -1229,10 +1238,16 @@ components:
             oneOf:
               - $ref: "#/components/schemas/AsyncQueuedResponse"
               - $ref: "#/components/schemas/HeldExecutionAcceptedResponse"
+            discriminator:
+              propertyName: status
+              mapping:
+                queued: "#/components/schemas/AsyncQueuedResponse"
+                held: "#/components/schemas/HeldExecutionAcceptedResponse"
           examples:
             queued:
               summary: Freshly queued async execution.
               value:
+                status: queued
                 job_id: job_abc123
                 _links:
                   self: https://control.your-instance.example/jobs/job_abc123

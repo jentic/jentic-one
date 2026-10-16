@@ -6,6 +6,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,21 @@ func (e AgentDirectiveStrategy) Valid() bool {
 	case SwitchToolkit:
 		return true
 	case Wait:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AsyncQueuedResponseStatus.
+const (
+	Queued AsyncQueuedResponseStatus = "queued"
+)
+
+// Valid indicates whether the value is a known member of the AsyncQueuedResponseStatus enum.
+func (e AsyncQueuedResponseStatus) Valid() bool {
+	switch e {
+	case Queued:
 		return true
 	default:
 		return false
@@ -174,7 +190,7 @@ type AgentDirectiveStrategy string
 // collect the upstream response body once `status` is
 // `completed`.
 //
-// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123"}
+// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123","status":"queued"}
 type AsyncQueuedResponse struct {
 	// UnderscoreLinks HAL-style link relations for the queued job. `self` always
 	// points at the control-plane job record; the broker does
@@ -193,7 +209,17 @@ type AsyncQueuedResponse struct {
 	//
 	// Examples: job_abc123
 	JobId string `json:"job_id"`
+
+	// Status Always `queued` on this body; a call held for approval answers `held` instead.
+	//
+	// Examples: queued
+	Status AsyncQueuedResponseStatus `json:"status"`
 }
+
+// AsyncQueuedResponseStatus Always `queued` on this body; a call held for approval answers `held` instead.
+//
+// Examples: queued
+type AsyncQueuedResponseStatus string
 
 // BrokerProblem RFC 9457 Problem Details body for every Broker error. Extends the
 // shared Jentic `ProblemDetails` schema with the Broker's
@@ -1039,6 +1065,10 @@ func (t ExecuteAsync) AsAsyncQueuedResponse() (AsyncQueuedResponse, error) {
 // FromAsyncQueuedResponse overwrites any union data inside the ExecuteAsync as the provided AsyncQueuedResponse
 func (t *ExecuteAsync) FromAsyncQueuedResponse(v AsyncQueuedResponse) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"status":"queued"}`))
 	t.union = b
 	return err
 }
@@ -1046,6 +1076,10 @@ func (t *ExecuteAsync) FromAsyncQueuedResponse(v AsyncQueuedResponse) error {
 // MergeAsyncQueuedResponse performs a merge with any union data inside the ExecuteAsync, using the provided AsyncQueuedResponse
 func (t *ExecuteAsync) MergeAsyncQueuedResponse(v AsyncQueuedResponse) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"status":"queued"}`))
 	if err != nil {
 		return err
 	}
@@ -1065,6 +1099,10 @@ func (t ExecuteAsync) AsHeldExecutionAcceptedResponse() (HeldExecutionAcceptedRe
 // FromHeldExecutionAcceptedResponse overwrites any union data inside the ExecuteAsync as the provided HeldExecutionAcceptedResponse
 func (t *ExecuteAsync) FromHeldExecutionAcceptedResponse(v HeldExecutionAcceptedResponse) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"status":"held"}`))
 	t.union = b
 	return err
 }
@@ -1075,10 +1113,37 @@ func (t *ExecuteAsync) MergeHeldExecutionAcceptedResponse(v HeldExecutionAccepte
 	if err != nil {
 		return err
 	}
+	b, err = runtime.JSONMerge(b, []byte(`{"status":"held"}`))
+	if err != nil {
+		return err
+	}
 
 	merged, err := runtime.JSONMerge(t.union, b)
 	t.union = merged
 	return err
+}
+
+func (t ExecuteAsync) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"status"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ExecuteAsync) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "held":
+		return t.AsHeldExecutionAcceptedResponse()
+	case "queued":
+		return t.AsAsyncQueuedResponse()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
 }
 
 func (t ExecuteAsync) MarshalJSON() ([]byte, error) {
