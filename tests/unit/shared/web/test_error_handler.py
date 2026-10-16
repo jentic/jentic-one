@@ -9,7 +9,9 @@ import pytest
 import structlog.testing
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.web.errors import make_service_error_handler
 
 
@@ -141,3 +143,42 @@ async def test_mro_walk_finds_parent_class_mapping() -> None:
     body: dict[str, object] = json.loads(bytes(response.body))
     assert body["type"] == "not_found"
     assert body["detail"] == "deep not found"
+
+
+@pytest.mark.asyncio
+async def test_database_unavailable_logs_warning_without_traceback_or_sql() -> None:
+    """A 503 for a lost database logs type names and the short detail, never the SQL.
+
+    The chained SQLAlchemy cause renders the statement and its bound
+    parameters, which a traceback would carry into the log.
+    """
+    handler = make_service_error_handler(
+        {DatabaseUnavailableError: (503, "database_unavailable")},
+        safe_details={DatabaseUnavailableError: "The database is temporarily unavailable."},
+    )
+    cause = DBAPIError(
+        "SELECT secret FROM creds WHERE id = %(id)s",
+        {"id": "hunter2"},
+        Exception("connection is closed"),
+        connection_invalidated=True,
+    )
+    try:
+        raise DatabaseCommitOutcomeUnknownError("connection is closed") from cause
+    except DatabaseCommitOutcomeUnknownError as caught:
+        exc = caught
+
+    with structlog.testing.capture_logs() as logs:
+        response = await handler(_make_request("/things"), exc)
+
+    assert response.status_code == 503
+    [entry] = logs
+    assert entry["event"] == "database_unavailable"
+    assert entry["log_level"] == "warning"
+    assert "exc_info" not in entry
+    assert entry["error_type"] == "DatabaseCommitOutcomeUnknownError"
+    assert entry["cause"] == "DBAPIError"
+    assert entry["error"] == "connection is closed"
+    assert entry["path"] == "/things"
+    rendered = repr(entry)
+    assert "SELECT" not in rendered
+    assert "hunter2" not in rendered
