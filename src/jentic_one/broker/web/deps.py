@@ -36,6 +36,7 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
@@ -227,6 +228,14 @@ def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | Non
     ``app.dependency_overrides[get_idempotency_store]``.
     """
     return getattr(request.app.state, "broker_idempotency_store", None)
+
+
+def get_repeated_failure_counter(request: Request) -> RepeatedFailureCounter | None:
+    """Provide the repeated-failure scan gate, or ``None`` when none is wired.
+
+    ``None`` keeps the unconditional repeated-failure scan on every failure.
+    """
+    return getattr(request.app.state, "broker_repeated_failure_counter", None)
 
 
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]

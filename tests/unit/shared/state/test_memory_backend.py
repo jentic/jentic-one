@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jentic_one.shared.state import MemoryStateBackend
+from jentic_one.shared.state import MemoryStateBackend, StateCapacityError
 
 
 class FakeClock:
@@ -125,3 +125,66 @@ async def test_incr_ttl_not_extended_by_later_increments(
 
 async def test_aclose_is_noop(backend: MemoryStateBackend) -> None:
     await backend.aclose()
+
+
+async def test_bounded_backend_rejects_new_keys_when_full(clock: FakeClock) -> None:
+    """At ``max_entries`` live keys a new key raises instead of evicting a live one;
+    existing keys stay writable."""
+    backend = MemoryStateBackend(clock=clock, max_entries=2)
+    await backend.set("a", b"1", ttl_s=10.0)
+    assert await backend.incr_with_ttl("b", ttl_s=10.0) == 1
+
+    with pytest.raises(StateCapacityError):
+        await backend.set("c", b"1", ttl_s=10.0)
+    with pytest.raises(StateCapacityError):
+        await backend.incr_with_ttl("c", ttl_s=10.0)
+    with pytest.raises(StateCapacityError):
+        await backend.set_if_absent("c", b"1", ttl_s=10.0)
+
+    assert await backend.incr_with_ttl("b", ttl_s=10.0) == 2
+    await backend.set("a", b"2", ttl_s=10.0)
+    assert await backend.get("a") == b"2"
+    assert await backend.get("b") == b"2"
+
+
+async def test_bounded_backend_sweeps_expired_entries_to_make_room(clock: FakeClock) -> None:
+    """Expired-but-unread entries are swept when the map is full."""
+    backend = MemoryStateBackend(clock=clock, max_entries=2)
+    await backend.set("short", b"1", ttl_s=1.0)
+    await backend.set("long", b"1", ttl_s=100.0)
+    with pytest.raises(StateCapacityError):
+        await backend.set("new", b"1", ttl_s=10.0)
+
+    clock.advance(1.5)  # "short" expired without ever being read again
+    await backend.set("new", b"1", ttl_s=10.0)
+    assert await backend.get("new") == b"1"
+    assert await backend.get("long") == b"1"
+
+
+async def test_incr_and_read_increments_then_reads_in_order(clock: FakeClock) -> None:
+    """One step increments every counter (TTL set only on creation) and reads the
+    rest; missing keys read as ``None``."""
+    backend = MemoryStateBackend(clock=clock)
+    await backend.set("marker", b"1", ttl_s=100.0)
+
+    assert await backend.incr_and_read(["a", "b"], ["prev", "marker"], ttl_s=10.0) == (
+        [1, 1],
+        [None, b"1"],
+    )
+    clock.advance(6.0)
+    assert await backend.incr_and_read(["a"], ["b"], ttl_s=10.0) == ([2], [b"1"])
+
+    clock.advance(5.0)  # past the creation TTL: the window does not slide
+    assert await backend.incr_and_read(["a"], [], ttl_s=10.0) == ([1], [])
+
+
+async def test_incr_and_read_respects_the_bound(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1)
+    await backend.incr_and_read(["a"], [], ttl_s=10.0)
+    with pytest.raises(StateCapacityError):
+        await backend.incr_and_read(["a", "b"], [], ttl_s=10.0)
+
+
+def test_bounded_backend_rejects_non_positive_bound() -> None:
+    with pytest.raises(ValueError, match="max_entries"):
+        MemoryStateBackend(max_entries=0)

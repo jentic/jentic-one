@@ -92,6 +92,7 @@ from jentic_one.broker.web.deps import (
     HttpRunnerDep,
     IdempotencyStoreDep,
     RequireExecuteAccess,
+    get_repeated_failure_counter,
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
@@ -111,6 +112,7 @@ from jentic_one.shared.events import (
     mint_trace_id,
     valid_trace_id_or_none,
 )
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -164,6 +166,7 @@ async def _persist_streaming_outcome(
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> None:
     """Best-effort persistence of a streaming execution record.
 
@@ -193,6 +196,7 @@ async def _persist_streaming_outcome(
                 actor_type=actor_type,
                 origin=origin,
                 security_config=ctx.config.security,
+                repeated_failure_counter=repeated_failure_counter,
             )
     except Exception:
         _streaming_persist_failures.add(1)
@@ -718,6 +722,7 @@ async def _handle(
             actor_type=identity.actor_type.value,
             origin=identity.origin.value,
             security_config=ctx.config.security,
+            repeated_failure_counter=get_repeated_failure_counter(request),
             signing=injection.signing,
             has_idempotency_key=bool(idem_key),
         )
@@ -801,6 +806,7 @@ async def _handle_streaming(
             identity.sub,
             identity.actor_type.value,
             origin=identity.origin.value,
+            repeated_failure_counter=get_repeated_failure_counter(request),
         )
 
     broker = _resolve_broker(request, runner)

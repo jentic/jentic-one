@@ -101,8 +101,15 @@ flowchart TB
 - **Broker-scaled** — brokers are stateless; run several behind a load
   balancer. Set `broker.resilience.backend.backend` to `redis` (and give
   every replica the same `broker.resilience.backend.redis_url`) so rate
-  limits, circuit breakers, and idempotency records are shared across
-  replicas. The redis client is an optional extra
+  limits, circuit breakers, idempotency records, and the repeated-failure
+  counters that gate the `execution.repeated_failure` scan are shared across
+  replicas. Several worker processes serving one broker count as several
+  replicas here: on the `memory` backend each process keeps its own
+  repeated-failure counters, so an `execution.repeated_failure` event fires
+  late, or not at all when failures spread thinly across processes. If the
+  Redis instance has a `maxmemory-policy` other than `noeviction`, it can
+  evict live counter keys (they all carry a TTL) and the gate undercounts
+  without an error. The redis client is an optional extra
   (`pip install jentic-one[redis]`), not part of the published container
   image — scaling out on that image means building your own with the extra.
 

@@ -2204,6 +2204,16 @@ type SecurityConfig struct {
 	// "credential_expiry_sweep_interval_ticks".
 	CredentialExpirySweepIntervalTicks int `json:"credential_expiry_sweep_interval_ticks,omitempty,omitzero" yaml:"credential_expiry_sweep_interval_ticks,omitempty" mapstructure:"credential_expiry_sweep_interval_ticks,omitempty"`
 
+	// Upper bound on live entries (per-key time buckets and dedup markers) the
+	// in-process repeated-failure counter holds on the `memory` shared-state backend.
+	// Each actor + toolkit/credential + operation key failing within two windows uses
+	// up to 4 entries (6 when a toolkit call also carries a credential). When the
+	// bound is reached the counter fails open: every failure runs the database scan
+	// until two windows after the store last rejected a key. The bound caps memory
+	// and never hides an emission, but a cardinality spike above it disables the
+	// pre-filter. Ignored on Redis.
+	ExecutionRepeatedFailureCounterMaxEntries int `json:"execution_repeated_failure_counter_max_entries,omitempty,omitzero" yaml:"execution_repeated_failure_counter_max_entries,omitempty" mapstructure:"execution_repeated_failure_counter_max_entries,omitempty"`
+
 	// ExecutionRepeatedFailureCriticalThreshold corresponds to the JSON schema field
 	// "execution_repeated_failure_critical_threshold".
 	ExecutionRepeatedFailureCriticalThreshold int `json:"execution_repeated_failure_critical_threshold,omitempty,omitzero" yaml:"execution_repeated_failure_critical_threshold,omitempty" mapstructure:"execution_repeated_failure_critical_threshold,omitempty"`
@@ -2245,6 +2255,12 @@ func (j *SecurityConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 1 > plain.CredentialExpirySweepIntervalTicks {
 		return fmt.Errorf("field %s: must be >= %v", "credential_expiry_sweep_interval_ticks", 1)
+	}
+	if v, ok := raw["execution_repeated_failure_counter_max_entries"]; !ok || v == nil {
+		plain.ExecutionRepeatedFailureCounterMaxEntries = 10000
+	}
+	if 1 > plain.ExecutionRepeatedFailureCounterMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "execution_repeated_failure_counter_max_entries", 1)
 	}
 	if v, ok := raw["execution_repeated_failure_critical_threshold"]; !ok || v == nil {
 		plain.ExecutionRepeatedFailureCriticalThreshold = 20

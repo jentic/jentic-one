@@ -15,6 +15,11 @@ import pytest
 
 redis = pytest.importorskip("redis.asyncio")
 
+from jentic_one.shared.config import SecurityConfig  # noqa: E402
+from jentic_one.shared.events.repeated_failure import (  # noqa: E402
+    AxisKey,
+    RepeatedFailureCounter,
+)
 from jentic_one.shared.state.redis import RedisStateBackend  # noqa: E402
 
 pytestmark = pytest.mark.integration
@@ -119,3 +124,41 @@ async def test_distinct_prefixes_are_isolated(redis_url: str) -> None:
     finally:
         await a.aclose()
         await b.aclose()
+
+
+async def test_repeated_failure_counter_is_shared_across_instances(
+    redis_url: str, prefix: str
+) -> None:
+    """Two broker instances on one Redis gate the repeated-failure scan on the
+    cluster-wide count: failures split across replicas still reach the threshold."""
+    a = RedisStateBackend(redis_url, key_prefix=prefix)
+    b = RedisStateBackend(redis_url, key_prefix=prefix)
+    config = SecurityConfig(execution_repeated_failure_threshold=4)
+    key = AxisKey("agt_redis", "toolkit", "tk_redis", "op_redis")
+    try:
+        gates = [RepeatedFailureCounter(a), RepeatedFailureCounter(b)]
+        decisions = [await gates[i % 2].should_scan(key, (), config) for i in range(4)]
+        assert decisions == [False, False, False, True]
+    finally:
+        await a.aclose()
+        await b.aclose()
+
+
+async def test_incr_and_read_matches_the_memory_backend(redis_url: str, prefix: str) -> None:
+    """The one-round-trip windowed step: increments (TTL set only on creation),
+    then reads in order, with missing keys as ``None`` — same as memory."""
+    backend = RedisStateBackend(redis_url, key_prefix=prefix)
+    raw = redis.from_url(redis_url)
+    try:
+        await backend.set("marker", b"1", ttl_s=100.0)
+        assert await backend.incr_and_read(["a", "b"], ["prev", "marker"], ttl_s=10.0) == (
+            [1, 1],
+            [None, b"1"],
+        )
+        assert await backend.incr_and_read(["a"], ["b"], ttl_s=50.0) == ([2], [b"1"])
+        assert await backend.incr_and_read([], ["missing"], ttl_s=10.0) == ([], [None])
+        # The TTL comes from the creating call, prefixed like every other key.
+        assert 0 < await raw.pttl(f"{prefix}a") <= 10_000
+    finally:
+        await raw.aclose()
+        await backend.aclose()

@@ -16,6 +16,7 @@ forget it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import redis.asyncio as redis
@@ -77,9 +78,31 @@ end
 return value
 """
 
+# Windowed counter step for the repeated-failure gate: increments the first
+# ARGV[2] keys (TTL set only on creation, as above) and GETs the rest, in one
+# round trip and atomically. Returns {counts, values}; a missing key reads as
+# false, which comes back as nil.
+_INCR_AND_READ_LUA = """
+local ttl_ms = tonumber(ARGV[1])
+local n_incr = tonumber(ARGV[2])
+local counts = {}
+for i = 1, n_incr do
+  local value = redis.call('INCRBY', KEYS[i], 1)
+  if value == 1 then
+    redis.call('PEXPIRE', KEYS[i], ttl_ms)
+  end
+  counts[i] = value
+end
+local values = {}
+for i = n_incr + 1, #KEYS do
+  values[i - n_incr] = redis.call('GET', KEYS[i])
+end
+return {counts, values}
+"""
+
 
 class RedisStateBackend:
-    """Redis implementation of all three shared-state roles.
+    """Redis implementation of every shared-state role.
 
     Args:
         url: Redis connection URL (e.g. ``redis://host:6379/0``).
@@ -91,6 +114,7 @@ class RedisStateBackend:
         self._redis: redis.Redis = redis.from_url(url)
         self._token_bucket_script = self._redis.register_script(_TOKEN_BUCKET_LUA)
         self._incr_script = self._redis.register_script(_INCR_WITH_TTL_LUA)
+        self._incr_and_read_script = self._redis.register_script(_INCR_AND_READ_LUA)
 
     def _k(self, key: str) -> str:
         """Prepend the configured prefix. The ONLY way keys reach Redis."""
@@ -116,6 +140,15 @@ class RedisStateBackend:
             raise ValueError(f"incr_with_ttl amount must be positive, got {amount}")
         result = await self._incr_script(keys=[self._k(key)], args=[amount, _ms(ttl_s)])
         return int(result)
+
+    async def incr_and_read(
+        self, incr_keys: Sequence[str], read_keys: Sequence[str], *, ttl_s: float
+    ) -> tuple[list[int], list[bytes | None]]:
+        keys = [self._k(key) for key in (*incr_keys, *read_keys)]
+        counts, values = await self._incr_and_read_script(
+            keys=keys, args=[_ms(ttl_s), len(incr_keys)]
+        )
+        return [int(c) for c in counts], [cast("bytes | None", v) for v in values]
 
     async def token_bucket(
         self, key: str, *, rate: float, burst: int, cost: int = 1

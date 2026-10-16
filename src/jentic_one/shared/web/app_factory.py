@@ -24,6 +24,7 @@ from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
@@ -185,6 +186,7 @@ def _start_worker(
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
     execution_authorizer: Any | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -211,7 +213,8 @@ def _start_worker(
     ``execution_authorizer`` is the broker's run-time re-authorizer: every
     queued execution is re-checked with the sync route's policy before any
     credential is resolved (the handler refuses a credential injector without
-    one).
+    one). ``repeated_failure_counter`` is the broker's shared-state gate in front
+    of the repeated-failure scan (``None`` scans on every failed job).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -238,6 +241,7 @@ def _start_worker(
                 # Same predicate the broker's hold path files under, so a held
                 # payload the broker encrypted is one this worker can decrypt.
                 encryption=ctx.encryption if ctx.has_encryption_keyset else None,
+                repeated_failure_counter=repeated_failure_counter,
             ),
         )
 
@@ -553,6 +557,9 @@ def create_surface_app(
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
                 execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
+                repeated_failure_counter=getattr(
+                    app.state, "broker_repeated_failure_counter", None
+                ),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
