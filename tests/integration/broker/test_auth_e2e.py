@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, event, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
@@ -401,6 +401,44 @@ async def test_disable_mid_life_kills_token_after_cache_ttl(
     await asyncio.sleep(0.06)
     resolved = await validator.validate("at_kill_me")
     assert resolved.sub == "agnt_opaque"
+
+
+async def test_concurrent_cold_validations_issue_one_admin_query(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """#1705: a burst of concurrent misses for one hot token hits admin_db once.
+
+    Counts the token lookups the real ``InProcessTokenResolver`` sends to Postgres
+    while N requests carrying the same uncached token validate concurrently.
+    """
+    await _seed_agent(admin_db, "agnt_opaque")
+    await _seed_opaque_token(admin_db, plaintext="at_hot_burst")
+    await _seed_opaque_token(admin_db, plaintext="at_hot_other")
+
+    lookups: list[str] = []
+
+    def _count(*args: object) -> None:
+        # before_cursor_execute(conn, cursor, statement, parameters, context, executemany)
+        statement = str(args[2])
+        if "FROM access_tokens t" in statement:
+            lookups.append(statement)
+
+    sync_engine = admin_db.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _count)
+    try:
+        validator = CachedTokenValidator(
+            resolver=InProcessTokenResolver(admin_db), cache_ttl_seconds=60.0
+        )
+        results = await asyncio.gather(
+            *(validator.validate("at_hot_burst") for _ in range(16)),
+            *(validator.validate("at_hot_other") for _ in range(16)),
+        )
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _count)
+
+    assert {r.sub for r in results} == {"agnt_opaque"}
+    # One lookup per distinct token: same-token misses coalesce, distinct ones don't.
+    assert len(lookups) == 2
 
 
 # --- client approval gate at the broker resolver (PR #1218 MAJOR-1) ---------

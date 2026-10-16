@@ -55,10 +55,21 @@ class SingleFlight[V]:
         the same in-flight Future and receive the identical result or exception.
         The in-flight entry is always removed before returning so a failed lookup
         leaves nothing pinned.
+
+        Cancellation is per caller. A cancelled waiter stops waiting without
+        touching the shared lookup. A cancelled leader aborts the lookup it was
+        running (it lives in the leader's task), and the surviving waiters elect
+        a new leader that re-runs ``fn`` once for all of them.
         """
-        existing = self._in_flight.get(key)
-        if existing is not None:
-            return await existing
+        while (existing := self._in_flight.get(key)) is not None:
+            # ``asyncio.wait`` never cancels what it waits on, so cancelling this
+            # waiter (client disconnect, request timeout) raises here without
+            # cancelling the Future every other caller shares.
+            await asyncio.wait((existing,))
+            if not existing.cancelled():
+                return existing.result()
+            # The leader was cancelled mid-lookup and its entry is already gone:
+            # loop so one surviving waiter takes the lookup over for the rest.
 
         # Map full and this is a new key: skip coalescing rather than grow
         # unbounded. The lookup still runs correctly, just without herd collapse.
@@ -70,6 +81,12 @@ class SingleFlight[V]:
         self._in_flight[key] = future
         try:
             result = await fn()
+        except asyncio.CancelledError:
+            # The leader's own cancellation aborts only its lookup. Cancelling the
+            # shared Future (rather than storing the CancelledError on it) tells
+            # the waiters to re-run the lookup instead of failing as cancelled.
+            future.cancel()
+            raise
         except BaseException as exc:  # propagate to all waiters, pin nothing
             future.set_exception(exc)
             # The leader re-raises; waiters receive `exc` via their own await. We

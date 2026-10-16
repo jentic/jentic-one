@@ -154,6 +154,91 @@ async def test_in_flight_map_is_bounded() -> None:
     assert sf.in_flight_count == 0
 
 
+@pytest.mark.asyncio
+async def test_cancelled_waiter_leaves_shared_lookup_intact() -> None:
+    """Cancelling one waiter neither cancels the shared Future nor breaks the leader."""
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def lookup() -> str:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return "value"
+
+    sf: SingleFlight[str] = SingleFlight()
+    tasks = [asyncio.create_task(sf.do("k", lookup)) for _ in range(5)]
+    await started.wait()
+    await asyncio.sleep(0)
+    tasks[2].cancel()
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert tasks[2].cancelled()
+    assert [r for i, r in enumerate(results) if i != 2] == ["value"] * 4
+    assert calls == 1
+    assert sf.in_flight_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_leader_hands_off_to_a_waiter() -> None:
+    """A cancelled leader aborts only its own lookup; one waiter re-runs it for the rest."""
+    calls = 0
+    release = asyncio.Event()
+    first_started = asyncio.Event()
+
+    async def lookup() -> str:
+        nonlocal calls
+        calls += 1
+        first_started.set()
+        await release.wait()
+        return "value"
+
+    sf: SingleFlight[str] = SingleFlight()
+    tasks = [asyncio.create_task(sf.do("k", lookup)) for _ in range(5)]
+    await first_started.wait()
+    await asyncio.sleep(0)
+    tasks[0].cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    # The hand-off re-installed exactly one flight for the surviving waiters.
+    assert sf.in_flight_count == 1
+    release.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert tasks[0].cancelled()
+    assert results[1:] == ["value"] * 4
+    assert calls == 2
+    assert sf.in_flight_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_leader_without_waiters_pins_nothing() -> None:
+    """A lone cancelled leader leaves no entry behind; the next call runs fresh."""
+    started = asyncio.Event()
+
+    async def hang() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return "never"
+
+    sf: SingleFlight[str] = SingleFlight()
+    task = asyncio.create_task(sf.do("k", hang))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sf.in_flight_count == 0
+
+    async def ok() -> str:
+        return "fresh"
+
+    assert await sf.do("k", ok) == "fresh"
+
+
 def test_rejects_invalid_max_in_flight() -> None:
     with pytest.raises(ValueError, match="max_in_flight"):
         SingleFlight(max_in_flight=0)

@@ -8,6 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import TokenResolverProtocol
@@ -35,8 +36,9 @@ class CachedTokenValidator:
 
     Caches both positive and negative results, keyed on a ``sha256`` digest of the
     token (never the attacker-controlled raw string) under a hard ``max_entries``
-    LRU bound. Entries past their ``expires_at`` are treated as inactive regardless
-    of TTL.
+    LRU bound. Concurrent misses for the same digest are coalesced into one
+    resolver lookup (:class:`SingleFlight`). Entries past their ``expires_at`` are
+    treated as inactive regardless of TTL.
     """
 
     resolver: TokenResolverProtocol
@@ -44,6 +46,9 @@ class CachedTokenValidator:
     max_entries: int = DEFAULT_MAX_CACHE_ENTRIES
     _cache: OrderedDict[str, _CacheEntry] = field(
         default_factory=OrderedDict, init=False, repr=False
+    )
+    _single_flight: SingleFlight[Identity | None] = field(
+        default_factory=SingleFlight, init=False, repr=False
     )
 
     def __post_init__(self) -> None:
@@ -65,8 +70,17 @@ class CachedTokenValidator:
             self._cache.move_to_end(cache_key)
             return self._check_active(entry.resolved)
 
-        resolved = await self.resolver.resolve_access_token(token)
-        self._store(cache_key, _CacheEntry(resolved=resolved, cached_at=now))
+        async def _load() -> Identity | None:
+            # Stamped with the leader's pre-lookup time, so a verdict never
+            # outlives the TTL measured from when its DB read began.
+            started = time.monotonic()
+            resolved = await self.resolver.resolve_access_token(token)
+            self._store(cache_key, _CacheEntry(resolved=resolved, cached_at=started))
+            return resolved
+
+        # Concurrent misses for one token (cold start, TTL expiry) share a single
+        # resolver lookup; a raised lookup reaches every waiter and is not cached.
+        resolved = await self._single_flight.do(cache_key, _load)
         return self._check_active(resolved)
 
     def _store(self, cache_key: str, entry: _CacheEntry) -> None:
