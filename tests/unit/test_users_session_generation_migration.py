@@ -2,9 +2,9 @@
 
 Pins revision ``eb3688e956fc`` against a real (SQLite) database: upgrade adds
 ``users.session_generation`` (existing rows read ``0``) and ``users.deleted_at``
-(backfilled for rows already carrying the delete tombstone email, ``NULL``
-otherwise); downgrade drops both columns in batch mode and a re-upgrade
-restores them.
+(backfilled for inactive rows carrying the delete tombstone email, ``NULL``
+otherwise — including an active row that carries it); downgrade drops both
+columns in batch mode and a re-upgrade restores them.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ _REV = "eb3688e956fc"  # pragma: allowlist secret
 _PARENT_REV = "a1c3e5f7b9d2"  # pragma: allowlist secret
 _LIVE = "usr_live"
 _DELETED = "usr_deleted"
+# Tombstone email but active: deleted, then re-enabled before enable refused it.
+_REVIVED = "usr_revived"
 
 
 def _columns(db_path: Path) -> set[str]:
@@ -35,14 +37,14 @@ def _indexes(db_path: Path) -> dict[str, str]:
     return dict(rows)
 
 
-def _insert_user(db_path: Path, user_id: str, email: str) -> None:
+def _insert_user(db_path: Path, user_id: str, email: str, *, active: bool = False) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "INSERT INTO users (id, email, first_name, last_name, active,"
             " auth_provider, must_change_password, invite_state, created_at, updated_at)"
-            " VALUES (?, ?, 'A', 'B', 0, 'local', 0, 'redeemed',"
+            " VALUES (?, ?, 'A', 'B', ?, 'local', 0, 'redeemed',"
             " '2026-01-01 00:00:00', '2026-02-01 00:00:00')",
-            (user_id, email),
+            (user_id, email, int(active)),
         )
 
 
@@ -55,6 +57,7 @@ def test_users_session_generation_upgrade_downgrade_roundtrip(sqlite_stack: Path
     assert "lower(email)" in parent_indexes["ix_users_email_lower"]
     _insert_user(db_path, _LIVE, "live@example.com")
     _insert_user(db_path, _DELETED, f"deleted-{_DELETED}@local")
+    _insert_user(db_path, _REVIVED, f"deleted-{_REVIVED}@local", active=True)
 
     upgrade(_DB, _REV)
     assert {"session_generation", "deleted_at"} <= _columns(db_path)
@@ -64,6 +67,7 @@ def test_users_session_generation_upgrade_downgrade_roundtrip(sqlite_stack: Path
             for row in conn.execute("SELECT id, session_generation, deleted_at FROM users")
         }
     assert rows[_LIVE] == (0, None)
+    assert rows[_REVIVED] == (0, None)
     generation, deleted_at = rows[_DELETED]
     assert generation == 0
     assert deleted_at is not None and deleted_at.startswith("2026-02-01")
@@ -75,7 +79,7 @@ def test_users_session_generation_upgrade_downgrade_roundtrip(sqlite_stack: Path
     # unique email index batch mode cannot reflect.
     assert _indexes(db_path).keys() == parent_indexes.keys()
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT count(*) FROM users").fetchone() == (2,)
+        assert conn.execute("SELECT count(*) FROM users").fetchone() == (3,)
 
     upgrade(_DB, _REV)
     assert {"session_generation", "deleted_at"} <= _columns(db_path)
