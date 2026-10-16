@@ -87,11 +87,17 @@ class RepeatedFailureCounter:
     below it too and it could not emit. Above the threshold the scan is skipped
     only while every severity the scan could pick is known to be deduplicated:
     after a scan finds an existing event of severity *S*, a marker lives until
-    that event leaves the dedup window (``created_at + window``). The marker is
-    set only from a *found* event (never from our own, possibly rolled-back,
-    emit), so it never suppresses an emission the scan would make. ERROR is a
-    possible pick whenever the critical threshold exceeds the base threshold;
-    CRITICAL once the estimate reaches the critical threshold.
+    that event leaves the dedup window (``created_at + window``); a CRITICAL
+    event marks ERROR too, since an active CRITICAL deduplicates ERROR. The
+    marker is set only from a *found* event (never from our own, possibly
+    rolled-back, emit), so it never suppresses an emission the scan would make.
+    ERROR is a possible pick whenever the critical threshold exceeds the base
+    threshold; CRITICAL once the estimate reaches the critical threshold. The
+    counter gives no lower bound on the scan's count (a counted failure's
+    transaction may roll back, a run-time denial has no record, a long call's
+    ``started_at`` can predate the window), so ERROR is never ruled out by
+    count — with CRITICAL marking ERROR, a sustained CRITICAL outage keeps the
+    gate closed regardless.
 
     **Keys.** The scan's toolkit axis counts every record with that toolkit and
     its credential axis every record with that credential (toolkit-path records
@@ -159,7 +165,12 @@ class RepeatedFailureCounter:
         event_created_at: datetime,
         config: SecurityConfig,
     ) -> None:
-        """Remember an existing event of *severity* until it leaves the dedup window."""
+        """Remember an existing event of *severity* until it leaves the dedup window.
+
+        An active CRITICAL also deduplicates ERROR (see the dedup query), so a
+        CRITICAL hit marks both severities; an ERROR hit never marks CRITICAL, so
+        escalation stays immediate.
+        """
         window = config.execution_repeated_failure_window_s
         created = (
             event_created_at
@@ -170,7 +181,8 @@ class RepeatedFailureCounter:
         if ttl_s <= 0:
             return
         try:
-            await self._store.set(self._marker_key(key, window, severity), b"1", ttl_s=ttl_s)
+            for covered in _DEDUP_COVERS[severity]:
+                await self._store.set(self._marker_key(key, window, covered), b"1", ttl_s=ttl_s)
         except Exception:
             self._log_unavailable(key)
 
@@ -191,6 +203,24 @@ class RepeatedFailureCounter:
     @staticmethod
     def _marker_key(key: _AxisKey, window: int, severity: EventSeverity) -> str:
         return f"{_KEY_PREFIX}:{window}:seen:{severity.value}:{key.digest()}"
+
+
+# Which existing event severities deduplicate an emission of a given severity,
+# and (the inverse) which markers an existing event of a given severity sets.
+# CRITICAL subsumes ERROR; ERROR never suppresses escalation to CRITICAL.
+_DEDUPED_BY: dict[EventSeverity, tuple[str, ...]] = {
+    EventSeverity.ERROR: (EventSeverity.ERROR.value, EventSeverity.CRITICAL.value),
+    EventSeverity.CRITICAL: (EventSeverity.CRITICAL.value,),
+}
+_DEDUP_COVERS: dict[EventSeverity, tuple[EventSeverity, ...]] = {
+    EventSeverity.ERROR: (EventSeverity.ERROR,),
+    EventSeverity.CRITICAL: (EventSeverity.CRITICAL, EventSeverity.ERROR),
+}
+
+
+def _utcnow() -> datetime:
+    """Wall-clock "now" for the scan's window (a seam for timeline tests)."""
+    return datetime.now(UTC)
 
 
 def _possible_severities(estimate: int, config: SecurityConfig) -> list[EventSeverity]:
@@ -257,8 +287,10 @@ async def maybe_emit_repeated_failure(
     Dedup is **severity-aware**: at most one ERROR and one CRITICAL per key per
     window. As failures accumulate incrementally the count crosses the ERROR
     threshold first (one ERROR fires); when it later crosses the CRITICAL
-    threshold the pre-existing ERROR must not suppress the escalation, so the
-    dedup only looks for an event of the severity about to be emitted.
+    threshold the pre-existing ERROR must not suppress the escalation, so a
+    CRITICAL is deduplicated only by a CRITICAL. An active CRITICAL does
+    deduplicate ERROR, though: while a CRITICAL for the key is in the window
+    (the outage is at least that bad), no lower-severity ERROR is emitted.
 
     Best-effort: any failure (count query, dedup query, emit) is swallowed with a
     warning so the surrounding execution persistence is never disturbed.
@@ -306,7 +338,7 @@ async def maybe_emit_repeated_failure(
         # ExecutionRecord down with it. Rolling back only the nested block keeps
         # the best-effort promise for DB-level failures too.
         async with session.begin_nested():
-            now = datetime.now(UTC)
+            now = _utcnow()
             window_start = now - timedelta(seconds=config.execution_repeated_failure_window_s)
 
             count_stmt = (
@@ -332,16 +364,17 @@ async def maybe_emit_repeated_failure(
             is_critical = failure_count >= config.execution_repeated_failure_critical_threshold
             severity = EventSeverity.CRITICAL if is_critical else EventSeverity.ERROR
 
-            # Per-key window dedup, severity-aware: at most one event of *this*
-            # severity per key per window. Matching the severity (not just the type)
-            # lets a later CRITICAL escalate past an ERROR already emitted earlier in
-            # the same window as failures accumulate. Match on the identifiers we
+            # Per-key window dedup, severity-aware. A CRITICAL is deduplicated only
+            # by a CRITICAL, so a later CRITICAL escalates past an ERROR emitted
+            # earlier in the same window. An ERROR is deduplicated by an ERROR *or*
+            # a CRITICAL: while a CRITICAL for the key is active in the window no
+            # lower-severity ERROR is emitted for it. Match on the identifiers we
             # stamp into ``data`` so the check is exact.
             dedup_stmt = (
-                select(Event.created_at)
+                select(Event.created_at, Event.severity)
                 .where(
                     Event.type == EventType.EXECUTION_REPEATED_FAILURE,
-                    Event.severity == severity.value,
+                    Event.severity.in_(_DEDUPED_BY[severity]),
                     Event.created_at >= window_start,
                     Event.data["actor_id"].as_string() == actor_id,
                     event_axis,
@@ -355,7 +388,9 @@ async def maybe_emit_repeated_failure(
             existing = (await session.execute(dedup_stmt)).first()
             if existing is not None:
                 if failure_counter is not None:
-                    await failure_counter.note_dedup_hit(gate_key, severity, existing[0], config)
+                    await failure_counter.note_dedup_hit(
+                        gate_key, EventSeverity(existing[1]), existing[0], config
+                    )
                 return
 
             await emit_event(

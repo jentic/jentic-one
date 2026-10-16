@@ -17,6 +17,7 @@ from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     _AxisKey,
+    _possible_severities,
     build_repeated_failure_counter,
 )
 from jentic_one.shared.models.events import EventSeverity
@@ -130,6 +131,43 @@ async def test_an_error_marker_does_not_hide_critical_escalation(
 
     await counter.note_dedup_hit(_KEY, EventSeverity.CRITICAL, _at(clock), _CONFIG)
     assert await _fail(counter) == [False]
+
+
+async def test_sustained_critical_keeps_the_gate_closed_after_the_error_ages_out(
+    counter: RepeatedFailureCounter, clock: FakeClock
+) -> None:
+    """With the current bucket alone at/above the critical threshold, only a
+    CRITICAL marker matters: it covers ERROR, so the gate stays closed after
+    the original ERROR event (and its marker) has left the window."""
+    await _fail(counter, 3)
+    await counter.note_dedup_hit(_KEY, EventSeverity.ERROR, _at(clock), _CONFIG)
+    clock.now += 30
+    await _fail(counter, 3)  # current bucket reaches critical (6)
+    await counter.note_dedup_hit(_KEY, EventSeverity.CRITICAL, _at(clock), _CONFIG)
+
+    clock.now += _WINDOW - 10  # ERROR marker expired, CRITICAL marker still live
+    await _fail(counter, _CONFIG.execution_repeated_failure_critical_threshold)
+    assert await _fail(counter, 5) == [False] * 5
+
+
+def test_possible_severities_with_the_current_bucket_at_critical() -> None:
+    """The counter yields no lower bound on the scan's count (a counted failure
+    can roll back or start before the window), so ERROR stays possible even when
+    the current bucket alone is at the critical threshold; the sustained case is
+    handled by CRITICAL markers covering ERROR instead."""
+    critical = _CONFIG.execution_repeated_failure_critical_threshold
+    assert _possible_severities(critical, _CONFIG) == [
+        EventSeverity.ERROR,
+        EventSeverity.CRITICAL,
+    ]
+    assert _possible_severities(_CONFIG.execution_repeated_failure_threshold, _CONFIG) == [
+        EventSeverity.ERROR
+    ]
+    only_critical = SecurityConfig(
+        execution_repeated_failure_threshold=6,
+        execution_repeated_failure_critical_threshold=6,
+    )
+    assert _possible_severities(6, only_critical) == [EventSeverity.CRITICAL]
 
 
 async def test_a_stale_dedup_hit_sets_no_marker(

@@ -19,8 +19,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, event, func, select
+from sqlalchemy import delete, event, func, select, update
 
+import jentic_one.shared.events.repeated_failure as repeated_failure_mod
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.config import SecurityConfig
@@ -249,3 +250,104 @@ async def test_without_a_counter_every_failure_scans(admin_db: DatabaseSession) 
     for _ in range(_CONFIG.execution_repeated_failure_threshold):
         assert len(_scans(await failures.fail())) == 1
     assert await _repeated_failure_events(admin_db) == 1
+
+
+class _VirtualClock:
+    """Epoch-seconds clock the test advances by hand (counter buckets + TTLs)."""
+
+    def __init__(self, start: float) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.mark.asyncio
+async def test_sustained_critical_outage_keeps_the_gate_closed(
+    admin_db: DatabaseSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the sustained-outage case the gate exists for: one failure every 2s
+    for ~12 minutes with the default thresholds (5 / 20, 300s window).
+
+    ERROR fires on the 5th failure and escalates to CRITICAL on the 20th, at
+    once. After that, scans happen only when a dedup marker expires — not on
+    every failure once the first ERROR event leaves the window (an active
+    CRITICAL also deduplicates ERROR). The timeline runs one day in the past on
+    a virtual clock so the scan's window, the records' ``started_at``, the
+    events' ``created_at``, and the counter all share one time base.
+    """
+    config = SecurityConfig()
+    window = config.execution_repeated_failure_window_s
+    start = datetime.now(UTC).timestamp() - 86_400
+    real_start = datetime.now(UTC)
+    clock = _VirtualClock(start)
+    monkeypatch.setattr(
+        repeated_failure_mod, "_utcnow", lambda: datetime.fromtimestamp(clock.now, tz=UTC)
+    )
+    counter = RepeatedFailureCounter(MemoryStateBackend(clock=clock), clock=clock)
+
+    scanned_at: list[float] = []
+    for i in range(1, 361):
+        clock.now = start + 2 * i
+        virtual_now = datetime.fromtimestamp(clock.now, tz=UTC)
+        async with admin_db.transaction() as session:
+            await record_execution(
+                session,
+                execution_id=f"{_PREFIX}outage-{i}",
+                toolkit_id=_TOOLKIT,
+                trace_id="a" * 32,
+                started_at=virtual_now,
+                status=ExecutionStatus.FAILED,
+                operation=_OPERATION,
+                actor_id=_ACTOR,
+                actor_type="agent",
+            )
+            with _statements(admin_db) as captured:
+                await maybe_emit_repeated_failure(
+                    session,
+                    actor_id=_ACTOR,
+                    actor_type="agent",
+                    toolkit_id=_TOOLKIT,
+                    operation=_OPERATION,
+                    trace_id="a" * 32,
+                    config=config,
+                    failure_counter=counter,
+                )
+            # Stamp any event emitted just now with the virtual time.
+            await session.execute(
+                update(Event)
+                .where(Event.actor_id == _ACTOR, Event.created_at >= real_start)
+                .values(created_at=virtual_now)
+            )
+        if _scans(captured):
+            scanned_at.append(clock.now - start)
+
+    async with admin_db.session() as session:
+        rows = (
+            await session.execute(
+                select(Event.severity, Event.created_at)
+                .where(
+                    Event.type == EventType.EXECUTION_REPEATED_FAILURE,
+                    Event.actor_id == _ACTOR,
+                )
+                .order_by(Event.created_at)
+            )
+        ).all()
+    emitted = [(sev, round(ts.timestamp() - start)) for sev, ts in rows]
+
+    # First window: one ERROR on the 5th failure, CRITICAL on the 20th (no lag).
+    first_window = [(sev, t) for sev, t in emitted if t <= window]
+    assert first_window == [("error", 10), ("critical", 40)]
+    # No ERROR ever again while CRITICAL stays active; CRITICAL re-fires once per
+    # window as each one ages out.
+    assert [sev for sev, _ in emitted].count("error") == 1
+    assert all(sev == "critical" for sev, _ in emitted[1:])
+
+    # Scans: emit + confirm for ERROR and for CRITICAL, then — per CRITICAL
+    # marker expiry — the scan that still sees the aging event, the re-emit and
+    # its confirm. Never one per failure.
+    marker_expiries = len(emitted) - 2
+    assert len(scanned_at) <= 4 + 3 * marker_expiries, scanned_at
+    # In particular nothing scans between the ERROR event leaving the window
+    # (t=310) and the first CRITICAL leaving it (t=340).
+    assert not [t for t in scanned_at if 310 <= t < 340], scanned_at
