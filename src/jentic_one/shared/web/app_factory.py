@@ -96,23 +96,38 @@ SURFACE_MODULES = {
 _db_instrumented = False
 
 
-def attach_http_observability(app: FastAPI) -> None:
+def mount_metrics_endpoint(app: FastAPI) -> None:
+    """Mount the Prometheus ASGI app at "/metrics" when the exporter is enabled.
+
+    Starlette matches routes in registration order, so call this *before*
+    including any router with a catch-all path (the broker's
+    ``/{upstream_url:path}``) — otherwise the catch-all shadows the scrape
+    endpoint.
+
+    The mount causes Starlette to redirect the bare "/metrics" path to
+    "/metrics/" with a 307. The `local-prom-app.yaml` overlay therefore sets
+    `prometheus.io/path` to "/metrics/" with the trailing slash — keep them in
+    sync.
+    """
+    metrics_app = make_metrics_asgi_app()
+    if metrics_app is not None:
+        app.mount("/metrics", metrics_app)
+
+
+def attach_http_observability(app: FastAPI, *, mount_metrics: bool = True) -> None:
     """Wire FastAPI auto-instrumentation and (when enabled) mount /metrics.
 
     Safe to call once per FastAPI instance. DB instrumentation is *not* done
     here because it must happen after `Context.startup()` has created the
     SQLAlchemy engines — see `instrument_databases`.
 
-    The Prometheus ASGI app is mounted at "/metrics", which causes Starlette
-    to redirect the bare "/metrics" path to "/metrics/" with a 307. The
-    `local-prom-app.yaml` overlay therefore sets `prometheus.io/path` to
-    "/metrics/" with the trailing slash — keep them in sync.
+    ``mount_metrics=False`` skips the /metrics mount for callers that already
+    mounted it ahead of their routers via `mount_metrics_endpoint`.
     """
     instrument_inbound_app(app)
 
-    metrics_app = make_metrics_asgi_app()
-    if metrics_app is not None:
-        app.mount("/metrics", metrics_app)
+    if mount_metrics:
+        mount_metrics_endpoint(app)
 
 
 def instrument_databases(ctx: Context) -> None:
@@ -577,6 +592,9 @@ def create_surface_app(
     # the broker's /{upstream_url:path} catch-all nor an injected extra router
     # can shadow the discovery paths (the /skills/* routes and llms.txt).
     app.include_router(get_agent_discovery_router())
+    # Prometheus scrape endpoint (when enabled), mounted ahead of the surface
+    # routers for the same reason: the broker catch-all must not shadow it.
+    mount_metrics_endpoint(app)
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
     # Public, schema-visible backend-identity endpoint so a client (MCP server,
@@ -604,7 +622,7 @@ def create_surface_app(
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
-    attach_http_observability(app)
+    attach_http_observability(app, mount_metrics=False)
     install_openapi_metadata(app)
     return app
 
