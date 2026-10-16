@@ -112,6 +112,15 @@ class Caller:
     issued_at: float | None = None
 
 
+class TokenLifetimeTooShortError(SystemExit):
+    """``check_fresh``: the run outlasts a token's whole lifetime.
+
+    Re-provisioning can't fix this; the run has to be shortened (or the TTLs
+    raised). A ``SystemExit`` so CLI entry points still exit with the message;
+    wrappers that give their own fix hint catch this type, not the text.
+    """
+
+
 @dataclass
 class PerfEnv:
     """Everything the load generators need, written by ``provision.py``."""
@@ -152,7 +161,8 @@ class PerfEnv:
         turns every call into a fast 401, which would otherwise be measured.
 
         When a stale token's full lifetime is itself shorter than the run,
-        re-provisioning can't help, so the error says to shorten the run.
+        re-provisioning can't help, so it raises ``TokenLifetimeTooShortError``
+        (saying to shorten the run) instead of a plain ``SystemExit``.
         """
         needed = run_s + margin_s
         deadline = (time.time() if now is None else now) + needed
@@ -174,7 +184,7 @@ class PerfEnv:
             if exp is not None and iat is not None and exp - iat < needed
         ]
         if too_long:
-            raise SystemExit(
+            raise TokenLifetimeTooShortError(
                 f"the planned run (~{run_s / 60:.0f} min +{margin_s:.0f}s margin) is longer "
                 f"than the token lifetime of: {', '.join(too_long)} — split it with --only "
                 "or lower --repeat (or raise the TTLs in config.perf.yaml)"

@@ -13,9 +13,10 @@ share per subsystem plus the hottest frames. The
 subsystem buckets are first-match on the stack, in the order of ``BUCKETS``.
 
 The profile (flamegraph, raw stacks and summary JSON) is only kept if the load
-ran for the whole window and at least ``--min-ok`` of its responses were 200 —
-otherwise the sidecar's files are deleted, since they would profile an idle
-(or failing) broker.
+ran for the whole window and at least ``--min-ok`` of its responses were 200.
+Any run that ends without writing its summary (rejected load, py-spy failure
+or timeout, Ctrl-C, unreadable stacks) deletes the sidecar's files, since they
+would profile an idle (or failing) broker or be incomplete.
 
 Usage::
 
@@ -27,11 +28,13 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import os
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -226,6 +229,21 @@ def check_load_or_discard(
         raise
 
 
+@contextlib.contextmanager
+def discard_on_failure(stem: str) -> Iterator[None]:
+    """Delete the run's profile files if anything in the block raises.
+
+    Covers every way a run can end without a summary: a py-spy timeout or
+    non-zero exit, a rejected load, Ctrl-C, or ``analyse`` failing on
+    truncated stacks. The exception propagates unchanged.
+    """
+    try:
+        yield
+    except BaseException:
+        discard_profile(stem)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="py-spy the broker under closed-loop load")
     parser.add_argument("--vendor", default="perf-noauth")
@@ -266,49 +284,54 @@ def main(argv: list[str] | None = None) -> int:
 
     with (
         exclusive_run("pyspy_profile"),
-        restore_on_exit(("remove oha sidecar", stop_oha), ("remove py-spy sidecar", stop_pyspy)),
+        discard_on_failure(stem),
     ):
-        cid = broker_container()
-        print(f"starting py-spy sidecar (pip install py-spy=={PYSPY_VERSION}) ...", flush=True)
-        start_pyspy(cid)
-        start_oha()
-        loader = threading.Thread(target=load, daemon=True)
-        loader.start()
-        time.sleep(warm_s)
-        common = (
-            f"--pid 1 --subprocesses --nonblocking --duration {args.duration} --rate {args.rate}"
-        )
-        procs = [
-            record(f"{common} --format raw --output /out/{stem}.txt"),
-            record(f"{common} --output /out/{stem}.svg"),
-        ]
-        codes = [proc.wait(timeout=args.duration + 60) for proc in procs]
-        if any(codes):
-            discard_profile(stem)
-            raise RuntimeError(f"py-spy record failed: exit codes {codes}")
-        loader.join(timeout=load_s + 30)
-        check_load_or_discard(stem, result, errors, loader.is_alive(), args.min_ok)
+        # Inside discard_on_failure, so the sidecars are gone (and py-spy can't
+        # write any more) before a failed run's files are deleted.
+        with restore_on_exit(
+            ("remove oha sidecar", stop_oha), ("remove py-spy sidecar", stop_pyspy)
+        ):
+            cid = broker_container()
+            print(f"starting py-spy sidecar (pip install py-spy=={PYSPY_VERSION}) ...", flush=True)
+            start_pyspy(cid)
+            start_oha()
+            loader = threading.Thread(target=load, daemon=True)
+            loader.start()
+            time.sleep(warm_s)
+            common = (
+                f"--pid 1 --subprocesses --nonblocking --duration {args.duration} "
+                f"--rate {args.rate}"
+            )
+            procs = [
+                record(f"{common} --format raw --output /out/{stem}.txt"),
+                record(f"{common} --output /out/{stem}.svg"),
+            ]
+            codes = [proc.wait(timeout=args.duration + 60) for proc in procs]
+            if any(codes):
+                raise RuntimeError(f"py-spy record failed: exit codes {codes}")
+            loader.join(timeout=load_s + 30)
+            check_load_or_discard(stem, result, errors, loader.is_alive(), args.min_ok)
 
-    summary = analyse(OUT_DIR / f"{stem}.txt")
-    print(f"load: {result['rps']:.1f} rps  p50={result['p50_ms']:.1f}ms")
-    for name, share in summary["buckets"].items():
-        print(f"  {share:6.1%}  {name}")
-    print("  -- inclusive")
-    for name, share in summary["probes"].items():
-        print(f"  {share:6.1%}  {name}")
-    path = write_result(
-        "profile",
-        {
-            **run_metadata("profile"),
-            "vendor": args.vendor,
-            "caller": args.caller,
-            "concurrency": args.concurrency,
-            "pyspy_version": PYSPY_VERSION,
-            "load": result,
-            "flamegraph": f"pyspy/{stem}.svg",
-            "profile": summary,
-        },
-    )
+        summary = analyse(OUT_DIR / f"{stem}.txt")
+        print(f"load: {result['rps']:.1f} rps  p50={result['p50_ms']:.1f}ms")
+        for name, share in summary["buckets"].items():
+            print(f"  {share:6.1%}  {name}")
+        print("  -- inclusive")
+        for name, share in summary["probes"].items():
+            print(f"  {share:6.1%}  {name}")
+        path = write_result(
+            "profile",
+            {
+                **run_metadata("profile"),
+                "vendor": args.vendor,
+                "caller": args.caller,
+                "concurrency": args.concurrency,
+                "pyspy_version": PYSPY_VERSION,
+                "load": result,
+                "flamegraph": f"pyspy/{stem}.svg",
+                "profile": summary,
+            },
+        )
     print(f"wrote {path} and results/pyspy/{stem}.svg")
     return 0
 

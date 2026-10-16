@@ -9,6 +9,8 @@ since a regression there silently produces plausible but wrong numbers.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -159,8 +161,9 @@ def test_check_fresh_refuses_a_caller_that_expires_mid_run() -> None:
 def test_check_fresh_says_split_the_run_when_it_outlasts_the_token_lifetime() -> None:
     now = 1_000_000.0
     env = _env(at=Caller("at", "at_x", "ag", expires_at=now + 3600, issued_at=now))
-    with pytest.raises(SystemExit, match="longer than the token lifetime") as exc:
+    with pytest.raises(common.TokenLifetimeTooShortError) as exc:
         env.check_fresh(callers=["at"], run_s=2 * 3600, now=now)
+    assert isinstance(exc.value, SystemExit)
     assert "make perf-provision" not in str(exc.value)
     assert "--only" in str(exc.value)
 
@@ -169,8 +172,9 @@ def test_check_fresh_says_reprovision_when_a_fresh_token_would_fit() -> None:
     now = 1_000_000.0
     issued = now - 3000
     env = _env(at=Caller("at", "at_x", "ag", expires_at=issued + 3600, issued_at=issued))
-    with pytest.raises(SystemExit, match="make perf-provision"):
+    with pytest.raises(SystemExit, match="make perf-provision") as exc:
         env.check_fresh(callers=["at"], run_s=1800, now=now)
+    assert not isinstance(exc.value, common.TokenLifetimeTooShortError)
 
 
 def test_perf_config_tokens_outlive_the_full_overhead_matrix_at_repeat_3() -> None:
@@ -366,6 +370,87 @@ def test_a_valid_load_keeps_its_flamegraph(tmp_path: Path, monkeypatch: pytest.M
     good = bench_overhead.summarise(_oha_json({"200": 100}), 200)
     pyspy_profile.check_load_or_discard("run", good, [], alive=False, min_ok=0.99)
     assert svg.exists()
+
+
+class _FakeRecord:
+    """A ``py-spy record`` that writes its output file, then ``wait``s as told."""
+
+    def __init__(self, out_dir: Path, args: str, wait: Any, raw: str) -> None:
+        out = Path(args.rsplit("--output ", 1)[1].replace("/out", str(out_dir), 1))
+        out.write_text(raw if out.suffix == ".txt" else "<svg/>")
+        self._wait = wait
+
+    def wait(self, timeout: float) -> int:
+        result = self._wait()
+        assert isinstance(result, int)
+        return result
+
+
+def _run_pyspy_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, wait: Any, raw: str = "a;b 3"
+) -> list[Path]:
+    """Drive ``pyspy_profile.main`` with Docker, oha and py-spy faked out.
+
+    Returns the files left in the (temporary) ``results/pyspy`` directory.
+    """
+    out_dir = tmp_path / "pyspy"
+    out_dir.mkdir()
+    env = _env()
+    monkeypatch.setattr(pyspy_profile, "OUT_DIR", out_dir)
+    monkeypatch.setattr(PerfEnv, "load", classmethod(lambda cls, path=None: env))
+    monkeypatch.setattr(pyspy_profile, "exclusive_run", lambda tool: contextlib.nullcontext())
+    for name in ("stop_oha", "stop_pyspy", "start_oha", "start_pyspy"):
+        monkeypatch.setattr(pyspy_profile, name, lambda *a: None)
+    monkeypatch.setattr(pyspy_profile, "broker_container", lambda: "cid")
+    monkeypatch.setattr(pyspy_profile, "run_oha", lambda a: _oha_json({"200": 100}))
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(pyspy_profile, "run_metadata", lambda scenario: {})
+    monkeypatch.setattr(
+        pyspy_profile, "write_result", lambda scenario, payload: tmp_path / "profile.json"
+    )
+    monkeypatch.setattr(pyspy_profile, "record", lambda args: _FakeRecord(out_dir, args, wait, raw))
+    try:
+        pyspy_profile.main(["--duration", "1"])
+    finally:
+        left = sorted(out_dir.iterdir())
+    return left
+
+
+def _raise(exc: BaseException) -> Any:
+    def wait() -> int:
+        raise exc
+
+    return wait
+
+
+@pytest.mark.parametrize(
+    ("wait", "raw", "error"),
+    [
+        (_raise(subprocess.TimeoutExpired("py-spy", 61)), "a;b 3", subprocess.TimeoutExpired),
+        (_raise(KeyboardInterrupt()), "a;b 3", KeyboardInterrupt),
+        (lambda: 1, "a;b 3", RuntimeError),
+        (lambda: 0, "a;b 3\ntruncat", ValueError),
+    ],
+    ids=["timeout", "ctrl-c", "record-failed", "analyse-failed"],
+)
+def test_every_failed_profile_run_deletes_its_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wait: Any,
+    raw: str,
+    error: type[BaseException],
+) -> None:
+    out_dir = tmp_path / "pyspy"
+    with pytest.raises(error):
+        _run_pyspy_main(tmp_path, monkeypatch, wait=wait, raw=raw)
+    assert list(out_dir.iterdir()) == []
+
+
+def test_a_completed_profile_run_keeps_its_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    left = _run_pyspy_main(tmp_path, monkeypatch, wait=lambda: 0)
+    assert [p.suffix for p in left] == [".svg", ".txt"]
 
 
 # ── report ────────────────────────────────────────────────────────────────────
