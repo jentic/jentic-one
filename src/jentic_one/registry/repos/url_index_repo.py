@@ -26,6 +26,36 @@ class OperationContext:
     method: str
 
 
+@dataclass(frozen=True, slots=True)
+class UrlIndexCandidate:
+    """A URL-index row plus the identity of the operation it routes to.
+
+    The API identity and the operation's spec ``path`` + ``method`` are read in
+    the same statement as the row, so resolving a URL needs no follow-up query
+    for them. ``name`` is always the API's canonical ``name``, never its
+    editable ``display_name``: the broker matches credentials and revision pins
+    on this identity, so it must not change when the display label does.
+    """
+
+    row: OperationURLIndex
+    vendor: str
+    name: str
+    version: str
+    operation_path: str
+    operation_method: str
+
+    def context(self) -> OperationContext:
+        """The operation's API identity + path/method as an :class:`OperationContext`."""
+        return OperationContext(
+            api=APIReference(vendor=self.vendor, name=self.name, version=self.version),
+            path=self.operation_path,
+            method=self.operation_method,
+        )
+
+
+_CandidateSelect = Select[tuple[OperationURLIndex, str, str, str, str, str]]
+
+
 @dataclass(frozen=True)
 class LiveHostOwner:
     """A host already served by another vendor's live API revision."""
@@ -50,21 +80,50 @@ def describe_live_host_owners(owners: list[LiveHostOwner]) -> str:
     )
 
 
-def _live_rows() -> Select[tuple[OperationURLIndex]]:
-    """Select URL-index rows that belong to their API's live revision.
+def _candidate_rows() -> _CandidateSelect:
+    """Select URL-index rows with their operation's path/method and revision joined.
+
+    Callers add the ``apis`` join (``_pinned_rows`` / ``_live_rows``). Every
+    join is a primary-key lookup, and the index row's FKs cascade on delete, so
+    the inner joins never drop a row that could otherwise match.
+    """
+    return (
+        select(
+            OperationURLIndex,
+            Api.vendor,
+            Api.name,
+            Api.version,
+            Operation.path,
+            Operation.method,
+        )
+        .join(Operation, Operation.id == OperationURLIndex.operation_id)
+        .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
+    )
+
+
+def _pinned_rows(revision_id: uuid.UUID) -> _CandidateSelect:
+    """Select candidate rows of exactly ``revision_id``, whatever its state."""
+    return (
+        _candidate_rows()
+        .join(Api, Api.id == ApiRevision.api_id)
+        .where(OperationURLIndex.revision_id == revision_id)
+    )
+
+
+def _live_rows() -> _CandidateSelect:
+    """Select candidate rows that belong to their API's live revision.
 
     "Live" is ``apis.current_revision_id`` — the revision promotion (or an
     auto-live import) made current. Drafts, archived and superseded revisions
     keep their rows (a ``Jentic-Revision`` pin still resolves against them) but
-    never serve an unpinned lookup. Both joins are primary-key lookups.
+    never serve an unpinned lookup.
 
     Rows are ordered most-recently-live first so a caller ranking equally
     specific matches from *different* live revisions can prefer the newest one
     deterministically (see ``URLLookupService._match_and_rank``).
     """
     return (
-        select(OperationURLIndex)
-        .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
+        _candidate_rows()
         .join(
             Api,
             and_(
@@ -77,6 +136,24 @@ def _live_rows() -> Select[tuple[OperationURLIndex]]:
             OperationURLIndex.revision_id,
         )
     )
+
+
+async def _fetch_candidates(
+    session: AsyncSession, stmt: _CandidateSelect
+) -> list[UrlIndexCandidate]:
+    """Run a candidate select and wrap each result row."""
+    result = await session.execute(stmt)
+    return [
+        UrlIndexCandidate(
+            row=row,
+            vendor=vendor,
+            name=name,
+            version=version,
+            operation_path=path,
+            operation_method=method,
+        )
+        for row, vendor, name, version, path, method in result.tuples().all()
+    ]
 
 
 #: Namespace prefix for the host-ownership advisory lock keys, so they cannot
@@ -146,37 +223,6 @@ class UrlIndexRepository:
         await session.flush()
 
     @staticmethod
-    async def get_operation_context(
-        session: AsyncSession, operation_id: str
-    ) -> OperationContext | None:
-        """Return the operation's API identity + path/method, or ``None`` if unknown.
-
-        ``name`` is always the API's canonical ``name``, never its editable
-        ``display_name``: the broker matches credentials and revision pins on
-        this identity, so it must not change when the display label does.
-        Joins operations → api_revisions → apis; the operation's own ``path`` +
-        ``method`` ride along so the resolver returns the human-readable
-        operation identity in the same single query.
-        """
-        stmt = (
-            select(Api.vendor, Api.name, Api.version)
-            .add_columns(Operation.path, Operation.method)
-            .select_from(Operation)
-            .join(ApiRevision, ApiRevision.id == Operation.revision_id)
-            .join(Api, Api.id == ApiRevision.api_id)
-            .where(Operation.id == operation_id)
-        )
-        row = (await session.execute(stmt)).one_or_none()
-        if row is None:
-            return None
-        vendor, name, version, path, method = row
-        return OperationContext(
-            api=APIReference(vendor=vendor, name=name, version=version),
-            path=path,
-            method=method,
-        )
-
-    @staticmethod
     async def upsert_entry(
         session: AsyncSession,
         *,
@@ -223,18 +269,14 @@ class UrlIndexRepository:
         method: str,
         host: str,
         segment_count: int,
-    ) -> list[OperationURLIndex]:
-        """Find URL index entries matching exact host, method, and segment count."""
-        stmt = select(OperationURLIndex).where(
-            and_(
-                OperationURLIndex.revision_id == revision_id,
-                OperationURLIndex.method == method,
-                OperationURLIndex.host == host,
-                OperationURLIndex.segment_count == segment_count,
-            )
+    ) -> list[UrlIndexCandidate]:
+        """Find entries of ``revision_id`` matching exact host, method, and segment count."""
+        stmt = _pinned_rows(revision_id).where(
+            OperationURLIndex.method == method,
+            OperationURLIndex.host == host,
+            OperationURLIndex.segment_count == segment_count,
         )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return await _fetch_candidates(session, stmt)
 
     @staticmethod
     async def lookup_by_host_live(
@@ -243,7 +285,7 @@ class UrlIndexRepository:
         method: str,
         host: str,
         segment_count: int,
-    ) -> list[OperationURLIndex]:
+    ) -> list[UrlIndexCandidate]:
         """Find live-revision entries matching host, method, and segment count.
 
         Only rows of each API's current (live) revision are returned — see
@@ -254,8 +296,7 @@ class UrlIndexRepository:
             OperationURLIndex.host == host,
             OperationURLIndex.segment_count == segment_count,
         )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return await _fetch_candidates(session, stmt)
 
     @staticmethod
     async def lookup_by_host_any_method(
@@ -283,19 +324,15 @@ class UrlIndexRepository:
         revision_id: uuid.UUID,
         method: str,
         segment_count: int,
-    ) -> list[OperationURLIndex]:
-        """Find regex-host entries matching method and segment count."""
-        stmt = select(OperationURLIndex).where(
-            and_(
-                OperationURLIndex.revision_id == revision_id,
-                OperationURLIndex.method == method,
-                OperationURLIndex.host.is_(None),
-                OperationURLIndex.host_regex.isnot(None),
-                OperationURLIndex.segment_count == segment_count,
-            )
+    ) -> list[UrlIndexCandidate]:
+        """Find regex-host entries of ``revision_id`` matching method and segment count."""
+        stmt = _pinned_rows(revision_id).where(
+            OperationURLIndex.method == method,
+            OperationURLIndex.host.is_(None),
+            OperationURLIndex.host_regex.isnot(None),
+            OperationURLIndex.segment_count == segment_count,
         )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return await _fetch_candidates(session, stmt)
 
     @staticmethod
     async def lookup_by_host_regex_live(
@@ -303,7 +340,7 @@ class UrlIndexRepository:
         *,
         method: str,
         segment_count: int,
-    ) -> list[OperationURLIndex]:
+    ) -> list[UrlIndexCandidate]:
         """Find live-revision regex-host entries matching method and segment count."""
         stmt = _live_rows().where(
             OperationURLIndex.method == method,
@@ -311,8 +348,7 @@ class UrlIndexRepository:
             OperationURLIndex.host_regex.isnot(None),
             OperationURLIndex.segment_count == segment_count,
         )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return await _fetch_candidates(session, stmt)
 
     @staticmethod
     async def find_live_hosts_of_other_vendors(

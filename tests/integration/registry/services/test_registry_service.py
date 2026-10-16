@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, event, select, update
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -123,6 +123,62 @@ async def test_resolve_operation_returns_operation_and_api_context(
     assert result.path_params == {"petId": "123"}
 
 
+@pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
+async def test_resolve_operation_issues_one_registry_statement(
+    registry_db: DatabaseSession, clean_url_index: None, pinned: bool
+) -> None:
+    """Resolving a URL is a single registry round trip (#1699).
+
+    The candidate query carries the API identity and the operation's
+    path/method, so no follow-up context query runs. The broker resolves every
+    upstream call through here, so a second statement doubles its registry load.
+    """
+    op_id = await _seed_operation(
+        registry_db,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        host="api.acme.com",
+        path_template="/v1/pets/{petId}",
+    )
+    async with registry_db.session() as session:
+        rev_id = (
+            await session.execute(
+                select(OperationURLIndex.revision_id).where(OperationURLIndex.operation_id == op_id)
+            )
+        ).scalar_one()
+
+    statements: list[str] = []
+
+    def _capture(_conn, _cursor, statement, _params, _context, _executemany) -> None:
+        statements.append(statement)
+
+    sync_engine = registry_db.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _capture)
+    try:
+        async with registry_db.session() as session:
+            result = await RegistryService(session).resolve_operation(
+                method="GET",
+                url="https://api.acme.com/v1/pets/123",
+                revision_id=rev_id if pinned else None,
+            )
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _capture)
+
+    assert len(statements) == 1, statements
+    assert result is not None
+    assert result.operation.id == op_id
+    assert result.operation.path == "/v1/pets/{petId}"
+    assert result.operation.method == "GET"
+    assert result.operation.relative_path == "/v1/pets/123"
+    assert (result.api.vendor, result.api.name, result.api.version) == (
+        "acme.com",
+        "pets-api",
+        "v1",
+    )
+    assert result.path_params == {"petId": "123"}
+
+
 async def test_resolve_operation_ignores_display_name(
     registry_db: DatabaseSession, clean_url_index: None
 ) -> None:
@@ -189,46 +245,6 @@ async def test_resolve_operation_unknown_url_returns_none(
         result = await svc.resolve_operation(method="GET", url="https://api.acme.com/v1/unknown")
 
     assert result is None
-
-
-async def test_resolve_operation_index_hit_without_operation_context_returns_none(
-    registry_db: DatabaseSession, clean_url_index: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A URL-index hit whose operation context can't be loaded yields None —
-    never a ``ResolveResult`` with a fabricated (id-only) operation identity.
-
-    The index row's FK cascades on operation delete, so this is only reachable
-    in a race (the operation goes between the index lookup and the context
-    join); the context lookup is stubbed to model that window.
-    """
-    await _seed_operation(
-        registry_db,
-        vendor="acme.com",
-        name="pets-api",
-        version="v1",
-        host="api.acme.com",
-        path_template="/v1/pets",
-    )
-
-    async def _vanished(_session: object, _operation_id: str) -> None:
-        return None
-
-    monkeypatch.setattr(UrlIndexRepository, "get_operation_context", staticmethod(_vanished))
-
-    async with registry_db.session() as session:
-        result = await RegistryService(session).resolve_operation(
-            method="GET", url="https://api.acme.com/v1/pets"
-        )
-
-    assert result is None
-
-
-async def test_get_operation_context_unknown_operation_returns_none(
-    registry_db: DatabaseSession, clean_url_index: None
-) -> None:
-    """The context join returns None for an operation id with no row."""
-    async with registry_db.session() as session:
-        assert await UrlIndexRepository.get_operation_context(session, "op_missing") is None
 
 
 async def test_resolve_operation_ambiguous_match_raises(

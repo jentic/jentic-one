@@ -23,7 +23,6 @@ from jentic_one.registry.ingest.host_change_guard import (
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
-from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
@@ -64,9 +63,7 @@ class RegistryService:
         )
         if hit is None:
             return None
-        op_ctx = await UrlIndexRepository.get_operation_context(self._session, hit.operation_id)
-        if op_ctx is None:
-            return None
+        op_ctx = hit.context
         return ResolveResult(
             operation=OperationInfo(
                 id=hit.operation_id,

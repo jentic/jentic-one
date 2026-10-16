@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
+from jentic_one.registry.repos.url_index_repo import UrlIndexCandidate
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
     MethodNotAllowedError,
@@ -30,8 +31,8 @@ def _make_index_entry(
     param_names: list[str] | None = None,
     segment_count: int = 2,
     revision_id: uuid.UUID | None = None,
-) -> object:
-    """Create a mock OperationURLIndex row."""
+) -> UrlIndexCandidate:
+    """Create a lookup candidate wrapping a mock OperationURLIndex row."""
     entry = MagicMock()
     entry.operation_id = operation_id
     entry.revision_id = revision_id or REVISION_ID
@@ -44,7 +45,14 @@ def _make_index_entry(
     entry.path_regex = URL_INDEX_FORMAT_MARKER + path_regex
     entry.param_names = param_names or []
     entry.segment_count = segment_count
-    return entry
+    return UrlIndexCandidate(
+        row=entry,
+        vendor="example.com",
+        name="pets",
+        version="v1",
+        operation_path=path_template,
+        operation_method=method,
+    )
 
 
 REVISION_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -174,7 +182,7 @@ async def test_method_not_allowed_raises_with_allowed_methods() -> None:
         patch(
             "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_any_method",
             new_callable=AsyncMock,
-            return_value=[post_entry],
+            return_value=[post_entry.row],
         ),
         pytest.raises(MethodNotAllowedError) as exc_info,
     ):
@@ -231,7 +239,7 @@ async def test_head_falls_back_to_get() -> None:
 
     async def mock_lookup_by_host(
         session: object, *, revision_id: object, method: str, host: str, segment_count: int
-    ) -> list[object]:
+    ) -> list[UrlIndexCandidate]:
         nonlocal call_count
         call_count += 1
         if method == "GET":

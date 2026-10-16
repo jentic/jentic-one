@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, urlparse
 
 import structlog
 
-from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.url_index import (
     URL_INDEX_FORMAT_MARKER,
     ServerVariableMatch,
@@ -21,7 +20,11 @@ from jentic_one.registry.core.url_index import (
     resolve_server_variable_groups,
 )
 from jentic_one.registry.repos.operation_repo import OperationRepository
-from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
+from jentic_one.registry.repos.url_index_repo import (
+    OperationContext,
+    UrlIndexCandidate,
+    UrlIndexRepository,
+)
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
     MethodNotAllowedError,
@@ -43,6 +46,9 @@ class URLLookupResult:
     operation_id: str
     path_params: dict[str, str]
     query_params: dict[str, Any]
+    # The matched operation's API identity + spec path/method, read in the same
+    # statement as the candidate rows (no follow-up query).
+    context: OperationContext
     # Concrete server-variable values present in the request URL, and the
     # declared defaults of variables the URL left as a ``{name}`` placeholder.
     server_variables: dict[str, str] = field(default_factory=dict)
@@ -60,10 +66,10 @@ class _RankedMatch:
     revision_id: uuid.UUID
     path_params: dict[str, str]
     specificity_key: tuple[bool, int, int, int]
+    candidate: UrlIndexCandidate
     server_variables: dict[str, str] = field(default_factory=dict)
     server_variable_defaults: dict[str, str] = field(default_factory=dict)
     server_variables_unresolved: bool = False
-    row: OperationURLIndex | None = None
 
 
 class URLLookupService:
@@ -110,6 +116,7 @@ class URLLookupService:
                     operation_id=result.operation_id,
                     path_params=result.path_params,
                     query_params=query_params,
+                    context=result.candidate.context(),
                     server_variables=result.server_variables,
                     server_variable_defaults=result.server_variable_defaults,
                     server_variables_unresolved=result.server_variables_unresolved,
@@ -152,7 +159,7 @@ class URLLookupService:
                 candidates = [
                     c
                     for c in regex_candidates
-                    if c.host_regex and re.fullmatch(c.host_regex, host, re.IGNORECASE)
+                    if c.row.host_regex and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
                 ]
         else:
             candidates = await UrlIndexRepository.lookup_by_host_live(
@@ -170,7 +177,7 @@ class URLLookupService:
                 candidates = [
                     c
                     for c in regex_candidates
-                    if c.host_regex and re.fullmatch(c.host_regex, host, re.IGNORECASE)
+                    if c.row.host_regex and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
                 ]
 
         if not candidates:
@@ -181,9 +188,7 @@ class URLLookupService:
 
         ranked = self._match_and_rank(candidates, path, host)
         is_legacy_row = (
-            ranked is not None
-            and ranked.row is not None
-            and URL_INDEX_FORMAT_MARKER not in ranked.row.path_regex
+            ranked is not None and URL_INDEX_FORMAT_MARKER not in ranked.candidate.row.path_regex
         )
         if ranked is not None and is_legacy_row:
             await self._resolve_legacy_server_variables(ranked, host=host, path=path)
@@ -203,8 +208,7 @@ class URLLookupService:
         the stored ones — the match is flagged ``server_variables_unresolved``
         so credential selection fails closed for scoped credentials.
         """
-        row = ranked.row
-        assert row is not None
+        row = ranked.candidate.row
         operations = await OperationRepository.get_by_ids(self._session, {row.operation_id})
         derived: ServerVariableMatch | None = None
         if operations:
@@ -264,16 +268,17 @@ class URLLookupService:
 
     @staticmethod
     def _match_and_rank(
-        candidates: list[OperationURLIndex], path: str, host: str = ""
+        candidates: list[UrlIndexCandidate], path: str, host: str = ""
     ) -> _RankedMatch | None:
         matches: list[_RankedMatch] = []
         for candidate in candidates:
-            match = re.fullmatch(candidate.path_regex, path)
+            row = candidate.row
+            match = re.fullmatch(row.path_regex, path)
             if not match:
                 continue
             host_groups: dict[str, str | None] = {}
-            if candidate.host_regex and host:
-                host_match = re.fullmatch(candidate.host_regex, host, re.IGNORECASE)
+            if row.host_regex and host:
+                host_match = re.fullmatch(row.host_regex, host, re.IGNORECASE)
                 if host_match is not None:
                     host_groups = host_match.groupdict()
             # Server-variable groups carry the request's concrete values; they
@@ -282,8 +287,8 @@ class URLLookupService:
             if resolved is None:
                 continue
             path_params = resolved.path_params
-            is_parameterized = bool(candidate.param_names)
-            template_parts = candidate.path_template.strip("/").split("/")
+            is_parameterized = bool(row.param_names)
+            template_parts = row.path_template.strip("/").split("/")
             literal_count = sum(1 for p in template_parts if not p.startswith("{"))
             first_literal_pos = next(
                 (i for i, p in enumerate(template_parts) if not p.startswith("{")),
@@ -301,13 +306,13 @@ class URLLookupService:
             )
             matches.append(
                 _RankedMatch(
-                    operation_id=candidate.operation_id,
-                    revision_id=candidate.revision_id,
+                    operation_id=row.operation_id,
+                    revision_id=row.revision_id,
                     path_params=path_params,
                     specificity_key=specificity_key,
                     server_variables=resolved.values,
                     server_variable_defaults=resolved.defaults,
-                    row=candidate,
+                    candidate=candidate,
                 )
             )
 
