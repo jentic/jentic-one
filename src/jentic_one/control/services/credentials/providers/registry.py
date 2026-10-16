@@ -55,12 +55,17 @@ class ProviderRegistry:
     def mints_from_account_ref(self, name: str) -> bool:
         """Whether credentials on provider *name* connect as an account reference.
 
-        The single "managed provider" predicate: such a credential is connected
-        by its ``provider_account_ref`` and refreshes from it, with no local
-        token row. Every other provider keeps its grant in ``oauth_tokens``,
-        so a set ``provider_account_ref`` there is only a display name. An
-        unknown provider is not one, so a credential on it fails closed as
-        needing a reconnect.
+        Such a credential is connected by its ``provider_account_ref`` and
+        refreshes from it, with no local token row. Every other provider keeps
+        its grant in ``oauth_tokens``, so a set ``provider_account_ref`` there
+        is only a display name. An unknown provider is not one, so a
+        credential on it fails closed as needing a reconnect.
+
+        This is about where the grant lives. ``CredentialProvider.managed`` is
+        a different question, whether the provider supplies the OAuth client
+        material (``direct_oauth2`` is managed yet keeps its grant in
+        ``oauth_tokens``); use this predicate, not ``.managed``, to decide
+        connectedness.
         """
         try:
             return self.get(name).mints_from_account_ref

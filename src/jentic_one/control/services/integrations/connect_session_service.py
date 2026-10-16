@@ -3264,9 +3264,10 @@ class ConnectSessionService:
             credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
             registration_id_stamp: str | None = None
             if credential_for_stamp is not None:
-                if not await minted_at_current_origin(
-                    session, credential_for_stamp, tokens.token_url
-                ):
+                current_token_url = await OAuthClientCredentialRepository.current_token_url(
+                    session, credential_for_stamp
+                )
+                if not minted_at_current_origin(tokens.token_url, current_token_url):
                     _logger.warning(
                         "connect_session.finalise_discarded_token_url_moved",
                         credential_id=credential_id,
