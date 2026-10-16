@@ -224,6 +224,8 @@ def test_patch_sigv4_region_and_service_without_rotation(
 @pytest.mark.parametrize(
     "body",
     [
+        {"type": "api_key", "name": ""},
+        {"type": "no_auth", "name": ""},
         {"type": "bearer_token", "token": ""},
         {"type": "api_key", "key": ""},
         {"type": "basic", "username": ""},
@@ -239,7 +241,7 @@ def test_patch_sigv4_region_and_service_without_rotation(
 def test_patch_empty_secret_is_rejected(
     cred_writer_client: TestClient, body: dict[str, object]
 ) -> None:
-    """Pins #1425: an empty secret/signing field is a 422, never stored."""
+    """Pins #1425: an empty name/secret/signing field is a 422, never stored."""
     # Field validation runs at the request boundary, before the service checks
     # the stored type, so one api_key credential serves every variant.
     cred_id = _create_api_key(cred_writer_client)

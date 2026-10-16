@@ -17,14 +17,25 @@ from sqlalchemy import delete
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.control.core.schema.device_authorization_app_registration_details import (
+    DeviceAuthorizationAppRegistrationDetails,
+)
 from jentic_one.control.core.schema.device_authorization_credentials import (
     DeviceAuthorizationCredential,
 )
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
-from jentic_one.control.repos import CredentialRepository, OAuthClientCredentialRepository
+from jentic_one.control.repos import (
+    CredentialRepository,
+    OAuthAppRegistrationRepository,
+    OAuthClientCredentialRepository,
+)
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
     ImmutableFieldError,
@@ -1311,6 +1322,7 @@ async def test_update_oauth2_reports_not_found_or_type_before_token_url(
 @pytest.mark.parametrize(
     "fields",
     [
+        {"type": CredentialType.BEARER_TOKEN, "name": ""},
         {"type": CredentialType.BEARER_TOKEN, "token": ""},
         {"type": CredentialType.BASIC, "password": ""},
         {"type": CredentialType.OAUTH2, "client_secret": ""},
@@ -1378,23 +1390,32 @@ async def test_update_oauth2_token_url_and_scopes_apply_without_secret(
         assert row.encrypted_client_secret == secret_before
 
 
-async def test_update_device_code_applies_token_url_and_rejects_secret(
-    svc: CredentialService, clean_credentials: None
-) -> None:
-    """Device-code edits land on their own table; a client_secret is a 400 (public client)."""
-    created = await svc.create(
-        CredentialCreate(
-            type=CredentialType.OAUTH2,
-            name="Device edit",
-            api=_api(),
-            grant_type="device_code",
-            token_url="https://auth.example.com/token",
-            authorize_url="https://auth.example.com/device",
-            client_id="device-client",
-            scopes=["read"],
-        ),
-        identity=_ADMIN_IDENTITY,
+def _device_code_create(name: str) -> CredentialCreate:
+    return CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name=name,
+        api=_api(),
+        grant_type="device_code",
+        token_url="https://auth.example.com/token",
+        authorize_url="https://auth.example.com/device",
+        client_id="device-client",
+        scopes=["read"],
     )
+
+
+async def test_update_device_code_applies_token_url_and_scopes(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """Device-code edits land on their own table and are not masked by the
+    scopes stamped by an earlier connect; ``[]`` clears to None; a
+    client_secret is a 400 (public client)."""
+    created = await svc.create(_device_code_create("Device edit"), identity=_ADMIN_IDENTITY)
+    # Simulate an earlier connect, which stamps granted_scopes on the row.
+    async with control_db.transaction() as session:
+        await DeviceAuthorizationCredentialRepository.update_fields(
+            session, created.credential_id, granted_scopes=["old"]
+        )
+
     updated = await svc.update(
         created.credential_id,
         CredentialUpdate(
@@ -1408,6 +1429,14 @@ async def test_update_device_code_applies_token_url_and_rejects_secret(
     assert updated.details.token_url == "https://other.example.com/t"
     assert updated.details.scopes == ["read", "write"]
 
+    cleared = await svc.update(
+        created.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=[]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(cleared.details, OAuth2Redacted)
+    assert cleared.details.scopes is None
+
     with pytest.raises(InvalidCredentialInputError):
         await svc.update(
             created.credential_id,
@@ -1417,6 +1446,61 @@ async def test_update_device_code_applies_token_url_and_rejects_secret(
             ),
             identity=_ADMIN_IDENTITY,
         )
+
+
+async def test_update_shared_registration_client_fields_rejected(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A credential bound to a shared app registration resolves its client
+    config from the registration at runtime, so per-credential token_url /
+    scopes edits are a 400, not a 200 that writes a dead column."""
+    created = await svc.create(_device_code_create("Shared device"), identity=_ADMIN_IDENTITY)
+    async with control_db.transaction() as session:
+        registration = await OAuthAppRegistrationRepository.create_device_authorization(
+            session,
+            name="Shared device app",
+            api_vendor="test-vendor",
+            catalog_api_id="test-vendor",
+            display_name="Shared",
+            client_id="device-client",
+            authorization_endpoint="https://auth.example.com/device",
+            token_endpoint="https://auth.example.com/token",
+            created_by=_ADMIN_IDENTITY.sub,
+        )
+        registration_id = registration.id
+        await CredentialRepository.set_oauth_app_registration(
+            session, created.credential_id, registration_id=registration_id
+        )
+    try:
+        for edit in (
+            CredentialUpdate(type=CredentialType.OAUTH2, token_url="https://x.example.com/t"),
+            CredentialUpdate(type=CredentialType.OAUTH2, scopes=["write"]),
+        ):
+            with pytest.raises(InvalidCredentialInputError):
+                await svc.update(created.credential_id, edit, identity=_ADMIN_IDENTITY)
+        after = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+        assert isinstance(after.details, OAuth2Redacted)
+        assert after.details.token_url == "https://auth.example.com/token"
+        assert after.details.scopes == ["read"]
+        # Header edits stay allowed on shared-registration credentials.
+        renamed = await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.OAUTH2, name="Renamed shared"),
+            identity=_ADMIN_IDENTITY,
+        )
+        assert renamed.name == "Renamed shared"
+    finally:
+        async with control_db.transaction() as session:
+            await session.execute(delete(DeviceAuthorizationCredential))
+            await session.execute(delete(Credential).where(Credential.id == created.credential_id))
+            await session.execute(
+                delete(DeviceAuthorizationAppRegistrationDetails).where(
+                    DeviceAuthorizationAppRegistrationDetails.id == registration_id
+                )
+            )
+            await session.execute(
+                delete(OAuthAppRegistration).where(OAuthAppRegistration.id == registration_id)
+            )
 
 
 async def test_update_no_auth_name_and_active(
