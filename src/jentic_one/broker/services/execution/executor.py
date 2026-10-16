@@ -18,17 +18,28 @@ execution path that drifted from the sync one.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
+
+from fastapi import Response
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.broker.execution import (
+    ExecutionContext,
+    ExecutionOutcome,
+    RunnerRequest,
+    StreamingOutcome,
+    StreamingUpstreamRunner,
+)
+from jentic_one.shared.db.errors import DATABASE_WRITE_ERRORS
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import valid_trace_id_or_minted
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
+    ExecutionRecordNotPersistedError,
     UpstreamExecRequest,
     UpstreamExecResult,
     UpstreamExecutor,
@@ -58,29 +69,80 @@ class PipelineExecutor(UpstreamExecutor):
         self._registry = registry
         self._broker_factory = broker_factory
 
-    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
+    async def execute(
+        self, request: UpstreamExecRequest, *, db: TransactionalDatabase
+    ) -> UpstreamExecResult:
+        """Run the call and persist its record.
+
+        ``run_execution`` writes the record only after the upstream call, so a
+        database error from it means the call already happened. That surfaces as
+        :class:`ExecutionRecordNotPersistedError` carrying the upstream result
+        when there is one, never as a retryable failure.
+        """
         ctx_req = _ctx_from_metadata(request)
         runner = self._registry.select(request.url)
-        outcome = await run_execution(
+        broker = _OutcomeKeepingBroker(self._broker_factory(runner))
+        try:
+            outcome = await run_execution(
+                ctx_req,
+                body=request.body,
+                headers=request.headers,
+                admin_db=db,
+                timeout=request.timeout_s,
+                broker=broker,
+                execution_id=request.metadata.get("execution_id"),
+                actor_id=request.metadata["actor_id"],
+                actor_type=request.metadata["actor_type"],
+                origin=request.metadata.get("origin"),
+                signing=request.signing,
+            )
+        except DATABASE_WRITE_ERRORS as exc:
+            kept = broker.outcome
+            raise ExecutionRecordNotPersistedError(
+                _exec_result(kept) if kept is not None else None
+            ) from exc
+        return _exec_result(outcome)
+
+
+class _OutcomeKeepingBroker:
+    """Delegates to ``inner`` and keeps the buffered outcome it returned."""
+
+    def __init__(self, inner: Broker) -> None:
+        self._inner = inner
+        self.outcome: ExecutionOutcome | None = None
+
+    async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
+        self.outcome = await self._inner.execute(request, context)
+        return self.outcome
+
+    async def execute_streaming(
+        self,
+        runner: StreamingUpstreamRunner,
+        request: RunnerRequest,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Callable[[StreamingOutcome], Awaitable[None]] | None = None,
+    ) -> Response:
+        return await self._inner.execute_streaming(
+            runner,
+            request,
             ctx_req,
-            body=request.body,
-            headers=request.headers,
-            admin_db=db,
-            timeout=request.timeout_s,
-            broker=self._broker_factory(runner),
-            execution_id=request.metadata.get("execution_id"),
-            actor_id=request.metadata["actor_id"],
-            actor_type=request.metadata["actor_type"],
-            origin=request.metadata.get("origin"),
-            signing=request.signing,
+            execution_id,
+            transfer_deadline_s=transfer_deadline_s,
+            background_callback=background_callback,
         )
-        result = outcome.result
-        return UpstreamExecResult(
-            status_code=result.status_code,
-            body=result.body,
-            content_type=result.content_type,
-            duration_ms=result.duration_ms,
-        )
+
+
+def _exec_result(outcome: ExecutionOutcome) -> UpstreamExecResult:
+    result = outcome.result
+    return UpstreamExecResult(
+        status_code=result.status_code,
+        body=result.body,
+        content_type=result.content_type,
+        duration_ms=result.duration_ms,
+    )
 
 
 def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:

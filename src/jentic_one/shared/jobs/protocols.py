@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.aws.sigv4 import SigV4Material
+from jentic_one.shared.db.protocols import TransactionalDatabase
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +187,21 @@ class UpstreamExecResult:
     duration_ms: int
 
 
+class ExecutionRecordNotPersistedError(Exception):
+    """The upstream call ran but its ``executions`` record could not be written.
+
+    Raised by an ``UpstreamExecutor`` when the record transaction fails after the
+    call returned (``result`` is the verbatim upstream result) or after it raised
+    (``result`` is ``None``). It is distinct from a pipeline failure so the worker
+    reports what the upstream actually did, and does not requeue a job whose
+    upstream side effect has already happened.
+    """
+
+    def __init__(self, result: UpstreamExecResult | None) -> None:
+        super().__init__("execution record not persisted")
+        self.result = result
+
+
 class UpstreamExecutor(Protocol):
     """Runs one upstream call through the **shared** ``BrokerExecutionPipeline``.
 
@@ -201,10 +217,13 @@ class UpstreamExecutor(Protocol):
     Implementations own the ``executions`` record write (the pipeline persists
     it); the worker keeps only the job-result + lifecycle-event persistence.
     ``db`` is the worker's database: the record is written in a transaction
-    opened on it after the upstream call, never one held across the call.
+    opened on it after the upstream call, never one held across the call. A
+    failed record write raises :class:`ExecutionRecordNotPersistedError`.
     """
 
-    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult: ...
+    async def execute(
+        self, request: UpstreamExecRequest, *, db: TransactionalDatabase
+    ) -> UpstreamExecResult: ...
 
 
 class JobRecord(Protocol):

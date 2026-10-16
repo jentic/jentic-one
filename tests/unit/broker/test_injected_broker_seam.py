@@ -38,6 +38,7 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
+from jentic_one.broker.core.exceptions import CircuitOpenError
 from jentic_one.broker.services.execution.executor import PipelineExecutor, _ctx_from_metadata
 from jentic_one.broker.web.routers.execute import _resolve_broker
 from jentic_one.shared.broker.broker import Broker
@@ -51,11 +52,12 @@ from jentic_one.shared.broker.execution import RunnerResult as SharedRunnerResul
 from jentic_one.shared.broker.schemas import ExecuteRequestContext
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.jobs.protocols import UpstreamExecRequest
+from jentic_one.shared.db.errors import DatabaseUnavailableError
+from jentic_one.shared.jobs.protocols import ExecutionRecordNotPersistedError, UpstreamExecRequest
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
-from tests.unit.fake_tx import SessionScope
+from tests.unit.fake_tx import FailingTransactions, SessionScope
 
 
 class _SpyBroker:
@@ -220,6 +222,58 @@ async def test_async_path_invokes_injected_broker() -> None:
     assert len(spy.calls) == 1, "injected broker must be invoked on the async path"
     assert result.status_code == 200
     assert result.body == b"spy"
+
+
+class _RaisingBroker(_SpyBroker):
+    async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
+        self.calls.append((request, context))
+        raise CircuitOpenError(detail="circuit open")
+
+
+def _exec_request() -> UpstreamExecRequest:
+    return UpstreamExecRequest(
+        method="POST",
+        url="https://api.example.com/v1/things",
+        headers={},
+        body=None,
+        timeout_s=30.0,
+        metadata={
+            "execution_id": "exec_test0000000000000001",
+            "trace_id": "b" * 32,
+            "actor_id": "agt_abc123",
+            "actor_type": "agent",
+        },
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("broker", "expected_status"), [(_SpyBroker(), 200), (_RaisingBroker(), None)]
+)
+async def test_async_path_record_write_failure_carries_the_upstream_result(
+    broker: _SpyBroker, expected_status: int | None
+) -> None:
+    """A record write that fails after the call is reported as such, with the
+    upstream's real result when it returned one, so the worker neither reports
+    a successful call as a pipeline failure nor requeues it."""
+    broker.calls.clear()
+    registry = RunnerRegistry()
+    registry.register(["http", "https"], _NoopRunner(), required=True)
+    executor = PipelineExecutor(registry, broker_factory=lambda _runner: broker)
+    db = FailingTransactions(DatabaseUnavailableError("connection lost"))
+
+    with pytest.raises(ExecutionRecordNotPersistedError) as caught:
+        await executor.execute(_exec_request(), db=db)
+
+    assert len(broker.calls) == 1
+    assert db.opened == 1
+    assert isinstance(caught.value.__cause__, DatabaseUnavailableError)
+    if expected_status is None:
+        assert caught.value.result is None
+    else:
+        assert caught.value.result is not None
+        assert caught.value.result.status_code == expected_status
+        assert caught.value.result.body == b"spy"
 
 
 def test_ctx_from_metadata_rebuilds_credential_attribution() -> None:

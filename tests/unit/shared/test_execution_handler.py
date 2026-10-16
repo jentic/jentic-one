@@ -20,8 +20,10 @@ import pytest
 import structlog
 from sqlalchemy.exc import OperationalError
 
+from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
+    ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
     QueuedExecutionVerdict,
@@ -31,7 +33,7 @@ from jentic_one.shared.jobs.protocols import (
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
-from tests.unit.fake_tx import SessionScope
+from tests.unit.fake_tx import FailingTransactions, SessionScope
 
 
 class _FakeSession:
@@ -860,3 +862,129 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
     assert req.body == b'{"a":1}'
     assert req.headers["Authorization"] == "Bearer tok"
     assert "authorization" not in req.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error", [DatabaseUnavailableError("connection lost"), DatabaseIntegrityError("dup")]
+)
+async def test_handler_lifecycle_write_failure_still_returns_the_upstream_result(
+    error: Exception,
+) -> None:
+    """The lifecycle transaction runs after the upstream call. If it fails the job
+    still completes with the real result: raising would requeue the job and
+    send the upstream request a second time."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=201, body=b"made", content_type="text/plain", duration_ms=4)
+    )
+    handler = ExecutionHandler(executor=executor)
+    db = FailingTransactions(error)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-lifecycle",
+            db,
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert db.opened == 1
+    assert result.body["status"] == "completed"
+    assert result.body["http_status"] == 201
+    assert result.body["body_b64"]
+    assert result.content_type == "text/plain"
+    failed = [e for e in logs if e["event"] == "queued_execution_lifecycle_write_failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == type(error).__name__
+
+
+@pytest.mark.asyncio
+async def test_handler_denial_lifecycle_write_failure_still_returns_the_denial() -> None:
+    """A denied job whose lifecycle write fails still completes with its problem."""
+    problem = {"type": "no_credential_binding", "status": 403}
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=0)
+        ),
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+    db = FailingTransactions(DatabaseUnavailableError("connection lost"))
+
+    result = await handler.execute(
+        "job-denied-lifecycle",
+        db,
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert db.opened == 1
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 403
+    assert result.body["problem"] == problem
+
+
+@pytest.mark.asyncio
+async def test_handler_unpersisted_record_reports_the_real_upstream_result() -> None:
+    """A record write that fails after a 2xx upstream reports the 2xx (body kept),
+    not a pipeline failure, and still emits EXECUTION_COMPLETED."""
+    upstream = UpstreamExecResult(
+        status_code=200, body=b"ok", content_type="application/json", duration_ms=9
+    )
+    exc = ExecutionRecordNotPersistedError(upstream)
+    exc.__cause__ = DatabaseUnavailableError("connection lost")
+    handler = ExecutionHandler(executor=_RaisingExecutor(exc))
+    scope = SessionScope(_FakeSession())
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+    ):
+        result = await handler.execute(
+            "job-unpersisted",
+            scope,
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "completed"
+    assert result.body["http_status"] == 200
+    assert result.body["duration_ms"] == 9
+    assert result.body["body_b64"]
+    assert result.content_type == "application/json"
+    assert scope.opened == 1
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_COMPLETED
+    assert not [e for e in logs if e["event"] == "pipeline_error"]
+    logged = [e for e in logs if e["event"] == "queued_execution_record_not_persisted"]
+    assert len(logged) == 1
+    assert logged[0]["error_type"] == "DatabaseUnavailableError"
+    assert logged[0]["http_status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_handler_unpersisted_record_without_a_result_fails_without_raising() -> None:
+    """A record write that fails after the upstream raised completes the job as
+    failed (never requeued) with a reason that names the lost record."""
+    handler = ExecutionHandler(executor=_RaisingExecutor(ExecutionRecordNotPersistedError(None)))
+
+    with patch(
+        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+    ) as mock_emit:
+        result = await handler.execute(
+            "job-unpersisted-failed",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] is None
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_FAILED
+    assert "Execution record not persisted" in mock_emit.call_args.kwargs["summary"]

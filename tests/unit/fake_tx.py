@@ -1,9 +1,11 @@
-"""A unit-test stand-in for a database whose ``transaction()`` yields one fixed session.
+"""Unit-test stand-ins for a database the code under test opens transactions on.
 
 ``run_execution`` and the async ``ExecutionHandler`` take the database and open
 their own transaction after the upstream call. Pure unit tests that assert on a
-session stand-in wrap it in :class:`SessionScope` so those writes land on it;
-``opened`` counts the transactions the code under test opened.
+session stand-in wrap it in :class:`SessionScope` so those writes land on it,
+and assert ``opened`` to pin how many transactions the code opened.
+:class:`FailingTransactions` fails every transaction, the way a lost database
+connection does.
 """
 
 from __future__ import annotations
@@ -38,3 +40,17 @@ class SessionScope:
             await self.session.rollback()
             raise
         await self.session.commit()
+
+
+class FailingTransactions:
+    """Raise ``error`` from every ``transaction()``; count how many were opened."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.opened = 0
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Any]:
+        self.opened += 1
+        raise self.error
+        yield  # pragma: no cover - never reached; makes this an async generator

@@ -38,6 +38,8 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.connectivity import redact_sql
+from jentic_one.shared.db.errors import DATABASE_WRITE_ERRORS
+from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -51,6 +53,7 @@ from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
     ExecutionAuthorizer,
+    ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
     UpstreamExecRequest,
@@ -114,7 +117,7 @@ class ExecutionHandler:
     async def execute(
         self,
         job_id: str,
-        db: Any,
+        db: TransactionalDatabase,
         *,
         payload: dict[str, Any] | None = None,
         created_by: str | None = None,
@@ -125,6 +128,11 @@ class ExecutionHandler:
         ``db`` is the worker's database. Each write opens its own short
         transaction on it, after the upstream call, so the call is never awaited
         while an admin connection (or, on SQLite, the write lock) is held.
+
+        Once the upstream call has run, a database failure does not raise: a
+        raise would requeue the job and send the upstream request again. A
+        failed record write is reported with the real upstream result, and the
+        lifecycle write is best-effort.
         """
         if not created_by or not actor_type:
             raise ValueError("created_by and actor_type are required for execution jobs")
@@ -288,6 +296,26 @@ class ExecutionHandler:
             if http_status >= 400:
                 status = ExecutionStatus.FAILED
                 error_msg = f"Upstream returned {http_status}"
+        except ExecutionRecordNotPersistedError as exc:
+            cause = exc.__cause__
+            logger.error(
+                "queued_execution_record_not_persisted",
+                job_id=job_id,
+                execution_id=execution_id,
+                error_type=type(cause).__name__ if cause is not None else None,
+                http_status=exc.result.status_code if exc.result is not None else None,
+            )
+            if exc.result is None:
+                status = ExecutionStatus.FAILED
+                error_msg = "Execution record not persisted"
+            else:
+                http_status = exc.result.status_code
+                response_body = exc.result.body
+                content_type = exc.result.content_type
+                duration_ms = exc.result.duration_ms
+                if http_status >= 400:
+                    status = ExecutionStatus.FAILED
+                    error_msg = f"Upstream returned {http_status}"
         except (OSError, TimeoutError) as exc:
             status = ExecutionStatus.FAILED
             error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
@@ -309,21 +337,20 @@ class ExecutionHandler:
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
 
-        async with db.transaction() as session:
-            await self._emit_lifecycle(
-                session,
-                job_id=job_id,
-                execution_id=execution_id,
-                trace_id=trace_id,
-                status=status,
-                error_msg=error_msg,
-                created_by=created_by,
-                actor_type=actor_type,
-                toolkit_id=payload.get("toolkit_id"),
-                credential_id=credential_id,
-                operation=operation,
-                origin=origin,
-            )
+        await self._write_lifecycle(
+            db,
+            job_id=job_id,
+            execution_id=execution_id,
+            trace_id=trace_id,
+            status=status,
+            error_msg=error_msg,
+            created_by=created_by,
+            actor_type=actor_type,
+            toolkit_id=payload.get("toolkit_id"),
+            credential_id=credential_id,
+            operation=operation,
+            origin=origin,
+        )
 
         result_body: dict[str, Any] = {
             "execution_id": execution_id,
@@ -338,7 +365,7 @@ class ExecutionHandler:
 
     async def _deny(
         self,
-        db: Any,
+        db: TransactionalDatabase,
         *,
         job_id: str,
         execution_id: str,
@@ -357,21 +384,20 @@ class ExecutionHandler:
         """
         problem_type = str(problem.get("type") or "about:blank")
         logger.info("queued_execution_denied", job_id=job_id, problem_type=problem_type)
-        async with db.transaction() as session:
-            await self._emit_lifecycle(
-                session,
-                job_id=job_id,
-                execution_id=execution_id,
-                trace_id=trace_id,
-                status=ExecutionStatus.FAILED,
-                error_msg=f"Authorization denied ({problem_type})",
-                created_by=created_by,
-                actor_type=actor_type,
-                toolkit_id=payload.get("toolkit_id"),
-                credential_id=payload.get("credential_id"),
-                operation=operation_from_job_payload(payload),
-                origin=payload.get("origin"),
-            )
+        await self._write_lifecycle(
+            db,
+            job_id=job_id,
+            execution_id=execution_id,
+            trace_id=trace_id,
+            status=ExecutionStatus.FAILED,
+            error_msg=f"Authorization denied ({problem_type})",
+            created_by=created_by,
+            actor_type=actor_type,
+            toolkit_id=payload.get("toolkit_id"),
+            credential_id=payload.get("credential_id"),
+            operation=operation_from_job_payload(payload),
+            origin=payload.get("origin"),
+        )
         status = problem.get("status")
         return JobResultPayload(
             body={
@@ -382,6 +408,53 @@ class ExecutionHandler:
                 "problem": problem,
             }
         )
+
+    async def _write_lifecycle(
+        self,
+        db: TransactionalDatabase,
+        *,
+        job_id: str,
+        execution_id: str,
+        trace_id: str,
+        status: ExecutionStatus,
+        error_msg: str | None,
+        created_by: str,
+        actor_type: str,
+        toolkit_id: str | None,
+        credential_id: str | None,
+        operation: OperationInfo | None,
+        origin: str | None,
+    ) -> None:
+        """Write the lifecycle events in their own transaction, best-effort.
+
+        They are written after the job's outcome is settled (the upstream call
+        has run, or the job was denied). A failure here is logged and the job
+        still completes with its real result rather than being requeued, which
+        would re-send the upstream request.
+        """
+        try:
+            async with db.transaction() as session:
+                await self._emit_lifecycle(
+                    session,
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    trace_id=trace_id,
+                    status=status,
+                    error_msg=error_msg,
+                    created_by=created_by,
+                    actor_type=actor_type,
+                    toolkit_id=toolkit_id,
+                    credential_id=credential_id,
+                    operation=operation,
+                    origin=origin,
+                )
+        except DATABASE_WRITE_ERRORS as exc:
+            logger.warning(
+                "queued_execution_lifecycle_write_failed",
+                job_id=job_id,
+                execution_id=execution_id,
+                error_type=type(exc).__name__,
+            )
 
     async def _emit_lifecycle(
         self,

@@ -43,3 +43,13 @@ class DatabaseConsistencyError(Exception):
     def __init__(self, detail: str = "") -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+#: The domain errors ``DatabaseSession.transaction`` raises for a failed write
+#: (in the body or at commit), for callers that handle any of them alike.
+DATABASE_WRITE_ERRORS: tuple[type[Exception], ...] = (
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+    DatabaseDataError,
+    DatabaseConsistencyError,
+)
