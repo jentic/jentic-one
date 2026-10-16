@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 import socket
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -36,6 +37,7 @@ from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner
+from jentic_one.broker.core import server_timing as core_server_timing
 from jentic_one.broker.core.exceptions import UpstreamTimeoutError
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.server_timing import (
@@ -265,10 +267,12 @@ class _CaptureRecorder:
         *,
         sink: list[ServerTimingRecorder],
         headers_at_ms: list[float],
+        on_headers: Callable[[], None] | None = None,
     ) -> None:
         self._app = app
         self._sink = sink
         self._headers_at_ms = headers_at_ms
+        self._on_headers = on_headers
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         recorder = current_recorder()
@@ -280,9 +284,39 @@ class _CaptureRecorder:
         async def stamp_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 self._headers_at_ms.append(recorder.elapsed_ms())
+                if self._on_headers is not None:
+                    self._on_headers()
             await send(message)
 
         await self._app(scope, receive, stamp_headers)
+
+
+class _HoldableClock:
+    """``perf_counter`` for the recorder that can be held still.
+
+    While held it returns the reading taken at :meth:`hold`; :meth:`release`
+    resumes from that reading (the held span counts as zero), so it stays
+    monotonic. Holding it from the overhead sample to the response headers
+    makes the dispatch gap between the two exactly zero on any machine.
+    """
+
+    def __init__(self) -> None:
+        self._offset = 0.0
+        self._held: float | None = None
+
+    def perf_counter(self) -> float:
+        if self._held is not None:
+            return self._held
+        return time.perf_counter() - self._offset
+
+    def hold(self) -> None:
+        if self._held is None:
+            self._held = self.perf_counter()
+
+    def release(self) -> None:
+        if self._held is not None:
+            self._offset = time.perf_counter() - self._held
+            self._held = None
 
 
 def _app(
@@ -294,6 +328,7 @@ def _app(
     recorder_only: bool = False,
     recorders: list[ServerTimingRecorder] | None = None,
     headers_at_ms: list[float] | None = None,
+    on_headers: Callable[[], None] | None = None,
     broker: Broker | None = None,
 ) -> FastAPI:
     """The execute router behind the recorder middleware.
@@ -310,6 +345,7 @@ def _app(
             _CaptureRecorder,
             sink=recorders,
             headers_at_ms=headers_at_ms if headers_at_ms is not None else [],
+            on_headers=on_headers,
         )
     if server_timing or recorder_only:
         app.add_middleware(ServerTimingMiddleware, emit_header=server_timing)
@@ -508,9 +544,6 @@ _OVERHEAD = "broker.execution.overhead_ms"
 _DURATION = "broker.execution.duration_ms"
 _UPSTREAM_DELAY_S = 0.2
 _BACKOFF_S = 0.25
-#: Upper bound on the time between the route handing back its response and the
-#: response headers being sent (the sample is taken in between).
-_SEND_GAP_MS = 1.0
 #: Broker-side stages recorded before the upstream call on both paths.
 _PRE_UPSTREAM_STAGES = (
     ServerTimingStage.AUTH,
@@ -561,12 +594,26 @@ async def test_overhead_excludes_upstream_and_covers_persistence(
     seeded_credential: None,
     upstream: _Upstream,
     overhead_reader: InMemoryMetricReader,
+    monkeypatch: pytest.MonkeyPatch,
     streaming: bool,
 ) -> None:
     """One sample per execution, read from the request's recorder with the header
     off. The sample is exactly the broker time outside ``jentic-upstream``: what
     precedes the upstream headers, plus (buffered) everything after the upstream
-    call up to the headers, or (streaming) the persistence after the body."""
+    call up to the headers, or (streaming) the persistence after the body.
+
+    The recorder's clock is held from the sample to the response headers, so
+    the comparison with the elapsed time at the headers is exact rather than
+    allowing for response dispatch on a loaded runner."""
+    clock = _HoldableClock()
+    monkeypatch.setattr(core_server_timing, "time", clock)
+    sample_elapsed = overhead.upstream_exclusive_elapsed_ms
+
+    def _held_after_sample(recorder: ServerTimingRecorder) -> float:
+        clock.hold()
+        return sample_elapsed(recorder)
+
+    monkeypatch.setattr(execute, "upstream_exclusive_elapsed_ms", _held_after_sample)
     upstream.script.append((200, _UPSTREAM_DELAY_S))
     recorders: list[ServerTimingRecorder] = []
     headers_at_ms: list[float] = []
@@ -580,6 +627,7 @@ async def test_overhead_excludes_upstream_and_covers_persistence(
             recorder_only=True,
             recorders=recorders,
             headers_at_ms=headers_at_ms,
+            on_headers=clock.release,
         )
         resp = await _execute(app, upstream.port)
 
@@ -596,13 +644,16 @@ async def test_overhead_excludes_upstream_and_covers_persistence(
     persist_ms = recorder.duration_ms(ServerTimingStage.PERSIST)
     assert upstream_ms >= _UPSTREAM_DELAY_S * 1000
     assert persist_ms > 0.0  # the streaming write runs after the body, still recorded
-    # Broker time up to the response headers; the sample is taken a little
-    # before they leave (after the route returns, before the response is sent).
+    # Broker time up to the response headers. The clock stood still from the
+    # sample to the headers, so the pre-header part equals it exactly.
     to_headers_ms = headers_at - upstream_ms
     post_ms = persist_ms if streaming else 0.0
-    assert to_headers_ms - _SEND_GAP_MS <= point.sum - post_ms <= to_headers_ms
+    assert point.sum - post_ms == pytest.approx(to_headers_ms, abs=1e-6)
     assert point.sum < _UPSTREAM_DELAY_S * 1000
-    if not streaming:
+    if streaming:
+        # The pre-header part is >= 0, so the persistence term is in the sample.
+        assert point.sum >= persist_ms
+    else:
         # The buffered record commits before the sample, so it is inside it.
         assert point.sum >= persist_ms + sum(recorder.duration_ms(s) for s in _PRE_UPSTREAM_STAGES)
     assert await _statuses(ctx) == [ExecutionStatus.COMPLETED]
@@ -675,7 +726,10 @@ async def test_failed_upstream_records_no_overhead(
     streaming: bool,
 ) -> None:
     """A call that never got an upstream response persists its FAILED record but
-    emits no overhead sample, on both paths."""
+    emits no overhead sample, on both paths. On streaming, that write is
+    delivered from inside ``jentic-upstream``, so it is not also timed as
+    ``jentic-persist`` (it would be counted twice)."""
+    recorders: list[ServerTimingRecorder] = []
     async with httpx.AsyncClient() as upstream_client:
         http_runner = HttpRunner(upstream_client)
         runner: UpstreamRunner = http_runner if streaming else _BufferedOnly(http_runner)
@@ -684,6 +738,7 @@ async def test_failed_upstream_records_no_overhead(
             runner,
             server_timing=False,
             recorder_only=True,
+            recorders=recorders,
             broker=_OpenFailureBroker() if streaming else None,
         )
         resp = await _execute(app, refused_port)
@@ -692,3 +747,8 @@ async def test_failed_upstream_records_no_overhead(
     assert resp.json()["type"] == "upstream_connect_failed"
     assert await _statuses(ctx) == [ExecutionStatus.FAILED]
     assert histogram_points(overhead_reader, _OVERHEAD) == []
+    (recorder,) = recorders
+    assert recorder.has(ServerTimingStage.UPSTREAM)
+    # Buffered times its FAILED write after the upstream stage; streaming's
+    # open-failure write sits inside it.
+    assert recorder.has(ServerTimingStage.PERSIST) is not streaming

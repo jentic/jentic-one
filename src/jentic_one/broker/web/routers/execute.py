@@ -860,9 +860,15 @@ async def _handle_streaming(
     pre_upstream_ms: float | None = None
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        persist = StageTimer(recorder, ServerTimingStage.PERSIST) if recorder is not None else None
-        # Timed into the request's recorder after the header has been sent, so
-        # ``jentic-persist`` never appears in this response's field.
+        # Timed only once the stream has opened, i.e. after this response's
+        # headers were sent, so ``jentic-persist`` never appears in its field.
+        # An outcome for a stream that failed to open is delivered from inside
+        # ``jentic-upstream``; timing that write too would count it in both.
+        persist = (
+            StageTimer(recorder, ServerTimingStage.PERSIST)
+            if recorder is not None and pre_upstream_ms is not None
+            else None
+        )
         async with persist or nullcontext():
             persisted = await _persist_streaming_outcome(
                 outcome,
