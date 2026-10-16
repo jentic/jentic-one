@@ -11,11 +11,23 @@ Percentile deltas are *indicative*: percentiles are not additive, so
 ``p99(broker) - p99(direct)`` is not the p99 of the overhead. ``mean`` deltas
 are exact. Report both; never subtract server-side histogram quantiles.
 
+The A/B is interleaved: every (case, rate) measures direct immediately before
+the broker run, so host drift (Docker Desktop, thermal) lands in both sides
+instead of in the overhead. ``--repeat K`` alternates direct/broker K times and
+records the spread (min/median/max) of the mean overhead; the row's headline
+numbers come from the median repeat.
+
+A case whose broker or direct run has fewer than ``--min-ok`` expected-status
+responses is written with ``"valid": false`` (and left out of the report): a
+401/429/5xx returns in a few ms without reaching the upstream, so a failing run
+would otherwise read as *lower* overhead. Any invalid case makes the exit code 1.
+
 Usage::
 
     uv run python -m tests.perf.bench_overhead                 # full matrix
     uv run python -m tests.perf.bench_overhead --quick         # 10 rps only, short
     uv run python -m tests.perf.bench_overhead --only noauth-post-small,bearer-post-small
+    uv run python -m tests.perf.bench_overhead --repeat 3      # spread per case
     uv run python -m tests.perf.bench_overhead --list
 """
 
@@ -24,17 +36,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from tests.perf.common import (
+    DEFAULT_MIN_OK,
     ECHO_PATH,
     GET_PATH,
     RESULTS_DIR,
     PerfEnv,
     compose,
+    exclusive_run,
+    restore_on_exit,
     run_metadata,
     upstream_base,
     wait_healthy,
@@ -150,7 +167,8 @@ def apply_variant(name: str, current: str | None) -> str:
     return name
 
 
-OHA_CONTAINER = "jentic-perf-oha"
+#: Per-process name, so one tool's cleanup can never remove another's sidecar.
+OHA_CONTAINER = f"jentic-perf-oha-{os.getpid()}"
 
 
 def start_oha() -> None:
@@ -218,31 +236,61 @@ def run_oha(args: list[str]) -> dict[str, Any]:
     return dict(json.loads(proc.stdout))
 
 
-def oha(url: str, case: Case, rate: int, n: int, token: str | None) -> dict[str, Any]:
-    """Open-loop run at ``rate`` rps for ``n`` requests."""
-    conns = max(4, min(64, rate // 2))
+def oha(
+    url: str, case: Case, rate: int, n: int, token: str | None, *, conns: int | None = None
+) -> dict[str, Any]:
+    """Open-loop run at ``rate`` rps for ``n`` requests (``conns`` scales with rate by default)."""
+    if conns is None:
+        conns = max(4, min(64, rate // 2))
     return run_oha(oha_args(url, case, token, n=n, conns=conns, rate=rate))
 
 
+class OhaOutputError(RuntimeError):
+    """oha's JSON lacks a field the summary needs (a schema change or a broken run)."""
+
+
+def _ms(seconds: float | None) -> float | None:
+    return seconds * 1000 if seconds is not None else None
+
+
 def summarise(raw: dict[str, Any], expect_status: int) -> dict[str, Any]:
-    pct = raw.get("latencyPercentiles", {})
-    summary = raw.get("summary", {})
+    """Latency (ms), throughput and the expected-status share of one oha run.
+
+    Raises ``OhaOutputError`` rather than defaulting a missing field to 0: a
+    zero would be indistinguishable from a real (very fast) measurement.
+    """
+    pct, summary = raw.get("latencyPercentiles"), raw.get("summary")
+    if not isinstance(pct, dict) or not isinstance(summary, dict):
+        raise OhaOutputError(f"oha JSON lacks summary/latencyPercentiles: keys {sorted(raw)}")
+    missing = [k for k in ("average", "slowest", "requestsPerSec") if k not in summary]
+    if missing:
+        raise OhaOutputError(f"oha summary lacks {missing}: keys {sorted(summary)}")
     codes = {str(k): v for k, v in (raw.get("statusCodeDistribution") or {}).items()}
-    total = sum(codes.values()) + sum((raw.get("errorDistribution") or {}).values())
+    errors = raw.get("errorDistribution") or {}
+    total = sum(codes.values()) + sum(errors.values())
     ok = codes.get(str(expect_status), 0)
-    ms = {k: (v * 1000 if v is not None else None) for k, v in pct.items()}
     return {
-        "mean_ms": (summary.get("average") or 0) * 1000,
-        "p50_ms": ms.get("p50"),
-        "p90_ms": ms.get("p90"),
-        "p99_ms": ms.get("p99"),
-        "p999_ms": ms.get("p99.9"),
-        "max_ms": (summary.get("slowest") or 0) * 1000,
-        "rps": summary.get("requestsPerSec"),
+        "mean_ms": _ms(summary["average"]),
+        "p50_ms": _ms(pct.get("p50")),
+        "p90_ms": _ms(pct.get("p90")),
+        "p99_ms": _ms(pct.get("p99")),
+        "p999_ms": _ms(pct.get("p99.9")),
+        "max_ms": _ms(summary["slowest"]),
+        "rps": summary["requestsPerSec"],
         "ok_ratio": (ok / total) if total else 0.0,
         "status_codes": codes,
-        "errors": raw.get("errorDistribution") or {},
+        "errors": errors,
     }
+
+
+def check_ok(summary: dict[str, Any], min_ok: float, label: str) -> str | None:
+    """Why ``summary`` is not a valid measurement, or ``None`` if it is."""
+    if summary["ok_ratio"] >= min_ok:
+        return None
+    return (
+        f"{label}: ok_ratio {summary['ok_ratio']:.3f} < {min_ok} "
+        f"(status {summary['status_codes']}, errors {summary['errors']})"
+    )
 
 
 def delta(broker: dict[str, Any], direct: dict[str, Any]) -> dict[str, float | None]:
@@ -253,6 +301,55 @@ def delta(broker: dict[str, Any], direct: dict[str, Any]) -> dict[str, float | N
     return out
 
 
+#: Broker state while a recreate is in flight: restored on exit like any variant.
+UNKNOWN_VARIANT = "?"
+
+
+def switch_variant(state: dict[str, str | None], name: str) -> bool:
+    """Recreate the broker on variant ``name`` unless it is already on it.
+
+    ``state["variant"]`` is the broker's variant (``None`` = never touched). It
+    reads ``UNKNOWN_VARIANT`` until the recreate succeeds, so an interrupted
+    recreate is still put back by ``restore_default``. Returns True on recreate.
+    """
+    if state["variant"] == name:
+        return False
+    state["variant"] = UNKNOWN_VARIANT
+    state["variant"] = apply_variant(name, None)
+    return True
+
+
+def restore_default(state: dict[str, str | None]) -> None:
+    """Put the broker back on the default variant unless it never left it."""
+    if state["variant"] not in (None, "default"):
+        state["variant"] = UNKNOWN_VARIANT
+        state["variant"] = apply_variant("default", None)
+
+
+def fmt_num(value: float | None, spec: str = ".2f") -> str:
+    return "n/a" if value is None else format(value, spec)
+
+
+def case_rates(case: Case, rates: tuple[int, ...], quick: bool) -> list[int]:
+    chosen = case.rates or rates
+    return sorted({min(r, 10) for r in chosen}) if quick else list(chosen)
+
+
+def requests_for(case: Case, rate: int, args: argparse.Namespace) -> int:
+    n = max(int(args.min_requests), int(rate * args.duration))
+    return min(n, case.max_requests) if case.max_requests is not None else n
+
+
+def estimate_s(plan: list[tuple[Case, int]], args: argparse.Namespace) -> float:
+    """Rough run length: timed windows plus ~1 min per broker recreate."""
+    repeat = int(args.repeat)
+    timed = sum(
+        repeat * (1 if case.no_direct else 2) * requests_for(case, rate, args) / rate
+        for case, rate in plan
+    )
+    return timed + 60.0 * len({case.variant for case, _ in plan})
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Broker overhead A/B bench (oha, in-network)")
     parser.add_argument("--rates", default="1,10,50", help="comma-separated rps set")
@@ -260,8 +357,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-requests", type=int, default=50)
     parser.add_argument("--quick", action="store_true", help="10 rps, 10 s runs")
     parser.add_argument("--only", default="", help="comma-separated case names")
+    parser.add_argument("--repeat", type=int, default=1, help="direct/broker pairs per case")
+    parser.add_argument(
+        "--min-ok",
+        type=float,
+        default=DEFAULT_MIN_OK,
+        help="minimum expected-status share for a run to count (default %(default)s)",
+    )
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
+    if args.repeat < 1:
+        parser.error("--repeat must be >= 1")
 
     env = PerfEnv.load()
     all_cases = cases(env)
@@ -275,69 +381,89 @@ def main(argv: list[str] | None = None) -> int:
     wanted = {s for s in args.only.split(",") if s}
     selected = [c for c in all_cases if not wanted or c.name in wanted]
     selected.sort(key=lambda c: list(VARIANTS).index(c.variant))
+    plan = [(case, rate) for case in selected for rate in case_rates(case, rates, args.quick)]
+    env.check_fresh(callers={case.caller for case, _ in plan}, run_s=estimate_s(plan, args))
     ensure_bodies()
 
     rows: list[dict[str, Any]] = []
-    direct_cache: dict[tuple[str, str, str | None, str | None, int], dict[str, Any]] = {}
-    current: str | None = None
-    start_oha()
-    try:
-        for case in selected:
-            previous = current
-            current = apply_variant(case.variant, current)
-            # A freshly recreated broker has cold pools/caches/JIT-ish import
-            # paths: warm it harder than between cases on a warm broker.
-            warm_n = 200 if current != previous else 20
-            case_rates = case.rates or rates
-            for rate in sorted({min(r, 10) for r in case_rates}) if args.quick else case_rates:
-                row = run_case(env, case, rate, args, warm_n, direct_cache)
-                rows.append(row)
-                warm_n = 20
-    finally:
-        stop_oha()
-    apply_variant("default", current)
-    path = write_result("overhead", {**run_metadata("overhead"), "rows": rows})
-    print(f"wrote {path}")
-    return 0
+    state: dict[str, str | None] = {"variant": None}
+    with (
+        exclusive_run("bench_overhead"),
+        restore_on_exit(
+            ("remove oha sidecar", stop_oha),
+            ("broker back to default variant", lambda: restore_default(state)),
+        ),
+    ):
+        start_oha()
+        for case, rate in plan:
+            # A freshly recreated broker has cold pools/caches/import paths:
+            # warm it harder than between runs on a warm broker.
+            warm_n = 200 if switch_variant(state, case.variant) else 20
+            rows.append(run_case(env, case, rate, args, warm_n))
+        path = write_result("overhead", {**run_metadata("overhead"), "rows": rows})
+        print(f"wrote {path}")
+    invalid = [row for row in rows if not row["valid"]]
+    for row in invalid:
+        print(f"INVALID {row['case']} @{row['rate']}: {'; '.join(row['invalid_reasons'])}")
+    return 1 if invalid else 0
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def run_case(
-    env: PerfEnv,
-    case: Case,
-    rate: int,
-    args: argparse.Namespace,
-    warm_n: int,
-    direct_cache: dict[tuple[str, str, str | None, str | None, int], dict[str, Any]],
+    env: PerfEnv, case: Case, rate: int, args: argparse.Namespace, warm_n: int
 ) -> dict[str, Any]:
     vendor = env.vendors[case.vendor]
     alias_base = upstream_base(vendor["alias"])
     token = env.caller(case.caller).token
     broker_url = f"{env.broker_url}/{alias_base}{case.path}"
-    n = max(args.min_requests, int(rate * args.duration))
+    direct_url = f"{alias_base}{case.path}"
+    n = requests_for(case, rate, args)
     if case.max_requests is not None:
-        n = min(n, case.max_requests)
         warm_n = min(warm_n, 20)
-    oha(broker_url, case, max(20, min(rate, 50)), warm_n, token)
-    broker = summarise(oha(broker_url, case, rate, n, token), case.expect_status)
-    direct: dict[str, Any] | None = None
-    if not case.no_direct:
-        # Every alias is the same harness container, so one direct baseline per
-        # (method, path, body, rate) — keying on the alias re-ran it per
-        # credential type and injected ~1 ms of baseline jitter into deltas.
-        key = (case.method, case.path, case.body, case.body_file, rate)
-        if key not in direct_cache:
-            plain = Case(
-                case.name,
-                method=case.method,
-                path=case.path,
-                body=case.body,
-                body_file=case.body_file,
-            )
-            oha(f"{alias_base}{case.path}", plain, max(20, min(rate, 50)), 20, None)
-            direct_cache[key] = summarise(
-                oha(f"{alias_base}{case.path}", plain, rate, n, None), 200
-            )
-        direct = direct_cache[key]
+    plain = (
+        None
+        if case.no_direct
+        else Case(
+            case.name, method=case.method, path=case.path, body=case.body, body_file=case.body_file
+        )
+    )
+    warm_rate = max(20, min(rate, 50))
+    oha(broker_url, case, warm_rate, warm_n, token)
+    if plain is not None:
+        oha(direct_url, plain, warm_rate, 20, None)
+
+    samples: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for i in range(args.repeat):
+        sample: dict[str, Any] = {}
+        if plain is not None:
+            # Direct right before broker, never shared across cases: host drift
+            # between the two runs is bounded by one run's length.
+            sample["direct_measured_at"] = _now()
+            sample["direct"] = summarise(oha(direct_url, plain, rate, n, None), 200)
+        sample["broker_measured_at"] = _now()
+        sample["broker"] = summarise(oha(broker_url, case, rate, n, token), case.expect_status)
+        direct = sample.get("direct")
+        sample["overhead"] = delta(sample["broker"], direct) if direct else None
+        for side in ("direct", "broker"):
+            if sample.get(side) and (why := check_ok(sample[side], args.min_ok, f"{side}#{i}")):
+                problems.append(why)
+        samples.append(sample)
+
+    def rank(s: dict[str, Any]) -> float:
+        value = (s["overhead"] or {}).get("mean_ms") if plain else s["broker"]["mean_ms"]
+        return float("inf") if value is None else float(value)
+
+    rep = sorted(samples, key=rank)[(len(samples) - 1) // 2]
+    means = [m for s in samples if (m := (s["overhead"] or {}).get("mean_ms")) is not None]
+    spread = (
+        {"min": min(means), "median": statistics.median(means), "max": max(means)}
+        if means
+        else None
+    )
     row: dict[str, Any] = {
         "case": case.name,
         "variant": case.variant,
@@ -347,19 +473,34 @@ def run_case(
         "method": case.method,
         "rate": rate,
         "requests": n,
-        "broker": broker,
-        "direct": direct,
-        "overhead": delta(broker, direct) if direct else None,
+        "repeats": len(samples),
+        "valid": not problems,
+        "invalid_reasons": problems,
+        "broker": rep["broker"],
+        "direct": rep.get("direct"),
+        "overhead": rep["overhead"],
+        "direct_measured_at": rep.get("direct_measured_at"),
+        "broker_measured_at": rep["broker_measured_at"],
+        "overhead_mean_spread": spread,
     }
-    ov = row["overhead"] or {}
+    if len(samples) > 1:
+        row["samples"] = samples
+    broker, ov = rep["broker"], rep["overhead"] or {}
+    spread_s = (
+        f" spread {fmt_num(spread['min'])}..{fmt_num(spread['max'])}ms"
+        if spread and len(means) > 1
+        else ""
+    )
     print(
-        f"  {case.name:<32} {rate:>4} rps  broker p50={broker['p50_ms']:.2f}ms "
-        f"p99={broker['p99_ms']:.2f}ms ok={broker['ok_ratio']:.3f}  "
+        f"  {case.name:<32} {rate:>4} rps  broker p50={fmt_num(broker['p50_ms'])}ms "
+        f"p99={fmt_num(broker['p99_ms'])}ms ok={broker['ok_ratio']:.3f}  "
         + (
-            f"overhead mean={ov.get('mean_ms', 0):.2f}ms p50={ov.get('p50_ms', 0):.2f}ms"
-            if direct
+            f"overhead mean={fmt_num(ov.get('mean_ms'))}ms "
+            f"p50={fmt_num(ov.get('p50_ms'))}ms{spread_s}"
+            if plain
             else "(no direct baseline)"
-        ),
+        )
+        + ("" if row["valid"] else "  INVALID"),
         flush=True,
     )
     return row

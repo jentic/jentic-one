@@ -1,13 +1,19 @@
 """Static HTML report over every result JSON in tests/perf/results/.
 
-No Python plotting dependency: emits a self-contained HTML page that loads
-Plotly.js from its CDN and renders JSON traces built here. Sections:
+No Python plotting dependency: emits one static HTML file whose data is
+inlined, but which loads a pinned Plotly.js from its CDN (with a Subresource
+Integrity hash), so viewing it needs network access. Rows a tool marked
+``"valid": false`` (too few expected-status responses) are left out of every
+chart. Sections:
 
 * **Overhead (latest run)** — broker vs direct p50/p99 per case, and the
   overhead (mean / p50) bar per case.
 * **Overhead over time** — overhead p50 per case across runs (git SHA on hover),
   for run-over-run regression spotting.
 * **DB cost** — statements and transactions per call per plane, warm vs cold.
+* **Capacity** — throughput and p99 vs concurrency per ``workers x CPUs`` config.
+* **Profile** — broker CPU share per subsystem and per call site (py-spy), plus
+  links to every flamegraph.
 * **Locust** — the latest ``*_stats.csv`` summary table, if present.
 
 Usage::
@@ -30,6 +36,11 @@ from typing import Any
 from tests.perf.common import RESULTS_DIR
 
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
+#: sha384 of exactly that file; the browser refuses a CDN copy that differs.
+PLOTLY_SRI = (
+    "sha384-"
+    "cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"  # pragma: allowlist secret
+)
 
 
 def load(kind: str) -> list[dict[str, Any]]:
@@ -42,11 +53,35 @@ def load(kind: str) -> list[dict[str, Any]]:
 
 
 def _label(run: dict[str, Any]) -> str:
-    return f"{run.get('timestamp', '')[:16]} {run.get('git_sha', '')}"
+    dirty = "+dirty" if run.get("git_dirty") else ""
+    return f"{run.get('timestamp', '')[:16]} {run.get('git_sha', '')}{dirty}"
+
+
+def valid_rows(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rows that count (results written before validity was recorded count too)."""
+    return [r for r in run.get("rows", []) if r.get("valid", True)]
+
+
+def _rps(run: dict[str, Any]) -> str:
+    rps = (run.get("load") or {}).get("rps")
+    return "n/a" if rps is None else f"{rps:.0f}"
+
+
+def _spread_error_bars(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """min..max of the mean overhead across ``--repeat`` runs, as Plotly error bars."""
+    if not any((r.get("overhead_mean_spread") or {}).get("max") is not None for r in rows):
+        return {}
+    plus, minus = [], []
+    for r in rows:
+        spread, mean = r.get("overhead_mean_spread") or {}, r["overhead"]["mean_ms"]
+        ok = mean is not None and spread.get("min") is not None
+        plus.append(spread["max"] - mean if ok else 0)
+        minus.append(mean - spread["min"] if ok else 0)
+    return {"error_y": {"type": "data", "symmetric": False, "array": plus, "arrayminus": minus}}
 
 
 def overhead_latest(run: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = [r for r in run["rows"] if r.get("direct")]
+    rows = [r for r in valid_rows(run) if r.get("direct")]
     names = [f"{r['case']} @{r['rate']}" for r in rows]
     charts = [
         {
@@ -81,6 +116,7 @@ def overhead_latest(run: dict[str, Any]) -> list[dict[str, Any]]:
                     "name": "mean (exact)",
                     "x": names,
                     "y": [r["overhead"]["mean_ms"] for r in rows],
+                    **_spread_error_bars(rows),
                 },
                 {
                     "type": "bar",
@@ -100,7 +136,7 @@ def overhead_trend(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
     series: dict[str, tuple[list[str], list[float]]] = {}
     for run in runs:
-        for row in run["rows"]:
+        for row in valid_rows(run):
             if not row.get("overhead"):
                 continue
             key = f"{row['case']} @{row['rate']}"
@@ -118,7 +154,7 @@ def overhead_trend(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def dbcost_chart(run: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = run["rows"]
+    rows = valid_rows(run)
     names = [f"{r['variant']} {r['caller']}" for r in rows]
     roles = ("registry_user", "control_user", "admin_user")
     charts = []
@@ -146,7 +182,7 @@ def dbcost_chart(run: dict[str, Any]) -> list[dict[str, Any]]:
 
 def capacity_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
     by_cfg: dict[str, list[dict[str, Any]]] = {}
-    for row in run["rows"]:
+    for row in valid_rows(run):
         by_cfg.setdefault(row["config"], []).append(row)
     label = _label(run)
     return [
@@ -183,11 +219,7 @@ def capacity_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
 
 def profile_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
     prof = run["profile"]
-    load_ = run.get("load", {})
-    label = (
-        f"{run.get('vendor')} c={run.get('concurrency')}, "
-        f"{load_.get('rps', 0):.0f} rps - {_label(run)}"
-    )
+    label = f"{run.get('vendor')} c={run.get('concurrency')}, {_rps(run)} rps - {_label(run)}"
     charts = []
     for key, title in (
         ("buckets", "Broker CPU by subsystem (py-spy, exclusive)"),
@@ -217,7 +249,7 @@ def profile_links(runs: list[dict[str, Any]]) -> str:
     links = "".join(
         f'<li><a href="{html.escape(r["flamegraph"])}">{html.escape(r["flamegraph"])}</a> '
         f"({html.escape(str(r.get('vendor')))} c={r.get('concurrency')}, "
-        f"{r.get('load', {}).get('rps', 0):.0f} rps)</li>"
+        f"{_rps(r)} rps)</li>"
         for r in reversed(runs)
         if r.get("flamegraph")
     )
@@ -251,7 +283,7 @@ def render(charts: list[dict[str, Any]], extra_html: str) -> str:
         )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Broker perf report</title>
-<script src="{PLOTLY_CDN}"></script>
+<script src="{PLOTLY_CDN}" integrity="{PLOTLY_SRI}" crossorigin="anonymous"></script>
 <style>
 body {{ font-family: -apple-system, system-ui, sans-serif; margin: 2rem; color: #222; }}
 .chart {{ margin-bottom: 2rem; }}

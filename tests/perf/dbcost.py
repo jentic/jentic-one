@@ -6,20 +6,26 @@ many statements — and how many transactions (``BEGIN``) — one broker call
 costs on each database, plus the total DB time.
 
 Method: reset stats, idle for the window to measure background noise (worker
-polling etc.), reset, drive ``N`` sequential calls at a low fixed rate, read
-stats, subtract the idle baseline, divide by ``N``. Sequential + low rate keeps
-cache behaviour deterministic: ``warm`` pins every broker TTL to 300 s so the
-window never straddles an expiry (100% cache hits); ``cold`` sets every TTL to 0.
+polling etc.), reset, drive ``N`` sequential calls (one connection) at a low
+fixed rate, read stats, subtract the idle baseline, divide by ``N``. The run is
+aborted unless all ``N`` calls returned 200: a failed call costs fewer
+statements, so a partial run would understate the per-call cost. Sequential +
+low rate keeps cache behaviour deterministic: ``warm`` pins every broker TTL to
+300 s so the window never straddles an expiry (100% cache hits); ``cold`` sets
+every TTL to 0.
 
 The ``app`` container (control/admin/registry surfaces + background scanners and
 the job worker) is stopped for the duration — the standalone broker never calls
 it on a synchronous ``POST /execute``, and its polling would otherwise leak into
-the control/admin numbers. It is restarted on exit.
+the control/admin numbers. It is restarted on exit, whatever else fails.
 
 Counting: ``statements`` is real SQL only; ``BEGIN``/``COMMIT``/``ROLLBACK`` are
-reported separately as ``tx_control``. ``transactions`` counts ``BEGIN`` — note
-``pool_pre_ping=True`` wraps each connection checkout's ping in its own
-``BEGIN``/``ROLLBACK``, so it is roughly 2x the number of sessions opened.
+reported separately as ``tx_control``. ``transactions`` counts ``BEGIN`` — when
+``pool_pre_ping`` is enabled (the default) each connection checkout's ping runs
+in its own ``BEGIN``/``ROLLBACK``, so it is roughly 2x the number of sessions
+opened. ``writes`` counts ``INSERT``/``UPDATE``/``DELETE``/``MERGE`` statements,
+including a data-modifying ``WITH … INSERT/UPDATE/DELETE`` (a ``SELECT … FOR
+UPDATE`` is a read and is not counted).
 
 Usage::
 
@@ -38,23 +44,41 @@ from typing import Any
 from tests.perf.bench_overhead import (
     VARIANTS,
     Case,
-    apply_variant,
     oha,
+    restore_default,
     start_oha,
     stop_oha,
+    summarise,
+    switch_variant,
 )
-from tests.perf.common import PerfEnv, compose, run_metadata, upstream_base, write_result
+from tests.perf.common import (
+    PerfEnv,
+    compose,
+    exclusive_run,
+    restore_on_exit,
+    run_metadata,
+    upstream_base,
+    write_result,
+)
 
 ROLES = ("registry_user", "control_user", "admin_user")
 METRICS = ("statements", "transactions", "tx_control", "writes", "ms")
 DB_VARIANTS = {"warm": "warm-cache", "cold": "cold-cache"}
 
-STATS_SQL = """
+#: Data-modifying statements: plain DML, or a ``WITH`` whose body modifies data
+#: (``SELECT … FOR UPDATE`` doesn't match: no ``SET`` follows its ``UPDATE``).
+WRITE_PREDICATE = (
+    "(s.query ~* '^\\s*(INSERT|UPDATE|DELETE|MERGE)\\M'"
+    " OR (s.query ~* '^\\s*WITH\\M' AND s.query ~* "
+    "'\\m(INSERT\\s+INTO|DELETE\\s+FROM|UPDATE\\s+\\S+(\\s+(AS\\s+)?\\S+)?\\s+SET)\\M'))"
+)
+
+STATS_SQL = f"""
 SELECT r.rolname,
        COALESCE(SUM(s.calls) FILTER (WHERE s.query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK)'), 0)::bigint,
        COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*BEGIN'), 0)::bigint,
        COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*(BEGIN|COMMIT|ROLLBACK)'), 0)::bigint,
-       COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*(INSERT|UPDATE|DELETE)'), 0)::bigint,
+       COALESCE(SUM(s.calls) FILTER (WHERE {WRITE_PREDICATE}), 0)::bigint,
        COALESCE(SUM(s.total_exec_time), 0)::float
 FROM pg_roles r
 LEFT JOIN pg_stat_statements s ON s.userid = r.oid
@@ -110,6 +134,10 @@ def snapshot() -> dict[str, dict[str, float]]:
     }
 
 
+class IncompleteRunError(RuntimeError):
+    """Not every measured call succeeded, so per-call counts would be wrong."""
+
+
 def measure(env: PerfEnv, variant: str, caller: str, n: int, rate: int) -> dict[str, Any]:
     window_s = n / rate
     case = Case(f"dbcost-{variant}-{caller}", caller=caller)
@@ -124,7 +152,14 @@ def measure(env: PerfEnv, variant: str, caller: str, n: int, rate: int) -> dict[
     idle = snapshot()
 
     reset()
-    result = oha(url, case, rate, n, token)
+    # One connection: calls are strictly sequential, so cache state is too.
+    result = summarise(oha(url, case, rate, n, token, conns=1), 200)
+    ok = result["status_codes"].get("200", 0)
+    if ok != n:
+        raise IncompleteRunError(
+            f"dbcost {variant}/{caller}: {ok}/{n} calls returned 200 "
+            f"(status {result['status_codes']}, errors {result['errors']})"
+        )
     # Let post-response background persistence (stream passthrough) land.
     time.sleep(1.5)
     busy = snapshot()
@@ -132,10 +167,9 @@ def measure(env: PerfEnv, variant: str, caller: str, n: int, rate: int) -> dict[
     per_call: dict[str, dict[str, float]] = {}
     for role in ROLES:
         b, i = busy.get(role, {}), idle.get(role, {})
-        per_call[role] = {k: max(0.0, b.get(k, 0.0) - i.get(k, 0.0)) / n for k in METRICS}
+        per_call[role] = {k: max(0.0, b.get(k, 0.0) - i.get(k, 0.0)) / ok for k in METRICS}
     total = {k: sum(v[k] for v in per_call.values()) for k in METRICS}
     top = psql(TOP_SQL)
-    ok = (result.get("statusCodeDistribution") or {}).get("200", 0)
     return {
         "variant": variant,
         "caller": caller,
@@ -167,13 +201,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.all
         else [(args.variant, args.caller)]
     )
+    # Idle window + measured window per combo, plus a broker recreate each.
+    env.check_fresh(
+        callers={c for _, c in combos}, run_s=len(combos) * (2 * args.n / args.rate + 60)
+    )
     rows: list[dict[str, Any]] = []
-    current: str | None = None
-    start_oha()
-    compose("stop", "app")
-    try:
+    state: dict[str, str | None] = {"variant": None}
+    with (
+        exclusive_run("dbcost"),
+        restore_on_exit(
+            ("remove oha sidecar", stop_oha),
+            ("broker back to default variant", lambda: restore_default(state)),
+            ("restart app", lambda: compose("start", "app")),
+        ),
+    ):
+        start_oha()
+        compose("stop", "app")
         for variant, caller in combos:
-            current = apply_variant(DB_VARIANTS[variant], current)
+            switch_variant(state, DB_VARIANTS[variant])
             row = measure(env, variant, caller, args.n, args.rate)
             rows.append(row)
             parts = "  ".join(
@@ -187,12 +232,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"{t['ms']:.2f} ms DB  |  {parts}",
                 flush=True,
             )
-    finally:
-        stop_oha()
-        apply_variant("default", current)
-        compose("start", "app")
-    path = write_result("dbcost", {**run_metadata("dbcost"), "rows": rows})
-    print(f"wrote {path}")
+        path = write_result("dbcost", {**run_metadata("dbcost"), "rows": rows})
+        print(f"wrote {path}")
     return 0
 
 

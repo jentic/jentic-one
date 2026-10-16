@@ -7,12 +7,16 @@ not depend on anything beyond the standard library.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +27,14 @@ REPO_ROOT: Final = PERF_DIR.parent.parent
 RESULTS_DIR: Final = PERF_DIR / "results"
 COMPOSE_FILE: Final = PERF_DIR / "docker-compose.perf.yaml"
 DEFAULT_ENV_FILE: Final = RESULTS_DIR / ".perf-env.json"
+LOCK_FILE: Final = RESULTS_DIR / ".perf.lock"
+
+#: Minimum share of expected-status responses for a measurement to count.
+#: Fast failures (401, 429, 5xx) return in a few ms without reaching the
+#: upstream, so a mostly-failed run would otherwise read as *lower* overhead.
+DEFAULT_MIN_OK: Final = 0.99
+#: Tokens must outlive the run by at least this much (``check_fresh``).
+TOKEN_MARGIN_S: Final = 300.0
 
 #: In-network addresses (what load generators inside the compose network use).
 BROKER_INTERNAL: Final = "http://broker:8000"
@@ -53,8 +65,13 @@ VARIANT_KEYS: Final = (
     "PERF_TRACING",
     "PERF_WORKERS",
     "PERF_BROKER_CPUS",
+    "PERF_APP_CPUS",
+    "PERF_PG_CPUS",
+    "PERF_UPSTREAM_CPUS",
     "PERF_LOADGEN_CPUS",
+    "PERF_IMAGE",
 )
+DEFAULT_IMAGE: Final = "jentic-one/app:perf"
 
 
 @dataclass(frozen=True)
@@ -106,10 +123,43 @@ class PerfEnv:
     #: Extra agents (jak_ keys) bound to perf-noauth, for the rate-limit scenario.
     pool_agents: list[Caller] = field(default_factory=list)
     admin_token: str = ""
+    #: Unix time the admin token expires (``None`` = unknown, treated as stale).
+    admin_expires_at: float | None = None
     created_at: str = ""
 
     def caller(self, kind: str = "jak") -> Caller:
         return self.callers[kind]
+
+    def check_fresh(
+        self,
+        *,
+        callers: Iterable[str] | None = None,
+        admin: bool = False,
+        run_s: float = 0.0,
+        margin_s: float = TOKEN_MARGIN_S,
+        now: float | None = None,
+    ) -> None:
+        """Refuse to start if a token the run uses expires before it can finish.
+
+        ``callers`` names the caller kinds the run drives (``None`` = all), and
+        ``admin`` whether it uses the admin token. Each must stay valid for
+        ``run_s`` (the planned run length) plus ``margin_s``. An expired token
+        turns every call into a fast 401, which would otherwise be measured.
+        """
+        deadline = (time.time() if now is None else now) + run_s + margin_s
+        kinds = list(self.callers) if callers is None else list(callers)
+        stale = [
+            f"{kind} caller (expires {_fmt_ts(self.callers[kind].expires_at)})"
+            for kind in kinds
+            if (exp := self.callers[kind].expires_at) is not None and exp < deadline
+        ]
+        if admin and (self.admin_expires_at is None or self.admin_expires_at < deadline):
+            stale.append(f"admin token (expires {_fmt_ts(self.admin_expires_at)})")
+        if stale:
+            raise SystemExit(
+                f"tokens expire before this run can finish (+{margin_s:.0f}s margin): "
+                f"{', '.join(stale)} — re-run `make perf-provision`"
+            )
 
     def save(self, path: Path = DEFAULT_ENV_FILE) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +174,12 @@ class PerfEnv:
         return cls(**raw)
 
 
+def _fmt_ts(ts: float | None) -> str:
+    if ts is None:
+        return "unknown"
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def upstream_base(alias: str) -> str:
     """In-network base URL of a harness alias."""
     return f"http://{alias}.{ALIAS_DOMAIN}:{UPSTREAM_PORT}"
@@ -134,17 +190,50 @@ def broker_target(alias: str, path: str = ECHO_PATH, broker: str = BROKER_INTERN
     return f"{broker.rstrip('/')}/{upstream_base(alias)}{path}"
 
 
-def git_sha() -> str:
+def _run(cmd: list[str]) -> str | None:
+    """stdout of ``cmd``, or ``None`` if it can't run or exits non-zero."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True)
     except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+        return None
     return out.stdout.strip()
+
+
+def git_sha() -> str:
+    return _run(["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]) or "unknown"
+
+
+def git_dirty() -> bool | None:
+    """Uncommitted changes in the host checkout (``None`` = git unavailable)."""
+    out = _run(["git", "-C", str(REPO_ROOT), "status", "--porcelain"])
+    return None if out is None else bool(out)
+
+
+def image_info(image: str) -> dict[str, str | None]:
+    """Id + build time of the image under test (it may be older than HEAD)."""
+    out = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}\t{{.Created}}"])
+    image_id, _, created = (out or "").partition("\t")
+    return {"ref": image, "id": image_id or None, "created": created or None}
+
+
+def service_images() -> dict[str, str]:
+    """Image reference per compose service (tag@digest pins = tool versions)."""
+    out = _run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(COMPOSE_FILE),
+            *("--profile", "tools", "--profile", "load", "--profile", "obs"),
+            "config",
+            "--format",
+            "json",
+        ]
+    )
+    if not out:
+        return {}
+    services = json.loads(out).get("services", {})
+    return {name: str(svc.get("image", "")) for name, svc in sorted(services.items())}
 
 
 def variant_snapshot(overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -158,6 +247,9 @@ def run_metadata(scenario: str, overrides: dict[str, str] | None = None) -> dict
     return {
         "scenario": scenario,
         "git_sha": git_sha(),
+        "git_dirty": git_dirty(),
+        "app_image": image_info(os.environ.get("PERF_IMAGE", DEFAULT_IMAGE)),
+        "images": service_images(),
         "timestamp": datetime.now(UTC).isoformat(),
         "variant": variant_snapshot(overrides),
     }
@@ -197,3 +289,61 @@ def wait_healthy(url: str, timeout_s: float = 90.0) -> None:
             last = str(exc)
         time.sleep(1)
     raise TimeoutError(f"{url} not healthy after {timeout_s}s: {last}")
+
+
+@contextlib.contextmanager
+def exclusive_run(tool: str) -> Iterator[None]:
+    """Hold ``results/.perf.lock`` for the run; refuse to start if another tool has it.
+
+    The host-side tools recreate the broker and stop/start ``app``, so two at
+    once would measure (and reconfigure) each other's stack.
+    """
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("a+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fh.seek(0)
+            holder = fh.read().strip() or "unknown"
+            raise SystemExit(f"another perf tool is running ({holder}); wait for it") from None
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{tool} pid={os.getpid()}")
+        fh.flush()
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+RestoreStep = tuple[str, Callable[[], object]]
+
+
+def _restore(steps: Iterable[RestoreStep]) -> list[str]:
+    failed = []
+    for label, step in steps:
+        try:
+            step()
+        except Exception as exc:
+            print(f"restore: {label} failed: {exc!r}", file=sys.stderr, flush=True)
+            failed.append(label)
+    return failed
+
+
+@contextlib.contextmanager
+def restore_on_exit(*steps: RestoreStep) -> Iterator[None]:
+    """Run every restore step on exit, each independently of the others' outcome.
+
+    Steps are closures, so they see state the body updated (e.g. the variant
+    the broker is on). A failing step is logged and the rest still run. If the
+    body raised, its exception propagates unchanged; otherwise a failed step
+    raises after all steps ran, so a half-restored stack is never silent.
+    """
+    try:
+        yield
+    except BaseException:
+        _restore(steps)
+        raise
+    failed = _restore(steps)
+    if failed:
+        raise RuntimeError(f"restore failed: {', '.join(failed)} — check `docker compose ps`")

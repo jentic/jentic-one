@@ -1,15 +1,20 @@
 """CPU-profile the broker under closed-loop load with py-spy.
 
-A ``python:3.12-slim`` sidecar joins the broker container's PID namespace
-(``--pid=container:… --cap-add SYS_PTRACE``) and installs py-spy *before* the
-load starts (so a slow PyPI never eats into the timed window), then samples
-PID 1 (``--subprocesses`` follows uvicorn workers). The broker image is
-untouched. Meanwhile oha drives ``-c N`` closed-loop load through the broker.
+A pinned ``python`` slim sidecar joins the broker container's PID namespace
+(``--pid=container:… --cap-add SYS_PTRACE``) and installs a pinned, hash-checked
+py-spy wheel *before* the load starts (so a slow PyPI never eats into the timed
+window), then samples PID 1 (``--subprocesses`` follows uvicorn workers). The
+broker image is untouched. Meanwhile oha drives ``-c N`` closed-loop load
+through the broker.
 
 Outputs in ``results/pyspy/``: the raw collapsed stacks and a flamegraph SVG,
 recorded concurrently over the same window, plus a JSON summary with CPU
 share per subsystem plus the hottest frames. The
 subsystem buckets are first-match on the stack, in the order of ``BUCKETS``.
+
+The profile is only written if the load ran for the whole window and at least
+``--min-ok`` of its responses were 200 — otherwise the flamegraph would be of
+an idle (or failing) broker.
 
 Usage::
 
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import os
 import subprocess
 import sys
 import threading
@@ -28,19 +34,40 @@ import time
 from pathlib import Path
 from typing import Any
 
-from tests.perf.bench_overhead import Case, oha_args, run_oha, start_oha, stop_oha, summarise
+from tests.perf.bench_overhead import (
+    Case,
+    check_ok,
+    oha_args,
+    run_oha,
+    start_oha,
+    stop_oha,
+    summarise,
+)
 from tests.perf.common import (
+    DEFAULT_MIN_OK,
     ECHO_PATH,
     RESULTS_DIR,
     PerfEnv,
     compose,
+    exclusive_run,
+    restore_on_exit,
     run_metadata,
     upstream_base,
     write_result,
 )
 
 OUT_DIR = RESULTS_DIR / "pyspy"
-PYSPY_IMAGE = "python:3.12-slim"
+#: Sidecar image and py-spy release, pinned so profiles are comparable run to run.
+PYSPY_IMAGE = (
+    "python:3.12.13-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36"
+)
+PYSPY_VERSION = "0.4.2"
+#: PyPI sha256 of the py-spy 0.4.2 Linux wheels (x86_64, aarch64): pip refuses
+#: anything else, since the sidecar holds SYS_PTRACE in the broker's namespace.
+PYSPY_HASHES = (
+    "aeb0323409199c785f730645e9f4bb7a7b9ca2c481f2c331a55642b5d13fa52f",  # pragma: allowlist secret
+    "142887e984a4e541071c99a4401ff8c3770f255d329dbd0f64e8c1dd51882cce",  # pragma: allowlist secret
+)
 
 # (bucket, substrings) — first match wins, so specific beats generic.
 BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -77,7 +104,8 @@ def broker_container() -> str:
     return cid
 
 
-PYSPY_CONTAINER = "jentic-perf-pyspy"
+#: Per-process name, so one tool's cleanup can never remove another's sidecar.
+PYSPY_CONTAINER = f"jentic-perf-pyspy-{os.getpid()}"
 
 
 def start_pyspy(cid: str) -> None:
@@ -103,8 +131,17 @@ def start_pyspy(cid: str) -> None:
         check=True,
         capture_output=True,
     )
+    requirement = f"py-spy=={PYSPY_VERSION} " + " ".join(f"--hash=sha256:{h}" for h in PYSPY_HASHES)
     subprocess.run(
-        ["docker", "exec", PYSPY_CONTAINER, "pip", "install", "-q", "py-spy"],
+        [
+            "docker",
+            "exec",
+            PYSPY_CONTAINER,
+            "sh",
+            "-c",
+            f"echo '{requirement}' > /tmp/req.txt && "
+            "pip install -q --only-binary=:all: --require-hashes -r /tmp/req.txt",
+        ],
         check=True,
         capture_output=True,
     )
@@ -149,6 +186,24 @@ def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
     }
 
 
+class LoadError(RuntimeError):
+    """The load generator did not drive the broker for the profiled window."""
+
+
+def check_load(
+    result: dict[str, Any], errors: list[BaseException], alive: bool, min_ok: float
+) -> None:
+    """Raise unless the background load finished cleanly with enough 200s."""
+    if errors:
+        raise LoadError(f"load generator failed: {errors[0]!r}") from errors[0]
+    if alive:
+        raise LoadError("load generator still running after the profile window")
+    if not result:
+        raise LoadError("load generator produced no result")
+    if why := check_ok(result, min_ok, "load"):
+        raise LoadError(why)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="py-spy the broker under closed-loop load")
     parser.add_argument("--vendor", default="perf-noauth")
@@ -156,29 +211,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--duration", type=int, default=30, help="py-spy seconds")
     parser.add_argument("--rate", type=int, default=200, help="py-spy samples/s")
+    parser.add_argument(
+        "--min-ok",
+        type=float,
+        default=DEFAULT_MIN_OK,
+        help="minimum 200 share under load for the profile to count (default %(default)s)",
+    )
     args = parser.parse_args(argv)
 
     env = PerfEnv.load()
     url = f"{env.broker_url}/{upstream_base(env.vendors[args.vendor]['alias'])}{ECHO_PATH}"
     token = env.caller(args.caller).token
     stem = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{args.vendor}-c{args.concurrency}"
-    cid = broker_container()
     # Raw (for the bucket table) and SVG recorded concurrently over the same
     # window; --nonblocking samplers only read memory, so they don't stack up
     # pauses on the broker.
     warm_s, load_s = 5, 5 + args.duration + 5
+    # Sidecar start (pip install) + the load window.
+    env.check_fresh(callers=[args.caller], run_s=load_s + 120)
     result: dict[str, Any] = {}
+    errors: list[BaseException] = []
 
     def load() -> None:
-        a = oha_args(
-            url, Case("profile"), token, n=None, conns=args.concurrency, rate=None,
-            duration_s=load_s,
-        )  # fmt: skip
-        result.update(summarise(run_oha(a), 200))
+        try:
+            a = oha_args(
+                url, Case("profile"), token, n=None, conns=args.concurrency, rate=None,
+                duration_s=load_s,
+            )  # fmt: skip
+            result.update(summarise(run_oha(a), 200))
+        except BaseException as exc:
+            errors.append(exc)
 
-    print("starting py-spy sidecar (pip install py-spy) ...", flush=True)
-    try:
-        # Inside the try so a failed/interrupted start still removes both sidecars.
+    with (
+        exclusive_run("pyspy_profile"),
+        restore_on_exit(("remove oha sidecar", stop_oha), ("remove py-spy sidecar", stop_pyspy)),
+    ):
+        cid = broker_container()
+        print(f"starting py-spy sidecar (pip install py-spy=={PYSPY_VERSION}) ...", flush=True)
         start_pyspy(cid)
         start_oha()
         loader = threading.Thread(target=load, daemon=True)
@@ -195,12 +264,10 @@ def main(argv: list[str] | None = None) -> int:
         if any(codes):
             raise RuntimeError(f"py-spy record failed: exit codes {codes}")
         loader.join(timeout=load_s + 30)
-    finally:
-        stop_oha()
-        stop_pyspy()
+        check_load(result, errors, loader.is_alive(), args.min_ok)
 
     summary = analyse(OUT_DIR / f"{stem}.txt")
-    print(f"load: {result.get('rps', 0):.1f} rps  p50={result.get('p50_ms', 0):.1f}ms")
+    print(f"load: {result['rps']:.1f} rps  p50={result['p50_ms']:.1f}ms")
     for name, share in summary["buckets"].items():
         print(f"  {share:6.1%}  {name}")
     print("  -- inclusive")
@@ -213,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
             "vendor": args.vendor,
             "caller": args.caller,
             "concurrency": args.concurrency,
+            "pyspy_version": PYSPY_VERSION,
             "load": result,
             "flamegraph": f"pyspy/{stem}.svg",
             "profile": summary,
