@@ -1272,3 +1272,34 @@ async def test_update_oauth2_resolves_token_url_off_the_loop_outside_the_transac
     assert isinstance(redacted.details, OAuth2Redacted)
     expected = _INTERNAL_TOKEN_URL if allowed else "https://93.184.216.34/oauth/token"
     assert redacted.details.token_url == expected
+
+
+@pytest.mark.parametrize("target", ["missing", "bearer"])
+async def test_update_oauth2_reports_not_found_or_type_before_token_url(
+    integration_config: AppConfig, clean_credentials: None, target: str
+) -> None:
+    """A missing or non-OAuth2 credential fails as such, before ``token_url`` resolves.
+
+    The ``strict`` case above pins the other order: on an existing OAuth2
+    credential the blocked ``token_url`` is what fails.
+    """
+    config = _egress_config(integration_config, control=_STRICT)
+    update = CredentialUpdate(
+        type=CredentialType.OAUTH2, client_secret=_ROTATED_SECRET, token_url=_INTERNAL_TOKEN_URL
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        credential_id = "cred_does_not_exist"
+        expected: type[Exception] = CredentialNotFoundError
+        if target == "bearer":
+            created = await svc.create(
+                CredentialCreate(
+                    type=CredentialType.BEARER_TOKEN, name="Bearer", api=_api(), token="tok"
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+            credential_id = created.credential_id
+            expected = ImmutableFieldError
+        with _lookups_seeing([0]) as seen, pytest.raises(expected):
+            await svc.update(credential_id, update, identity=_ADMIN_IDENTITY)
+    assert seen == []

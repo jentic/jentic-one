@@ -1165,27 +1165,44 @@ class CredentialService:
         except ValueError as exc:
             raise InvalidCredentialInputError(f"Invalid {field}: {exc}") from exc
 
+    @staticmethod
+    async def _get_updatable(
+        session: Any,
+        credential_id: str,
+        payload: CredentialUpdate,
+        access_filters: Sequence[Any],
+    ) -> Credential:
+        """Load a credential the caller can see, rejecting a change of ``type``."""
+        credential = await CredentialRepository.get_by_id(
+            session, credential_id, filters=access_filters
+        )
+        if credential is None:
+            raise CredentialNotFoundError(credential_id)
+        if payload.type != to_wire(StoredCredentialType(credential.type)):
+            raise ImmutableFieldError("type")
+        return credential
+
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
-        """Update/rotate a credential."""
+        """Update/rotate a credential.
+
+        Not-found and type-mismatch errors take precedence over an invalid
+        ``token_url``.
+        """
         access_filters = build_access_filters(identity, Credential)
-        # Resolved before the write transaction opens, as in ``create``.
+        # ``token_url`` resolves DNS, so it is validated before the write
+        # transaction opens (as in ``create``), after a read-only existence and
+        # type check. The transaction repeats that check against the row it writes.
         validated_token_url: str | None = None
         if payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
+            async with self._ctx.control_db.session() as session:
+                await self._get_updatable(session, credential_id, payload, access_filters)
             validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
         async with self._ctx.control_db.transaction() as session:
-            credential = await CredentialRepository.get_by_id(
-                session, credential_id, filters=access_filters
-            )
-            if credential is None:
-                raise CredentialNotFoundError(credential_id)
+            credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
             before_state = {"name": credential.name, "active": credential.active}
-
-            wire_type = to_wire(StoredCredentialType(credential.type))
-            if payload.type != wire_type:
-                raise ImmutableFieldError("type")
 
             # The api_key parameter binding (field_name/location) is derived from
             # the API spec at create time and must not drift afterwards — a wrong
@@ -1316,16 +1333,16 @@ class CredentialService:
                     )
                     changed = True
 
-            credential = await CredentialRepository.get_by_id(session, credential_id)
-            assert credential is not None
+            updated = await CredentialRepository.get_by_id(session, credential_id)
+            assert updated is not None
             if changed:
-                credential.updated_at = datetime.now(UTC)
+                updated.updated_at = datetime.now(UTC)
             await session.flush()
             names = await OAuthAppRegistrationRepository.get_names_by_ids(
-                session, _registration_ids([credential])
+                session, _registration_ids([updated])
             )
-            view = self._to_redacted(credential, registration_names=names)
-            after_state = {"name": credential.name, "active": credential.active}
+            view = self._to_redacted(updated, registration_names=names)
+            after_state = {"name": updated.name, "active": updated.active}
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
         # is a no-op — no timestamp bump and no audit noise.
