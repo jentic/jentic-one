@@ -91,7 +91,7 @@ describe('ActorLabel', () => {
 		expect(screen.queryByText('self')).not.toBeInTheDocument();
 	});
 
-	// The theme-8 migration stamps every successor agent's `registered_by` with
+	// The service-account migration stamps every successor agent's `registered_by` with
 	// `system:theme8-sa-migration` — a sentinel, not an id.
 	it('renders the service-account migration registrar as a friendly word', async () => {
 		seedActors();
@@ -101,8 +101,8 @@ describe('ActorLabel', () => {
 		expect(el.className).not.toContain('font-mono');
 	});
 
-	// Historical executions/audit rows keep `actor_type = 'service_account'`
-	// (theme 8, OQ-3): the directory never holds them, so show the raw id
+	// Historical executions/audit rows keep `actor_type = 'service_account'`:
+	// the directory never holds them, so show the raw id
 	// marked as retired rather than a type prefix that reads as a live actor.
 	it('labels a historical service-account actor as retired', async () => {
 		seedActors();

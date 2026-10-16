@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, waitFor, within } from '@/__tests__/test-utils';
+import { fireEvent, renderWithProviders, screen, waitFor, within } from '@/__tests__/test-utils';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 import { CredentialGroupCard } from '@/shared/credentials/components/CredentialGroupCard';
@@ -25,6 +25,91 @@ function renderGroup(credentials: Credential[]) {
 }
 
 describe('CredentialGroupCard', () => {
+	it('shows the full API reference in a tooltip when the API line is cut off, with no native title', async () => {
+		const api = {
+			vendor: 'very-long-vendor-name.example.com',
+			name: 'an-equally-long-api-name-for-the-test',
+			version: '',
+		};
+		renderWithProviders(
+			<div style={{ width: 240 }}>
+				<CredentialGroupCard
+					credentials={[
+						makeMockCredential({ name: 'Work', api }),
+						makeMockCredential({ name: 'Personal', api }),
+					]}
+					onEdit={vi.fn()}
+					onDelete={vi.fn()}
+					usageFor={() => ({ usedByAgentCount: null, callsLast7d: null })}
+				/>
+			</div>,
+		);
+		const group = screen.getByTestId('credential-group');
+		expect(group).not.toHaveAttribute('title');
+		const line = within(group).getByText(/very-long-vendor-name\.example\.com\//);
+		await waitFor(() => expect(line).toHaveAttribute('tabindex', '0'));
+		fireEvent.mouseEnter(line);
+		expect(await screen.findByRole('tooltip')).toHaveTextContent(
+			'very-long-vendor-name.example.com/an-equally-long-api-name-for-the-test',
+		);
+	});
+
+	it('is a card like the single credentials, and stays a labelled region', () => {
+		renderGroup([
+			makeMockCredential({
+				name: 'Work',
+				api: { vendor: 'googleapis.com', name: 'sheets', version: '' },
+			}),
+			makeMockCredential({
+				name: 'Personal',
+				api: { vendor: 'googleapis.com', name: 'sheets', version: '' },
+			}),
+		]);
+		const group = screen.getByTestId('credential-group');
+		// The shared Card surface (its edge is what reads on a surface-1 sheet).
+		expect(group).toHaveAttribute('data-surface', 'card');
+		expect(group.tagName).toBe('SECTION');
+		expect(getComputedStyle(group).outlineStyle).toBe('solid');
+		expect(getComputedStyle(group).outlineWidth).toBe('1px');
+		// Still a region landmark, named by its header.
+		const heading = within(group).getByRole('heading', { level: 3 });
+		expect(screen.getByRole('region', { name: heading.textContent ?? '' })).toBe(group);
+	});
+
+	it('keeps every row and its actions reachable inside the card', () => {
+		const onEdit = vi.fn();
+		const onDelete = vi.fn();
+		const creds = [
+			makeMockCredential({
+				name: 'Work',
+				api: { vendor: 'googleapis.com', name: 'sheets', version: '' },
+			}),
+			makeMockCredential({
+				name: 'Personal',
+				api: { vendor: 'googleapis.com', name: 'sheets', version: '' },
+			}),
+		];
+		renderWithProviders(
+			<CredentialGroupCard
+				credentials={creds}
+				onEdit={onEdit}
+				onDelete={onDelete}
+				onConnect={vi.fn()}
+				usageFor={() => ({ usedByAgentCount: null, callsLast7d: null })}
+			/>,
+		);
+		const rows = within(screen.getByTestId('credential-group')).getAllByTestId(
+			'credential-card',
+		);
+		expect(rows).toHaveLength(2);
+		within(rows[1]).getByRole('button', { name: /Edit/ }).click();
+		expect(onEdit).toHaveBeenCalledWith(creds[1]);
+		within(rows[0])
+			.getByRole('button', { name: /Delete/ })
+			.click();
+		expect(onDelete).toHaveBeenCalledWith(creds[0]);
+	});
+
 	it('shows each row’s pinned version, or "any version"', () => {
 		renderGroup([
 			makeMockCredential({

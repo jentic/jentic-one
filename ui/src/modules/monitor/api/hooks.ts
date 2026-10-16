@@ -27,7 +27,6 @@ import {
 	listExecutions,
 	listJobs,
 	MonitorApiError,
-	resolveActor,
 	streamEvents,
 	type ListActorsParams,
 	type ListAuditParams,
@@ -347,37 +346,26 @@ export function useAudit(
 /**
  * Resolve "who did it" for a trace.
  *
- * Executions now carry `actor_id`/`actor_type` directly (jentic-one#375), so the
+ * Executions carry `actor_id`/`actor_type` directly (jentic-one#375), so the
  * trace actor is read straight off the execution record — accurate and available
- * to non-admins. The audit log is kept only as a fallback for older traces whose
- * execution records predate actor attribution.
+ * to non-admins. An execution without actor fields has no recorded actor; the
+ * audit log is no source either, since no audit row carries an API call's trace.
  *
  * (Jobs carry `actor_id`/`actor_type` on the job record too, so the job detail
  * reads them off `useJob` — no separate lookup.)
  */
-export function useActorForTrace(
-	traceId: string | null,
-	{ canReadAudit = false }: { canReadAudit?: boolean } = {},
-) {
-	// Primary source: the execution record's own actor fields (#375). Nothing
-	// to look up without a trace — don't fire an unfiltered list.
+export function useActorForTrace(traceId: string | null) {
+	// Nothing to look up without a trace — don't fire an unfiltered list.
 	const execQuery = useExecutions(traceId ? { traceId } : {}, { enabled: traceId != null });
 	const exec = traceId
 		? (execQuery.data?.data ?? []).find((e) => e.trace_id === traceId)
 		: undefined;
-	const execActor =
+	const actor =
 		exec && (exec.actor_id || exec.actor_type)
 			? { actorId: exec.actor_id || null, actorType: exec.actor_type }
 			: null;
 
-	// Fallback for traces whose execution record predates actor attribution.
-	// Audit is org:admin, so only admins can take this path.
-	const needsAudit = traceId != null && execQuery.isSuccess && !execActor && canReadAudit;
-	const auditQuery = useAudit({ limit: 50 }, { enabled: needsAudit });
-	const entries = needsAudit ? (auditQuery.data?.data ?? []) : [];
-	const matched = traceId ? entries.filter((e) => e.trace_id === traceId) : [];
-
-	return { ...execQuery, actor: execActor ?? resolveActor(matched) };
+	return { ...execQuery, actor };
 }
 
 /* ------------------------------------------------------------------ */

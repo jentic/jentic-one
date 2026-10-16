@@ -3,11 +3,16 @@
  * real fleet grows (`my-agent-34` → M34, `my-agent-34-staging` → M34S,
  * `support-triage` vs `support-triage-eu` → ST vs STE).
  *
- * Each name yields a ranked list of candidates. Names whose first candidate
- * clashes form a group, and the group moves down the ranks together until every
- * member reads differently (else each takes its best candidate still free).
- * Unique fleet-wide: a group never lands on letters another name already
- * reads. Pure and deterministic: the same fleet always reads the same letters.
+ * Each name yields a ranked list of candidates. Agents are served first come,
+ * first served by creation date (ties broken by id): each takes the first of its
+ * own candidates no older agent holds, and one with none left numbers its first
+ * (`M342`, `M343`, …) until the result is free fleet-wide.
+ *
+ * Avatar letters are an identity cue, so an older agent's pick never depends on
+ * a newer one: adding an agent never changes the letters of any agent already
+ * there, nor does reordering the list it arrives in. Removing one can let a
+ * younger agent take a better candidate it frees. Pure and deterministic: the
+ * same fleet always reads the same letters.
  */
 
 /** The longest initials an avatar carries. */
@@ -16,6 +21,9 @@ const MAX_INITIALS = 4;
 interface Named {
 	id: string;
 	name: string;
+	/** ISO-8601 creation time: decides who keeps contested letters. An absent
+	 *  or unreadable time is served after every agent that has one. */
+	createdAt: string;
 }
 
 function words(name: string): string[] {
@@ -59,77 +67,61 @@ export function initialsCandidates(name: string): string[] {
 	]);
 }
 
-/**
- * Caps every candidate's length. Repeats stay: ranks line up across a clash
- * group, so `support-triage`'s rank-1 `ST` (no third word) stands against
- * `support-triage-eu`'s `STE`.
- */
+/** Caps every candidate's length. */
 function capped(list: string[]): string[] {
 	return list.map((c) => c.slice(0, MAX_INITIALS)).filter(Boolean);
 }
 
-/** Initials for every agent in the fleet, keyed by id (upper case). */
+/** Creation instant in ms; an absent or unreadable time sorts after every real one. */
+function createdMs(a: Named): number {
+	const ms = Date.parse(a.createdAt);
+	return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
+}
+
+/**
+ * Oldest first; equal creation times fall back to id, so the order is total.
+ * Compared as instants, not strings, so two surfaces reading the same agents
+ * through differently formatted timestamps still agree.
+ */
+function byCreation(a: Named, b: Named): number {
+	const at = createdMs(a);
+	const bt = createdMs(b);
+	if (at !== bt) return at < bt ? -1 : 1;
+	if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+	return 0;
+}
+
+/** Initials for every agent in the fleet, keyed by id (upper case), in fleet order. */
 export function smartInitials(fleet: readonly Named[]): Map<string, string> {
-	const picks = new Map<string, string>();
-	const cand = new Map(fleet.map((a) => [a.id, initialsCandidates(a.name)]));
-	const groups = new Map<string, Named[]>();
-	for (const a of fleet) {
-		const first = cand.get(a.id)?.[0];
-		if (!first) continue;
-		const group = groups.get(first);
-		if (group) group.push(a);
-		else groups.set(first, [a]);
-	}
-	// Every pick so far, fleet-wide. A name alone on its first candidate keeps
-	// it, so those are taken before any clash group chooses.
 	const taken = new Set<string>();
-	for (const [first, group] of groups) {
-		if (group.length !== 1) continue;
-		picks.set(group[0].id, first.toUpperCase());
-		taken.add(first);
+	const picks = new Map<string, string>();
+	for (const agent of [...fleet].sort(byCreation)) {
+		if (picks.has(agent.id)) continue;
+		const pick = firstFree(initialsCandidates(agent.name), taken);
+		if (pick === undefined) continue;
+		taken.add(pick);
+		picks.set(agent.id, pick.toUpperCase());
 	}
-	for (const group of groups.values()) {
-		if (group.length === 1) continue;
-		const lists = group.map((a) => cand.get(a.id) ?? []);
-		const deepest = Math.max(...lists.map((l) => l.length));
-		let picked: string[] | null = null;
-		// The first rank at which every member of the clash group reads apart —
-		// and apart from every pick elsewhere in the fleet.
-		for (let rank = 1; rank < deepest && !picked; rank++) {
-			const picks = lists.map((l) => l[Math.min(rank, l.length - 1)]);
-			if (new Set(picks).size === group.length && !picks.some((p) => taken.has(p))) {
-				picked = picks;
-			}
-		}
-		const final = picked ?? greedyPicks(lists, taken);
-		final.forEach((pick) => taken.add(pick));
-		group.forEach((a, i) => picks.set(a.id, final[i].toUpperCase()));
-	}
-	// In fleet order, whatever order the groups chose in.
 	const out = new Map<string, string>();
-	for (const a of fleet) {
-		const pick = picks.get(a.id);
-		if (pick) out.set(a.id, pick);
+	for (const agent of fleet) {
+		const pick = picks.get(agent.id);
+		if (pick) out.set(agent.id, pick);
 	}
 	return out;
 }
 
 /**
- * No single rank separates the group: each member, in fleet order, takes its
- * best candidate nobody has taken; one with none left numbers its first
- * (`M342`), counting on until the result is free fleet-wide.
+ * The best candidate nobody has taken; with none left, the first candidate
+ * numbered (`M342`), counting on until the result is free fleet-wide.
+ * `undefined` only for a name with no candidates at all.
  */
-function greedyPicks(lists: string[][], taken: ReadonlySet<string>): string[] {
-	const mine = new Set<string>();
-	const free = (c: string) => !taken.has(c) && !mine.has(c);
-	return lists.map((list, i) => {
-		let pick = list.find(free);
-		for (let n = i + 1; pick === undefined; n++) {
-			const digits = String(n);
-			const numbered = list[0].slice(0, Math.max(1, MAX_INITIALS - digits.length)) + digits;
-			if (free(numbered)) pick = numbered;
-		}
-		mine.add(pick);
-		return pick;
-	});
+function firstFree(list: readonly string[], taken: ReadonlySet<string>): string | undefined {
+	if (list.length === 0) return undefined;
+	const free = list.find((c) => !taken.has(c));
+	if (free !== undefined) return free;
+	for (let n = 2; ; n++) {
+		const digits = String(n);
+		const numbered = list[0].slice(0, Math.max(1, MAX_INITIALS - digits.length)) + digits;
+		if (!taken.has(numbered)) return numbered;
+	}
 }

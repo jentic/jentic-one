@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
+import { shortActorId } from '@/shared/lib';
 import { SegmentedToggle } from '@/shared/ui';
 import { formatLatency, formatPercent } from '@/modules/monitor/lib/format';
 import {
@@ -27,7 +28,7 @@ import {
 	type UsageLens,
 } from '@/modules/monitor/lib/palette';
 import { EntityMark } from '@/modules/monitor/components/EntityMark';
-import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
+import { isUnnamedActor, type EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBubbleChartProps {
 	apis: EntityUsageRow[];
@@ -353,7 +354,8 @@ export function UsageBubbleChart({ apis, agents, className }: UsageBubbleChartPr
 													fontFamily: 'var(--font-heading, system-ui)',
 												}}
 											>
-												{entityInitials(lens, bubble.item.label)}
+												{bubble.item.initials ??
+													entityInitials(lens, bubble.item.label)}
 											</text>
 											{bubble.radius > 40 && (
 												<text
@@ -417,15 +419,37 @@ function BubbleTooltip({
 			className="bg-surface-field pointer-events-none absolute z-20 w-56 rounded-lg p-3 shadow-xl"
 			style={{ left: isRight ? x - 240 : x + 20, top: Math.max(8, y - 60) }}
 		>
-			<p className="text-foreground mb-2 flex items-center gap-2 text-sm font-medium">
+			<div className="mb-2 flex items-start gap-2">
 				<EntityMark
 					tone={tone}
 					label={item.label}
+					initials={item.initials}
 					lens={lens}
-					className="h-5 w-5 text-[8px]"
+					className="mt-px h-5 w-5 text-[8px]"
 				/>
-				<span className="min-w-0 truncate">{item.label}</span>
-			</p>
+				<div className="min-w-0 flex-1">
+					<p
+						className={cn(
+							'text-foreground truncate text-sm font-medium',
+							isUnnamedActor(item) && 'font-mono text-xs',
+						)}
+						dir="auto"
+					>
+						{item.label}
+					</p>
+					{/* A named actor keeps its id within reach, muted, for correlating. */}
+					{item.actor && item.actor.resolution !== 'loading' && (
+						<p
+							className="text-muted-foreground truncate font-mono text-[10px]"
+							data-testid="bubble-tooltip-id"
+						>
+							{item.actor.resolution === 'resolved'
+								? shortActorId(item.actor.id)
+								: item.actor.id}
+						</p>
+					)}
+				</div>
+			</div>
 
 			<div className="grid grid-cols-3 gap-2 text-center">
 				<div>

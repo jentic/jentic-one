@@ -482,16 +482,112 @@ describe('MonitorPage', () => {
 		await screen.findByText('Breakdown');
 
 		await user.click(breakdownLens('Agents'));
-		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
+		// The rollup carries only `agent/agent_billing`; the row reads the
+		// directory's name, never the id.
+		expect(await screen.findByText('Billing Agent')).toBeInTheDocument();
+		expect(screen.queryByText('agent_billing')).not.toBeInTheDocument();
 		expect(screen.getByText('Unattributed').closest('a')).toBeNull();
 
-		await user.click(screen.getByRole('row', { name: /View executions for agent_billing/ }));
+		await user.click(screen.getByRole('row', { name: /View executions for Billing Agent/ }));
 		await waitFor(() => {
 			const params = currentParams();
 			expect(params.get('show')).toBe('calls');
 			expect(params.get('actor_id')).toBe('agent_billing');
 			expect(params.get('actor_type')).toBe('agent');
 		});
+	});
+
+	it('names agents across the Overview, so two agnt_6… agents read apart', async () => {
+		const A = 'agnt_6accc351d881e4d9aaaa';
+		const B = 'agnt_6accc351d881e4d9bbbb';
+		const GONE = 'agnt_6accc351d881e4d9dead';
+		const now = Math.floor(Date.now() / 1000);
+		const top = (key: string, total: number) => ({
+			key,
+			label: key,
+			total,
+			success: total,
+			failed: 0,
+			avg_ms: 100,
+			trend: [total],
+		});
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				const since = Number(url.searchParams.get('since') ?? now - 86_400);
+				const until = Number(url.searchParams.get('until') ?? now);
+				const agentLens = url.searchParams.get('group_by') === 'agent';
+				return HttpResponse.json({
+					since,
+					until,
+					bucket_seconds: until - since,
+					group_by: agentLens ? 'agent' : 'api',
+					stats: {
+						total: 60,
+						success: 60,
+						failed: 0,
+						pending: 0,
+						avg_ms: 100,
+						p50_ms: 90,
+						p95_ms: 200,
+						active_now: 0,
+					},
+					buckets: [{ ts: since, total: 60, success: 60, failed: 0, avg_ms: 100 }],
+					top: agentLens
+						? [top(`agent/${A}`, 30), top(`agent/${B}`, 20), top(`agent/${GONE}`, 10)]
+						: [top('stripe/stripe-api', 60)],
+				});
+			}),
+			http.get('/actors', () =>
+				HttpResponse.json({
+					data: [
+						{
+							id: A,
+							actor_type: 'agent',
+							name: 'support-triage',
+							active: true,
+							created_at: '2026-01-01T00:00:00Z',
+						},
+						{
+							id: B,
+							actor_type: 'agent',
+							name: 'support-triage-eu',
+							active: true,
+							created_at: '2026-01-02T00:00:00Z',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+		await user.click(breakdownLens('Agents'));
+
+		// Breakdown: the names, the fleet's distinct initials, the name on the link.
+		const triage = await screen.findByRole('row', {
+			name: 'View executions for support-triage',
+		});
+		expect(triage.querySelector('[data-initials]')).toHaveAttribute('data-initials', 'ST');
+		const eu = screen.getByRole('row', { name: 'View executions for support-triage-eu' });
+		expect(eu.querySelector('[data-initials]')).toHaveAttribute('data-initials', 'STE');
+		// A deleted agent: its short id, with the whole id on its link.
+		expect(
+			screen.getByRole('row', { name: `View executions for agnt_…dead (${GONE})` }),
+		).toBeInTheDocument();
+		// Nowhere does a whole id stand in for a name.
+		expect(screen.queryByText(A)).not.toBeInTheDocument();
+		expect(screen.queryByText(B)).not.toBeInTheDocument();
+
+		// The volume chart's legend, on its Agents lens: names and fleet letters.
+		await user.click(toggle('Volume chart grouping', 'Agents'));
+		const legend = await screen.findByRole('button', { name: 'support-triage' });
+		expect(within(legend).getByTestId('entity-mark')).toHaveTextContent('ST');
+		const marks = screen.getAllByTestId('entity-mark').map((m) => m.textContent);
+		expect(marks).toEqual(expect.arrayContaining(['ST', 'STE', '?']));
+		expect(marks).not.toContain('A6');
 	});
 
 	it('drills an API row into API calls filtered by that API', async () => {
@@ -567,18 +663,73 @@ describe('MonitorPage', () => {
 		await user.click(await findToggle('Activity source', 'Audit log'));
 
 		// Audit entries read as sentences, not raw action codes.
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+		expect(await screen.findByText('Created a credential')).toBeInTheDocument();
 		expect(screen.getByText('Cancelled a job')).toBeInTheDocument();
 		expect(screen.getAllByText('Admin User').length).toBeGreaterThanOrEqual(1);
 		// The Audit log has no status axis.
 		expect(screen.queryByRole('group', { name: 'Status' })).not.toBeInTheDocument();
 	});
 
-	it('filters the Audit log by trace_id deep-link param', async () => {
+	it('explains an empty trace-filtered Audit log and links to the trace in API calls', async () => {
+		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit&trace_id=trace_aaaaaaaa');
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+
+		expect(await screen.findByText('No audit entries for this trace')).toBeInTheDocument();
+		expect(screen.getByText("API calls aren't recorded in the audit log.")).toBeInTheDocument();
+		expect(screen.queryByText('Cancelled a job')).not.toBeInTheDocument();
+
+		// The link's name is its visible text (WCAG 2.5.3).
+		await user.click(screen.getByRole('link', { name: 'Open this trace in API calls' }));
 		await waitFor(() => {
-			expect(screen.queryByText('Cancelled a job')).not.toBeInTheDocument();
+			const params = currentParams();
+			expect(params.get('show')).toBe('calls');
+			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
+		});
+	});
+
+	it('cross-links an Audit row that carries a trace to it in API calls', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/audit', () =>
+				HttpResponse.json({
+					data: [
+						{
+							action: 'credential.create',
+							actor_id: 'user_admin',
+							actor_session_id: null,
+							actor_type: 'user',
+							after: null,
+							before: null,
+							diff: null,
+							id: 'audit_traced',
+							ip_address: null,
+							job_id: null,
+							occurred_at: new Date(Date.now() - 60_000).toISOString(),
+							reason: null,
+							request_id: null,
+							target_id: 'cred_stripe',
+							target_parent_id: null,
+							target_type: 'credential',
+							trace_id: 'trace_crosslink1',
+							user_agent: null,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?show=audit');
+
+		const link = await screen.findByRole('link', {
+			name: 'Open trace trace_crosslink1 in API calls',
+		});
+		expect(link).toHaveTextContent('Trace');
+		await user.click(link);
+		await waitFor(() => {
+			const params = currentParams();
+			expect(params.get('show')).toBe('calls');
+			expect(params.get('trace_id')).toBe('trace_crosslink1');
 		});
 	});
 
@@ -749,23 +900,73 @@ describe('Monitor inter-linking', () => {
 		worker.use(...monitorHandlers);
 	});
 
-	it('API call row → trace sheet → "View in audit" carries trace_id', async () => {
+	it('the trace sheet offers no "View in audit" link, even to an audit reader', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await user.click(await screen.findByText('POST /v1/charges'));
 
-		await screen.findByRole('link', { name: /View trace .* in the audit log/ });
+		const sheet = await screen.findByRole('dialog');
+		expect(await within(sheet).findByText(/Billing Agent/)).toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBe('trace_aaaaaaaa');
-
-		await user.click(screen.getByRole('link', { name: /View trace .* in the audit log/ }));
-		await waitFor(() => {
-			const params = currentParams();
-			expect(params.get('show')).toBe('audit');
-			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
-		});
+		// The caller can read the audit log: the source is offered.
+		expect(await findToggle('Activity source', 'Audit log')).toBeInTheDocument();
+		expect(within(sheet).queryByRole('link', { name: /audit/i })).not.toBeInTheDocument();
+		expect(within(sheet).queryByText(/View in audit/)).not.toBeInTheDocument();
 	});
 
-	it('API call with unknown trace opens by execution_id, no audit link', async () => {
+	it('a trace whose execution has no actor says so, with no /audit lookup', async () => {
+		const calls = { audit: 0 };
+		const onRequest = ({ request }: { request: Request }) => {
+			if (new URL(request.url).pathname === '/audit') calls.audit += 1;
+		};
+		const noActor = {
+			_links: { self: '/executions/exec_noactor' },
+			actor_id: null,
+			actor_type: null,
+			api: {
+				vendor: 'stripe',
+				name: 'stripe-api',
+				version: '2024-01-01',
+				host: 'stripe.com',
+			},
+			created_at: new Date().toISOString(),
+			duration_ms: 120,
+			error: null,
+			execution_id: 'exec_noactor',
+			http_status: 200,
+			operation_id: 'op_noactor',
+			operation_path: '/v1/balance',
+			operation_method: 'GET',
+			origin: 'api',
+			pinned_revisions: null,
+			started_at: new Date().toISOString(),
+			status: 'completed',
+			credential_id: 'cred_payments',
+			credential_name: 'Stripe key',
+			trace_id: 'trace_noactor',
+		};
+		worker.use(
+			http.get('/executions', () =>
+				HttpResponse.json({ data: [noActor], has_more: false, next_cursor: null }),
+			),
+		);
+		worker.events.on('request:start', onRequest);
+		try {
+			renderMonitor('/app/monitor?show=calls&trace_id=trace_noactor');
+
+			const dialog = await screen.findByRole('dialog');
+			expect(
+				await within(dialog).findByText('No actor recorded for this trace.'),
+			).toBeInTheDocument();
+			// Give any audit request time to land before asserting none did.
+			await new Promise((r) => setTimeout(r, 500));
+			expect(calls.audit).toBe(0);
+		} finally {
+			worker.events.removeListener('request:start', onRequest);
+		}
+	});
+
+	it('API call with unknown trace opens by execution_id, with the opaque operation id only copyable', async () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_4');
 
 		// Legacy id-only row (no operation_path/method): the record falls back
@@ -784,10 +985,6 @@ describe('Monitor inter-linking', () => {
 		expect(
 			within(operationRow).getByRole('button', { name: 'Copy operation ID' }),
 		).toBeInTheDocument();
-		// No trace-scoped audit link is offered for an unusable trace.
-		expect(
-			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),
-		).not.toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
 
@@ -812,9 +1009,7 @@ describe('Monitor inter-linking', () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_1');
 		expect(await screen.findByText('Trace')).toBeInTheDocument();
 		expect(screen.queryByText(/No trace recorded/)).not.toBeInTheDocument();
-		expect(
-			await screen.findByRole('link', { name: /View trace .* in the audit log/ }),
-		).toBeInTheDocument();
+		expect((await screen.findAllByText('trace_aaaaaaaa')).length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('Jobs row → job sheet → "View in audit" sends target_type + target_id (no 400)', async () => {
@@ -951,7 +1146,7 @@ describe('Monitor inter-linking', () => {
 			expect(params.get('target_id')).toBeNull();
 			expect(params.get('show')).toBe('audit');
 		});
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+		expect(await screen.findByText('Created a credential')).toBeInTheDocument();
 	});
 
 	it('Job sheet → linked execution deep-links by execution_id', async () => {
@@ -966,18 +1161,10 @@ describe('Monitor inter-linking', () => {
 		});
 	});
 
-	it('Audit row → API calls (trace) and → Jobs (job) links round-trip', async () => {
+	it('Audit row → Jobs (job) link round-trips', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit');
 
-		await user.click(await screen.findByRole('link', { name: /^Open trace .* in API calls$/ }));
-		await waitFor(() => {
-			const params = currentParams();
-			expect(params.get('show')).toBe('calls');
-			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
-		});
-
-		await user.click(await findToggle('Activity source', 'Audit log'));
 		await user.click(await screen.findByRole('link', { name: /^Open job .* in Jobs$/ }));
 		await waitFor(() => {
 			const params = currentParams();
