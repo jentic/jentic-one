@@ -8,8 +8,18 @@ costs on each database, plus the total DB time.
 Method: reset stats, idle for the window to measure background noise (worker
 polling etc.), reset, drive ``N`` sequential calls at a low fixed rate, read
 stats, subtract the idle baseline, divide by ``N``. Sequential + low rate keeps
-cache behaviour deterministic: with warm caches (default TTLs) most calls are
-cache hits; the ``cold`` variant sets every TTL to 0.
+cache behaviour deterministic: ``warm`` pins every broker TTL to 300 s so the
+window never straddles an expiry (100% cache hits); ``cold`` sets every TTL to 0.
+
+The ``app`` container (control/admin/registry surfaces + background scanners and
+the job worker) is stopped for the duration — the standalone broker never calls
+it on a synchronous ``POST /execute``, and its polling would otherwise leak into
+the control/admin numbers. It is restarted on exit.
+
+Counting: ``statements`` is real SQL only; ``BEGIN``/``COMMIT``/``ROLLBACK`` are
+reported separately as ``tx_control``. ``transactions`` counts ``BEGIN`` — note
+``pool_pre_ping=True`` wraps each connection checkout's ping in its own
+``BEGIN``/``ROLLBACK``, so it is roughly 2x the number of sessions opened.
 
 Usage::
 
@@ -36,12 +46,14 @@ from tests.perf.bench_overhead import (
 from tests.perf.common import PerfEnv, compose, run_metadata, upstream_base, write_result
 
 ROLES = ("registry_user", "control_user", "admin_user")
-DB_VARIANTS = {"warm": "default", "cold": "cold-cache"}
+METRICS = ("statements", "transactions", "tx_control", "writes", "ms")
+DB_VARIANTS = {"warm": "warm-cache", "cold": "cold-cache"}
 
 STATS_SQL = """
 SELECT r.rolname,
-       COALESCE(SUM(s.calls), 0)::bigint,
-       COALESCE(SUM(s.calls) FILTER (WHERE s.query ILIKE 'BEGIN%'), 0)::bigint,
+       COALESCE(SUM(s.calls) FILTER (WHERE s.query !~* '^\\s*(BEGIN|COMMIT|ROLLBACK)'), 0)::bigint,
+       COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*BEGIN'), 0)::bigint,
+       COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*(BEGIN|COMMIT|ROLLBACK)'), 0)::bigint,
        COALESCE(SUM(s.calls) FILTER (WHERE s.query ~* '^\\s*(INSERT|UPDATE|DELETE)'), 0)::bigint,
        COALESCE(SUM(s.total_exec_time), 0)::float
 FROM pg_roles r
@@ -90,10 +102,11 @@ def snapshot() -> dict[str, dict[str, float]]:
         role: {
             "statements": float(calls),
             "transactions": float(tx),
+            "tx_control": float(txc),
             "writes": float(w),
             "ms": float(ms),
         }
-        for role, calls, tx, w, ms in rows
+        for role, calls, tx, txc, w, ms in rows
     }
 
 
@@ -119,14 +132,8 @@ def measure(env: PerfEnv, variant: str, caller: str, n: int, rate: int) -> dict[
     per_call: dict[str, dict[str, float]] = {}
     for role in ROLES:
         b, i = busy.get(role, {}), idle.get(role, {})
-        per_call[role] = {
-            k: max(0.0, b.get(k, 0.0) - i.get(k, 0.0)) / n
-            for k in ("statements", "transactions", "writes", "ms")
-        }
-    total = {
-        k: sum(v[k] for v in per_call.values())
-        for k in ("statements", "transactions", "writes", "ms")
-    }
+        per_call[role] = {k: max(0.0, b.get(k, 0.0) - i.get(k, 0.0)) / n for k in METRICS}
+    total = {k: sum(v[k] for v in per_call.values()) for k in METRICS}
     top = psql(TOP_SQL)
     ok = (result.get("statusCodeDistribution") or {}).get("200", 0)
     return {
@@ -163,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[dict[str, Any]] = []
     current: str | None = None
     start_oha()
+    compose("stop", "app")
     try:
         for variant, caller in combos:
             current = apply_variant(DB_VARIANTS[variant], current)
@@ -181,7 +189,8 @@ def main(argv: list[str] | None = None) -> int:
             )
     finally:
         stop_oha()
-    apply_variant("default", current)
+        apply_variant("default", current)
+        compose("start", "app")
     path = write_result("dbcost", {**run_metadata("dbcost"), "rows": rows})
     print(f"wrote {path}")
     return 0

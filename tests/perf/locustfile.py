@@ -14,6 +14,12 @@ web UI's class picker (``--class-picker``). Knobs (env):
 * ``PERF_UPSTREAM_DELAY`` — seconds; forwarded as ``X-Mock-Delay`` (slow upstream)
 * ``PERF_STATUS_SEQUENCE`` — e.g. ``503,503,200`` for ``RetryUser``
 * ``PERF_IMPORT_SPEC`` — path (in-container) to a spec for ``ImportUser``
+* ``PERF_STREAMING`` — must match the broker's ``stream_passthrough_enabled``
+  (compose passes the same value to both); ``DisconnectUser`` asserts on it
+
+Idempotency: any ``Idempotency-Key`` forces the broker onto the *buffered*
+path, so compare ``IdempotentFirstCallUser`` / ``IdempotentReplayUser`` against a
+``BrokerEchoUser`` run with ``PERF_STREAMING=false`` — not the streaming default.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ CALLER = os.environ.get("PERF_CALLER", "jak")
 VENDOR = os.environ.get("PERF_VENDOR", "perf-noauth")
 UPSTREAM_DELAY = os.environ.get("PERF_UPSTREAM_DELAY", "")
 STATUS_SEQUENCE = os.environ.get("PERF_STATUS_SEQUENCE", "") or "503,503,200"
+STREAMING = os.environ.get("PERF_STREAMING", "true").lower() == "true"
 BODY = b'{"probe":true}'
 JSON_HEADERS = {"Content-Type": "application/json"}
 ASYNC_POLL_S = 0.2
@@ -150,7 +157,14 @@ class FailingUpstreamUser(_BrokerUser):
 
 
 class DisconnectUser(_BrokerUser):
-    """Upstream drops mid-body: streaming truncates, buffered returns an envelope."""
+    """Upstream drops mid-body: streaming truncates, buffered returns an envelope.
+
+    Buffered (``PERF_STREAMING=false``) must answer a problem+json 5xx carrying
+    ``error_origin``: today the runner maps the transport error to 500 (502 would
+    be the more accurate gateway status), and 503 once the breaker opens.
+    Streaming has already sent a 200 status line, so the client sees 200 or a
+    mid-stream protocol abort (status 0). Anything else is a regression.
+    """
 
     @task
     def disconnect(self) -> None:
@@ -163,8 +177,13 @@ class DisconnectUser(_BrokerUser):
             name="echo disconnect",
             catch_response=True,
         ) as resp:
-            if resp.status_code in (200, 502):
+            expected = (0, 200) if STREAMING else (500, 502, 503)
+            enveloped = STREAMING or "error_origin" in (resp.text or "")
+            if resp.status_code in expected and enveloped:
                 resp.success()
+            else:
+                mode = "streaming" if STREAMING else "buffered"
+                resp.failure(f"{mode}: expected {expected}, got {resp.status_code}")
 
 
 class IdempotentFirstCallUser(_BrokerUser):
@@ -175,6 +194,19 @@ class IdempotentFirstCallUser(_BrokerUser):
         h = self.headers()
         h["Idempotency-Key"] = uuid.uuid4().hex
         self.client.post(_proxy_path("perf-noauth"), data=BODY, headers=h, name="echo idem-first")
+
+
+class IdempotentReplayUser(_BrokerUser):
+    """Fixed Idempotency-Key per user: after the first call, every call is a replay."""
+
+    def on_start(self) -> None:
+        self.idem_key = uuid.uuid4().hex
+
+    @task
+    def replay(self) -> None:
+        h = self.headers()
+        h["Idempotency-Key"] = self.idem_key
+        self.client.post(_proxy_path("perf-noauth"), data=BODY, headers=h, name="echo idem-replay")
 
 
 class AsyncJobUser(_BrokerUser):

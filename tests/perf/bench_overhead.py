@@ -50,6 +50,8 @@ VARIANTS: dict[str, dict[str, str]] = {
     "default": {},
     "buffered": {"PERF_STREAMING": "false"},
     "cold-cache": {"PERF_RESOLVE_TTL": "0", "PERF_TOOLKIT_TTL": "0", "PERF_RULE_TTL": "0"},
+    # Long TTLs so a measurement window never straddles a cache expiry (dbcost).
+    "warm-cache": {"PERF_RESOLVE_TTL": "300", "PERF_TOOLKIT_TTL": "300", "PERF_RULE_TTL": "300"},
 }
 
 
@@ -276,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_bodies()
 
     rows: list[dict[str, Any]] = []
-    direct_cache: dict[tuple[str, str, str, str | None, str | None, int], dict[str, Any]] = {}
+    direct_cache: dict[tuple[str, str, str | None, str | None, int], dict[str, Any]] = {}
     current: str | None = None
     start_oha()
     try:
@@ -305,7 +307,7 @@ def run_case(
     rate: int,
     args: argparse.Namespace,
     warm_n: int,
-    direct_cache: dict[tuple[str, str, str, str | None, str | None, int], dict[str, Any]],
+    direct_cache: dict[tuple[str, str, str | None, str | None, int], dict[str, Any]],
 ) -> dict[str, Any]:
     vendor = env.vendors[case.vendor]
     alias_base = upstream_base(vendor["alias"])
@@ -319,7 +321,10 @@ def run_case(
     broker = summarise(oha(broker_url, case, rate, n, token), case.expect_status)
     direct: dict[str, Any] | None = None
     if not case.no_direct:
-        key = (vendor["alias"], case.method, case.path, case.body, case.body_file, rate)
+        # Every alias is the same harness container, so one direct baseline per
+        # (method, path, body, rate) — keying on the alias re-ran it per
+        # credential type and injected ~1 ms of baseline jitter into deltas.
+        key = (case.method, case.path, case.body, case.body_file, rate)
         if key not in direct_cache:
             plain = Case(
                 case.name,

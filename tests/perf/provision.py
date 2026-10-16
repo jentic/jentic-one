@@ -204,6 +204,28 @@ def bind(client: httpx.Client, agent_id: str, credential_id: str) -> None:
     )
 
 
+def purge_perf_agents(client: httpx.Client) -> int:
+    """Hard-delete agents from earlier runs (``perf-agent-*`` / ``perf-pool-*``)."""
+    stale: list[str] = []
+    cursor: str | None = None
+    while True:
+        params: dict[str, str | int] = {"limit": 200}
+        if cursor:
+            params["cursor"] = cursor
+        page = _check(client.get("/agents", params=params), 200)
+        stale += [
+            str(a.get("agent_id") or a.get("id"))
+            for a in page.get("data", [])
+            if str(a.get("name", "")).startswith(("perf-agent-", "perf-pool-"))
+        ]
+        cursor = page.get("next_cursor")
+        if not page.get("has_more") or not cursor:
+            break
+    for agent_id in stale:
+        _check(client.delete(f"/agents/{agent_id}", params={"purge": "true"}), 204, 404)
+    return len(stale)
+
+
 def create_agent(client: httpx.Client, name: str) -> tuple[str, str]:
     """Create an agent and mint its ``jak_`` API key; returns (agent_id, key)."""
     agent = _check(client.post("/agents", json={"name": name}), 201)
@@ -314,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
     with httpx.Client(
         base_url=args.app, timeout=60, headers={"Authorization": f"Bearer {token}"}
     ) as client:
+        purged = purge_perf_agents(client)
+        if purged:
+            print(f"purged {purged} perf agents from earlier runs")
         agent_id, key = create_agent(client, f"perf-agent-{uuid.uuid4().hex[:8]}")
         env = PerfEnv(
             app_url=APP_INTERNAL,

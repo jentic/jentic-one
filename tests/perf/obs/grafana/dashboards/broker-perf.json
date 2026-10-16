@@ -17,7 +17,7 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "Broker execution duration (server-side)",
+      "title": "Broker upstream HTTP duration — mean (broker.execution.duration_ms, upstream time only)",
       "datasource": {
         "type": "prometheus",
         "uid": "perf-prom"
@@ -47,8 +47,8 @@
             "type": "prometheus",
             "uid": "perf-prom"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(broker_execution_duration_ms_milliseconds_bucket[1m])))",
-          "legendFormat": "p50"
+          "expr": "sum(rate(broker_execution_duration_ms_milliseconds_sum[1m])) / sum(rate(broker_execution_duration_ms_milliseconds_count[1m]))",
+          "legendFormat": "mean"
         },
         {
           "refId": "B",
@@ -57,14 +57,14 @@
             "uid": "perf-prom"
           },
           "expr": "histogram_quantile(0.99, sum by (le) (rate(broker_execution_duration_ms_milliseconds_bucket[1m])))",
-          "legendFormat": "p99"
+          "legendFormat": "p99 (coarse buckets)"
         }
       ]
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "HTTP server p99 by surface",
+      "title": "HTTP server duration by surface — mean (+ coarse-bucket p99)",
       "datasource": {
         "type": "prometheus",
         "uid": "perf-prom"
@@ -95,7 +95,7 @@
             "uid": "perf-prom"
           },
           "expr": "histogram_quantile(0.99, sum by (le, job) (rate(http_server_duration_milliseconds_bucket[1m])))",
-          "legendFormat": "{{job}} p99"
+          "legendFormat": "{{job}} p99 (coarse buckets)"
         },
         {
           "refId": "B",
@@ -103,8 +103,8 @@
             "type": "prometheus",
             "uid": "perf-prom"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(http_server_duration_milliseconds_bucket[1m])))",
-          "legendFormat": "{{job}} p50"
+          "expr": "sum by (job) (rate(http_server_duration_milliseconds_sum[1m])) / sum by (job) (rate(http_server_duration_milliseconds_count[1m]))",
+          "legendFormat": "{{job}} mean"
         }
       ]
     },

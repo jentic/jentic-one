@@ -31,7 +31,7 @@ make perf-down         # stop + wipe volumes
 | --- | --- | --- |
 | `bench_overhead.py` (`make perf-overhead`) | How much latency does the broker add? | [oha](https://github.com/hatoo/oha), **open loop** (fixed `-q` rate, `--latency-correction`), same request direct vs via broker, per case. |
 | `bench_capacity.py` (`make perf-capacity`) | What's the max throughput per worker/CPU config, and what's the bottleneck? | oha **closed loop** (fixed concurrency, no rate cap), broker recreated per `workers x CPUs`, one `docker stats` CPU sample per step. |
-| `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N. |
+| `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the `pool_pre_ping` ping transaction per checkout. |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | Where's the knee? What happens under faults, imports, mixed admin load? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. |
 | Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. |
 | `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over every `results/*.json`. |
@@ -96,8 +96,9 @@ PERF_SHAPE=step PERF_STEP_USERS=20 make perf-load    # ramp until the knee
 | `PoolAgentUser` | One agent per user (rate-limit fairness, per-actor caches). |
 | `RetryUser` | `X-Mock-Status-Sequence` (`PERF_STATUS_SEQUENCE`, default `503,503,200`). |
 | `FailingUpstreamUser` | Always 503 — breaker open / fail-fast. |
-| `DisconnectUser` | Upstream drops mid-body. |
-| `IdempotentFirstCallUser` | Unique `Idempotency-Key` per call (first-call cost). |
+| `DisconnectUser` | Upstream drops mid-body. Asserts a problem+json 500/502/503 when `PERF_STREAMING=false` (transport errors map to 500 today), 200/abort when streaming. |
+| `IdempotentFirstCallUser` | Unique `Idempotency-Key` per call (first-call claim + store cost). |
+| `IdempotentReplayUser` | Fixed `Idempotency-Key` per user (replay cost). |
 | `AsyncJobUser` | `Prefer: respond-async` → 202 → poll `/jobs/{id}`; reports E2E time. |
 | `ImportUser` | Inline spec import + job completion (`PERF_IMPORT_SPEC` for a big spec). |
 | `ControlReadUser` | `/executions`, `/monitoring/executions`, `/search` reads. |
@@ -105,6 +106,10 @@ PERF_SHAPE=step PERF_STEP_USERS=20 make perf-load    # ramp until the knee
 Slow upstream: `PERF_UPSTREAM_DELAY=0.5` adds `X-Mock-Delay` to every broker
 call. Shapes: `PERF_SHAPE=step|spike|soak` (`PERF_STEP_USERS`, `PERF_STEP_S`,
 `PERF_MAX_USERS`, `PERF_SOAK_S`).
+
+Idempotency: an `Idempotency-Key` forces the broker onto the buffered path, so
+compare the `Idempotent*User` classes against `BrokerEchoUser` with
+`PERF_STREAMING=false`, not the streaming default.
 
 ## Provisioning notes
 

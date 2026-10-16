@@ -64,7 +64,7 @@ def recreate_broker(workers: int, cpus: str) -> None:
         "broker",
         env={**os.environ, **env},
     )
-    wait_healthy("http://127.0.0.1:18100/health")
+    wait_healthy(f"http://127.0.0.1:{os.environ.get('PERF_BROKER_PORT', '18100')}/health")
 
 
 def sample_cpu(out: dict[str, float], delay_s: float) -> None:

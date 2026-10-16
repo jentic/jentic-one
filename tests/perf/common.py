@@ -11,6 +11,8 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -184,19 +186,14 @@ def compose(*args: str, env: dict[str, str] | None = None, capture: bool = False
 def wait_healthy(url: str, timeout_s: float = 90.0) -> None:
     """Poll ``url`` until it answers 2xx (used after recreating the broker)."""
     deadline = time.monotonic() + timeout_s
-    last: str = ""
+    last = ""
     while time.monotonic() < deadline:
         try:
-            proc = subprocess.run(
-                ["curl", "-fsS", "-o", "/dev/null", "--max-time", "2", url],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except OSError as exc:
-            raise RuntimeError("curl is required on the host") from exc
-        if proc.returncode == 0:
-            return
-        last = proc.stderr.strip()
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if 200 <= resp.status < 300:
+                    return
+                last = f"HTTP {resp.status}"
+        except (urllib.error.URLError, OSError) as exc:
+            last = str(exc)
         time.sleep(1)
     raise TimeoutError(f"{url} not healthy after {timeout_s}s: {last}")

@@ -196,6 +196,8 @@ services:
       PERF_VENDOR: ${PERF_VENDOR:-perf-noauth}
       PERF_UPSTREAM_DELAY: ${PERF_UPSTREAM_DELAY:-}
       PERF_STATUS_SEQUENCE: ${PERF_STATUS_SEQUENCE:-}
+      # Must match the broker's mode; DisconnectUser asserts on it.
+      PERF_STREAMING: ${PERF_STREAMING:-true}
       PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
       PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
       PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
@@ -227,6 +229,8 @@ services:
       PERF_VENDOR: ${PERF_VENDOR:-perf-noauth}
       PERF_UPSTREAM_DELAY: ${PERF_UPSTREAM_DELAY:-}
       PERF_STATUS_SEQUENCE: ${PERF_STATUS_SEQUENCE:-}
+      # Must match the broker's mode; DisconnectUser asserts on it.
+      PERF_STREAMING: ${PERF_STREAMING:-true}
       PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
       PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
       PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
