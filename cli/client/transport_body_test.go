@@ -106,6 +106,56 @@ func TestRetryTransportBuffersBodyWithoutGetBody(t *testing.T) {
 	}
 }
 
+// TestRetryTransportUnknownLengthGetBodyReadsOnce pins that a GetBody with
+// ContentLength == 0 and a real Body (net/http's "unknown length" for client
+// requests) is not trusted as a known-length replay: it goes through the
+// bounded read-once path, so the MaxBodyBytes cap applies and every attempt
+// carries the real body and length.
+func TestRetryTransportUnknownLengthGetBodyReadsOnce(t *testing.T) {
+	shrinkRetryKnobs(t)
+	payload := "unknown-length-body"
+	var seen []string
+	var lengths []int64
+	rt := &fakeRT{respond: func(attempt int, req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		seen = append(seen, string(b))
+		lengths = append(lengths, req.ContentLength)
+		if attempt == 0 {
+			return resp(http.StatusServiceUnavailable, nil), nil
+		}
+		return resp(http.StatusOK, nil), nil
+	}}
+	req, err := http.NewRequest(http.MethodPost, "https://broker.example/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Idempotency-Key", "k1")
+	req.Body = io.NopCloser(strings.NewReader(payload))
+	req.ContentLength = 0
+	var opens int
+	req.GetBody = func() (io.ReadCloser, error) {
+		opens++
+		return io.NopCloser(strings.NewReader(payload)), nil
+	}
+
+	got, err := newRetryTransport(rt, auth.Credentials{InjectedBearerToken: "at_x"}).RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = got.Body.Close()
+	if opens != 0 {
+		t.Errorf("GetBody opens = %d, want 0 (unknown length must be read once from Body)", opens)
+	}
+	if len(seen) != 2 || seen[0] != payload || seen[1] != payload {
+		t.Errorf("attempt bodies = %q, want the payload twice", seen)
+	}
+	for i, l := range lengths {
+		if l != int64(len(payload)) {
+			t.Errorf("attempt %d ContentLength = %d, want %d", i, l, len(payload))
+		}
+	}
+}
+
 // TestBufferBodyOversizeIsRequestError pins the request-path wording: an
 // oversize outbound body is refused with ErrRequestBodyTooLarge — never the
 // response-side ErrBodyTooLarge, which would misreport an upload as a bad

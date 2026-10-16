@@ -181,7 +181,10 @@ func bufferBody(req *http.Request) (body replayBody, canRewind bool, err error) 
 	if req.Body == nil || req.Body == http.NoBody {
 		return replayBody{}, true, nil
 	}
-	if req.GetBody != nil && req.ContentLength >= 0 {
+	// ContentLength > 0, not >= 0: for a client request, 0 with a non-NoBody
+	// Body means "unknown length" (a zero-length byte body is already NoBody),
+	// so such a request takes the bounded read-once path below.
+	if req.GetBody != nil && req.ContentLength > 0 {
 		_ = req.Body.Close()
 		if req.ContentLength > MaxBodyBytes {
 			return replayBody{}, false, requestTooLarge()
