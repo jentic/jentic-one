@@ -75,6 +75,10 @@ func (BearerTokenCreateRequest) RequiredFields() []string {
 	return []string{"api", "name", "token", "type"}
 }
 func (BearerTokenUpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (BindingAccessResponse) RequiredFields() []string    { return []string{"data", "suspended"} }
+func (BindingRuleSetSchema) RequiredFields() []string {
+	return []string{"curated", "id", "name", "rules"}
+}
 func (CatalogEntryLinksResponse) RequiredFields() []string {
 	return []string{"import", "operations", "self"}
 }

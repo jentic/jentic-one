@@ -23,6 +23,7 @@ from jentic_one.control.repos import (
     CustomerAPIKeyRepository,
     OAuthAppRegistrationRepository,
     OAuthClientCredentialRepository,
+    OAuthTokenRepository,
     PermissionRuleSetRepository,
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
@@ -105,6 +106,17 @@ from jentic_one.shared.permissions.evaluation import (
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url_async
+
+
+class BindingAccess(NamedTuple):
+    """What a direct ``(agent, credential)`` binding grants (``get_binding_access``)."""
+
+    rules: list[AgentPermissionRule]
+    rule_set: PermissionRuleSet | None
+    rule_set_rules: list[PermissionRuleSetRule]
+    granted_scopes: list[str] | None
+    suspended: bool
+
 
 logger = structlog.get_logger()
 
@@ -745,6 +757,35 @@ class CredentialService:
         await self._require_visible_binding(credential_id, agent_id, identity=identity)
         async with self._ctx.control_db.session() as session:
             return await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+
+    async def get_binding_access(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> BindingAccess:
+        """Everything a direct binding grants: its rules, rule set, scopes and suspension.
+
+        Same visibility as :meth:`list_agent_permissions`, so the bound agent
+        reads its own binding. ``rules`` are the inline rules, dormant while a
+        shared ``rule_set`` is attached. ``granted_scopes`` is the credential's
+        OAuth grant; ``None`` when it has no platform-visible scopes.
+        """
+        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            rules = await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+            rule_set = None
+            rule_set_rules: list[PermissionRuleSetRule] = []
+            if binding.rule_set_id is not None:
+                rule_set = await PermissionRuleSetRepository.get_by_id(session, binding.rule_set_id)
+                rule_set_rules = await PermissionRuleSetRepository.list_rules(
+                    session, binding.rule_set_id
+                )
+            token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        return BindingAccess(
+            rules=rules,
+            rule_set=rule_set,
+            rule_set_rules=rule_set_rules,
+            granted_scopes=token.scope.split() if token is not None and token.scope else None,
+            suspended=binding.suspended,
+        )
 
     async def replace_agent_permissions(
         self,

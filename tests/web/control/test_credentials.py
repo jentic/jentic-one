@@ -504,7 +504,12 @@ def test_agent_permissions_lifecycle(
     base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
 
     # A fresh binding has no rules — default-deny with nothing to show.
-    assert cred_writer_client.get(base).json() == {"data": []}
+    assert cred_writer_client.get(base).json() == {
+        "data": [],
+        "rule_set": None,
+        "granted_scopes": None,
+        "suspended": False,
+    }
 
     # PUT an ordered list: deny DELETE first, then allow the rest.
     rules = [
@@ -518,6 +523,11 @@ def test_agent_permissions_lifecycle(
         ("deny", ["DELETE"]),
         ("allow", ["GET", "POST"]),
     ]
+
+    # GET reads the rules back with the ids an edit names them by.
+    read = cred_writer_client.get(base).json()["data"]
+    assert [r["effect"] for r in read] == ["deny", "allow"]
+    assert all(r["id"].startswith("apr_") for r in read)
 
     # PUT is idempotent replacement, not append.
     resp = cred_writer_client.put(base, json=rules)

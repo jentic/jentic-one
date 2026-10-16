@@ -3817,6 +3817,238 @@
         "title": "BearerTokenUpdateRequest",
         "type": "object"
       },
+      "BindingAccessResponse": {
+        "description": "A binding's permission rules plus the rest of what it grants.",
+        "examples": [
+          {
+            "data": [
+              {
+                "_comment": "Read-only access to charges.",
+                "_system": false,
+                "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "granted_scopes": [
+              "repo",
+              "read:user"
+            ],
+            "rule_set": {
+              "curated": false,
+              "id": "prs_6968b3987c22b63e87e79f05",
+              "name": "Stripe read-only",
+              "rules": [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            },
+            "suspended": false
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "The binding's permission rules, in evaluation order.",
+            "examples": [
+              [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleReadSchema"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "granted_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scopes the credential's OAuth grant holds; null when it has none.",
+            "examples": [
+              [
+                "repo",
+                "read:user"
+              ]
+            ],
+            "title": "Granted Scopes"
+          },
+          "rule_set": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BindingRuleSetSchema"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The shared rule set the binding points at; null when its own rules (`data`) apply. While a set is attached, `data` is dormant.",
+            "examples": [
+              {
+                "curated": false,
+                "id": "prs_6968b3987c22b63e87e79f05",
+                "name": "Stripe read-only",
+                "rules": [
+                  {
+                    "_comment": "Read-only access to charges.",
+                    "_system": false,
+                    "effect": "allow",
+                    "id": "apr_6968b3987c22b63e87e79f06",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          },
+          "suspended": {
+            "description": "True when the binding is suspended and the agent cannot use it.",
+            "examples": [
+              false
+            ],
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "suspended"
+        ],
+        "title": "BindingAccessResponse",
+        "type": "object"
+      },
+      "BindingRuleSetSchema": {
+        "description": "The shared rule set a binding points at.",
+        "examples": [
+          {
+            "curated": false,
+            "id": "prs_6968b3987c22b63e87e79f05",
+            "name": "Stripe read-only",
+            "rules": [
+              {
+                "_comment": "Read-only access to charges.",
+                "_system": false,
+                "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "curated": {
+            "description": "True for a curated set, which an edit can copy but never change.",
+            "examples": [
+              false
+            ],
+            "title": "Curated",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "ID of the rule set (`prs_…`).",
+            "examples": [
+              "prs_6968b3987c22b63e87e79f05"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the rule set.",
+            "examples": [
+              "Stripe read-only"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "rules": {
+            "description": "The set's rules, in evaluation order. They apply instead of `data`.",
+            "examples": [
+              [
+                {
+                  "_comment": "Read-only access to charges.",
+                  "_system": false,
+                  "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleReadSchema"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "curated",
+          "rules"
+        ],
+        "title": "BindingRuleSetSchema",
+        "type": "object"
+      },
       "Body_consentAgentCreate": {
         "examples": [
           {
@@ -14214,6 +14446,7 @@
                 "_comment": "Read-only access to charges.",
                 "_system": false,
                 "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
                 "match_mode": "prefix",
                 "methods": [
                   "GET"
@@ -14235,6 +14468,7 @@
                   "_comment": "Read-only access to charges.",
                   "_system": false,
                   "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
                   "match_mode": "prefix",
                   "methods": [
                     "GET"
@@ -14266,6 +14500,7 @@
             "_comment": "Read-only access to charges.",
             "_system": false,
             "effect": "allow",
+            "id": "apr_6968b3987c22b63e87e79f06",
             "match_mode": "prefix",
             "methods": [
               "GET"
@@ -14313,6 +14548,21 @@
             ],
             "title": "Effect",
             "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session edit can name it in `remove` or `before`.",
+            "examples": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "title": "Id"
           },
           "match_mode": {
             "default": "regex",
@@ -16200,6 +16450,7 @@
                 "_comment": "Read-only access to charges.",
                 "_system": false,
                 "effect": "allow",
+                "id": "apr_6968b3987c22b63e87e79f06",
                 "match_mode": "prefix",
                 "methods": [
                   "GET"
@@ -16292,6 +16543,7 @@
                   "_comment": "Read-only access to charges.",
                   "_system": false,
                   "effect": "allow",
+                  "id": "apr_6968b3987c22b63e87e79f06",
                   "match_mode": "prefix",
                   "methods": [
                     "GET"
@@ -36654,7 +36906,7 @@
     "/credentials/{credential_id}/agents/{agent_id}/permissions": {
       "description": "`GET`: List binding permission rules. `PUT`: Replace binding permission rules. `PATCH`: Patch binding permission rules.",
       "get": {
-        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.",
+        "description": "List the ordered PBAC rules for a direct `(agent, credential)` binding.\n\nAlso returns the rest of what the binding grants: the shared rule set it\npoints at (whose rules apply instead of `data`), the credential's granted\nOAuth scopes, and whether the binding is suspended. The bound agent can\nread its own binding.",
         "operationId": "listAgentCredentialPermissions",
         "parameters": [
           {
@@ -36708,6 +36960,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -36717,10 +36970,36 @@
                       ],
                       "path": "/v1/charges"
                     }
-                  ]
+                  ],
+                  "granted_scopes": [
+                    "repo",
+                    "read:user"
+                  ],
+                  "rule_set": {
+                    "curated": false,
+                    "id": "prs_6968b3987c22b63e87e79f05",
+                    "name": "Stripe read-only",
+                    "rules": [
+                      {
+                        "_comment": "Read-only access to charges.",
+                        "_system": false,
+                        "effect": "allow",
+                        "id": "apr_6968b3987c22b63e87e79f06",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    ]
+                  },
+                  "suspended": false
                 },
                 "schema": {
-                  "$ref": "#/components/schemas/PermissionRuleListResponse"
+                  "$ref": "#/components/schemas/BindingAccessResponse"
                 }
               }
             },
@@ -36950,6 +37229,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -37178,6 +37458,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -47878,6 +48159,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48266,6 +48548,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48480,6 +48763,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"
@@ -48692,6 +48976,7 @@
                       "_comment": "Read-only access to charges.",
                       "_system": false,
                       "effect": "allow",
+                      "id": "apr_6968b3987c22b63e87e79f06",
                       "match_mode": "prefix",
                       "methods": [
                         "GET"

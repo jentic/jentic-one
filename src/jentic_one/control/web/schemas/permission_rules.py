@@ -110,6 +110,14 @@ class PermissionRuleSchema(BasePermissionRuleSchema):
 class PermissionRuleReadSchema(BaseModel):
     """Permission rule response (includes system fields)."""
 
+    id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session "
+            "edit can name it in `remove` or `before`."
+        ),
+        examples=[ex.PERMISSION_RULE_ID],
+    )
     effect: Literal["allow", "deny", "require-approval"] = Field(
         description="Whether this rule allows, denies, or holds the matched request for "
         "human approval (`require-approval`).",
@@ -175,6 +183,41 @@ class PermissionRuleListResponse(BaseModel):
 
     data: list[PermissionRuleReadSchema] = Field(
         description="The binding's permission rules, in evaluation order."
+    )
+
+
+class BindingRuleSetSchema(BaseModel):
+    """The shared rule set a binding points at."""
+
+    id: str = Field(description="ID of the rule set (`prs_…`).", examples=[ex.RULE_SET_ID])
+    name: str = Field(description="Name of the rule set.", examples=["Stripe read-only"])
+    curated: bool = Field(
+        description="True for a curated set, which an edit can copy but never change.",
+        examples=[False],
+    )
+    rules: list[PermissionRuleReadSchema] = Field(
+        description="The set's rules, in evaluation order. They apply instead of `data`."
+    )
+
+
+class BindingAccessResponse(PermissionRuleListResponse):
+    """A binding's permission rules plus the rest of what it grants."""
+
+    rule_set: BindingRuleSetSchema | None = Field(
+        default=None,
+        description=(
+            "The shared rule set the binding points at; null when its own rules (`data`) apply. "
+            "While a set is attached, `data` is dormant."
+        ),
+    )
+    granted_scopes: list[str] | None = Field(
+        default=None,
+        description="Scopes the credential's OAuth grant holds; null when it has none.",
+        examples=[["repo", "read:user"]],
+    )
+    suspended: bool = Field(
+        description="True when the binding is suspended and the agent cannot use it.",
+        examples=[False],
     )
 
 

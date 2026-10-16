@@ -2466,6 +2466,56 @@ type BearerTokenUpdateRequest struct {
 // Examples: bearer_token
 type BearerTokenUpdateRequestType string
 
+// BindingAccessResponse A binding's permission rules plus the rest of what it grants.
+//
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"granted_scopes":["repo","read:user"],"rule_set":{"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]},"suspended":false}
+type BindingAccessResponse struct {
+	// Data The binding's permission rules, in evaluation order.
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	Data []PermissionRuleReadSchema `json:"data"`
+
+	// GrantedScopes Scopes the credential's OAuth grant holds; null when it has none.
+	//
+	// Examples: ["repo","read:user"]
+	GrantedScopes *[]string `json:"granted_scopes,omitempty"`
+
+	// RuleSet The shared rule set the binding points at; null when its own rules (`data`) apply. While a set is attached, `data` is dormant.
+	//
+	// Examples: {"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+	RuleSet *BindingRuleSetSchema `json:"rule_set,omitempty"`
+
+	// Suspended True when the binding is suspended and the agent cannot use it.
+	//
+	// Examples: false
+	Suspended bool `json:"suspended"`
+}
+
+// BindingRuleSetSchema The shared rule set a binding points at.
+//
+// Examples: {"curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+type BindingRuleSetSchema struct {
+	// Curated True for a curated set, which an edit can copy but never change.
+	//
+	// Examples: false
+	Curated bool `json:"curated"`
+
+	// Id ID of the rule set (`prs_…`).
+	//
+	// Examples: prs_6968b3987c22b63e87e79f05
+	Id string `json:"id"`
+
+	// Name Name of the rule set.
+	//
+	// Examples: Stripe read-only
+	Name string `json:"name"`
+
+	// Rules The set's rules, in evaluation order. They apply instead of `data`.
+	//
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	Rules []PermissionRuleReadSchema `json:"rules"`
+}
+
 // BodyConsentAgentCreate Examples: {"agent_name":"invoice-reconciler","consent_token":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","create_state":"eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"}
 type BodyConsentAgentCreate struct {
 	// AgentName Name for the new agent; surrounding whitespace is trimmed.
@@ -6071,17 +6121,17 @@ type PermissionResponse struct {
 
 // PermissionRuleListResponse List of permission rules.
 //
-// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"data":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type PermissionRuleListResponse struct {
 	// Data The binding's permission rules, in evaluation order.
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Data []PermissionRuleReadSchema `json:"data"`
 }
 
 // PermissionRuleReadSchema Permission rule response (includes system fields).
 //
-// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
+// Examples: {"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}
 type PermissionRuleReadSchema struct {
 	// UnderscoreComment Optional note attached to the rule.
 	//
@@ -6097,6 +6147,11 @@ type PermissionRuleReadSchema struct {
 	//
 	// Examples: allow
 	Effect PermissionRuleReadSchemaEffect `json:"effect"`
+
+	// Id ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session edit can name it in `remove` or `before`.
+	//
+	// Examples: apr_6968b3987c22b63e87e79f06
+	Id *string `json:"id,omitempty"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` or `exact`.
 	//
@@ -6748,7 +6803,7 @@ type RuleSetListResponse struct {
 
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 //
-// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
+// Examples: {"binding_count":3,"created_at":"2026-01-15T09:30:00Z","created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":true,"description":"Allows GET requests to the Stripe API; denies everything else.","name":"Stripe read-only","rule_set_id":"prs_6968b3987c22b63e87e79f05","rules":[{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]}
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
 	//
@@ -6787,7 +6842,7 @@ type RuleSetResponse struct {
 
 	// Rules Ordered rule list (first-match-wins, default-deny).
 	//
-	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
+	// Examples: [{"_comment":"Read-only access to charges.","_system":false,"effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}]
 	Rules []PermissionRuleReadSchema `json:"rules"`
 }
 
@@ -10876,6 +10931,11 @@ type ClientInterface interface {
 	//
 	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
 	//
+	// Also returns the rest of what the binding grants: the shared rule set it
+	// points at (whose rules apply instead of `data`), the credential's granted
+	// OAuth scopes, and whether the binding is suspended. The bound agent can
+	// read its own binding.
+	//
 	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 	ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -14744,6 +14804,11 @@ func (c *Client) ListCredentialAgents(ctx context.Context, credentialId string, 
 // ListAgentCredentialPermissions List binding permission rules
 //
 // List the ordered PBAC rules for a direct `(agent, credential)` binding.
+//
+// Also returns the rest of what the binding grants: the shared rule set it
+// points at (whose rules apply instead of `data`), the credential's granted
+// OAuth scopes, and whether the binding is suspended. The bound agent can
+// read its own binding.
 //
 // Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
 func (c *Client) ListAgentCredentialPermissions(ctx context.Context, credentialId string, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27402,6 +27467,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// List the ordered PBAC rules for a direct `(agent, credential)` binding.
 	//
+	// Also returns the rest of what the binding grants: the shared rule set it
+	// points at (whose rules apply instead of `data`), the credential's granted
+	// OAuth scopes, and whether the binding is suspended. The bound agent can
+	// read its own binding.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
@@ -36621,7 +36691,7 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PermissionRuleListResponse
+	JSON200 *BindingAccessResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -36641,7 +36711,7 @@ type ListAgentCredentialPermissionsHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListAgentCredentialPermissionsHTTPResp) GetJSON200() *PermissionRuleListResponse {
+func (r ListAgentCredentialPermissionsHTTPResp) GetJSON200() *BindingAccessResponse {
 	return r.JSON200
 }
 
@@ -45847,6 +45917,11 @@ func (c *ClientWithResponses) ListCredentialAgentsWithResponse(ctx context.Conte
 //
 // List the ordered PBAC rules for a direct `(agent, credential)` binding.
 //
+// Also returns the rest of what the binding grants: the shared rule set it
+// points at (whose rules apply instead of `data`), the credential's granted
+// OAuth scopes, and whether the binding is suspended. The bound agent can
+// read its own binding.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /credentials/{credential_id}/agents/{agent_id}/permissions (the `ListAgentCredentialPermissions` operationId).
@@ -54521,7 +54596,7 @@ func ParseListAgentCredentialPermissionsHTTPResp(rsp *http.Response) (*ListAgent
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PermissionRuleListResponse
+		var dest BindingAccessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
