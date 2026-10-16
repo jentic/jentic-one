@@ -18,19 +18,22 @@ claimed job.
 The race tests make the change *after* the authorizer has allowed a claimed
 job and before credentials are resolved — the window the live actor read
 right before injection closes. They run the handler on a session that has not
-written yet, as the worker's handler transaction has not at that point, so the
-change can commit on SQLite too: a transaction opened with ``BEGIN IMMEDIATE``
-around the handler would hold the single writer lock the change needs.
+written yet (``_UnwrittenSession``), as the worker's handler transaction has
+not at that point, so the change can commit on SQLite too: a transaction
+opened with ``BEGIN IMMEDIATE`` around the handler would hold the single
+writer lock the change needs.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 import structlog
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
@@ -127,6 +130,26 @@ class _ChangesAfterAuthorizing:
         assert verdict.allowed, verdict.problem
         await self._change()
         return verdict
+
+
+class _UnwrittenSession:
+    """A real session that has not written yet, offered as the handler's worker argument.
+
+    It forwards to the session and its ``transaction()`` yields that same
+    session, so the handler can write through it directly or open its own
+    transaction on it; either way nothing takes a write lock until the
+    handler's denial write, after the change under test has committed.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[AsyncSession]:
+        yield self._session
 
 
 @pytest.fixture()
@@ -531,7 +554,7 @@ async def test_claimed_job_denied_when_actor_changed_after_authorization(
         async with ctx.admin_db.session() as session:
             result = await handler.execute(
                 job.id,
-                session,
+                _UnwrittenSession(session),
                 payload=job.payload,
                 created_by=job.created_by,
                 actor_type=job.actor_type,

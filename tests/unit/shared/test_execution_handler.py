@@ -13,6 +13,8 @@ session that has no real backing is fine for these pure-logic unit tests.
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -40,6 +42,19 @@ class _FakeSession:
     The handler only touches the session via ``emit_event`` (best-effort,
     wrapped in try/except), so it never needs to behave like a real session.
     """
+
+
+class _FakeWorkerDb(_FakeSession):
+    """The handler's worker-side argument, as a session or as the worker's database.
+
+    It is the session itself, and its ``transaction()`` yields itself, so it
+    serves the handler whether that argument is written through directly or
+    used to open the handler's own short transactions.
+    """
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[_FakeWorkerDb]:
+        yield self
 
 
 class _RecordingExecutor:
@@ -586,7 +601,7 @@ async def test_handler_denies_on_the_live_actor_read(
     ):
         result = await handler.execute(
             "job_gone",
-            _FakeSession(),
+            _FakeWorkerDb(),
             payload=_payload(),
             created_by="act_gone",
             actor_type=actor_type,
@@ -649,7 +664,7 @@ async def test_handler_injects_only_after_the_live_read_allows() -> None:
     )
 
     await handler.execute(
-        "job_live", _FakeSession(), payload=_payload(), created_by="agt_live", actor_type="agent"
+        "job_live", _FakeWorkerDb(), payload=_payload(), created_by="agt_live", actor_type="agent"
     )
 
     assert order == ["authorize", "live_read", "inject"]
