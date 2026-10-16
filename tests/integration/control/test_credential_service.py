@@ -1173,3 +1173,102 @@ async def test_refresh_applies_control_egress_off_the_event_loop(
     assert len(sent) == (1 if allowed else 0)
     assert threads
     assert loop_thread not in threads
+
+
+def _track_open_transactions(ctx: Context, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the ``ctx.control_db.transaction()`` blocks open at each moment.
+
+    Wraps the real method (the transaction still runs against the database);
+    the returned one-item list holds the live count.
+    """
+    real = ctx.control_db.transaction
+    open_count = [0]
+
+    @asynccontextmanager
+    async def _tracked(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        async with real(*args, **kwargs) as session:
+            open_count[0] += 1
+            try:
+                yield session
+            finally:
+                open_count[0] -= 1
+
+    monkeypatch.setattr(ctx.control_db, "transaction", _tracked)
+    return open_count
+
+
+@contextmanager
+def _lookups_seeing(open_count: list[int]) -> Iterator[list[tuple[int, int]]]:
+    """Record ``(thread, open transactions)`` at every ``_INTERNAL_HOST`` lookup."""
+    real = socket.getaddrinfo
+    seen: list[tuple[int, int]] = []
+
+    def _fake(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == _INTERNAL_HOST:
+            seen.append((threading.get_ident(), open_count[0]))
+            return _addrinfo(_INTERNAL_IP)
+        return real(host, *args, **kwargs)
+
+    with patch.object(socket, "getaddrinfo", side_effect=_fake):
+        yield seen
+
+
+@pytest.mark.usefixtures("uncached_dns")
+async def test_create_oauth2_resolves_urls_outside_the_write_transaction(
+    integration_config: AppConfig, clean_credentials: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``token_url`` / ``authorize_url`` resolve before ``transaction()`` opens.
+
+    On SQLite the transaction holds the process-wide writer lock, so a slow
+    resolver inside it would fail concurrent writers on ``busy_timeout``.
+    Uncached so both URLs (same host) reach the resolver and are observed.
+    """
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    loop_thread = threading.get_ident()
+    payload = _oauth2_create(_INTERNAL_TOKEN_URL).model_copy(
+        update={"authorize_url": f"https://{_INTERNAL_HOST}/oauth/authorize"}
+    )
+    async with _context(config) as ctx:
+        open_count = _track_open_transactions(ctx, monkeypatch)
+        with _lookups_seeing(open_count) as seen:
+            await CredentialService(ctx).create(payload, identity=_ADMIN_IDENTITY)
+    assert len(seen) == 2
+    assert all(thread != loop_thread and opened == 0 for thread, opened in seen)
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_update_oauth2_resolves_token_url_off_the_loop_outside_the_transaction(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    monkeypatch: pytest.MonkeyPatch,
+    control: dict[str, Any],
+    allowed: bool,
+) -> None:
+    """Update-time ``token_url`` validation: ``control.egress``, off the loop, pre-transaction."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    update = CredentialUpdate(
+        type=CredentialType.OAUTH2, client_secret=_ROTATED_SECRET, token_url=_INTERNAL_TOKEN_URL
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        created = await svc.create(
+            _oauth2_create("https://93.184.216.34/oauth/token"), identity=_ADMIN_IDENTITY
+        )
+        open_count = _track_open_transactions(ctx, monkeypatch)
+        with _lookups_seeing(open_count) as seen:
+            if allowed:
+                await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+            else:
+                with pytest.raises(InvalidCredentialInputError, match="blocked address range"):
+                    await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+        redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert len(seen) == 1
+    assert seen[0][0] != loop_thread
+    assert seen[0][1] == 0
+    assert isinstance(redacted.details, OAuth2Redacted)
+    expected = _INTERNAL_TOKEN_URL if allowed else "https://93.184.216.34/oauth/token"
+    assert redacted.details.token_url == expected
