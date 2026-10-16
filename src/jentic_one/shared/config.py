@@ -1548,9 +1548,13 @@ class SecurityConfig(BaseModel):
         description=(
             "Upper bound on live entries (per-key time buckets and dedup markers) "
             "the in-process repeated-failure counter holds "
-            "on the `memory` shared-state backend. At the bound new keys are not "
-            "tracked and fall back to the database scan, so the bound caps memory "
-            "without hiding an emission. Ignored on Redis."
+            "on the `memory` shared-state backend. Each actor + toolkit/credential + "
+            "operation key failing within two windows uses up to 4 entries (6 when a "
+            "toolkit call also carries a credential). When the bound is reached the "
+            "counter fails open: every failure runs the database scan until two "
+            "windows after the store last rejected a key. The bound caps memory and "
+            "never hides an emission, but a cardinality spike above it disables the "
+            "pre-filter. Ignored on Redis."
         ),
     )
 
