@@ -1283,19 +1283,23 @@ class CredentialService:
             validated_token_url = await self._validate_update_token_url(payload)
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
-            credential = await self._get_updatable(session, credential_id, payload, access_filters)
             if validated_token_url is not None:
-                # Serialise with the broker's single-flight refresh and with a
-                # connect's token write before any write in this transaction:
+                # Serialise with the broker's single-flight refresh, with a
+                # connect's token write and with a concurrent token_url edit:
                 # a refresh already holding the lock finishes against the
                 # stored origin, and the next one finds the token row gone
                 # (needs-reconnect) rather than presenting the old refresh
                 # token to the new origin; a connect writing after this commits
                 # re-checks the endpoint and discards a grant minted at the old
-                # origin. Taken for every token_url edit, before the origin
-                # comparison, so no header UPDATE holds the credentials row
-                # while this waits.
+                # origin. It is the transaction's first statement, so the
+                # credential and client rows the origin comparison reads are
+                # loaded after any edit that held the lock has committed: a
+                # path edit queued behind a cross-origin move compares against
+                # the moved URL and needs client_secret itself. The read-only
+                # check above has already answered 404 for an id the caller
+                # cannot see, so locking by id discloses nothing.
                 await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
+            credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
             before_state = self._audit_snapshot(credential)
 
@@ -1640,8 +1644,10 @@ class CredentialService:
         change requires ``client_secret`` in the same PATCH, and it drops the
         live ``oauth_token`` row so the old grant is never presented to the
         new origin; the credential must be reconnected. Same-origin path edits
-        apply on their own. The caller holds the refresh lock
-        (``OAuthTokenRepository.acquire_refresh_lock``) for any token_url edit.
+        apply on their own. For any token_url edit the caller takes the
+        refresh lock (``OAuthTokenRepository.acquire_refresh_lock``) before
+        loading *credential*, so the stored token_url compared here is the
+        post-lock one.
 
         Raises ``InvalidCredentialInputError`` (400) when the credential uses
         a shared app registration, when it has no stored client config (a
