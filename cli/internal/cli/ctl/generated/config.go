@@ -246,13 +246,25 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
 
+	// How long (seconds) a streaming execution persist waits for one of the
+	// ``broker.streaming_persist_max_concurrency`` slots. Past it the record is
+	// abandoned: logged as ``streaming_execution_persist_abandoned`` and counted on
+	// ``broker.streaming_execution.persist_failures`` (``reason=backlog_timeout``).
+	// The wait runs after the response is complete, and a request no longer holds its
+	// admission slot once its response is complete, so the wait delays neither the
+	// client nor ``/ready``; the timeout bounds how long a stalled admin database can
+	// keep records queued in memory and how long shutdown waits on them.
+	StreamingPersistAcquireTimeoutS float64 `json:"streaming_persist_acquire_timeout_s,omitempty,omitzero" yaml:"streaming_persist_acquire_timeout_s,omitempty" mapstructure:"streaming_persist_acquire_timeout_s,omitempty"`
+
 	// Per-process cap on concurrent post-response persists of streaming execution
-	// records (each holds one admin-DB connection). Excess persists wait for a slot —
-	// none are dropped — and the waiting + in-flight count is exported as
-	// ``broker.streaming_execution.persist_backlog``. The effective cap is clamped to
-	// ``databases.admin.pool_max - 1`` (minimum 1) so a burst never takes the whole
-	// admin pool; the default (half the default admin pool of 10) leaves headroom for
-	// credential-access audit writes and the buffered path.
+	// records (each holds one admin-DB connection). Excess persists wait for a slot,
+	// up to ``broker.streaming_persist_acquire_timeout_s``; the waiting and writing
+	// counts are exported as ``broker.streaming_execution.persist_pending``. The
+	// effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1; a
+	// ``streaming_persist_limit_clamped`` warning is logged when it applies), so with
+	// ``pool_max >= 2`` persists never take every connection of the admin base pool.
+	// ``pool_max`` is the base pool size only; SQLAlchemy's default overflow can open
+	// up to 10 more connections on top of it.
 	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency,omitempty,omitzero" yaml:"streaming_persist_max_concurrency,omitempty" mapstructure:"streaming_persist_max_concurrency,omitempty"`
 
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
@@ -288,6 +300,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
+	}
+	if v, ok := raw["streaming_persist_acquire_timeout_s"]; !ok || v == nil {
+		plain.StreamingPersistAcquireTimeoutS = 5.0
+	}
+	if 0 >= plain.StreamingPersistAcquireTimeoutS {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_acquire_timeout_s", 0)
 	}
 	if v, ok := raw["streaming_persist_max_concurrency"]; !ok || v == nil {
 		plain.StreamingPersistMaxConcurrency = 5
