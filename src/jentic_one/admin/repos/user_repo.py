@@ -192,6 +192,23 @@ class UserRepository:
         return user
 
     @staticmethod
+    async def revoke_login_sessions(session: AsyncSession, user_id: str) -> User:
+        """Bump the user's session generation: every login JWT issued so far is refused.
+
+        Login JWTs minted afterwards (a fresh login, or the re-mint a password
+        change returns) carry the new generation and are unaffected. The
+        increment is a single ``UPDATE … SET n = n + 1``, so concurrent bumps
+        never collapse into one.
+        """
+        user = await session.get(User, user_id)
+        if user is None:
+            raise UserNotFoundError(user_id)
+        user.session_generation = User.session_generation + 1
+        await session.flush()
+        await session.refresh(user, ["session_generation"])
+        return user
+
+    @staticmethod
     async def enable(session: AsyncSession, user_id: str) -> User:
         user = await session.get(User, user_id)
         if user is None:

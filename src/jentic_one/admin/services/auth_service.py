@@ -38,6 +38,7 @@ from jentic_one.admin.services.schemas.auth import (
     TokenBundle,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -60,12 +61,15 @@ class AuthService:
         email: str,
         must_change_password: bool,
         auth_time: int,
+        session_generation: int,
     ) -> TokenBundle:
         """Mint a login-JWT bundle with freshly-resolved effective permissions.
 
         ``auth_time`` (epoch seconds of the original credential authentication)
         rides in the claims so :meth:`refresh` can enforce the absolute session
         window (``admin.auth.session_ttl_seconds``) across re-mints.
+        ``session_generation`` (the user row's current value) rides as
+        ``sgen``: bumping the row's generation revokes the token.
         """
         config = self._ctx.config.admin.auth
         perm_service = PermissionService(self._ctx)
@@ -79,6 +83,7 @@ class AuthService:
             "permissions": perms_view.effective,
             "must_change_password": must_change_password,
             "auth_time": auth_time,
+            SESSION_GENERATION_CLAIM: session_generation,
         }
         token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
         return TokenBundle(
@@ -231,6 +236,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def refresh(self, raw_token: str) -> TokenBundle:
@@ -279,6 +285,10 @@ class AuthService:
             user = await UserRepository.get_by_id(session, claims["sub"])
             if user is None or not user.active:
                 raise InvalidCredentialsError("Token is not refreshable")
+            # Defence in depth behind the auth gate: a revoked session (the
+            # generation moved on) never re-mints into a live one.
+            if claims.get(SESSION_GENERATION_CLAIM, 0) != user.session_generation:
+                raise InvalidCredentialsError("Token is not refreshable")
             await record_audit(
                 session,
                 action=AuditAction.REFRESH,
@@ -295,6 +305,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=auth_time,
+            session_generation=user.session_generation,
         )
 
     async def bootstrap_admin(
@@ -384,6 +395,7 @@ class AuthService:
             email=user.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def change_own_password(
@@ -412,6 +424,10 @@ class AuthService:
             await UserSecretRepository.set_password_hash(
                 session, user_id, password_hash=hashed, created_by=user_id
             )
+            # A new password ends every other session; the bundle minted below
+            # is issued after the cutoff, so the caller's own session survives.
+            revoked = await UserRepository.revoke_login_sessions(session, user_id)
+            session_generation = revoked.session_generation
 
             user = await UserRepository.get_by_id(session, user_id)
             if user is not None and user.must_change_password:
@@ -437,6 +453,7 @@ class AuthService:
             email=user.email if user is not None else identity.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=session_generation,
         )
 
     async def reset_password(self, *, email: str, temporary_password: str) -> str:
@@ -469,6 +486,9 @@ class AuthService:
                 created_by=user.id,
             )
             await UserSecretRepository.unlock(session, user.id)
+            # A reset is the response to a lost or leaked credential: end every
+            # session issued under the old one.
+            await UserRepository.revoke_login_sessions(session, user.id)
             if not user.must_change_password:
                 await UserRepository.update(session, user.id, must_change_password=True)
 

@@ -387,7 +387,10 @@ export class UsersService {
     }
     /**
      * Enable User
-     * Enable a user account.
+     * Enable a disabled user account.
+     *
+     * A deleted user cannot be re-enabled (409). Login sessions issued before the
+     * account was disabled stay revoked; the user signs in again.
      * @returns void
      * @throws ApiError
      */
@@ -409,6 +412,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

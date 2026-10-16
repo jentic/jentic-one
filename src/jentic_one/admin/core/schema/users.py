@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Index, String, column
+from sqlalchemy import Boolean, Index, Integer, String, column
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -39,3 +39,10 @@ class User(AuditableMixin, AdminBase):
         Boolean, nullable=False, default=False, server_default="false"
     )
     invite_state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    # Login-session generation, carried by every login JWT as ``sgen``: the
+    # shared verifier refuses a user token whose claim differs (#1139). Bumped
+    # on disable, delete and password change/reset, so re-enabling a user does
+    # not revive tokens minted before the disable.
+    session_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
