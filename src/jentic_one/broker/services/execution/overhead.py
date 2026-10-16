@@ -23,9 +23,10 @@ execution that got the upstream response headers and was persisted records a
 sample. A failure before those headers (connect refused, header timeout, open
 circuit, a stream that never opened), a failed persist, and paths that never
 call the upstream (async ``202``, approval hold, idempotent replay) record
-nothing. A streaming call that fails after the headers (mid-body reset,
-transfer deadline) persists a FAILED record and so still records its
-pre-header time plus that persistence.
+nothing. A streaming body that fails after the headers (mid-body reset,
+transfer deadline, client disconnect) records nothing either: the record is
+written only after a body that completes, so there is no persisted record
+(#1712).
 """
 
 from __future__ import annotations
