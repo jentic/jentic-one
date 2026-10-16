@@ -75,15 +75,18 @@ class DraftRevisionMatch:
     """A ``draft`` revision that serves a METHOD+URL no live revision serves.
 
     Read only on the broker's unregistered-URL 404 path, to explain the miss.
-    ``submitted_by`` and ``origin`` are the revision's own columns: the broker
-    uses them to decide whether the caller could pin the draft
-    (``Jentic-Revision``) and never puts ``submitted_by`` on the wire.
+    The resolver returns a match only for a draft the caller submitted or may
+    pin. ``pin_outcome`` is what a ``Jentic-Revision`` pin to it would resolve
+    to for the caller — the registry's pin rule, not a broker copy of it:
+    ``RESOLVED`` (the pin routes the call), ``HOST_CHANGE_HELD`` (the caller's
+    draft changes the hosts of a credential-bound API, so only an operator may
+    pin or promote it) or ``FORBIDDEN`` (the caller's draft is held for
+    server-host review, so only an operator may pin or promote it).
     """
 
     api: APIReference
     revision_id: uuid.UUID
-    submitted_by: str | None = None
-    origin: str | None = None
+    pin_outcome: RevisionPinOutcome
 
 
 @runtime_checkable
@@ -117,14 +120,20 @@ class RegistryResolverProtocol(Protocol):
         """
         ...
 
-    async def find_draft_match(self, *, method: str, url: str) -> DraftRevisionMatch | None:
-        """Find a ``draft`` revision that serves METHOD+URL, or ``None``.
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        """Name a ``draft`` revision the caller may know of that serves METHOD+URL.
 
-        Uses the same host/path/method matching as the unpinned lookup, but
-        searches ``draft`` revisions only, in one bounded statement. The broker
-        calls it only after an unpinned lookup matched nothing, so a successful
-        call never pays for it; it never raises the lookup errors
-        (ambiguity, too many candidates) — it either names a draft or not.
+        Uses the same host/path/method matching as a pinned lookup, but
+        searches ``draft`` revisions only, in one bounded statement (plus the
+        pin rule's server-host check when the match is the caller's own draft).
+        Only a draft the caller submitted, or one its pin would resolve, is
+        returned — another principal's draft is ``None``, exactly as if nothing
+        served the URL. The broker calls it only after an unpinned lookup
+        matched nothing, so a successful call never pays for it; it never raises
+        the lookup errors (ambiguity, too many candidates) — it either names a
+        draft or not.
         """
         ...
 

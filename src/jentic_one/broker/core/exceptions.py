@@ -690,11 +690,12 @@ def draft_revision_directive(
     The URL is registered — in a ``draft`` revision nobody promoted — so
     re-importing the spec or searching for another operation will not help.
     ``pin_header`` is the ``Jentic-Revision`` value that routes the call through
-    the draft, set only when the caller may pin it (it submitted the draft, or
-    holds the operator scope for a draft held for host review): the agent
-    resends once with ``parameters.headers``. Otherwise only promotion helps,
-    which needs ``apis:write`` (not a default agent permission), so the
-    strategy is ``prompt_human``.
+    the draft (it keeps any pins the request already carried), set when the
+    registry's pin rule accepts the caller's pin: the agent resends once with
+    ``parameters.headers``. ``None`` means the draft's server hosts need
+    operator review (``credentials:write``) before anyone without that scope
+    may pin or promote it, so the strategy is ``prompt_human``.
+    ``promote_path`` is a control API path, not a broker one.
     """
     api = f"{vendor}/{name}/{version}"
     command = f"jentic apis promote {api} {revision_id}"
@@ -717,14 +718,17 @@ def draft_revision_directive(
             human_readable_instruction=(
                 f"{lead} Resend the same request once with the Jentic-Revision header in "
                 "parameters.headers to call the draft. For unpinned calls to reach it, it "
-                f"must be promoted (`{command}`, needs apis:write)."
+                f"must be promoted (`{command}`, needs apis:write, and credentials:write "
+                "if it changes the server hosts of an API with bound credentials)."
             ),
         )
     return AgentDirective(
         strategy="prompt_human",
         parameters=parameters,
         human_readable_instruction=(
-            f"{lead} Ask your operator to promote it (`{command}`, needs apis:write), "
-            "then retry this call."
+            f"{lead} Its server hosts differ from the hosts the API's bound credentials "
+            "are sent to, so only an operator holding credentials:write may pin or "
+            f"promote it. Ask your operator to review and promote it (`{command}`, "
+            "needs apis:write and credentials:write), then retry this call."
         ),
     )

@@ -65,6 +65,7 @@ class DraftUrlIndexCandidate:
     vendor: str
     name: str
     version: str
+    api_id: uuid.UUID
     submitted_by: str | None
     origin: str | None
 
@@ -376,8 +377,14 @@ class UrlIndexRepository:
 
         The exact-host and regex-host candidates the unpinned lookup reads in
         two statements are read together here (``host = :host OR host IS
-        NULL``), for every method in ``methods``, newest draft first and at most
-        ``limit`` rows. Both ``host`` arms are prefixes of
+        NULL``), for every method in ``methods``. Rows come back exact-host
+        first, then newest draft first, and at most ``limit`` rows are
+        returned — the cap bounds the result, not the rows read: the statement
+        reads every index row of any revision for the host, method and segment
+        count, as the live lookup does, and filters ``state = 'draft'`` on the
+        joined revision. A caller that must tell a complete result from a
+        truncated one passes ``limit`` one above the size it accepts. Both
+        ``host`` arms are prefixes of
         ``ix_operation_url_index_method_host_revision``; the revision and API
         joins are primary-key lookups.
         """
@@ -387,6 +394,7 @@ class UrlIndexRepository:
                 Api.vendor,
                 Api.name,
                 Api.version,
+                ApiRevision.api_id,
                 ApiRevision.submitted_by,
                 ApiRevision.origin,
             )
@@ -404,7 +412,11 @@ class UrlIndexRepository:
                 ),
                 OperationURLIndex.segment_count == segment_count,
             )
-            .order_by(ApiRevision.created_at.desc(), OperationURLIndex.revision_id)
+            .order_by(
+                OperationURLIndex.host.is_(None),
+                ApiRevision.created_at.desc(),
+                OperationURLIndex.revision_id,
+            )
             .limit(limit)
         )
         rows = (await session.execute(stmt)).all()
@@ -414,10 +426,11 @@ class UrlIndexRepository:
                 vendor=vendor,
                 name=name,
                 version=version,
+                api_id=api_id,
                 submitted_by=submitted_by,
                 origin=origin,
             )
-            for row, vendor, name, version, submitted_by, origin in rows
+            for row, vendor, name, version, api_id, submitted_by, origin in rows
         ]
 
     @staticmethod

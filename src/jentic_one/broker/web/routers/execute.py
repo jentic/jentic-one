@@ -550,7 +550,7 @@ async def _handle(
         if handled is not None:
             return handled
         raise await unregistered_operation_error(
-            resolver, method=method, url=upstream_url, identity=identity
+            resolver, method=method, url=upstream_url, identity=identity, pins=pins
         )
 
     # If a pin applies to the discovered API, translate it to a revision_id
