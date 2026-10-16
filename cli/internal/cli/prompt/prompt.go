@@ -96,7 +96,9 @@ var StdinIsTerminal = func() bool { return term.IsTerminal(os.Stdin.Fd()) }
 // context, Esc, and Ctrl-C and discards per-field errors, so the prompt can
 // never be cancelled (jentic-one#841). Those sessions take the same
 // non-interactive path as a piped stdin: commands fall back to their flag /
-// --yes / defaulting behaviour instead of hanging.
+// --yes / defaulting behaviour instead of hanging. The comparison is exact on
+// purpose: it mirrors huh's own trigger (os.Getenv("TERM") == "dumb" in
+// huh.NewForm), so any other value keeps huh's normal, cancellable TUI.
 func Promptable() bool {
 	return os.Getenv("TERM") != "dumb" && StdinIsTerminal()
 }

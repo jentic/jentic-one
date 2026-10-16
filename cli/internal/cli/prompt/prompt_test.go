@@ -24,6 +24,13 @@ func TestPromptable(t *testing.T) {
 		{"tty with TERM=dumb", "dumb", true, false},
 		{"piped stdin", "xterm-256color", false, false},
 		{"piped stdin with TERM=dumb", "dumb", false, false},
+		// Parity with huh v1's accessible-mode trigger, an exact
+		// os.Getenv("TERM") == "dumb" in huh.NewForm: values huh does not
+		// treat as dumb run the normal (cancellable) TUI, so they stay
+		// promptable. Normalising them would disable working prompts.
+		{"uppercase DUMB is not huh's trigger", "DUMB", true, true},
+		{"padded dumb is not huh's trigger", " dumb ", true, true},
+		{"dumb-prefixed TERM is not huh's trigger", "dumb-emacs", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
