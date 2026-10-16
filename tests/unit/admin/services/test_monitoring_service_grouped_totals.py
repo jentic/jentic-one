@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Coroutine, Iterator
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from jentic_one.admin.services.monitoring_service import (
     UsageFilters,
     UsageTopKey,
     _GroupedTotalsCacheEntry,
+    _UsageCacheEntry,
 )
 from jentic_one.admin.web.schemas.monitoring import GroupBy
 
@@ -218,3 +220,41 @@ async def test_grouped_totals_cache_is_bounded(repo: dict[str, AsyncMock]) -> No
 
     await svc.get_grouped_totals(since=0, until=86400, group_by=GroupBy.API, limit=10)
     assert len(svc._grouped_totals_cache) <= _USAGE_CACHE_MAX_ENTRIES
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get_grouped_totals", "get_usage_stats"])
+async def test_miss_evicts_and_stamps_with_post_query_time(
+    repo: dict[str, AsyncMock], method: str
+) -> None:
+    """Eviction and ``cached_at`` use the clock after the query, not before the lock.
+
+    The clock reads 100 at the fast-path check and inside the lock, then 100 +
+    TTL once the (slow) query returns: an entry fresh at 100 but expired by then
+    must be evicted, and the new entry stamped with the later time.
+    """
+    svc = _svc()
+    post_query = 100.0 + _CACHE_TTL_SECONDS
+    stale_key: tuple[object, ...]
+    call: Coroutine[Any, Any, object]
+    if method == "get_grouped_totals":
+        cache: dict[tuple[object, ...], object] = svc._grouped_totals_cache  # type: ignore[assignment]
+        stale_key = (_GROUPED_TOTALS_KEY_TAG, 1, 2, GroupBy.API, 10, UsageFilters())
+        cache[stale_key] = _GroupedTotalsCacheEntry(result=(), cached_at=99.0)
+        call = svc.get_grouped_totals(since=0, until=86400, group_by=GroupBy.AGENT, limit=10)
+    else:
+        cache = svc._usage_cache  # type: ignore[assignment]
+        stale_key = (1, 2, GroupBy.API, 10, UsageFilters())
+        cache[stale_key] = _UsageCacheEntry(result=MagicMock(), cached_at=99.0)
+        repo["overall_stats"].return_value = MagicMock(
+            total=0, success=0, failed=0, avg_ms=0.0, p50_ms=None, p95_ms=None
+        )
+        call = svc.get_usage_stats(since=0, until=86400, group_by=GroupBy.AGENT, top_limit=10)
+
+    with patch("jentic_one.admin.services.monitoring_service.time") as mock_time:
+        mock_time.monotonic.side_effect = [100.0, 100.0, post_query]
+        await call
+
+    assert stale_key not in cache
+    (entry,) = cache.values()
+    assert entry.cached_at == post_query  # type: ignore[attr-defined]

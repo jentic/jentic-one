@@ -212,15 +212,17 @@ class MonitoringService:
             return entry.result
 
         async with self._usage_lock:
+            # Re-sample: the lock may have been held by a slow query, and the
+            # TTL check, eviction and timestamp must use the time they run at.
+            now = time.monotonic()
             entry = self._usage_cache.get(cache_key)
             if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
                 _cache_hits.add(1)
                 return entry.result
             result = await self._query_usage(resolved_since, resolved_until, group_by, top_limit, f)
-            self._evict_stale_usage_entries(now)
-            self._usage_cache[cache_key] = _UsageCacheEntry(
-                result=result, cached_at=time.monotonic()
-            )
+            stored_at = time.monotonic()
+            self._evict_stale_usage_entries(stored_at)
+            self._usage_cache[cache_key] = _UsageCacheEntry(result=result, cached_at=stored_at)
             _cache_misses.add(1)
             logger.debug(
                 "usage_cache_miss", group_by=group_by, since=resolved_since, until=resolved_until
@@ -266,6 +268,8 @@ class MonitoringService:
             return list(entry.result)
 
         async with self._grouped_totals_lock:
+            # Re-sampled for the same reason as in get_usage_stats.
+            now = time.monotonic()
             entry = self._grouped_totals_cache.get(cache_key)
             if entry is not None and (now - entry.cached_at) < _CACHE_TTL_SECONDS:
                 _cache_hits.add(1)
@@ -273,9 +277,10 @@ class MonitoringService:
             result = await self._query_grouped_totals(
                 resolved_since, resolved_until, group_by, limit, f
             )
-            _evict_stale(self._grouped_totals_cache, now)
+            stored_at = time.monotonic()
+            _evict_stale(self._grouped_totals_cache, stored_at)
             self._grouped_totals_cache[cache_key] = _GroupedTotalsCacheEntry(
-                result=tuple(result), cached_at=time.monotonic()
+                result=tuple(result), cached_at=stored_at
             )
             _cache_misses.add(1)
             logger.debug(
