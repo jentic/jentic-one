@@ -17,7 +17,7 @@ PERF_WORKERS_LOCUST ?= 2
 # Agent probe knobs (all optional): N, CALLER, CACHE, VENDOR, EXPLAIN, C, DURATION,
 # FUNCS, SECONDS, SCENARIOS, BASE, HEAD, TOLERANCE, FORCE.
 agent_opt = $(if $($(1)),$(2) $($(1)))
-agent_flag = $(if $($(1)),$(2))
+agent_flag = $(if $(filter 1 true yes,$($(1))),$(2))
 
 .PHONY: help build up provision overhead dbcost capacity profile ui load obs report down \
 	agent-doctor agent-sql agent-stages agent-cpu agent-resilience agent-compare

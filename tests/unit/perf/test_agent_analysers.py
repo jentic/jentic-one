@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import uuid
@@ -11,8 +12,10 @@ from typing import Any
 
 import pytest
 
+from tests.perf import pyspy_profile
 from tests.perf.agent import __main__ as agent_main
-from tests.perf.agent import sqltrace, stages
+from tests.perf.agent import base, sqltrace, stages
+from tests.perf.agent.base import PrereqError
 
 HOOK_PATH = Path(sqltrace.__file__).parent / "hooks" / "sitecustomize.py"
 
@@ -90,6 +93,66 @@ def test_literal_round_trips_awkward_values() -> None:
     assert sqltrace._literal(True) == "true"
     assert sqltrace.pg_type("list[UUID]") == "uuid[]"
     assert sqltrace.pg_type("list") == "text[]"
+
+
+def _secret_request(rid: str) -> list[dict[str, Any]]:
+    """One request whose SELECT carries values a custom plan would print."""
+    return [
+        _ev(rid, "checkout"),
+        _ev(
+            rid,
+            "sql",
+            sql="SELECT * FROM t WHERE key_hash = $1 AND id = ANY($2)",
+            ptypes=["str", "list[str]"],
+            rows=1,
+            ms=2.0,
+            params=["hash-secret-1", ["cred-secret-2", "b"]],
+            site="src/jentic_one/x.py:1 f",
+        ),
+        _ev(rid, "checkin"),
+    ]
+
+
+def test_sql_explain_never_writes_bind_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scripts: list[str] = []
+
+    def fake_compose(*args: str, **_: Any) -> str:
+        scripts.append(args[-1])
+        # A plan that echoes the values (what a custom plan prints), to prove masking.
+        return (
+            "QUERY PLAN\n-----\n"
+            "Index Scan using ix_key_hash on t (actual rows=1 loops=1)\n"
+            "  Index Cond: (key_hash = 'hash-secret-1'::text)\n"
+            "  Filter: (id = ANY ('{cred-secret-2,b}'::text[]))\n"
+            "  Note: hash-secret-1\n"
+            "(4 rows)\n"
+        )
+
+    events = _secret_request("p-1") + _secret_request("p-2")
+    monkeypatch.setattr(sqltrace, "compose", fake_compose)
+    monkeypatch.setattr(sqltrace, "broker_variant", lambda *a, **k: contextlib.nullcontext())
+    monkeypatch.setattr(sqltrace, "drive", lambda *a: ("p-", events, {"200": 2}))
+    monkeypatch.setattr(sqltrace, "hook_manifest", lambda: {"patched": [], "failed": []})
+    monkeypatch.setattr(sqltrace, "require_patched", lambda *a: None)
+    monkeypatch.setattr(base, "AGENT_DIR", tmp_path)
+
+    assert sqltrace.main(["-n", "2", "--explain", "1"]) == 0
+    assert "SET LOCAL plan_cache_mode = force_generic_plan" in scripts[0]
+    (artifact,) = tmp_path.glob("*-sql.json")
+    written = artifact.read_text() + capsys.readouterr().out
+    assert "Index Cond: (key_hash = '…'::text)" in written
+    for secret in ("hash-secret-1", "cred-secret-2"):
+        assert secret not in written
+
+
+def test_mask_plan_masks_literals_and_captured_values_in_errors() -> None:
+    err = "ERROR: invalid input syntax for type uuid: abcd-secret at character 9"
+    assert sqltrace.mask_plan(err, [["abcd-secret"], 7, None]) == (
+        "ERROR: invalid input syntax for type uuid: … at character 9"
+    )
+    assert sqltrace.mask_plan("x = 'o''brien' AND y = $1", []) == "x = '…' AND y = $1"
 
 
 def test_stages_analyse_counts_per_request_and_ignores_lag_context() -> None:
@@ -170,3 +233,41 @@ def test_hook_listeners_never_raise(hook: ModuleType) -> None:
 
     hook._guarded(broken)("conn")
     assert hook._stats["errors"] == 1
+
+
+@pytest.fixture()
+def failing_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A trace dir holding a trace file, and a broker whose clean restore fails."""
+    monkeypatch.setattr(base, "TRACE_DIR", tmp_path)
+
+    def recreate(overrides: dict[str, str]) -> None:
+        (tmp_path / "1.jsonl").write_text('{"params": ["secret"]}\n')
+        if not overrides.get("PERF_TRACE"):
+            raise PrereqError("broker did not come up: clean", "make perf-up")
+
+    monkeypatch.setattr(base, "recreate_broker", recreate)
+    return tmp_path
+
+
+def test_broker_variant_failed_restore_keeps_body_error_and_purges(failing_restore: Path) -> None:
+    with pytest.raises(ValueError, match="probe failed"), base.broker_variant({}, trace="sql"):
+        raise ValueError("probe failed")
+    assert list(failing_restore.glob("*.jsonl")) == []
+
+
+def test_broker_variant_failed_restore_after_success_is_a_prereq(failing_restore: Path) -> None:
+    with (
+        pytest.raises(PrereqError, match="restore failed: restore clean broker"),
+        base.broker_variant({}, trace="sql"),
+    ):
+        pass
+    assert list(failing_restore.glob("*.jsonl")) == []
+
+
+def test_cmd_cpu_capture_runtime_error_is_a_prereq(monkeypatch: pytest.MonkeyPatch) -> None:
+    def capture(**_: Any) -> None:
+        raise RuntimeError("py-spy record failed: exit codes [1]")
+
+    monkeypatch.setattr(pyspy_profile, "capture", capture)
+    with pytest.raises(PrereqError, match="cpu: py-spy record failed"):
+        agent_main.cmd_cpu([])

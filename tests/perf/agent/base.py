@@ -26,9 +26,11 @@ from tests.perf.common import (
     REPO_ROOT,
     RESULTS_DIR,
     PerfEnv,
+    RestoreStep,
     compose,
     exclusive_run,
     git_sha,
+    restore_on_exit,
     upstream_base,
     variant_snapshot,
     wait_healthy,
@@ -238,7 +240,9 @@ def broker_variant(
 
     The clean restore runs whether the variant broker came up or not, so a
     failed start never leaves the stack traced. Traces can hold raw SQL bind
-    parameters, so they are deleted once the traced broker is gone.
+    parameters, so they are deleted on exit even when the restore fails. Each
+    exit step runs independently; an exception from the body wins over a
+    failed step, which is logged to stderr.
     """
     traced: dict[str, str] = {}
     if trace:
@@ -252,13 +256,20 @@ def broker_variant(
         # but not list or delete other users' files (sticky, no read for others).
         TRACE_DIR.chmod(0o1733)
         purge_traces()
+    steps: list[RestoreStep] = [("restore clean broker", lambda: recreate_broker(clean))]
+    if trace:
+        steps.append(("purge traces", purge_traces))
+    body_done = False
     try:
-        recreate_broker({**clean, **overrides, **traced})
-        yield
-    finally:
-        recreate_broker(clean)
-        if trace:
-            purge_traces()
+        with restore_on_exit(*steps):
+            recreate_broker({**clean, **overrides, **traced})
+            yield
+            body_done = True
+    except RuntimeError as exc:
+        # Only the restore can raise once the body finished; the body's own errors pass through.
+        if not body_done or isinstance(exc, PrereqError):
+            raise
+        raise PrereqError(str(exc), "make perf-up   # then make perf-agent-doctor") from exc
 
 
 def hook_manifest() -> dict[str, list[str]]:

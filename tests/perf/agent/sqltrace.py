@@ -10,14 +10,17 @@ traced with ``PERF_TRACE=sql`` and prints, per request:
   request, average rows, zero-row %, ms;
 * **one representative request's timeline** (session → ping → BEGIN → SQL →
   COMMIT/ROLLBACK) with ``file:line`` for every step;
-* ``EXPLAIN (ANALYZE, BUFFERS)`` for the costliest SELECTs, executed in-container
-  as the plane's own role with the captured parameters inside a rolled-back
-  transaction. Statements with a truncated parameter, and CTEs that write, are
-  skipped with a note rather than planned with the wrong values.
+* ``EXPLAIN (ANALYZE, BUFFERS)`` of the generic plan for the costliest SELECTs,
+  executed in-container as the plane's own role with the captured parameters
+  inside a rolled-back transaction. Statements with a truncated parameter, and
+  CTEs that write, are skipped with a note rather than planned with the wrong
+  values.
 
-Bind parameter values are captured only when ``EXPLAIN`` runs, used in memory,
-and never written to the artifact; the raw trace files are deleted when the
-traced broker stops. Any non-200 response aborts the run (exit 2).
+Bind parameter values are captured only when ``EXPLAIN`` runs and are never
+written to the artifact or stdout: the generic plan prints ``$n`` in their
+place, and quoted literals and captured values are masked in plans and psql
+errors. The raw trace files are deleted when the traced broker stops. Any
+non-200 response aborts the run (exit 2).
 
 Timings come from a traced broker: use them for ranking, not as absolutes.
 """
@@ -306,7 +309,43 @@ def explain_skip_reason(group: dict[str, Any]) -> str:
     return ""
 
 
+def _param_texts(value: Any) -> list[str]:
+    """The text forms a captured bind value could take inside a plan or error."""
+    if isinstance(value, list):
+        return [t for v in value for t in _param_texts(v)]
+    if isinstance(value, dict):
+        return [str(value["bytes_hex"])] if "bytes_hex" in value else []
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+#: A quoted SQL literal (``''`` escapes a quote inside it).
+QUOTED_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+#: Shorter captured strings are left alone: masking them would garble plan text.
+MIN_MASKED_LEN = 4
+
+
+def mask_plan(text: str, params: list[Any]) -> str:
+    """``text`` with every quoted literal and every captured string bind value masked.
+
+    The generic plan already prints ``$n`` for parameters; this also covers
+    psql errors, which can echo the offending value.
+    """
+    masked = QUOTED_LITERAL_RE.sub("'…'", text)
+    for value in sorted({t for p in params for t in _param_texts(p)}, key=len, reverse=True):
+        if len(value) >= MIN_MASKED_LEN:
+            masked = masked.replace(value, "…")
+    return masked
+
+
 def explain(group: dict[str, Any]) -> str:
+    """The generic plan of one group, run with its captured values; no value is printed.
+
+    ``plan_cache_mode = force_generic_plan`` makes ``EXECUTE`` use the plan
+    asyncpg's cached statements settle on, and that plan shows parameters as
+    ``$n`` while ``ANALYZE`` still runs it with the captured values.
+    """
     skip = explain_skip_reason(group)
     if skip:
         return f"(EXPLAIN skipped: {skip})"
@@ -319,7 +358,8 @@ def explain(group: dict[str, Any]) -> str:
     args = ", ".join(_literal(v) for v in params)
     execute = f"EXECUTE perf_q({args})" if ptypes else "EXECUTE perf_q"
     script = (
-        f"BEGIN; SET LOCAL search_path TO {plane}, public; {stmt}; "
+        f"BEGIN; SET LOCAL search_path TO {plane}, public; "
+        f"SET LOCAL plan_cache_mode = force_generic_plan; {stmt}; "
         f"EXPLAIN (ANALYZE, BUFFERS, COSTS OFF) {execute}; ROLLBACK;"
     )
     try:
@@ -341,10 +381,10 @@ def explain(group: dict[str, Any]) -> str:
             capture=True,
         )
     except RuntimeError as exc:
-        return f"(EXPLAIN failed: {str(exc)[-300:]})"
+        return f"(EXPLAIN failed: {mask_plan(str(exc)[-300:], params)})"
     lines = [ln for ln in out.splitlines() if ln.strip() and "QUERY PLAN" not in ln]
     lines = [ln for ln in lines if not set(ln.strip()) <= {"-"} and not ln.startswith("(")]
-    return "\n".join(lines[:25])
+    return mask_plan("\n".join(lines[:25]), params)
 
 
 # --------------------------------------------------------------------------- main
@@ -496,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
             md_table(["+ms", "plane", "event / SQL", "rows", "ms", "callsite"], timeline(evs)),
         )
     for key, plan in explains.items():
-        rep.section(f"EXPLAIN (ANALYZE, BUFFERS) — {key}", f"```\n{plan}\n```")
+        rep.section(f"EXPLAIN (ANALYZE, BUFFERS), generic plan — {key}", f"```\n{plan}\n```")
     rep.next_steps += [
         "make perf-agent-sql CACHE=cold   # cache-miss path",
         "make perf-agent-sql CALLER=at    # opaque-token caller",

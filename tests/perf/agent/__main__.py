@@ -264,6 +264,9 @@ def cmd_cpu(argv: list[str]) -> int:
     except SystemExit as exc:
         # Stale tokens, the run lock held, or no broker: all fixable prerequisites.
         raise PrereqError(str(exc.code), "make perf-agent-doctor") from None
+    except RuntimeError as exc:
+        # py-spy record failed, or a sidecar could not be removed afterwards.
+        raise PrereqError(f"cpu: {exc}", "make perf-agent-doctor") from exc
     raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
     require_ok(load, "cpu load")
     summary = pyspy_profile.analyse(raw)

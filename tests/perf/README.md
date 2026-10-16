@@ -153,8 +153,11 @@ A/A spread is not calibrated here). To gate on a tail, repeat both runs and
 compare the medians yourself.
 
 **Request data in artifacts.** Bind parameter values are captured only while
-`perf-agent-sql` runs `EXPLAIN`; they stay in memory and the trace JSONL is
-deleted when the traced broker stops. Artifacts keep SQL text, parameter
+`perf-agent-sql` runs `EXPLAIN`, and only the traced broker's trace JSONL holds
+them; it is deleted when the traced broker stops, even if restoring the clean
+broker fails. `EXPLAIN` runs the generic plan, which prints `$n` in place of
+each value, and quoted literals and captured values are masked in plans and
+psql errors, so no value reaches stdout or the artifact. Artifacts keep SQL text, parameter
 *types*, call sites, and a whitelisted subset of each grouped log record (event,
 level, error type, request id, location, traceback). That can still include
 identifiers, so quote the markdown tables in issues and never paste raw
