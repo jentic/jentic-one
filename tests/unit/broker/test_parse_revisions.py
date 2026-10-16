@@ -80,8 +80,26 @@ def test_rev_label_encoding_round_trips() -> None:
     revision_id = uuid.UUID(REVISION_ID)
     assert encode_rev_label(revision_id) == LABEL
     assert decode_rev_label(LABEL) == revision_id
+    assert decode_rev_label(LABEL.upper().replace("REV_", "rev_")) == revision_id
     assert decode_rev_label(REVISION_ID) is None
     assert decode_rev_label("rev_notahexvalue") is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        pytest.param(f"rev_{{{REVISION_ID}}}", id="braced-uuid"),
+        pytest.param(f"rev_urn:uuid:{REVISION_ID}", id="urn-uuid"),
+        pytest.param(f"rev_{REVISION_ID}", id="hyphenated-uuid"),
+        pytest.param(f"{LABEL}0", id="33-hex"),
+        pytest.param(LABEL[:-1], id="31-hex"),
+        pytest.param("rev_", id="empty-hex"),
+    ],
+)
+def test_decode_rev_label_accepts_only_the_encoded_form(label: str) -> None:
+    # ``uuid.UUID(hex=...)`` would strip braces, hyphens and ``urn:uuid:``; the
+    # decoder accepts only what ``encode_rev_label`` produces.
+    assert decode_rev_label(label) is None
 
 
 def test_uuid_and_label_pins_mix_in_one_header() -> None:

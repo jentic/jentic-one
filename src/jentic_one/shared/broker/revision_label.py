@@ -9,9 +9,11 @@ the two surfaces can never disagree on the encoding.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 REV_LABEL_PREFIX = "rev_"
+_HEX32 = re.compile(r"[0-9A-Fa-f]{32}")
 
 
 def encode_rev_label(revision_id: uuid.UUID) -> str:
@@ -20,10 +22,15 @@ def encode_rev_label(revision_id: uuid.UUID) -> str:
 
 
 def decode_rev_label(label: str) -> uuid.UUID | None:
-    """The ``ApiRevision.id`` a ``rev_<uuid.hex>`` label names, or ``None`` if malformed."""
+    """The ``ApiRevision.id`` a ``rev_<uuid.hex>`` label names, or ``None`` if malformed.
+
+    Only the form :func:`encode_rev_label` produces (``rev_`` + 32 hex digits, either
+    case) decodes. ``uuid.UUID`` alone would also accept braces, hyphens and a
+    ``urn:uuid:`` prefix, so the hex is checked first.
+    """
     if not label.startswith(REV_LABEL_PREFIX):
         return None
-    try:
-        return uuid.UUID(hex=label[len(REV_LABEL_PREFIX) :])
-    except ValueError:
+    hex_part = label[len(REV_LABEL_PREFIX) :]
+    if _HEX32.fullmatch(hex_part) is None:
         return None
+    return uuid.UUID(hex=hex_part)
