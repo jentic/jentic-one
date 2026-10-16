@@ -157,13 +157,20 @@ class PoolAgentUser(_BrokerUser):
 
 
 class RetryUser(_BrokerUser):
-    """Upstream fails then succeeds (needs PERF_RETRY=true, PERF_BREAKER=false)."""
+    """Upstream fails then succeeds (needs PERF_RETRY=true, PERF_BREAKER=false).
+
+    Carries an ``Idempotency-Key``: the broker only retries a *status* failure
+    (429/5xx after the request was sent) for idempotent methods or keyed
+    requests (see ``broker/adapters/runners/retry.py``), so a key-less POST
+    would correctly surface the first 503.
+    """
 
     @task
     def flaky(self) -> None:
         h = self.headers()
         h["X-Mock-Status-Sequence"] = STATUS_SEQUENCE
         h["X-Mock-Test-Id"] = uuid.uuid4().hex
+        h["Idempotency-Key"] = uuid.uuid4().hex
         self.client.post(_proxy_path("perf-noauth"), data=BODY, headers=h, name="echo retry-seq")
 
 
