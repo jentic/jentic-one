@@ -167,7 +167,7 @@ def test_internal_domain_not_in_allowlist_raises_distinct_reason() -> None:
     assert isinstance(err, EgressPolicyError)
     assert isinstance(err, ValueError)
     assert err.hostname == "billing.svc.cluster.local"
-    assert "allowed_internal_domains" in str(err)
+    assert "allowed internal domain suffix" in str(err)
     assert "blocked address range" not in str(err)
     # The resolved internal address is never disclosed in the message.
     assert "10.50.2.10" not in str(err)
@@ -203,6 +203,40 @@ def test_mixed_answer_outside_allowed_subnet_keeps_generic_reason() -> None:
         ):
             validate_upstream_url("http://billing.svc.cluster.local/api", egress)
         assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+def test_ipv4_mapped_ipv6_answer_in_allowed_subnet_raises_distinct_reason() -> None:
+    # An IPv4-mapped IPv6 record is classified (and subnet-matched) by its
+    # embedded IPv4, so it is the same domain gap as the bare IPv4 answer.
+    egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to("::ffff:10.50.2.10"),
+        ),
+        pytest.raises(PrivateNameNotAllowedError) as exc_info,
+    ):
+        validate_upstream_url("http://billing.svc.cluster.local/api", egress)
+    assert "10.50.2.10" not in str(exc_info.value)
+
+
+def test_ipv4_mapped_ipv6_answer_outside_allowed_subnet_keeps_generic_reason() -> None:
+    egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to("::ffff:192.168.1.5"),
+        ),
+        pytest.raises(EgressPolicyError, match="blocked address range") as exc_info,
+    ):
+        validate_upstream_url("http://billing.svc.cluster.local/api", egress)
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+def test_blocked_hostname_raises_egress_policy_error() -> None:
+    with pytest.raises(EgressPolicyError, match="blocked hostname") as exc_info:
+        validate_upstream_url("http://metadata.google.internal/computeMetadata/v1/")
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
 
 
 def test_metadata_ip_by_name_in_allowed_subnet_keeps_generic_reason() -> None:

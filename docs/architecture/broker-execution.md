@@ -132,14 +132,30 @@ Two layers keep the proxy from being used against the network it runs in:
 Validation runs again after server-variable substitution, in both the sync
 and async callers, so an injected variable cannot smuggle in a new host.
 
-Both layers refuse with the same `400` problem. A host name needs **both**
+Both layers refuse with a `400` problem. A host name needs **both**
 allowlists: an address in `broker.egress.allowed_private_subnets` *and* a
 suffix in `broker.egress.allowed_internal_domains` (an IP literal needs only
 the subnet). A name that passes the subnet check but matches no suffix is
-`private_name_not_in_allowed_domains`, whose detail and `prompt_human`
-directive name the config key to set; every other refusal is
-`invalid_upstream_url`. Neither carries the resolved address, and an egress
-refusal is never retried and never counts against the upstream's circuit.
+`private_name_not_in_allowed_domains`; every other refusal is
+`invalid_upstream_url`. The distinct type is only for a caller that has passed
+authorization for the registered operation: the pre-flight check holds the
+refusal back until discovery and authorization have run (neither makes an
+outbound call), and anyone else gets `invalid_upstream_url`. So the type never
+tells an unprivileged caller which names resolve into the operator's trusted
+subnet. Its `prompt_human` directive names the config key for the operator to
+review but not the host, and it never advises widening the suffix list, which
+is what keeps a public name from being pointed into the subnet. No refusal
+carries the resolved address.
+
+Every refusal — pre-flight, connect time, or in the async worker — is logged
+as `upstream_egress_refused` with the host, the `stage`, the real `reason`
+(`private_name_not_in_allowed_domains`, `blocked_target` or `invalid_url`), and
+the `problem_type` the caller was shown. That log line is how an operator
+finds a host to review. On the synchronous runner path an egress refusal is
+never retried and never counts against the upstream's circuit; a queued
+execution fails terminally with the same problem in its job result, never
+requeued. A host the pinning transport cannot resolve at connect time is an
+`upstream_connect_failed` connect failure (`504`).
 
 The platform's own OAuth calls (credential and OAuth app `token_url` /
 `authorize_url` checks, the endpoints an approver confirms for their own

@@ -260,13 +260,15 @@ _BROKER_CREDENTIAL_PROBLEM_TYPES = frozenset(
 #: ``brokerEgressAllowlistProblemType``, routed to ``RecoverEgress``).
 _BROKER_EGRESS_ALLOWLIST_PROBLEM_TYPE = "private_name_not_in_allowed_domains"
 
-#: Recovery prose for the egress allowlist gap, byte-for-byte with the Go
-#: ``brokerEgressAllowlistHint`` both CLI lanes relay.
+#: Recovery prose for the egress allowlist gap, kept identical to the Go
+#: ``brokerEgressAllowlistHint`` (both are tested against
+#: ``cli/internal/agentops/testdata/broker_egress_allowlist_hint.txt``). It never
+#: advises widening the allowlist: that is the operator's call.
 _BROKER_EGRESS_ALLOWLIST_HINT = (
-    "The broker's egress policy refused the upstream host: it resolves to an allowlisted "
-    "private subnet but broker.egress.allowed_internal_domains does not cover it. Ask your "
-    "operator to add a suffix covering the host to broker.egress.allowed_internal_domains "
-    "(JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS) — do not retry until they have."
+    "The broker's egress policy refused the upstream host: it resolves into an allowed "
+    "private subnet but broker.egress.allowed_internal_domains does not cover it. Only an "
+    "operator can review that policy, and the broker has logged the refusal for them. Report "
+    "it to your operator; do not retry, and do not ask for the allowlist to be widened."
 )
 
 
@@ -276,10 +278,10 @@ def _broker_error_next_tool(status: int, problem_type: str) -> str:
 
     A 404 or ``operation_not_found`` needs search_apis; a known
     credential-resolution type gets whoami; the egress allowlist gap gets whoami
-    too (only an operator can fix it, the pointer an operator-only
-    ``action_denied`` gets); any other broker 4xx — a contract or payload error —
-    points at inspect_operation, never an identity-check loop that cannot fix a
-    malformed request.
+    as a placeholder (only an operator can act on it and no tool can; the
+    pointer an operator-only ``action_denied`` gets); any other broker 4xx — a
+    contract or payload error — points at inspect_operation, never an
+    identity-check loop that cannot fix a malformed request.
     """
     if status == 404 or problem_type == "operation_not_found":
         return "search_apis"

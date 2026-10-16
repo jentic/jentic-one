@@ -700,7 +700,7 @@
       "description": "Outbound SSRF/egress policy for upstream calls.\n\nDefaults are **strict** (both lists empty) — identical to the historical\nhard-coded behaviour: every private range and the cloud-metadata host are\nblocked. The two allowlists exist because the broker is frequently installed\n*inside* a corporate network to bridge to internal/legacy APIs, where the\ndefault block is a false positive. Both are opt-in, auditable operator\ndecisions; the cloud-metadata IP is a **hard, non-overridable** deny so a\ncredential-stealing SSRF can never be allowlisted by accident.",
       "properties": {
         "allowed_internal_domains": {
-          "description": "Domain suffixes (e.g. ``[\".svc.cluster.local\"]``) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. A host name that resolves into an allowed subnet but matches no suffix is refused with a reason naming this list (on the broker, problem type ``private_name_not_in_allowed_domains``). Accepts a YAML list or a comma-separated string.",
+          "description": "Domain suffixes (e.g. ``[\".svc.cluster.local\"]``) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string.",
           "items": {
             "type": "string"
           },

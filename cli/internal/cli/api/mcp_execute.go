@@ -1264,8 +1264,9 @@ func brokerErrorToolHint(rec agentops.BrokerErrorRecovery) string {
 // brokerErrorNextTool points a broker resolve failure at the tool that can fix
 // it: an unregistered operation needs search_apis, an unresolvable credential
 // header gets whoami (the same safe default the denial path uses), an egress
-// allowlist gap gets whoami too (only an operator can fix it, the same pointer
-// an operator-only action_denied gets), and any other broker 4xx — a contract or
+// allowlist gap gets whoami as a placeholder (only an operator can act on it and
+// no tool can; the pointer an operator-only action_denied gets, since every
+// RESOLVE_FAILED result names a next_tool), and any other broker 4xx — a contract or
 // payload error — points at inspect_operation so the agent re-reads the
 // contract instead of looping on an identity check that cannot fix it. Never
 // get_started: the identity already resolved.

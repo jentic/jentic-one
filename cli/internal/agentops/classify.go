@@ -338,12 +338,15 @@ func candidateLabels(candidates []any) []string {
 }
 
 // brokerEgressAllowlistHint is the recovery prose for RecoverEgress, shared by
-// the CLI and MCP lanes: no command or tool can fix it, so both relay it to the
-// operator verbatim.
-const brokerEgressAllowlistHint = "The broker's egress policy refused the upstream host: it resolves to an " +
-	"allowlisted private subnet but broker.egress.allowed_internal_domains does not cover it. Ask your " +
-	"operator to add a suffix covering the host to broker.egress.allowed_internal_domains " +
-	"(JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS) — do not retry until they have."
+// the CLI and MCP lanes: no command or tool can fix it. It never advises
+// widening the allowlist — the suffix list is what keeps a public name out of
+// the operator's private subnet, so whether a host belongs on it is the
+// operator's call, made from the broker's upstream_egress_refused log. Kept
+// identical to the Python MCP twin via testdata/broker_egress_allowlist_hint.txt.
+const brokerEgressAllowlistHint = "The broker's egress policy refused the upstream host: it resolves into an " +
+	"allowed private subnet but broker.egress.allowed_internal_domains does not cover it. Only an operator " +
+	"can review that policy, and the broker has logged the refusal for them. Report it to your operator; " +
+	"do not retry, and do not ask for the allowlist to be widened."
 
 // BrokerEgressAllowlistHint returns the shared RecoverEgress recovery prose.
 func BrokerEgressAllowlistHint() string { return brokerEgressAllowlistHint }

@@ -18,12 +18,14 @@ multicast, and reserved ranges — is blocked unless an allowlist exempts it.
 :func:`validate_upstream_url_async` is the event-loop-safe twin and shares its
 resolver answers with the pinning transport (``shared/dns_cache``).
 
-Refusals of a target *address* raise :class:`EgressPolicyError` (a ``ValueError``,
-so ``except ValueError`` callers keep refusing them). A DNS name that resolves
-into ``allowed_private_subnets`` but matches no ``allowed_internal_domains``
-suffix raises the :class:`PrivateNameNotAllowedError` subclass, whose message
-names the allowlist that lacks the entry. Neither message carries the resolved
-address.
+Refusals of a target — a blocked host name or a blocked resolved address —
+raise :class:`EgressPolicyError` (a ``ValueError``, so ``except ValueError``
+callers keep refusing them). A DNS name that resolves into
+``allowed_private_subnets`` but matches no ``allowed_internal_domains`` suffix
+raises the :class:`PrivateNameNotAllowedError` subclass. Malformed URLs (no
+host, unsupported scheme) stay a plain ``ValueError``. No message carries the
+resolved address, and none names a surface-specific config key: each surface
+maps the refusal to its own keys.
 """
 
 from __future__ import annotations
@@ -41,25 +43,27 @@ if TYPE_CHECKING:
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
-_BLOCKED_RANGE_MESSAGE = "upstream URL resolves to a blocked address range"
+#: The message of every address refusal other than the domain-suffix gap.
+BLOCKED_RANGE_MESSAGE = "upstream URL resolves to a blocked address range"
 
 
 class EgressPolicyError(ValueError):
-    """An upstream target address refused by the egress policy."""
+    """An upstream target (host name or resolved address) refused by the egress policy."""
 
 
 class PrivateNameNotAllowedError(EgressPolicyError):
     """A DNS name inside ``allowed_private_subnets`` that no ``allowed_internal_domains`` covers.
 
-    The subnet check passed, so adding a suffix covering ``hostname`` to
-    ``allowed_internal_domains`` is the one change that makes the name reachable.
+    The subnet check passed and only the domain-suffix check failed. Whether the
+    name belongs on the suffix list is an operator decision: the list is what
+    keeps a public name from being pointed into the allowlisted subnet.
     """
 
     def __init__(self, hostname: str) -> None:
         self.hostname = hostname
         super().__init__(
-            f"upstream host '{hostname}' resolves into allowed_private_subnets but matches "
-            "no allowed_internal_domains suffix"
+            f"upstream host '{hostname}' resolves into an allowed private subnet but matches "
+            "no allowed internal domain suffix"
         )
 
 
@@ -159,6 +163,14 @@ async def validate_upstream_url_async(raw_url: str, egress: EgressConfig | None 
     return url
 
 
+def normalise_upstream_url(raw_url: str) -> str:
+    """Strip *raw_url* and default a missing scheme to ``https://``, as the validators return it."""
+    url = raw_url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url
+
+
 def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[str, str | None]:
     """Run every check that needs no resolver; return ``(url, hostname_to_resolve)``.
 
@@ -168,9 +180,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     if not raw_url or not raw_url.strip():
         raise ValueError("upstream URL is required")
 
-    url = raw_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
+    url = normalise_upstream_url(raw_url)
 
     parsed = urlparse(url)
 
@@ -182,7 +192,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
         raise ValueError("upstream URL has no hostname")
 
     if _normalise_hostname(hostname) in _BLOCKED_HOSTNAMES:
-        raise ValueError("upstream URL targets a blocked hostname")
+        raise EgressPolicyError("upstream URL targets a blocked hostname")
 
     try:
         addr = ipaddress.ip_address(hostname)
@@ -195,7 +205,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
         return url, hostname
 
     # An IP literal: no domain-suffix exemption (there's no name to match).
-    _check_ip(addr, egress, hostname=None)
+    assert_ip_allowed(addr, egress, hostname=None)
     return url, None
 
 
@@ -275,12 +285,12 @@ def assert_ip_allowed(
 
     if addr in _METADATA_IPS or target in _METADATA_IPS:
         # Hard deny — never exemptable.
-        raise EgressPolicyError(_BLOCKED_RANGE_MESSAGE)
+        raise EgressPolicyError(BLOCKED_RANGE_MESSAGE)
 
     if not _is_blocked_address(target):
         return
     if not _in_allowed_subnet(target, egress):
-        raise EgressPolicyError(_BLOCKED_RANGE_MESSAGE)
+        raise EgressPolicyError(BLOCKED_RANGE_MESSAGE)
     if hostname is None or _matches_internal_domain(hostname, egress):
         return
     raise PrivateNameNotAllowedError(hostname)
@@ -304,10 +314,6 @@ def assert_resolved_allowed(
             domain_gap = exc
     if domain_gap is not None:
         raise domain_gap
-
-
-def _check_ip(addr: _IpAddress, egress: EgressConfig | None, *, hostname: str | None) -> None:
-    assert_ip_allowed(addr, egress, hostname=hostname)
 
 
 def _in_allowed_subnet(addr: _IpAddress, egress: EgressConfig | None) -> bool:
