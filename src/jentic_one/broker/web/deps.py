@@ -186,8 +186,10 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     pure pass-through of ``require_execute_permission``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
 
-    The opt-in ``auth`` Server-Timing stage is recorded only when every check
-    passes, so a rejected caller gets no timing data.
+    The opt-in ``jentic-auth`` Server-Timing stage is recorded only when every
+    check passes (an explicit start/end pair, not the ``finally``-recording
+    ``stage()``): the Server-Timing middleware emits nothing unless it is
+    recorded, so a rejected caller gets no timing data.
     """
     timing = stage_start()
     resolved = await require_execute_permission(request)

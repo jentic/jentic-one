@@ -62,7 +62,7 @@ _AGENT = "agnt_server_timing_integ"
 _VENDOR = "timing-example-com"
 _UPSTREAM_TIMING = 'db;dur=12.5, cache;desc="hit"'
 _UPSTREAM_BODY = b'{"ok":true}'
-_ENTRY_RE = re.compile(r"^(?P<name>[a-z]+);dur=(?P<dur>\d+\.\d)$")
+_ENTRY_RE = re.compile(r"^(?P<name>jentic-[a-z]+);dur=(?P<dur>\d+\.\d)$")
 
 
 def _stages(value: str) -> dict[str, float]:
@@ -80,13 +80,13 @@ def _stage_names(value: str) -> list[str]:
 
 
 def _assert_persist_is_sane(stages: dict[str, float]) -> None:
-    """``persist`` is the admin write alone: positive, and disjoint from ``upstream``.
+    """``jentic-persist`` is the admin write alone: positive, disjoint from upstream.
 
     Each value is rounded to 0.1 ms, so the sum check allows one rounding step
     per summed stage.
     """
-    assert stages["persist"] > 0.0
-    assert stages["upstream"] + stages["persist"] <= stages["total"] + 0.2
+    assert stages["jentic-persist"] > 0.0
+    assert stages["jentic-upstream"] + stages["jentic-persist"] <= stages["jentic-total"] + 0.2
 
 
 @dataclass
@@ -208,6 +208,11 @@ class _AllowAll:
         return RuleEvaluation(verdict=RuleVerdict.ALLOW, rules_loaded=1)
 
 
+class _DenyAll:
+    async def evaluate(self, **_: object) -> RuleEvaluation:
+        return RuleEvaluation(verdict=RuleVerdict.DENY, rules_loaded=1)
+
+
 class _BufferedOnly(UpstreamRunner):
     """Hides the HTTP runner's ``stream`` so the route takes the buffered path."""
 
@@ -218,7 +223,9 @@ class _BufferedOnly(UpstreamRunner):
         return await self._inner.run(request)
 
 
-def _app(ctx: Context, runner: UpstreamRunner, *, server_timing: bool) -> FastAPI:
+def _app(
+    ctx: Context, runner: UpstreamRunner, *, server_timing: bool, deny: bool = False
+) -> FastAPI:
     app = FastAPI()
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
     install_broker_error_handlers(app)
@@ -242,7 +249,7 @@ def _app(ctx: Context, runner: UpstreamRunner, *, server_timing: bool) -> FastAP
     )
     app.state.broker_registry_resolver = _Resolver()
     app.state.broker_credential_deriver = _Deriver()
-    app.state.broker_agent_rule_evaluator = _AllowAll()
+    app.state.broker_agent_rule_evaluator = _DenyAll() if deny else _AllowAll()
     app.dependency_overrides[get_http_runner] = lambda: runner
     return app
 
@@ -277,16 +284,27 @@ async def test_execute_emits_per_stage_server_timing(
     assert fields[0] == _UPSTREAM_TIMING
     if streaming:
         # Headers leave before the body: persistence happens after, so it is absent.
-        assert _stage_names(fields[1]) == ["auth", "discover", "rules", "cred", "upstream", "total"]
+        assert _stage_names(fields[1]) == [
+            "jentic-auth",
+            "jentic-egress",
+            "jentic-discover",
+            "jentic-rules",
+            "jentic-body",
+            "jentic-cred",
+            "jentic-upstream",
+            "jentic-total",
+        ]
     else:
         assert _stage_names(fields[1]) == [
-            "auth",
-            "discover",
-            "rules",
-            "cred",
-            "upstream",
-            "persist",
-            "total",
+            "jentic-auth",
+            "jentic-egress",
+            "jentic-discover",
+            "jentic-rules",
+            "jentic-body",
+            "jentic-cred",
+            "jentic-upstream",
+            "jentic-persist",
+            "jentic-total",
         ]
         _assert_persist_is_sane(_stages(fields[1]))
     broker_field = fields[1]
@@ -309,8 +327,8 @@ async def test_execute_failed_upstream_reports_persist_of_failed_record(
     ctx: Context, seeded_credential: None, refused_port: int
 ) -> None:
     """A ``BrokerError`` (connect refused → 504 ``upstream_connect_failed``) still
-    commits a FAILED record, and the header times that write as ``persist``
-    alongside the failed ``upstream``."""
+    commits a FAILED record, and the header times that write as
+    ``jentic-persist`` alongside the failed ``jentic-upstream``."""
     async with httpx.AsyncClient() as upstream_client:
         runner = _BufferedOnly(HttpRunner(upstream_client))
         resp = await _execute(_app(ctx, runner, server_timing=True), refused_port)
@@ -320,7 +338,17 @@ async def test_execute_failed_upstream_reports_persist_of_failed_record(
     fields = resp.headers.get_list("server-timing")
     assert len(fields) == 1, fields  # no upstream response, so no upstream field
     stages = _stages(fields[0])
-    assert list(stages) == ["auth", "discover", "rules", "cred", "upstream", "persist", "total"]
+    assert list(stages) == [
+        "jentic-auth",
+        "jentic-egress",
+        "jentic-discover",
+        "jentic-rules",
+        "jentic-body",
+        "jentic-cred",
+        "jentic-upstream",
+        "jentic-persist",
+        "jentic-total",
+    ]
     _assert_persist_is_sane(stages)
     assert str(refused_port) not in fields[0]
 
@@ -346,3 +374,19 @@ async def test_execute_failed_upstream_without_middleware_has_no_timing(
 
     assert resp.status_code == 504, resp.text
     assert "server-timing" not in resp.headers
+
+
+async def test_rule_deny_lists_stage_names_without_durations(
+    ctx: Context, seeded_credential: None, upstream: _Upstream
+) -> None:
+    """A broker 403 raised before the upstream call says where it stopped — the
+    failing ``jentic-rules`` stage included — but carries no durations."""
+    async with httpx.AsyncClient() as upstream_client:
+        runner = _BufferedOnly(HttpRunner(upstream_client))
+        resp = await _execute(_app(ctx, runner, server_timing=True, deny=True), upstream.port)
+
+    assert resp.status_code == 403, resp.text
+    assert resp.headers.get_list("server-timing") == [
+        "jentic-auth, jentic-egress, jentic-discover, jentic-rules, jentic-total"
+    ]
+    assert upstream.request_heads == []

@@ -1493,13 +1493,13 @@ class BrokerResilienceConfig(BaseModel):
         description=(
             "Hard admission cap on concurrently executing brokered calls, "
             "**per broker process** — replicas multiply it. At the cap, new "
-            "requests are shed with 429 + ``Retry-After: shed_retry_after_s``."
+            "requests are shed with 503 + ``Retry-After: shed_retry_after_s``."
         ),
     )
     shed_retry_after_s: int = Field(
         default=5,
         description=(
-            "``Retry-After`` (seconds) returned with the 429 when admission "
+            "``Retry-After`` (seconds) returned with the 503 when admission "
             "sheds at ``max_in_flight``."
         ),
     )
@@ -1719,12 +1719,16 @@ class BrokerConfig(BaseModel):
         default=False,
         description=(
             "Emit a W3C ``Server-Timing`` header on execute responses with "
-            "per-stage durations (auth, discover, rules, cred, upstream, "
-            "persist, total) for authenticated callers. Off by default: "
-            "timing data aids side-channel probing and fingerprinting, so "
-            "enable it only where callers are trusted with it (e.g. while "
-            "diagnosing latency). Streaming responses carry only the stages "
-            "known before the headers are sent (no ``persist``)."
+            "per-stage durations (``jentic-auth``, ``jentic-egress``, "
+            "``jentic-discover``, ``jentic-rules``, ``jentic-body``, "
+            "``jentic-idempotency``, ``jentic-cred``, ``jentic-upstream``, "
+            "``jentic-persist``, ``jentic-total``) for authenticated callers. "
+            "A broker-generated error raised before the upstream call lists "
+            "the stages that ran without durations. Off by default: timing "
+            "data aids side-channel probing and fingerprinting, so enable it "
+            "only where callers are trusted with it (e.g. while diagnosing "
+            "latency). Streaming responses carry only the stages known before "
+            "the headers are sent (no ``jentic-persist``)."
         ),
     )
 
