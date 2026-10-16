@@ -152,11 +152,18 @@ class _ScriptedWorker(WorkerLoop):
     stops once the script is exhausted.
     """
 
-    def __init__(self, script: list[BaseException | bool], *, jitter: float = 1.0) -> None:
+    def __init__(
+        self,
+        script: list[BaseException | bool],
+        *,
+        jitter: float = 1.0,
+        worker_config: WorkerConfig | None = None,
+    ) -> None:
         super().__init__(
             db=object(),  # type: ignore[arg-type]
             handler_registry=JobHandlerRegistry(),
             poll_interval=0.5,
+            worker_config=worker_config,
         )
         self._script = list(script)
         self._fixed_jitter = jitter
@@ -182,16 +189,34 @@ def _events(logs: list[MutableMapping[str, Any]], name: str) -> list[MutableMapp
 
 
 def test_reconnect_backoff_grows_exponentially_caps_and_jitters() -> None:
+    cfg = WorkerConfig()
     # Full jitter (1.0) yields the capped exponential value itself.
-    full = [_reconnect_backoff_s(n, 1.0) for n in range(1, 8)]
+    full = [_reconnect_backoff_s(n, 1.0, cfg) for n in range(1, 8)]
     assert full == [2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
     # Zero jitter is the lower bound: half the capped value.
-    assert _reconnect_backoff_s(1, 0.0) == 1.0
-    assert _reconnect_backoff_s(99, 0.0) == 15.0
+    assert _reconnect_backoff_s(1, 0.0, cfg) == 1.0
+    assert _reconnect_backoff_s(99, 0.0, cfg) == 15.0
     # Every jittered delay stays within [capped / 2, cap].
     for n in range(1, 10):
         for j in (0.0, 0.25, 0.5, 0.999):
-            assert 1.0 <= _reconnect_backoff_s(n, j) <= 30.0
+            assert 1.0 <= _reconnect_backoff_s(n, j, cfg) <= 30.0
+
+
+def test_reconnect_backoff_uses_configured_base_and_cap() -> None:
+    cfg = WorkerConfig(reconnect_backoff_base_s=0.5, reconnect_backoff_max_s=3.0)
+    assert [_reconnect_backoff_s(n, 1.0, cfg) for n in range(1, 6)] == [0.5, 1.0, 2.0, 3.0, 3.0]
+    assert _reconnect_backoff_s(99, 0.0, cfg) == 1.5
+
+
+@pytest.mark.asyncio
+async def test_run_connection_loss_backoff_follows_worker_config() -> None:
+    """The run loop's reconnect delays come from ``worker.reconnect_backoff_*``."""
+    cfg = WorkerConfig(reconnect_backoff_base_s=1.0, reconnect_backoff_max_s=4.0)
+    worker = _ScriptedWorker(
+        [*(_connection_dropped() for _ in range(4)), True, False], worker_config=cfg
+    )
+    await asyncio.wait_for(worker.run(), timeout=2.0)
+    assert worker.sleeps == [1.0, 2.0, 4.0, 4.0, 0.5]
 
 
 @pytest.mark.asyncio

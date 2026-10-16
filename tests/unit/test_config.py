@@ -1848,3 +1848,75 @@ def test_entitlement_env_override_round_trip(config_file: Path):
     assert config.entitlement.license_dimensions == ["users", "executions"]
     assert config.entitlement.region == "eu-west-1"
     assert config.entitlement.refresh_interval_seconds == 600
+
+
+def test_db_connection_tunables_default_and_env_override(config_file: Path):
+    """Pool recycle and TCP keepalive are per-database ``databases.*`` settings."""
+    default = load_config(config_file).databases.registry
+    assert default.pool_recycle_s == config_module.POOL_RECYCLE_S == 1800
+    assert default.tcp_keepalive is True
+    assert default.tcp_keepalive_idle_s == config_module.TCP_KEEPALIVE_IDLE_S == 60
+    assert default.tcp_keepalive_interval_s == config_module.TCP_KEEPALIVE_INTERVAL_S == 10
+    assert default.tcp_keepalive_count == config_module.TCP_KEEPALIVE_COUNT == 5
+    env = {
+        "JENTIC__DATABASES__REGISTRY__POOL_RECYCLE_S": "0",
+        "JENTIC__DATABASES__REGISTRY__TCP_KEEPALIVE": "false",
+        "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_IDLE_S": "30",
+        "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_INTERVAL_S": "3",
+        "JENTIC__DATABASES__CONTROL__TCP_KEEPALIVE_COUNT": "9",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.databases.registry.pool_recycle_s == 0
+    assert config.databases.registry.tcp_keepalive is False
+    control = config.databases.control
+    assert (control.tcp_keepalive_idle_s, control.tcp_keepalive_interval_s) == (30, 3)
+    assert control.tcp_keepalive_count == 9
+    assert config.databases.admin.tcp_keepalive_idle_s == 60
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("POOL_RECYCLE_S", "-1"),
+        ("TCP_KEEPALIVE_IDLE_S", "0"),
+        ("TCP_KEEPALIVE_IDLE_S", "32768"),
+        ("TCP_KEEPALIVE_INTERVAL_S", "0"),
+        ("TCP_KEEPALIVE_INTERVAL_S", "32768"),
+        ("TCP_KEEPALIVE_COUNT", "0"),
+        ("TCP_KEEPALIVE_COUNT", "128"),
+    ],
+)
+def test_db_connection_tunables_out_of_bounds_rejected(config_file: Path, key: str, value: str):
+    env = {f"JENTIC__DATABASES__REGISTRY__{key}": value}
+    with patch.dict(os.environ, env), pytest.raises(ConfigError, match=key.lower()):
+        load_config(config_file)
+
+
+def test_worker_reconnect_backoff_default_and_env_override(config_file: Path):
+    default = load_config(config_file).worker
+    assert (default.reconnect_backoff_base_s, default.reconnect_backoff_max_s) == (2.0, 30.0)
+    env = {
+        "JENTIC__WORKER__RECONNECT_BACKOFF_BASE_S": "0.5",
+        "JENTIC__WORKER__RECONNECT_BACKOFF_MAX_S": "120",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        worker = load_config(config_file).worker
+    assert (worker.reconnect_backoff_base_s, worker.reconnect_backoff_max_s) == (0.5, 120.0)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("RECONNECT_BACKOFF_BASE_S", "0"),
+        ("RECONNECT_BACKOFF_BASE_S", "301"),
+        ("RECONNECT_BACKOFF_MAX_S", "0"),
+        ("RECONNECT_BACKOFF_MAX_S", "3601"),
+    ],
+)
+def test_worker_reconnect_backoff_out_of_bounds_rejected(config_file: Path, key: str, value: str):
+    with (
+        patch.dict(os.environ, {f"JENTIC__WORKER__{key}": value}),
+        pytest.raises(ConfigError, match=key.lower()),
+    ):
+        load_config(config_file)

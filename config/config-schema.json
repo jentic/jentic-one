@@ -521,6 +521,13 @@
           "title": "Pool Max",
           "type": "integer"
         },
+        "pool_recycle_s": {
+          "default": 1800,
+          "description": "PostgreSQL: replace a pooled connection once it is this many seconds old, on its next checkout, so a connection silently dropped by a middlebox or left behind by a server restart is retired before use. Keep it below any server, proxy, or NAT idle timeout on the path. ``0`` disables recycling. Ignored for SQLite.",
+          "minimum": 0,
+          "title": "Pool Recycle S",
+          "type": "integer"
+        },
         "port": {
           "default": 5432,
           "description": "PostgreSQL server port.",
@@ -533,6 +540,36 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "title": "Schema Name",
           "type": "string"
+        },
+        "tcp_keepalive": {
+          "default": true,
+          "description": "PostgreSQL: enable TCP keepalive on each pooled connection's client socket so a peer that vanished while the connection sat idle is detected in about ``tcp_keepalive_idle_s + tcp_keepalive_count * tcp_keepalive_interval_s`` seconds instead of the OS default of hours. ``false`` leaves the socket at the OS defaults. Ignored for SQLite.",
+          "title": "Tcp Keepalive",
+          "type": "boolean"
+        },
+        "tcp_keepalive_count": {
+          "default": 5,
+          "description": "PostgreSQL: unanswered TCP keepalive probes before the connection is declared dead (``TCP_KEEPCNT``). Only applies when ``tcp_keepalive`` is ``true``. Ignored for SQLite.",
+          "maximum": 127,
+          "minimum": 1,
+          "title": "Tcp Keepalive Count",
+          "type": "integer"
+        },
+        "tcp_keepalive_idle_s": {
+          "default": 60,
+          "description": "PostgreSQL: seconds a connection may sit idle before the first TCP keepalive probe is sent (``TCP_KEEPIDLE``; ``TCP_KEEPALIVE`` on macOS). Only applies when ``tcp_keepalive`` is ``true``. Ignored for SQLite.",
+          "maximum": 32767,
+          "minimum": 1,
+          "title": "Tcp Keepalive Idle S",
+          "type": "integer"
+        },
+        "tcp_keepalive_interval_s": {
+          "default": 10,
+          "description": "PostgreSQL: seconds between unanswered TCP keepalive probes (``TCP_KEEPINTVL``). Only applies when ``tcp_keepalive`` is ``true``. Ignored for SQLite.",
+          "maximum": 32767,
+          "minimum": 1,
+          "title": "Tcp Keepalive Interval S",
+          "type": "integer"
         },
         "user": {
           "default": "postgres",
@@ -1957,6 +1994,22 @@
           "default": 5,
           "title": "Max Attempts",
           "type": "integer"
+        },
+        "reconnect_backoff_base_s": {
+          "default": 2.0,
+          "description": "First delay, in seconds, before the worker retries after losing its database connection. Doubles on each further failed attempt up to ``reconnect_backoff_max_s``; each delay is then jittered into the upper half of its value so workers sharing a database do not retry in lockstep.",
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Reconnect Backoff Base S",
+          "type": "number"
+        },
+        "reconnect_backoff_max_s": {
+          "default": 30.0,
+          "description": "Cap, in seconds, on the worker's reconnect delay while the database is unreachable — a recovered database is picked up within this long.",
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Reconnect Backoff Max S",
+          "type": "number"
         },
         "retry_backoff_base_s": {
           "default": 2.0,

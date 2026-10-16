@@ -162,6 +162,26 @@ def _normalize_optional_base_url(value: str | None) -> str | None:
     return normalize_base_url(value)
 
 
+# Default ``databases.*.pool_recycle_s``: a pooled connection older than this is
+# replaced at checkout. Bounds connection age so a connection silently dropped by
+# a middlebox (Docker Desktop's VM network, a NAT gateway, a cloud load balancer)
+# or left behind by a server restart is replaced proactively instead of failing a
+# request. 30 minutes sits well inside the usual idle cutoffs of proxies that do
+# not honour keepalives while costing one reconnect per connection per half hour.
+POOL_RECYCLE_S = 1800
+
+# Defaults for ``databases.*.tcp_keepalive_*`` (client-side TCP keepalive on each
+# asyncpg socket). An idle connection is probed after 60s and a dead peer is
+# detected after ~110s (60 + 5 x 10) rather than the OS default of hours.
+TCP_KEEPALIVE_IDLE_S = 60
+TCP_KEEPALIVE_INTERVAL_S = 10
+TCP_KEEPALIVE_COUNT = 5
+# Upper bounds the Linux kernel accepts for ``TCP_KEEPIDLE``/``TCP_KEEPINTVL``
+# (seconds) and ``TCP_KEEPCNT`` (probes); larger values fail ``setsockopt``.
+_TCP_KEEPALIVE_MAX_S = 32767
+_TCP_KEEPALIVE_MAX_COUNT = 127
+
+
 class DatabaseConfig(BaseModel):
     """Connection parameters for a single database.
 
@@ -192,6 +212,57 @@ class DatabaseConfig(BaseModel):
     pool_max: int = Field(
         default=10,
         description="Maximum connections in the PostgreSQL connection pool (ignored for SQLite).",
+    )
+    pool_recycle_s: int = Field(
+        default=POOL_RECYCLE_S,
+        ge=0,
+        description=(
+            "PostgreSQL: replace a pooled connection once it is this many seconds "
+            "old, on its next checkout, so a connection silently dropped by a "
+            "middlebox or left behind by a server restart is retired before use. "
+            "Keep it below any server, proxy, or NAT idle timeout on the path. "
+            "``0`` disables recycling. Ignored for SQLite."
+        ),
+    )
+    tcp_keepalive: bool = Field(
+        default=True,
+        description=(
+            "PostgreSQL: enable TCP keepalive on each pooled connection's client "
+            "socket so a peer that vanished while the connection sat idle is "
+            "detected in about ``tcp_keepalive_idle_s + tcp_keepalive_count * "
+            "tcp_keepalive_interval_s`` seconds instead of the OS default of hours. "
+            "``false`` leaves the socket at the OS defaults. Ignored for SQLite."
+        ),
+    )
+    tcp_keepalive_idle_s: int = Field(
+        default=TCP_KEEPALIVE_IDLE_S,
+        ge=1,
+        le=_TCP_KEEPALIVE_MAX_S,
+        description=(
+            "PostgreSQL: seconds a connection may sit idle before the first TCP "
+            "keepalive probe is sent (``TCP_KEEPIDLE``; ``TCP_KEEPALIVE`` on "
+            "macOS). Only applies when ``tcp_keepalive`` is ``true``. Ignored for SQLite."
+        ),
+    )
+    tcp_keepalive_interval_s: int = Field(
+        default=TCP_KEEPALIVE_INTERVAL_S,
+        ge=1,
+        le=_TCP_KEEPALIVE_MAX_S,
+        description=(
+            "PostgreSQL: seconds between unanswered TCP keepalive probes "
+            "(``TCP_KEEPINTVL``). Only applies when ``tcp_keepalive`` is ``true``. "
+            "Ignored for SQLite."
+        ),
+    )
+    tcp_keepalive_count: int = Field(
+        default=TCP_KEEPALIVE_COUNT,
+        ge=1,
+        le=_TCP_KEEPALIVE_MAX_COUNT,
+        description=(
+            "PostgreSQL: unanswered TCP keepalive probes before the connection is "
+            "declared dead (``TCP_KEEPCNT``). Only applies when ``tcp_keepalive`` is "
+            "``true``. Ignored for SQLite."
+        ),
     )
     # The identifier pattern is defense-in-depth so a hostile config value
     # cannot escape the quoted identifier (SEC-2).
@@ -311,6 +382,27 @@ class WorkerConfig(BaseModel):
     # this the worker stops claiming and lets the still-RUNNING job be reclaimed
     # via its visibility timeout after restart (no work dropped).
     drain_timeout_s: float = 25.0
+    reconnect_backoff_base_s: float = Field(
+        default=2.0,
+        gt=0,
+        le=300,
+        description=(
+            "First delay, in seconds, before the worker retries after losing its "
+            "database connection. Doubles on each further failed attempt up to "
+            "``reconnect_backoff_max_s``; each delay is then jittered into the "
+            "upper half of its value so workers sharing a database do not retry "
+            "in lockstep."
+        ),
+    )
+    reconnect_backoff_max_s: float = Field(
+        default=30.0,
+        gt=0,
+        le=3600,
+        description=(
+            "Cap, in seconds, on the worker's reconnect delay while the database "
+            "is unreachable — a recovered database is picked up within this long."
+        ),
+    )
 
 
 class RuntimeConfig(BaseModel):

@@ -62,20 +62,17 @@ def _backoff_s(attempts: int, cfg: WorkerConfig) -> float:
 
 # Reconnect backoff while the database is unreachable: base * 2**(n-1), capped,
 # then "equal jitter" (a uniform pick in the upper half) so workers sharing a
-# database don't retry in lockstep. Starts at the poll interval and tops out at
-# 30s, so a recovered database is picked up within half a minute.
-_RECONNECT_BACKOFF_BASE_S = _POLL_INTERVAL_SECONDS
-_RECONNECT_BACKOFF_MAX_S = 30.0
-
-
-def _reconnect_backoff_s(attempt: int, jitter: float) -> float:
+# database don't retry in lockstep. Base and cap come from
+# ``worker.reconnect_backoff_base_s`` / ``worker.reconnect_backoff_max_s``.
+def _reconnect_backoff_s(attempt: int, jitter: float, cfg: WorkerConfig) -> float:
     """Delay before reconnect ``attempt`` (1-based); ``jitter`` is in ``[0, 1)``.
 
     The result lies in ``[capped / 2, capped]`` where
     ``capped = min(base * 2**(attempt-1), max)``, so it never exceeds the cap.
     """
     capped = min(
-        _RECONNECT_BACKOFF_BASE_S * float(2 ** max(0, attempt - 1)), _RECONNECT_BACKOFF_MAX_S
+        cfg.reconnect_backoff_base_s * float(2 ** max(0, attempt - 1)),
+        cfg.reconnect_backoff_max_s,
     )
     return capped / 2 + (capped / 2) * jitter
 
@@ -143,7 +140,9 @@ class WorkerLoop:
                         outage_attempts = 0
                     else:
                         outage_attempts += 1
-                        delay_s = _reconnect_backoff_s(outage_attempts, self._jitter())
+                        delay_s = _reconnect_backoff_s(
+                            outage_attempts, self._jitter(), self._config
+                        )
                         if outage_attempts == 1:
                             outage_started = time.monotonic()
                             logger.warning(
