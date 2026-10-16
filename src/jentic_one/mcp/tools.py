@@ -1114,6 +1114,9 @@ async def _execute_tool(
         body_bytes = json.dumps(body_value, ensure_ascii=False).encode("utf-8")
 
     idempotency_key = args.get("idempotency_key", "")
+    # Both failure paths judge retry safety on the key that actually rides the
+    # wire, so a key passed via ``headers`` counts the same as idempotency_key.
+    retry_safe = ex.retry_safe(method, ex.effective_idempotency_key(headers, idempotency_key))
     try:
         status, response_headers, raw, execution_id = await ex.send_to_broker(
             method=method,
@@ -1125,7 +1128,6 @@ async def _execute_tool(
             idempotency_key=idempotency_key or None,
         )
     except Exception as exc:
-        retry_safe = bool(idempotency_key) or method in ("GET", "HEAD")
         # ``from None``: the raw transport message stays out of any rendered
         # traceback (``transport_error`` logs a redacted copy).
         raise ex.transport_error(exc, retry_safe=retry_safe) from None
@@ -1138,12 +1140,7 @@ async def _execute_tool(
         raise resolve_failure
     if (
         broker_failure := ex.classify_broker_transport_error(
-            status,
-            response_headers,
-            raw,
-            retry_safe=bool(idempotency_key)
-            or method in ("GET", "HEAD")
-            or any(k.strip().lower() == "idempotency-key" and v.strip() for k, v in headers),
+            status, response_headers, raw, retry_safe=retry_safe
         )
     ) is not None:
         raise broker_failure

@@ -352,39 +352,50 @@ RECOVER_TIMEOUT = "timeout"
 RECOVER_SCHEME = "scheme"
 RECOVER_UNKNOWN = "unknown"
 
-#: The wire types the broker emits when it refuses a call before dispatching it
-#: upstream, and that a later identical call can succeed on (Go:
+#: The wire types the broker emits when it fails a call before the upstream
+#: could act on it, and that a later identical call can succeed on (Go:
 #: ``brokerTransientProblemTypes``): ``circuit_open`` (CircuitOpenError, 503 +
 #: Retry-After), ``runner_unavailable`` (RunnerUnavailableError, 503),
 #: ``server_at_capacity`` (the admission middleware's 503 + Retry-After),
-#: ``refresh_transient_error`` (CredentialRefreshTransientError, 502) and
-#: ``rate_limit_exceeded`` (RateLimitExceededError, 429 + Retry-After).
+#: ``too_many_candidates`` (TooManyCandidatesError, 503: operation resolution
+#: overloaded, before dispatch), ``refresh_transient_error``
+#: (CredentialRefreshTransientError, 502: the token refresh failed before
+#: dispatch), ``upstream_connect_failed`` (UpstreamTimeoutError raised in the
+#: connect phase, 504: no request bytes were sent) and ``rate_limit_exceeded``
+#: (RateLimitExceededError, 429 + Retry-After).
 _BROKER_TRANSIENT_PROBLEM_TYPES = frozenset(
     {
         "circuit_open",
         "runner_unavailable",
         "server_at_capacity",
+        "too_many_candidates",
         "refresh_transient_error",
+        "upstream_connect_failed",
         "rate_limit_exceeded",
     }
 )
+
+#: The wire types for a call the broker ran out of time on after sending it
+#: (Go: ``brokerTimeoutProblemTypes``): ``upstream_timeout``
+#: (UpstreamTimeoutError, 504: one attempt's read timed out) and
+#: ``deadline_exceeded`` (DeadlineExceededError, 504: the overall deadline).
+_BROKER_TIMEOUT_PROBLEM_TYPES = frozenset({"upstream_timeout", "deadline_exceeded"})
 
 
 def broker_transport_recovery(status: int, problem_type: str) -> str:
     """Route a broker-origin 5xx/429 by status and exact problem type (Go:
     ``agentops.BrokerTransportRecoveryFor``).
 
-    Any 429 is a wait. ``deadline_exceeded`` (DeadlineExceededError) and an
-    untyped 504 (UpstreamTimeoutError carries no type of its own) are timeouts.
+    Any 429 is a wait. The timeout types may have reached the upstream.
     ``runner_scheme_unsupported`` (RunnerSchemeUnsupportedError, 501) needs a
-    different operation. Everything else, including an untyped 502
-    (UpstreamResponseTooLargeError carries no type of its own), is unknown.
+    different operation. Everything else is unknown, including
+    ``upstream_response_too_large`` (UpstreamResponseTooLargeError, 502: the
+    upstream answered, so the call ran) and ``upstream_transport_error`` (the
+    connection failed mid-request).
     """
     if status == 429 or problem_type in _BROKER_TRANSIENT_PROBLEM_TYPES:
         return RECOVER_WAIT
-    if problem_type == "deadline_exceeded" or (
-        status == 504 and problem_type in ("", "about:blank")
-    ):
+    if problem_type in _BROKER_TIMEOUT_PROBLEM_TYPES:
         return RECOVER_TIMEOUT
     if problem_type == "runner_scheme_unsupported":
         return RECOVER_SCHEME
@@ -403,6 +414,29 @@ def broker_transport_retryable(recovery: str, *, retry_safe: bool) -> bool:
     if recovery == RECOVER_TIMEOUT:
         return retry_safe
     return False
+
+
+def effective_idempotency_key(headers: list[tuple[str, str]], idempotency_key: str | None) -> str:
+    """The ``Idempotency-Key`` value :func:`send_to_broker` puts on the wire.
+
+    A caller-supplied ``Idempotency-Key`` in ``headers`` wins over the
+    ``idempotency_key`` argument, exactly as :func:`send_to_broker` merges them
+    (Go reads the built request's header for the same reason).
+    """
+    values = [v.strip() for k, v in headers if k.strip().lower() == "idempotency-key"]
+    if values:
+        return values[-1]
+    return idempotency_key or ""
+
+
+def retry_safe(method: str, idempotency_key: str | None) -> bool:
+    """Whether re-sending a call cannot double-execute it (Go: ``agentops.RetrySafe``).
+
+    A GET/HEAD (case-insensitive), or a call carrying a non-blank
+    ``Idempotency-Key`` the broker de-duplicates on. Pass the key that rides the
+    wire (:func:`effective_idempotency_key`).
+    """
+    return bool((idempotency_key or "").strip()) or method.upper() in ("GET", "HEAD")
 
 
 def retry_after_seconds(headers: httpx.Headers) -> float | None:
@@ -467,9 +501,10 @@ def classify_broker_transport_error(
     """Broker transport-failure classification (Go: ``agentops.BrokerTransportError``
     + ``executeBrokerTransportError``), #1531.
 
-    A 5xx or 429 the broker itself emitted (circuit open, runner degraded,
-    admission shed, rate limit, scheme unsupported) produced no upstream
-    answer, so it is a TRANSPORT_ERROR, not a normal result. ``retryable`` is
+    A 5xx or 429 the broker itself generated (circuit open, runner degraded,
+    admission shed, rate limit, refresh failure, timeout, deadline, response
+    size cap, scheme unsupported) is not an upstream answer, so it is a
+    TRANSPORT_ERROR, not a normal result. ``retryable`` is
     earned from the problem type, and the broker's ``Retry-After`` rides as
     ``retry_after_s`` when present.
 

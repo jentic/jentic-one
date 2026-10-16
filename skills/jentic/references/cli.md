@@ -297,11 +297,12 @@ jentic execute <METHOD:url> --broker-scheme http --broker-host 127.0.0.1:8100
   After the restart, retry the original call and continue the task.
 
 - **Broker-side failure (`TRANSPORT_ERROR`, exit 1, `details.origin:
-  broker`).** A 5xx or 429 the broker emitted itself (circuit open, runner
-  degraded, at capacity, rate limited) is not an upstream answer. Branch on
-  `details.retryable`: when `true`, wait `details.retry_after_s` seconds
-  (or briefly, when absent) and re-run the same call; when `false`, do not
-  re-run it as-is — it may have reached the upstream, or (for
+  broker`).** A 5xx or 429 the broker generated itself (circuit open, runner
+  degraded, at capacity, rate limited, token refresh failed, upstream timed
+  out, deadline exceeded, response too large) is not an upstream answer.
+  Branch on `details.retryable`: when `true`, wait `details.retry_after_s`
+  seconds (or briefly, when absent) and re-run the same call; when `false`,
+  do not re-run it as-is — it may have reached the upstream, or (for
   `runner_scheme_unsupported`) it can never succeed. A 5xx the broker
   mirrored from the vendor (`Jentic-Error-Origin: upstream`) stays exit 0
   — that is the API's own answer.

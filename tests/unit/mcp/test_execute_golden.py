@@ -626,6 +626,34 @@ async def test_transport_error_envelope_carries_exception_class_not_message(brok
     assert payload["retryable"] is False
 
 
+@pytest.mark.parametrize(
+    ("args", "want_retryable"),
+    [
+        ({}, False),
+        ({"idempotency_key": "idem-1"}, True),
+        ({"idempotency_key": "   "}, False),
+        ({"headers": {"Idempotency-Key": "idem-1"}}, True),
+    ],
+)
+async def test_midflight_transport_failure_honours_the_wire_idempotency_key(
+    broker, args, want_retryable
+) -> None:
+    """A mid-flight failure on a POST is retryable only with a non-blank key,
+    whether passed as ``idempotency_key`` or via ``headers`` (Go:
+    TestMCPExecute_MidflightFailureWithHeaderIdempotencyKeyIsRetryable)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("connection reset")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets", **args})
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["retryable"] is want_retryable
+
+
 def _broker_problem(status: int, problem: dict[str, Any]) -> httpx.Response:
     """A problem response in the broker's real ``problem_body`` shape (message in
     ``title``, no ``detail``, ``Jentic-Error-Origin: broker``)."""
@@ -820,8 +848,13 @@ async def test_execute_upstream_5xx_passthrough_matches_the_shared_golden(broker
         (503, "circuit_open", "12", {}, True, None),
         (503, "runner_unavailable", None, {}, True, None),
         (503, "server_at_capacity", "1", {}, True, None),
+        (503, "too_many_candidates", None, {}, True, None),
         (502, "refresh_transient_error", None, {}, True, None),
+        (504, "upstream_connect_failed", None, {}, True, None),
         (504, "deadline_exceeded", None, {}, False, None),
+        (504, "upstream_timeout", None, {}, False, None),
+        (504, "deadline_exceeded", None, {"idempotency_key": "   "}, False, None),
+        (502, "upstream_response_too_large", None, {}, False, None),
         (504, "deadline_exceeded", None, {"idempotency_key": "idem-1"}, True, None),
         (
             504,
