@@ -14,7 +14,8 @@ A loader exception propagates to every waiter of that load. With
 ``failure_ttl_seconds > 0`` the failure is also remembered for that long, so a
 persistently failing key is not reloaded on every call; with the default ``0``
 the next call after a failure runs the loader again. Only the failure's type
-and scalar args are remembered (never the exception object, whose traceback
+and scalar args (strings length-capped) are remembered (never the exception
+object, whose traceback
 and cause chain would keep the loader's locals alive), and each hit raises a
 fresh instance with no ``__cause__``. ``clear()`` drops every
 entry and detaches loads already in flight: their waiters still get the
@@ -32,10 +33,11 @@ from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from typing import cast
 
-#: Exception ``args`` of these types are kept verbatim in a remembered failure;
-#: anything else is replaced by the exception's message (at most
-#: :data:`_MAX_FALLBACK_MESSAGE` characters) so a remembered failure never
-#: references objects the loader built (bodies, responses, buffers).
+#: Exception ``args`` of these types are kept in a remembered failure (``str``
+#: args truncated to :data:`_MAX_FALLBACK_MESSAGE` characters); anything else is
+#: replaced by the exception's message (truncated the same way) so a remembered
+#: failure never references objects the loader built (bodies, responses,
+#: buffers) and never holds an unbounded message.
 _SCALAR_ARG_TYPES = (str, int, float, bool, type(None))
 _MAX_FALLBACK_MESSAGE = 1024
 
@@ -56,7 +58,12 @@ class _Failure:
     @classmethod
     def detach(cls, exc: Exception) -> _Failure:
         if all(isinstance(arg, _SCALAR_ARG_TYPES) for arg in exc.args):
-            return cls(type(exc), tuple(exc.args))
+            return cls(
+                type(exc),
+                tuple(
+                    arg[:_MAX_FALLBACK_MESSAGE] if isinstance(arg, str) else arg for arg in exc.args
+                ),
+            )
         return cls(type(exc), (str(exc)[:_MAX_FALLBACK_MESSAGE],))
 
     def rebuild(self) -> Exception:
