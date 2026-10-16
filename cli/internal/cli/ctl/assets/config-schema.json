@@ -208,6 +208,13 @@
           "title": "Rule Cache Ttl S",
           "type": "number"
         },
+        "streaming_persist_timeout_s": {
+          "default": 10.0,
+          "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist``, ``outcome=timed_out``).",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Timeout S",
+          "type": "number"
+        },
         "toolkit_cache_ttl_s": {
           "default": 3.0,
           "title": "Toolkit Cache Ttl S",
@@ -1527,6 +1534,13 @@
     "ServicesConfig": {
       "description": "Service-level settings (immutable after boot).",
       "properties": {
+        "background_task_drain_timeout_s": {
+          "default": 10.0,
+          "description": "On shutdown, how long (seconds) the app waits for work requests handed off after their response (e.g. streaming execution records) before cancelling what is still running. Runs before the databases close; each cancelled task is logged and counted on ``app.background_tasks`` (``outcome=cancelled``).",
+          "minimum": 0,
+          "title": "Background Task Drain Timeout S",
+          "type": "number"
+        },
         "request_timeout_s": {
           "default": 30.0,
           "title": "Request Timeout S",

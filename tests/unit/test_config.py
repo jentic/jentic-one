@@ -2021,3 +2021,41 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+def test_streaming_persist_and_drain_budgets_default(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 10.0
+    assert config.services.background_task_drain_timeout_s == 10.0
+
+
+def test_streaming_persist_and_drain_budgets_from_yaml_and_env(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "broker": {"streaming_persist_timeout_s": 2.5},
+            "services": {"background_task_drain_timeout_s": 0},
+        },
+    )
+    assert config.broker.streaming_persist_timeout_s == 2.5
+    assert config.services.background_task_drain_timeout_s == 0
+    env = {
+        "JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S": "4",
+        "JENTIC__SERVICES__BACKGROUND_TASK_DRAIN_TIMEOUT_S": "7.5",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = _load(tmp_path, {})
+    assert config.broker.streaming_persist_timeout_s == 4.0
+    assert config.services.background_task_drain_timeout_s == 7.5
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"broker": {"streaming_persist_timeout_s": 0}},
+        {"services": {"background_task_drain_timeout_s": -1}},
+    ],
+)
+def test_streaming_persist_and_drain_budgets_reject_invalid(tmp_path: Path, extra: dict[str, Any]):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, extra)

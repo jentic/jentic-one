@@ -21,7 +21,16 @@ response: `OutcomeStreamingResponse` logs one structured event for it and ends
 the response without its final body frame, so the server closes the connection
 and the client sees a truncated body rather than a clean end. On every outcome
 it then hands the `StreamingOutcome` to the completion callback exactly once —
-the execution record is never lost to a body that raised.
+the execution record is never lost to a body that raised. The callback must
+return promptly: the router's callback hands the record write to the app's
+background-task registry (`jentic_one.shared.web.background_tasks`), so neither
+a clean end nor an abort waits on the database.
+
+The truncation is detectable only where the downstream framing delimits the
+body: HTTP/1.1 chunked (the broker strips the upstream ``Content-Length``, so a
+streamed response is always chunked) and HTTP/2. An HTTP/1.0 client, or a front
+proxy that re-frames the body, reads a close-delimited body, and an aborted
+body looks complete to it.
 
 Deferred: a dedicated per-chunk slow-client *write* timeout — the downstream
 socket write happens inside the ASGI server (outside this generator), so it can't
@@ -47,7 +56,12 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     StreamingUpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError, ErrorOrigin, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    ErrorOrigin,
+    UpstreamBodyInterruptedError,
+    UpstreamTimeoutError,
+)
 from jentic_one.broker.core.headers import (
     REGION_MISMATCH_HINT,
     JenticHeader,
@@ -67,17 +81,11 @@ __all__ = [
 
 logger = structlog.get_logger(__name__)
 
-# Completion callbacks running under ``asyncio.shield``: held here so a
-# callback outlives a cancelled request task without being garbage-collected.
-_completions: set[asyncio.Task[None]] = set()
-
 
 def _error_type(exc: Exception) -> str:
-    """The failure class to record: the transport error a runner mapped, else the exception's."""
-    if isinstance(exc, BrokerError):
-        mapped = exc.extra.get("error_type")
-        if isinstance(mapped, str):
-            return mapped
+    """The failure class to record: a mid-body drop's transport error, else the exception's."""
+    if isinstance(exc, UpstreamBodyInterruptedError):
+        return exc.transport_error
     return type(exc).__name__
 
 
@@ -185,10 +193,14 @@ class OutcomeStreamingResponse(StreamingResponse):
     * After the body — completed, failed, or cut off by a client disconnect or
       cancellation — the body generator is closed (finalising the outcome and
       releasing the upstream stream) and ``on_complete`` receives the outcome
-      exactly once. That step is shielded from cancellation and never raises.
+      exactly once, even when a cancellation interrupts the close. It never
+      raises. ``on_complete`` runs before ``__call__`` returns, so it must
+      return promptly (hand slow work such as a DB write to the app's
+      background-task registry): the server closes an aborted response's
+      connection only once ``__call__`` returns.
 
-    Starlette skips a response's ``BackgroundTask`` when the body raises, so
-    the completion step lives in ``__call__``'s ``finally`` instead.
+    A body that raises would skip a ``BackgroundTask``, so the completion step
+    must run in ``__call__``'s ``finally``.
     """
 
     def __init__(
@@ -223,10 +235,7 @@ class OutcomeStreamingResponse(StreamingResponse):
                 # Set in the request task's own context, which the server's
                 # incomplete-response log call shares.
                 mark_response_aborted()
-            task = asyncio.ensure_future(self._complete())
-            _completions.add(task)
-            task.add_done_callback(_completions.discard)
-            await asyncio.shield(task)
+            await self._complete()
 
     async def stream_response(self, send: Send) -> None:
         await send(
@@ -255,25 +264,28 @@ class OutcomeStreamingResponse(StreamingResponse):
             "error_type": _error_type(exc),
             "stream": True,
         }
-        if not isinstance(exc, BrokerError):
+        if isinstance(exc, UpstreamBodyInterruptedError):
+            # The upstream leg failed (drop, protocol error, stall).
+            logger.error("upstream_network_failure", **fields)
+        elif isinstance(exc, BrokerError):
+            # The broker cut the body off (response-size cap, transfer deadline);
+            # ``reason`` is what the execution record stores.
+            logger.warning("streaming_response_aborted", reason=self._outcome.error, **fields)
+        else:
             # Not a mapped upstream/limit failure: a defect, keep the traceback.
             logger.error("streaming_body_failed", exc_info=exc, **fields)
-        elif "error_type" in exc.extra:
-            # The runner mapped a transport failure (drop, protocol error, stall).
-            logger.error("upstream_network_failure", **fields)
-        else:
-            # The broker cut the body off (response-size cap, transfer deadline).
-            logger.warning("streaming_response_aborted", reason=exc.type, **fields)
 
     async def _complete(self) -> None:
         if self._completed:
             return
         self._completed = True
         # Closing an unfinished body (the client went away mid-send) runs its
-        # ``finally``: the outcome records the disconnect and its duration, and
-        # the upstream stream is released. A finished body ignores this. A body
-        # that never started has no ``finally`` to run, so the stack (whose
-        # second close is a no-op) is closed here too and the outcome settled.
+        # ``finally``: the outcome records the disconnect and its duration
+        # before its first await, then the upstream stream is released. A
+        # finished body ignores this. A body that never started has no
+        # ``finally`` to run, so the stack (whose second close is a no-op) is
+        # closed here too and the outcome settled. The hand-off runs in a
+        # ``finally`` so a cancellation landing mid-close still delivers it.
         try:
             await self._body.aclose()
             await self._stack.aclose()
@@ -283,11 +295,15 @@ class OutcomeStreamingResponse(StreamingResponse):
                 execution_id=self._outcome.execution_id,
                 exc_info=True,
             )
-        if not self._body_started:
-            self._outcome.duration_ms = int(
-                (time.perf_counter() - self._outcome.started_at_perf) * 1000
-            )
-            self._outcome.error = self._outcome.error or "client_disconnect"
+        finally:
+            if not self._body_started:
+                self._outcome.duration_ms = int(
+                    (time.perf_counter() - self._outcome.started_at_perf) * 1000
+                )
+                self._outcome.error = self._outcome.error or "client_disconnect"
+            await self._hand_off()
+
+    async def _hand_off(self) -> None:
         if self._on_complete is None:
             return
         try:
@@ -316,10 +332,13 @@ async def open_streaming_response(
     `aclose()`d) when the body generator finishes or is cancelled on client
     disconnect.
 
-    When ``background_callback`` is provided, it receives the final
-    ``StreamingOutcome`` exactly once after the response body ends, whatever
-    the outcome (completed, failed mid-body, client disconnect) — used for
-    persistence.
+    When ``background_callback`` is provided, it is the response's completion
+    callback: it receives the final ``StreamingOutcome`` exactly once after the
+    response body ends, whatever the outcome (completed, failed mid-body,
+    client disconnect), before the response returns to the server. It must
+    return promptly — the router's callback only schedules the record write on
+    the app's background-task registry. (The parameter name is part of the
+    ``Broker.execute_streaming`` injection seam and stays stable.)
     """
     # Anchor the duration clock *before* the upstream stream is opened:
     # ``runner.stream()`` awaits connect + request send + response headers, and

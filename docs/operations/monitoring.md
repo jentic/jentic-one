@@ -136,6 +136,9 @@ correlate with traces by `trace_id`.
 A few instruments are worth alerting on by name:
 `broker.streaming_execution.persist_failures` (an execution completed but
 its record was silently dropped — the only signal that happened),
+`app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
+(work handed off after a response — today the streaming execution record —
+that hit its budget or was cut off by a shutdown drain),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and

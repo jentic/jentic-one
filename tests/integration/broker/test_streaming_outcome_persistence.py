@@ -19,6 +19,8 @@ import asyncio
 import contextlib
 import logging
 import socket
+import time
+import uuid
 from collections.abc import AsyncGenerator, MutableMapping
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +46,11 @@ from jentic_one.shared.logging import RequestIDMiddleware, install_server_log_fi
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.web.background_tasks import (
+    BackgroundTaskRegistry,
+    get_background_tasks,
+    install_background_tasks,
+)
 from jentic_one.shared.web.errors import unhandled_exception_handler
 
 pytestmark = pytest.mark.integration
@@ -57,13 +64,6 @@ _IDENTITY = Identity(
     permissions=["execute"],
     active=True,
 )
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port: int = sock.getsockname()[1]
-        return port
 
 
 @dataclass
@@ -109,8 +109,13 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
 
 
 def _app(ctx: Context, runner: HttpRunner, upstream_port: int) -> FastAPI:
-    """The streaming handler with the broker's request-id middleware + error handlers."""
+    """The streaming handler with the broker's request-id middleware + error handlers.
+
+    Carries the app-owned background-task registry the record writes run on
+    (drained by the ``served`` fixture, as the app lifespan does).
+    """
     app = FastAPI()
+    install_background_tasks(app)
     install_broker_error_handlers(app)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.add_middleware(RequestIDMiddleware)
@@ -151,6 +156,7 @@ class _Served:
     base_url: str
     logs: list[MutableMapping[str, Any]]
     server_log: _Records
+    background_tasks: BackgroundTaskRegistry
 
 
 @pytest.fixture()
@@ -162,10 +168,14 @@ async def served(
     async with httpx.AsyncClient() as upstream_client:
         runner = HttpRunner(upstream_client, max_response_bytes=max_response_bytes)
         app = _app(integration_context, runner, upstream.port)
-        port = _free_port()
-        server = uvicorn.Server(
-            uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, lifespan="off")
-        )
+        background_tasks = get_background_tasks(app)
+        assert background_tasks is not None
+        # Bound before uvicorn starts and handed over, so no other process can
+        # take the port in between.
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, log_config=None, lifespan="off"))
         install_server_log_filters()
         server_log = _Records()
         uvicorn_error = logging.getLogger("uvicorn.error")
@@ -173,15 +183,19 @@ async def served(
         with structlog.testing.capture_logs(
             processors=[structlog.contextvars.merge_contextvars]
         ) as logs:
-            task = asyncio.create_task(server.serve())
-            while not server.started:
-                await asyncio.sleep(0.02)
+            task = asyncio.create_task(server.serve(sockets=[sock]))
             try:
-                yield _Served(f"http://127.0.0.1:{port}", logs, server_log)
+                async with asyncio.timeout(5):
+                    while not server.started:
+                        assert not task.done(), "uvicorn exited before it started"
+                        await asyncio.sleep(0.02)
+                yield _Served(f"http://127.0.0.1:{port}", logs, server_log, background_tasks)
             finally:
                 server.should_exit = True
                 await task
+                await background_tasks.drain(5)
                 uvicorn_error.removeHandler(server_log)
+                sock.close()
 
 
 @pytest.fixture()
@@ -313,7 +327,7 @@ async def test_size_cap_exceeded_midbody_persists_one_failed_record(
     assert len(await _events(integration_context, execution_id)) == 1
     aborts = [e for e in served.logs if e["event"] == "streaming_response_aborted"]
     assert len(aborts) == 1
-    assert aborts[0]["reason"] == "upstream_response_too_large"
+    assert aborts[0]["reason"] == "upstream_error: UpstreamResponseTooLargeError"
     assert aborts[0]["execution_id"] == execution_id
     assert "request_id" in aborts[0]
     assert _unhandled(served) == []
@@ -344,7 +358,7 @@ async def test_persist_failure_is_counted_and_never_escapes(
     integration_context: Context, served: _Served, execution_ids: list[str]
 ) -> None:
     """A real DB failure (duplicate execution id) is logged and counted only."""
-    execution_id = "exec_pr1712duplicateid0001"
+    execution_id = f"exec_{uuid.uuid4().hex}"
     execution_ids.append(execution_id)
     with (
         patch.object(execute_router, "mint_execution_id", return_value=execution_id),
@@ -365,3 +379,44 @@ async def test_persist_failure_is_counted_and_never_escapes(
     assert len(await _records(integration_context, execution_id)) == 1
     assert [e["event"] for e in served.logs].count("streaming_execution_persist_failed") == 1
     assert _unhandled(served) == []
+
+
+async def test_aborted_response_reaches_the_client_before_the_record_is_written(
+    integration_context: Context, served: _Served, execution_ids: list[str]
+) -> None:
+    """The client sees the truncated body at once; the slow record write runs after.
+
+    The write is slowed (not mocked: the real write still runs, then lands
+    exactly once), so a response that waited on it would surface the abort only
+    after the delay.
+    """
+    write_delay_s = 1.0
+    written_at: list[float] = []
+    real_persist = execute_router._persist_streaming_outcome
+
+    async def _slow_persist(*args: Any, **kwargs: Any) -> None:
+        await asyncio.sleep(write_delay_s)
+        await real_persist(*args, **kwargs)
+        written_at.append(time.monotonic())
+
+    with patch.object(execute_router, "_persist_streaming_outcome", _slow_persist):
+        async with (
+            httpx.AsyncClient(base_url=served.base_url) as client,
+            client.stream("GET", "/execute/drop") as resp,
+        ):
+            execution_id = resp.headers[JenticHeader.EXECUTION_ID.value]
+            execution_ids.append(execution_id)
+            sent_at = time.monotonic()
+            with pytest.raises(httpx.RemoteProtocolError):
+                async for _chunk in resp.aiter_raw():
+                    pass
+            aborted_after = time.monotonic() - sent_at
+        assert written_at == []
+        assert served.background_tasks.pending == 1
+        await served.background_tasks.drain(5)
+
+    assert aborted_after < write_delay_s / 2
+    assert len(written_at) == 1
+    records = await _records(integration_context, execution_id)
+    assert len(records) == 1
+    assert records[0].status == ExecutionStatus.FAILED
