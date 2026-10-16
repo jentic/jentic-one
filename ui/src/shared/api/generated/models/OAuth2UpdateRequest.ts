@@ -12,7 +12,7 @@ export type OAuth2UpdateRequest = {
      */
     active?: (boolean | null);
     /**
-     * Replacement client secret; omit to leave unchanged.
+     * Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.
      */
     client_secret?: (string | null);
     /**
@@ -24,7 +24,7 @@ export type OAuth2UpdateRequest = {
      */
     runtime_config?: (RuntimeConfig | null);
     /**
-     * Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them.
+     * Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
      */
     scopes?: (Array<string> | null);
     /**
@@ -32,7 +32,7 @@ export type OAuth2UpdateRequest = {
      */
     server_variables?: (Record<string, string> | null);
     /**
-     * Replacement token endpoint URL; omit to leave unchanged.
+     * Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
      */
     token_url?: (string | null);
     /**

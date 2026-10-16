@@ -6364,7 +6364,7 @@ components:
           - minLength: 1
             type: string
           - type: 'null'
-          description: Replacement client secret; omit to leave unchanged.
+          description: Replacement client secret; omit to leave unchanged. Required when `token_url` moves to a different origin. Rejected with 400 on `device_code` credentials (public client) and on credentials that use a shared app registration.
           examples:
           - example-secret
           title: Client Secret
@@ -6391,7 +6391,7 @@ components:
               type: string
             type: array
           - type: 'null'
-          description: Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them.
+          description: Replacement OAuth scopes; omit to leave unchanged, send `[]` to clear them. Each item is a single non-empty scope token without whitespace. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
           examples:
           - *id087
           title: Scopes
@@ -6410,7 +6410,7 @@ components:
           - minLength: 1
             type: string
           - type: 'null'
-          description: Replacement token endpoint URL; omit to leave unchanged.
+          description: Replacement token endpoint URL; omit to leave unchanged. A change of origin (scheme, host or port) requires `client_secret` in the same request and disconnects the credential until it is reconnected; on `device_code` credentials it is rejected with 400. Rejected with 400 on credentials that use a shared app registration, and on `device_code` credentials while a device flow is pending.
           examples:
           - https://connect.stripe.com/oauth/token
           title: Token Url
