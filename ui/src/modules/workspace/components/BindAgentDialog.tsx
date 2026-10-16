@@ -57,7 +57,7 @@ import {
 	useBindCredentialToAgents,
 } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { AccessRulesStep } from '@/shared/credentials/components/AccessRulesStep';
+import { AccessRulesStep } from '@/shared/credentials/components';
 import {
 	rulesForPreset,
 	type RulesPreset,

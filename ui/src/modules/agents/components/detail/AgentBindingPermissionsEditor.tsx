@@ -19,9 +19,8 @@ import {
 	toDisplayRule,
 	toEditorRule,
 } from '@/modules/agents/components/detail/shared';
-import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
+import { RuleListEditor, type OpsApiReference } from '@/shared/credentials/components';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
-import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
 import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vendors-types';
 
 /**

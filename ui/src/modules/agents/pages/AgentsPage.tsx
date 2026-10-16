@@ -25,8 +25,7 @@ import { useHotkey } from '@/shared/hooks';
 import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
-import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
-import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+import { CreateCredentialFlow, PostConnectBindMore } from '@/shared/credentials/components';
 import { ConnectRequestsSection } from '@/modules/agents/components/flat/ConnectRequestsSection';
 
 /** The connect session the approve wizard is open on. */

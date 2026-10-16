@@ -33,10 +33,7 @@ import { ROUTE_PATHS } from '@/shared/app/routes';
 import { hasTrace } from '@/shared/lib';
 import { cn, timeAgo } from '@/shared/lib/utils';
 import { ago } from '@/modules/agents/lib/ago';
-import {
-	useAllowedOperationCount,
-	type OpsApiReference,
-} from '@/shared/credentials/components/OperationImpactPreview';
+import { useAllowedOperationCount, type OpsApiReference } from '@/shared/credentials/components';
 import {
 	useAgentBindingEffectiveRules,
 	type ActorExecutionEntity,

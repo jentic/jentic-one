@@ -231,7 +231,7 @@ interface TooltipState {
 	x: number;
 }
 
-interface UsageChartsProps {
+export interface UsageChartsProps {
 	/** API-grouped response (also carries the aggregate buckets/window). */
 	usage: UsageResponse;
 	apis: EntityUsageRow[];

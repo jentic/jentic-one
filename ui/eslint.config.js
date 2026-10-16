@@ -320,6 +320,11 @@ export default defineConfig(
 								'Import shared UI through the barrel: `@/shared/ui` (not a deep path).',
 						},
 						{
+							group: ['@/shared/credentials/components/*'],
+							message:
+								'Import shared credentials components through the barrel: `@/shared/credentials/components` (not a component file).',
+						},
+						{
 							group: [
 								'@/shared/api/*',
 								'@/shared/hooks/*',
@@ -358,6 +363,11 @@ export default defineConfig(
 							group: ['@/shared/ui/*'],
 							message:
 								'Import shared UI through the barrel: `@/shared/ui` (not a deep path).',
+						},
+						{
+							group: ['@/shared/credentials/components/*'],
+							message:
+								'Import shared credentials components through the barrel: `@/shared/credentials/components` (not a component file).',
 						},
 						{
 							group: ['@/shared/api', '@/shared/api/*'],

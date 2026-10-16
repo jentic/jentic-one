@@ -69,14 +69,12 @@ import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdenti
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialFlow';
-import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
-import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
-import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
-import {
+	useConnectAfterCreate,
+	EditCredentialSheet,
+	CredentialTypeBadge,
 	credentialIsConnected,
 	credentialIsPendingSignIn,
-} from '@/shared/credentials/components/CredentialCard';
+} from '@/shared/credentials/components';
 import {
 	agentsExhaustive,
 	apiUsageKeyFor,

@@ -40,9 +40,7 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { useNoAuthPicks, type SelectedApi, type VendorSummary } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
-import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
-import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
-import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+import { ApiPicker, ImportSpecDialog, CreateCredentialFlow } from '@/shared/credentials/components';
 import {
 	PREFLIGHT_LABELS,
 	PREFLIGHT_TALLY_ORDER,
