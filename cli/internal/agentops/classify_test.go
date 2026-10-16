@@ -166,6 +166,7 @@ func TestBrokerErrorRecoveryForMatchesExactTypes(t *testing.T) {
 		{400, "credential_id_not_found", RecoverCredential},
 		{400, "credential_name_not_found", RecoverCredential},
 		{400, "invalid_upstream_url", RecoverContract},
+		{400, "private_name_not_in_allowed_domains", RecoverEgress},
 		{422, "unknown_revision_pin", RecoverContract},
 		{422, "about:blank#validation", RecoverContract},
 		{428, "mutation_requires_idempotency_key", RecoverContract},
@@ -208,6 +209,14 @@ func TestBrokerErrorActionableBranches(t *testing.T) {
 			`{"type":"payload_too_large","title":"too big"}`,
 			[]string{"apis inspect"},
 			[]string{"creds list", "jentic search"},
+		},
+		{
+			// #1722: an internal host outside allowed_internal_domains is an
+			// operator config fix, never a request-contract fix.
+			"egress allowlist gap", 400,
+			`{"type":"private_name_not_in_allowed_domains","title":"not covered"}`,
+			[]string{"operator", "broker.egress.allowed_internal_domains", "do not retry"},
+			[]string{"apis inspect", "creds list", "jentic search"},
 		},
 	}
 	for _, tc := range cases {

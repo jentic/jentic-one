@@ -132,6 +132,15 @@ Two layers keep the proxy from being used against the network it runs in:
 Validation runs again after server-variable substitution, in both the sync
 and async callers, so an injected variable cannot smuggle in a new host.
 
+Both layers refuse with the same `400` problem. A host name needs **both**
+allowlists: an address in `broker.egress.allowed_private_subnets` *and* a
+suffix in `broker.egress.allowed_internal_domains` (an IP literal needs only
+the subnet). A name that passes the subnet check but matches no suffix is
+`private_name_not_in_allowed_domains`, whose detail and `prompt_human`
+directive name the config key to set; every other refusal is
+`invalid_upstream_url`. Neither carries the resolved address, and an egress
+refusal is never retried and never counts against the upstream's circuit.
+
 ## Credential injection
 
 `CredentialService` ([`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)) is the

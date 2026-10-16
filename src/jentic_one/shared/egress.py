@@ -33,7 +33,7 @@ import httpx
 
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.dns_cache import resolve_host, resolve_host_blocking
-from jentic_one.shared.url_validation import assert_ip_allowed
+from jentic_one.shared.url_validation import assert_ip_allowed, assert_resolved_allowed
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -44,7 +44,8 @@ def resolve_and_validate(host: str, egress: EgressConfig | None) -> _IpAddress:
     Validates **every** resolved address against ``assert_ip_allowed`` so a
     multi-record answer can't smuggle a blocked IP past the check, then returns
     the first one to pin the connection to. Raises ``ValueError`` if the host
-    can't be resolved or any resolved IP is blocked (the rebind guard).
+    can't be resolved, or :class:`~jentic_one.shared.url_validation.EgressPolicyError`
+    if any resolved IP is blocked (the rebind guard).
 
     Blocking; :func:`resolve_and_validate_async` is the event-loop variant.
     """
@@ -78,10 +79,9 @@ def _validated_pin(
     if not addrs:
         raise ValueError(f"upstream host did not resolve: {host}")
 
-    for addr in addrs:
-        # A DNS name re-resolved here, so pass the hostname for the suffix
-        # exemption — matches the validation-time semantics.
-        assert_ip_allowed(addr, egress, hostname=host)
+    # A DNS name re-resolved here, so pass the hostname for the suffix
+    # exemption — matches the validation-time semantics.
+    assert_resolved_allowed(host, addrs, egress)
     return addrs[0]
 
 

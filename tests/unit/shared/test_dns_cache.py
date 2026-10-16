@@ -22,7 +22,10 @@ from jentic_one.shared import dns_cache
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.dns_cache import ResolutionCache, resolve_host
 from jentic_one.shared.egress import DnsPinningTransport, resolve_and_validate_async
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.url_validation import (
+    PrivateNameNotAllowedError,
+    validate_upstream_url_async,
+)
 
 
 def _answers(*ips: str) -> list[tuple[Any, ...]]:
@@ -149,8 +152,6 @@ async def test_validate_async_ip_literal_never_resolves(monkeypatch: pytest.Monk
         (("169.254.169.254",), EgressConfig(allowed_private_subnets=["169.254.0.0/16"])),
         (("93.184.216.34", "10.0.0.5"), None),
         (("::ffff:127.0.0.1",), None),
-        # Subnet allowlisted but the name lacks an allowed internal-domain suffix.
-        (("10.1.2.3",), EgressConfig(allowed_private_subnets=["10.0.0.0/8"])),
     ],
 )
 async def test_validate_async_blocks_like_sync(
@@ -159,6 +160,19 @@ async def test_validate_async_blocks_like_sync(
     monkeypatch.setattr(socket, "getaddrinfo", _Resolver(*ips))
     with pytest.raises(ValueError, match="blocked address range"):
         await validate_upstream_url_async("https://evil.example.com/", egress)
+
+
+@pytest.mark.asyncio
+async def test_validate_async_names_the_missing_internal_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Subnet allowlisted but the name lacks an allowed internal-domain suffix.
+    monkeypatch.setattr(socket, "getaddrinfo", _Resolver("10.1.2.3"))
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8"])
+    with pytest.raises(PrivateNameNotAllowedError) as exc_info:
+        await validate_upstream_url_async("https://evil.example.com/", egress)
+    assert exc_info.value.hostname == "evil.example.com"
+    assert "10.1.2.3" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio

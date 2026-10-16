@@ -1278,6 +1278,14 @@ components:
         missing required field, or schema-validation failure on the
         broker side. Body is RFC 9457 `application/problem+json` using
         the shared `ProblemDetails` schema.
+
+        An upstream URL the egress policy refuses is
+        `invalid_upstream_url`. A host name that resolves into
+        `broker.egress.allowed_private_subnets` but is not covered by
+        `broker.egress.allowed_internal_domains` is
+        `private_name_not_in_allowed_domains`, with a `prompt_human`
+        `agent_directive` naming the config key the operator sets. Neither
+        body carries the resolved address.
       content:
         application/problem+json:
           schema:
@@ -1292,6 +1300,31 @@ components:
                 detail: upstream URL resolves to a blocked address range
                 error_origin: broker
                 instance: /169.254.169.254/latest/meta-data
+            private_name_not_in_allowed_domains:
+              summary: Internal host name in an allowed subnet but not in allowed_internal_domains.
+              value:
+                type: private_name_not_in_allowed_domains
+                title: >-
+                  Upstream host 'billing.svc.cluster.local' resolves to an allowlisted
+                  private subnet but is not covered by broker.egress.allowed_internal_domains
+                status: 400
+                detail: >-
+                  Upstream host 'billing.svc.cluster.local' resolves to an allowlisted
+                  private subnet but is not covered by broker.egress.allowed_internal_domains
+                error_origin: broker
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    host: billing.svc.cluster.local
+                    config_key: broker.egress.allowed_internal_domains
+                    env_var: JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS
+                  human_readable_instruction: >-
+                    The broker's egress policy does not allow 'billing.svc.cluster.local': it
+                    resolves to an allowlisted private subnet, but no entry in
+                    broker.egress.allowed_internal_domains covers it. Ask your operator to add a
+                    suffix covering this host to broker.egress.allowed_internal_domains (env
+                    JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS), then retry. This is not
+                    agent-recoverable.
     Unauthorized:
       description: |
         Authentication missing or invalid — the `Authorization: Bearer

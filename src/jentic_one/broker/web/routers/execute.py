@@ -37,9 +37,9 @@ from jentic_one.broker.core.exceptions import (
     OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
-    UpstreamUrlNotAllowedError,
     approval_pending_limit_directive,
     switch_toolkit_directive,
+    upstream_url_not_allowed,
 )
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
@@ -518,7 +518,7 @@ async def _handle(
     try:
         upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
     except ValueError as exc:
-        raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+        raise upstream_url_not_allowed(exc) from exc
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
@@ -702,7 +702,7 @@ async def _handle(
         try:
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+            raise upstream_url_not_allowed(exc) from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
     async with ctx.admin_db.transaction() as session:
@@ -777,7 +777,7 @@ async def _handle_streaming(
         try:
             await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+            raise upstream_url_not_allowed(exc) from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
     execution_id = mint_execution_id()
