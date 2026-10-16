@@ -60,13 +60,23 @@ function reportFromLayout() {
 			: new DOMRectReadOnly(0, 0, window.innerWidth, window.innerHeight);
 	const rect = sentinel.getBoundingClientRect();
 	const isIntersecting = rect.bottom > rootBounds.top && rect.top < rootBounds.bottom;
+	// The part of the sentinel inside the root; empty when it isn't intersecting.
+	const intersectionRect = isIntersecting
+		? DOMRectReadOnly.fromRect({
+				x: rect.left,
+				y: Math.max(rect.top, rootBounds.top),
+				width: rect.width,
+				height:
+					Math.min(rect.bottom, rootBounds.bottom) - Math.max(rect.top, rootBounds.top),
+			})
+		: new DOMRectReadOnly(0, 0, 0, 0);
 	const entry = {
 		target: sentinel,
 		isIntersecting,
 		intersectionRatio: isIntersecting ? 1 : 0,
 		boundingClientRect: rect,
 		rootBounds,
-		intersectionRect: rect,
+		intersectionRect,
 		time: performance.now(),
 	} as IntersectionObserverEntry;
 	act(() => {
@@ -162,6 +172,10 @@ describe('DiscoverToolbar', () => {
 		// A header taller than the scroller: at the top the sentinel sits out of
 		// view beneath it — "not intersecting", but not pinned either.
 		const { toolbar, scroller } = renderToolbar(1000);
+		// The entry a real observer delivers on observe(), at mount.
+		reportFromLayout();
+		expect(toolbar).toHaveAttribute('data-scrolled', 'false');
+
 		scroller.scrollTop = 1200;
 		reportFromLayout();
 		expect(toolbar).toHaveAttribute('data-scrolled', 'true');
