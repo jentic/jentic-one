@@ -210,7 +210,7 @@
         },
         "server_timing": {
           "default": false,
-          "description": "Emit a W3C ``Server-Timing`` header on execute responses with per-stage durations (``jentic-auth``, ``jentic-egress``, ``jentic-discover``, ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``, ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated callers. A broker-generated error raised before the upstream call lists the stages that ran without durations. Off by default: timing data aids side-channel probing and fingerprinting, so enable it only where callers are trusted with it (e.g. while diagnosing latency). Streaming responses carry only the stages known before the headers are sent (no ``jentic-persist``).",
+          "description": "Emit a W3C ``Server-Timing`` header on execute responses with per-stage durations (``jentic-auth``, ``jentic-egress``, ``jentic-discover``, ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``, ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated callers. A broker-generated error raised before the upstream call lists the stages that ran without durations. ``jentic-upstream`` includes the circuit-breaker check, so a circuit-open ``503`` carries durations even though no upstream request was sent. Off by default: timing data aids side-channel probing and fingerprinting, so enable it only where callers are trusted with it (e.g. while diagnosing latency). Streaming responses carry only the stages known before the headers are sent (no ``jentic-persist``).",
           "title": "Server Timing",
           "type": "boolean"
         },

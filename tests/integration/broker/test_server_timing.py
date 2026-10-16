@@ -29,6 +29,7 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.token_validation import CachedTokenValidator
@@ -52,7 +53,9 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, ExecutionStatus, StoredCredentialType
+from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import APIReference, OperationInfo
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 pytestmark = pytest.mark.integration
 
@@ -374,6 +377,31 @@ async def test_execute_failed_upstream_without_middleware_has_no_timing(
 
     assert resp.status_code == 504, resp.text
     assert "server-timing" not in resp.headers
+
+
+async def test_circuit_open_503_carries_durations(
+    ctx: Context, seeded_credential: None, upstream: _Upstream
+) -> None:
+    """The circuit-breaker check runs inside ``jentic-upstream``, so a
+    circuit-open ``503`` reports durations although no upstream request left."""
+    breaker = CircuitBreaker(
+        MemoryStateBackend(), failure_ratio=0.5, min_calls=2, window_s=30, cooldown_s=15
+    )
+    host = f"127.0.0.1:{upstream.port}"
+    await breaker.record(host, ok=False)
+    await breaker.record(host, ok=False)
+    async with httpx.AsyncClient() as upstream_client:
+        runner = CircuitBreakerRunner(_BufferedOnly(HttpRunner(upstream_client)), breaker)
+        resp = await _execute(_app(ctx, runner, server_timing=True), upstream.port)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["type"] == "circuit_open"
+    assert upstream.request_heads == []
+    fields = resp.headers.get_list("server-timing")
+    assert len(fields) == 1, fields
+    stages = _stages(fields[0])
+    assert "jentic-upstream" in stages
+    assert "jentic-total" in stages
 
 
 async def test_rule_deny_lists_stage_names_without_durations(
