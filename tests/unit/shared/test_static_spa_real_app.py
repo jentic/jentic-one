@@ -194,6 +194,34 @@ def test_combined_app_app_deep_link_negotiation(ctx: Context, bundle: Path) -> N
     assert r.status_code == 404 and not _is_shell(r)
 
 
+@pytest.mark.parametrize(
+    "deep_link",
+    [
+        "library/workspace/httpbin.org/httpbin.org/1.2.3",
+        "library/workspace/posthog-com/posthog-api/1.0",
+        "workspace/posthog-com/posthog-api/1.0",
+    ],
+)
+def test_combined_app_dotted_deep_link_serves_shell(
+    ctx: Context, bundle: Path, deep_link: str
+) -> None:
+    """A browser navigation whose final segment contains a dot (an API version,
+    a domain-shaped vendor) gets the SPA shell, not a 404 (issue #647). The
+    route identity is ``:vendor/:name/:version``, so dots in the last segment
+    are normal; a non-navigation request for the same path still 404s.
+    """
+    app = create_combined_app(ctx, ["admin"])
+    client = _client(app)
+
+    nav = client.get(f"{SPA_MOUNT_PATH}/{deep_link}", headers=HTML)
+    assert nav.status_code == 200
+    assert "<title>Jentic One</title>" in nav.text
+
+    non_nav = client.get(f"{SPA_MOUNT_PATH}/{deep_link}", headers=JSON)
+    assert non_nav.status_code == 404
+    assert "<title>" not in non_nav.text
+
+
 def test_combined_app_deep_link_head(ctx: Context, bundle: Path) -> None:
     app = create_combined_app(ctx, ["admin"])
     client = _client(app)
