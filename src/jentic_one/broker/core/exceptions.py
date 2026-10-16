@@ -7,14 +7,16 @@ the transport coupling out of the domain/service layers (00-overview "Errors —
 domain in, problem+json out").
 
 Every error also carries the **agent-recovery contract**: an ``error_origin``
-(``broker`` | ``upstream``) and, where a deterministic recovery exists, a
+(``broker`` | ``upstream``: who generated the response — a ``BrokerError`` is
+always the broker's own response, so it keeps the ``broker`` default) and,
+where a deterministic recovery exists, a
 structured ``AgentDirective`` so the autonomous-agent caller can recover without
 reading docs (02-core-proxy "Agent-centric error recovery").
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel
 
@@ -53,13 +55,19 @@ class BrokerError(Exception):
     Carries the problem+json ``detail``/``type`` plus optional extension members,
     the ``error_origin`` and an optional ``AgentDirective``. ``headers`` are extra
     response headers the central handler should attach (e.g. ``Retry-After``).
+
+    ``default_type`` is the problem ``type`` a subclass renders when the raise
+    site passes none, so a class with a stable wire identity (one a client keys
+    recovery on) never falls back to ``about:blank``.
     """
+
+    default_type: ClassVar[str] = "about:blank"
 
     def __init__(
         self,
         detail: str,
         *,
-        type: str = "about:blank",
+        type: str | None = None,
         extra: dict[str, Any] | None = None,
         origin: ErrorOrigin = ErrorOrigin.BROKER,
         directive: AgentDirective | None = None,
@@ -69,7 +77,7 @@ class BrokerError(Exception):
     ) -> None:
         super().__init__(detail)
         self.detail = detail
-        self.type = type
+        self.type = type or self.default_type
         self.extra = extra or {}
         self.origin = origin
         self.directive = directive
@@ -99,7 +107,12 @@ class MethodNotAllowedError(BrokerError):
 
 
 class TooManyCandidatesError(BrokerError):
-    """Discovery produced too many candidates to resolve safely (503)."""
+    """Discovery produced too many candidates to resolve safely (503).
+
+    Raised before dispatch, so the upstream never saw the call.
+    """
+
+    default_type = "too_many_candidates"
 
 
 class UpstreamUrlNotAllowedError(BrokerError):
@@ -185,7 +198,13 @@ class CredentialNeedsReconnectError(BrokerError):
 
 
 class CredentialRefreshTransientError(BrokerError):
-    """The IdP returned a transient error during token refresh (502)."""
+    """The IdP returned a transient error during token refresh (502).
+
+    ``broker`` origin: the refresh runs before dispatch, so the upstream API
+    never saw the call and the 502 is the broker's own response.
+    """
+
+    default_type = "refresh_transient_error"
 
 
 class InvalidCredentialNameError(BrokerError):
@@ -222,7 +241,15 @@ class CredentialIdentityMismatchError(BrokerError):
 
 
 class UpstreamTimeoutError(BrokerError):
-    """The upstream did not respond within the deadline (504)."""
+    """The upstream did not respond within the deadline (504).
+
+    ``broker`` origin: the broker gave up and generated this response; no
+    upstream answer exists. Typed ``upstream_timeout`` (read phase, the request
+    may have reached the upstream) or ``upstream_connect_failed`` (connect
+    phase, ``pre_send``: no request bytes were sent).
+    """
+
+    default_type = "upstream_timeout"
 
 
 class DeadlineExceededError(BrokerError):
@@ -232,19 +259,25 @@ class DeadlineExceededError(BrokerError):
     timeout): this is the **whole-call wall-clock budget** the ``DeadlineRunner``
     enforces *around* the transport (and, once it lands, the retry loop). Same
     ``504`` class, but the cause is "we ran out of time across the envelope", not
-    "one attempt stalled". ``upstream`` origin — the time was spent waiting on the
-    vendor — so the agent's directive points at the async-pivot / wait recovery.
+    "one attempt stalled". ``broker`` origin — the broker cut the call off and
+    generated this response — and the agent's directive points at the
+    async-pivot / wait recovery.
     """
+
+    default_type = "deadline_exceeded"
 
 
 class UpstreamResponseTooLargeError(BrokerError):
     """The upstream response body exceeded the broker's response-size cap (502).
 
     Enforced mid-stream so a hostile/large upstream can't OOM the instance — the
-    response-side counterpart to :class:`PayloadTooLargeError`. ``upstream`` origin
-    (the vendor sent too much), so the agent can ``switch_toolkit`` to an
-    alternative vendor.
+    response-side counterpart to :class:`PayloadTooLargeError`. ``broker`` origin
+    (the broker aborted the vendor's response and generated this one); the
+    vendor sent too much, so the agent can ``switch_toolkit`` to an alternative
+    vendor.
     """
+
+    default_type = "upstream_response_too_large"
 
 
 class RunnerSchemeUnsupportedError(BrokerError):

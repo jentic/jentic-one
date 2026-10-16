@@ -177,17 +177,21 @@ def test_oauth2_injection(
     )
     if status in (401, 502):
         # Distinguish infra (token endpoint unreachable) from broker bugs:
-        # only skip when the error originated upstream — a broker-origin 502
-        # means the broker itself mis-handled the oauth2 flow and should fail.
+        # only skip on a transient token-refresh failure (or a mirrored
+        # upstream error). Any other broker 502 means the broker itself
+        # mis-handled the oauth2 flow and should fail. The refresh failure is
+        # broker-origin since #1675, so it is matched by its problem type.
         try:
             err_body = json.loads(raw)
             origin = err_body.get("error_origin", "")
-        except (json.JSONDecodeError, ValueError):
+            problem_type = err_body.get("type", "")
+        except (json.JSONDecodeError, ValueError, AttributeError):
             origin = ""
-        if origin == "upstream" or status == 401:
+            problem_type = ""
+        if origin == "upstream" or problem_type == "refresh_transient_error" or status == 401:
             pytest.skip(
                 f"broker oauth2 client-credentials refresh unavailable "
-                f"(status {status}, origin={origin!r})"
+                f"(status {status}, origin={origin!r}, type={problem_type!r})"
             )
         # broker-origin 502 → let it fail through to the assertion below
     _assert_authenticated(raw, status, "oauth2")

@@ -81,7 +81,7 @@ async def guarded_body(
                     outcome.error = "transfer_deadline_exceeded"
                 raise UpstreamTimeoutError(
                     detail="The upstream response exceeded the transfer deadline.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_timeout",
                 )
             try:
                 chunk = await (
@@ -96,7 +96,7 @@ async def guarded_body(
                     outcome.error = "transfer_deadline_exceeded"
                 raise UpstreamTimeoutError(
                     detail="The upstream response exceeded the transfer deadline.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_timeout",
                 ) from exc
             except asyncio.CancelledError:
                 if outcome is not None:

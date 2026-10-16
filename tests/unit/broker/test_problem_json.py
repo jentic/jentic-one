@@ -15,8 +15,11 @@ from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
+    DeadlineExceededError,
     ErrorOrigin,
     OperationNotFoundError,
+    TooManyCandidatesError,
+    UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     ambiguous_credential_binding_directive,
     credential_identity_mismatch_directive,
@@ -27,7 +30,7 @@ from jentic_one.broker.core.exceptions import (
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.headers import JenticHeader
-from jentic_one.broker.core.problem import STATUS_BY_ERROR
+from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
 from jentic_one.broker.web.errors import handle_broker_error, problem_response
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
@@ -416,3 +419,30 @@ def test_broker_error_carries_contract() -> None:
     assert err.origin is ErrorOrigin.BROKER
     assert err.directive is not None
     assert err.directive.strategy == "fatal"
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "want_type"),
+    [
+        (UpstreamTimeoutError("slow"), 504, "upstream_timeout"),
+        (DeadlineExceededError("late"), 504, "deadline_exceeded"),
+        (CredentialRefreshTransientError("cred_1: Timeout"), 502, "refresh_transient_error"),
+        (UpstreamResponseTooLargeError("too big"), 502, "upstream_response_too_large"),
+        (TooManyCandidatesError("too many"), 503, "too_many_candidates"),
+    ],
+    ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
+)
+def test_broker_generated_5xx_is_typed_and_broker_origin(exc, status, want_type) -> None:
+    """#1675: the 5xx the broker generates itself (no upstream answer exists) are
+    stamped ``broker`` and carry a distinct problem type, so the CLI and MCP
+    classify them as TRANSPORT_ERROR instead of passing them through."""
+    body = broker_error_problem(exc)
+    assert body["status"] == status
+    assert body["type"] == want_type
+    assert body["error_origin"] == "broker"
+
+
+def test_explicit_type_overrides_the_class_default() -> None:
+    assert UpstreamTimeoutError("x", type="upstream_connect_failed").type == (
+        "upstream_connect_failed"
+    )

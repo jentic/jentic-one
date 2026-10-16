@@ -82,7 +82,8 @@ async def test_exceeding_deadline_raises_504_with_directive() -> None:
 
     err = exc.value
     assert err.type == "deadline_exceeded"
-    assert err.origin is ErrorOrigin.UPSTREAM
+    # The broker cut the call off and generated the 504 (#1675).
+    assert err.origin is ErrorOrigin.BROKER
     assert err.directive is not None
     assert err.directive.strategy == "wait"
     assert err.directive.parameters["deadline_seconds"] == pytest.approx(0.01)

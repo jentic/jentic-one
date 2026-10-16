@@ -37,7 +37,6 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     BrokerError,
-    ErrorOrigin,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     switch_toolkit_directive,
@@ -209,7 +208,7 @@ class HttpRunner(UpstreamRunner):
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 raise UpstreamTimeoutError(
                     detail="The upstream connection could not be established in time.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_connect_failed",
                     pre_send=True,
                 ) from exc
             except httpx.TimeoutException as exc:
@@ -217,7 +216,7 @@ class HttpRunner(UpstreamRunner):
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 raise UpstreamTimeoutError(
                     detail="The upstream did not respond within the deadline.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_timeout",
                 ) from exc
             except httpx.HTTPError as exc:
                 _record_transport_error(span, exc)
@@ -226,7 +225,7 @@ class HttpRunner(UpstreamRunner):
                 # into any traceback rendered from this error (span, log).
                 raise BrokerError(
                     detail=_transport_error_detail(exc),
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_transport_error",
                 ) from None
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -270,7 +269,7 @@ class HttpRunner(UpstreamRunner):
             if cap and total > cap:
                 raise UpstreamResponseTooLargeError(
                     detail=f"The upstream response exceeded the {cap}-byte response-size cap.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_response_too_large",
                     extra={"max_response_bytes": cap},
                     directive=switch_toolkit_directive(status_code),
                 )
@@ -307,7 +306,7 @@ class HttpRunner(UpstreamRunner):
             except httpx.TimeoutException as exc:
                 raise UpstreamTimeoutError(
                     detail="The upstream did not respond within the deadline.",
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_timeout",
                 ) from exc
             except httpx.HTTPError as exc:
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
@@ -315,5 +314,5 @@ class HttpRunner(UpstreamRunner):
                 # into any traceback rendered from this error (span, log).
                 raise BrokerError(
                     detail=_transport_error_detail(exc),
-                    origin=ErrorOrigin.UPSTREAM,
+                    type="upstream_transport_error",
                 ) from None

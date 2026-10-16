@@ -35,7 +35,6 @@ from jentic_one.broker.core.exceptions import (
     AgentDirective,
     BrokerError,
     DeadlineExceededError,
-    ErrorOrigin,
 )
 from jentic_one.shared.metrics import get_meter
 
@@ -114,7 +113,6 @@ class DeadlineRunner:
         raise DeadlineExceededError(
             detail=(f"The request exceeded the broker's {self._deadline_s:g}s overall deadline."),
             type="deadline_exceeded",
-            origin=ErrorOrigin.UPSTREAM,
             directive=_deadline_directive(self._deadline_s),
         ) from exc
 

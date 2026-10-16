@@ -797,10 +797,13 @@ components:
               type: string
               enum: [broker, upstream]
               description: |
-                Who failed: `broker` (the Broker itself — overloaded,
-                misconfigured, or rejecting the request shape) or
-                `upstream` (the external API — down, rate-limited, or
-                returning an error). Mirrored in the `Jentic-Error-Origin`
+                Who generated the error response: `broker` (the Broker
+                itself — overloaded, misconfigured, rejecting the request
+                shape, or giving up on the call: an upstream timeout or
+                connect failure, the overall deadline, a failed token
+                refresh, an oversized upstream response) or `upstream` (the
+                external API answered with this error and the Broker
+                mirrored it). Mirrored in the `Jentic-Error-Origin`
                 response header. Absent on authentication errors.
               examples:
                 - broker
@@ -1624,11 +1627,21 @@ components:
             upstream_timeout:
               summary: Upstream did not respond within the broker's deadline.
               value:
-                type: about:blank
+                type: upstream_timeout
                 title: The upstream did not respond within the deadline.
                 status: 504
                 detail: The upstream did not respond within the deadline.
-                error_origin: upstream
+                error_origin: broker
+                instance: /api.example.com/v1/reports
+            upstream_response_too_large:
+              summary: The broker aborted an upstream response over its size cap.
+              value:
+                type: upstream_response_too_large
+                title: The upstream response exceeded the 10485760-byte response-size cap.
+                status: 502
+                detail: The upstream response exceeded the 10485760-byte response-size cap.
+                error_origin: broker
+                max_response_bytes: 10485760
                 instance: /api.example.com/v1/reports
   securitySchemes:
     BearerAuth:

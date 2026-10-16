@@ -553,7 +553,7 @@ async def test_invalid_grant_maps_to_401_reconnect(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_refresh_transient_maps_to_502_broker_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_resolved(monkeypatch, _resolved_oauth2())
     _patch_refresher(monkeypatch, RefreshTransientError("cred_1", "502 from idp"))
 
@@ -562,7 +562,8 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
     assert exc.value.type == "refresh_transient_error"
-    assert exc.value.origin == ErrorOrigin.UPSTREAM
+    # The refresh runs before dispatch: the 502 is the broker's own (#1675).
+    assert exc.value.origin == ErrorOrigin.BROKER
     assert exc.value.__cause__ is None
     assert exc.value.__suppress_context__ is True
 

@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
-from jentic_one.broker.core.exceptions import BrokerError, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import BrokerError, ErrorOrigin, UpstreamTimeoutError
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
@@ -78,8 +78,40 @@ async def test_timeout_maps_to_domain_error() -> None:
 
     async with _mock_client(httpx.MockTransport(handle)) as client:
         runner = HttpRunner(client)
-        with pytest.raises(UpstreamTimeoutError):
+        with pytest.raises(UpstreamTimeoutError) as excinfo:
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
+    # Connect phase: no bytes were sent, and the 504 is the broker's own (#1675).
+    assert excinfo.value.type == "upstream_connect_failed"
+    assert excinfo.value.pre_send is True
+    assert excinfo.value.origin is ErrorOrigin.BROKER
+
+
+@pytest.mark.asyncio
+async def test_read_timeout_maps_to_broker_origin_upstream_timeout() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(UpstreamTimeoutError) as excinfo:
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == "upstream_timeout"
+    assert excinfo.value.pre_send is False
+    assert excinfo.value.origin is ErrorOrigin.BROKER
+
+
+@pytest.mark.asyncio
+async def test_stream_read_timeout_maps_to_broker_origin_upstream_timeout() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(UpstreamTimeoutError) as excinfo:
+            async with runner.stream(RunnerRequest(method="GET", url="https://api.example.com/x")):
+                pass  # pragma: no cover - the stream never opens
+    assert excinfo.value.type == "upstream_timeout"
+    assert excinfo.value.origin is ErrorOrigin.BROKER
 
 
 @pytest.mark.asyncio
@@ -116,6 +148,8 @@ async def test_transport_error_detail_and_span_omit_exception_message(
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
 
     assert excinfo.value.detail == "Upstream transport error (LocalProtocolError)"
+    assert excinfo.value.type == "upstream_transport_error"
+    assert excinfo.value.origin is ErrorOrigin.BROKER
     assert _INJECTED_SECRET not in repr(logs)
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__suppress_context__ is True

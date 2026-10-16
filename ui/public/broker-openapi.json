@@ -267,15 +267,27 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "upstream_response_too_large": {
+                "summary": "The broker aborted an upstream response over its size cap.",
+                "value": {
+                  "detail": "The upstream response exceeded the 10485760-byte response-size cap.",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "max_response_bytes": 10485760,
+                  "status": 502,
+                  "title": "The upstream response exceeded the 10485760-byte response-size cap.",
+                  "type": "upstream_response_too_large"
+                }
+              },
               "upstream_timeout": {
                 "summary": "Upstream did not respond within the broker's deadline.",
                 "value": {
                   "detail": "The upstream did not respond within the deadline.",
-                  "error_origin": "upstream",
+                  "error_origin": "broker",
                   "instance": "/api.example.com/v1/reports",
                   "status": 504,
                   "title": "The upstream did not respond within the deadline.",
-                  "type": "about:blank"
+                  "type": "upstream_timeout"
                 }
               }
             },
@@ -883,7 +895,7 @@
                 "type": "array"
               },
               "error_origin": {
-                "description": "Who failed: `broker` (the Broker itself — overloaded,\nmisconfigured, or rejecting the request shape) or\n`upstream` (the external API — down, rate-limited, or\nreturning an error). Mirrored in the `Jentic-Error-Origin`\nresponse header. Absent on authentication errors.\n",
+                "description": "Who generated the error response: `broker` (the Broker\nitself — overloaded, misconfigured, rejecting the request\nshape, or giving up on the call: an upstream timeout or\nconnect failure, the overall deadline, a failed token\nrefresh, an oversized upstream response) or `upstream` (the\nexternal API answered with this error and the Broker\nmirrored it). Mirrored in the `Jentic-Error-Origin`\nresponse header. Absent on authentication errors.\n",
                 "enum": [
                   "broker",
                   "upstream"

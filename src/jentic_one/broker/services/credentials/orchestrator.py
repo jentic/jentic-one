@@ -23,7 +23,6 @@ from jentic_one.broker.core.exceptions import (
     CredentialNeedsReconnectError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
-    ErrorOrigin,
     InvalidCredentialNameError,
     ambiguous_credential_binding_directive,
     api_connect_hint,
@@ -280,7 +279,7 @@ class CredentialService:
             # refresher never forwards raw exception text); ``from None`` keeps
             # any chained provider/transport error out of rendered tracebacks.
             raise CredentialRefreshTransientError(
-                detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
+                detail=str(exc), type="refresh_transient_error"
             ) from None
 
     async def select(

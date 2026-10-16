@@ -68,7 +68,9 @@ async def test_body_over_cap_aborts_mid_stream() -> None:
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
 
     err = exc_info.value
-    assert err.origin is ErrorOrigin.UPSTREAM
+    # The broker aborted the vendor's body and generated the 502 (#1675).
+    assert err.origin is ErrorOrigin.BROKER
+    assert err.type == "upstream_response_too_large"
     assert err.extra == {"max_response_bytes": 8}
     assert err.directive is not None and err.directive.strategy == "switch_toolkit"
     # Mid-stream abort: we stopped as soon as the cap was breached, not after a

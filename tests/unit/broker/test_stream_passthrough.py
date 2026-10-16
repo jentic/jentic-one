@@ -119,9 +119,11 @@ async def test_guarded_body_transfer_deadline_aborts() -> None:
     await stack.enter_async_context(fake.open())
 
     body = guarded_body(result, stack, transfer_deadline_s=0.06)
-    with pytest.raises(UpstreamTimeoutError):
+    with pytest.raises(UpstreamTimeoutError) as excinfo:
         async for _ in body:
             pass
+    assert excinfo.value.type == "upstream_timeout"
+    assert excinfo.value.origin.value == "broker"
     # The deadline fired; the stack unwound and closed the upstream stream.
     assert fake.closed is True
 
