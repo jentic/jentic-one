@@ -612,29 +612,51 @@ async def test_handler_denies_on_the_live_actor_read(
 
 
 @pytest.mark.asyncio
-async def test_handler_injects_for_the_live_active_identity() -> None:
-    """The identity handed to the injector carries the live ``active`` read."""
+async def test_handler_injects_only_after_the_live_read_allows() -> None:
+    """The authorizer runs, then the live actor read, then injection, for the
+    actor the job was enqueued by; a denied read never reaches injection
+    (``test_handler_denies_on_the_live_actor_read``)."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
+    order: list[str] = []
 
-    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    class _OrderedAuthorizer(_FakeAuthorizer):
+        async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
+            order.append("authorize")
+            return await super().authorize(request)
+
+    class _OrderedActorStatus(_FakeActorStatus):
+        async def authority(
+            self, *, actor_id: str, actor_type: str, permission: str
+        ) -> ActorAuthority:
+            order.append("live_read")
+            return await super().authority(
+                actor_id=actor_id, actor_type=actor_type, permission=permission
+            )
+
+    class _OrderedInjector(_FakeInjector):
+        async def inject(self, **kwargs: Any) -> InjectedAuth:
+            order.append("inject")
+            return await super().inject(**kwargs)
+
+    injector = _OrderedInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,
-        execution_authorizer=_FakeAuthorizer(),
-        actor_status=_FakeActorStatus(active=True),
+        execution_authorizer=_OrderedAuthorizer(),
+        actor_status=_OrderedActorStatus(),
     )
 
     await handler.execute(
         "job_live", _FakeSession(), payload=_payload(), created_by="agt_live", actor_type="agent"
     )
 
+    assert order == ["authorize", "live_read", "inject"]
     identity = injector.last_identity
     assert identity is not None
     assert identity.sub == "agt_live"
     assert identity.actor_type == "agent"
-    assert identity.active is True
     assert executor.last_request is not None
 
 
