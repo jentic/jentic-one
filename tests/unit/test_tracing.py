@@ -38,7 +38,6 @@ from jentic_one.shared.tracing import (
     instrument_outbound_client,
     jentic_tracestate,
     pack_jentic_tracestate,
-    reset_tracing,
     scrub_span,
     scrubbing_exporter,
 )
@@ -57,12 +56,7 @@ def _attr_text(key: str, value: object) -> str:
     return f"{key}={text}"
 
 
-@pytest.fixture(autouse=True)
-def _reset_tracer_provider():
-    """Reset OTel global tracer provider between tests."""
-    reset_tracing()
-    yield
-    reset_tracing()
+pytestmark = pytest.mark.usefixtures("isolated_tracer_provider")
 
 
 def test_configure_tracing_sets_tracer_provider():
