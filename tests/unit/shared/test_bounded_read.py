@@ -2,6 +2,7 @@
 
 import gzip
 import itertools
+import random
 import tracemalloc
 import zlib
 from collections.abc import AsyncIterator, Callable, Iterable
@@ -239,6 +240,70 @@ async def test_trailing_data_in_same_chunk_as_gzip_end_refused() -> None:
             await read_capped_body(resp, max_bytes=CHUNK_SIZE)
         await resp.aclose()
     assert stream.served == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("encoding", "encode"),
+    [
+        ("gzip", lambda b: gzip.compress(b)[:-8]),
+        ("deflate", lambda b: zlib.compress(b)[:-4]),
+        ("deflate", lambda b: zlib.compress(b, wbits=-zlib.MAX_WBITS)[:-1]),
+    ],
+    ids=["gzip", "deflate-zlib", "deflate-raw"],
+)
+async def test_truncated_compressed_body_refused(
+    encoding: str, encode: Callable[[bytes], bytes]
+) -> None:
+    """A compressed body that ends before its end-of-stream marker is refused,
+    never returned as the prefix it decoded to."""
+    async with _encoded_client(encode(b'{"a": 1}' * 100), encoding) as client:
+        resp = await open_stream(client, _URL)
+        with pytest.raises(UndecodableBodyError, match="truncated"):
+            await read_capped_body(resp, max_bytes=CHUNK_SIZE)
+        await resp.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["gzip", "deflate"])
+async def test_empty_compressed_body_decodes_to_empty(encoding: str) -> None:
+    async with _encoded_client(b"", encoding) as client:
+        resp = await open_stream(client, _URL)
+        body = await read_capped_body(resp, max_bytes=CHUNK_SIZE)
+        await resp.aclose()
+    assert body == b""
+
+
+@pytest.mark.asyncio
+async def test_never_ending_gzip_header_stops_at_raw_budget() -> None:
+    """A gzip header whose FCOMMENT field never terminates inflates to nothing;
+    the raw-byte budget refuses it shortly after ``max_bytes`` + slack instead
+    of downloading the endless stream."""
+    cap = 1024 * 1024
+    header = bytes.fromhex("1f8b08100000000000ff")
+    filler = b"A" * (64 * 1024)
+    stream = _CountingRawChunks(itertools.chain([header], itertools.repeat(filler, 2000)))
+    async with _stream_client(stream, "gzip") as client:
+        resp = await open_stream(client, _URL)
+        with pytest.raises(ResponseTooLargeError):
+            await read_capped_body(resp, max_bytes=cap)
+        await resp.aclose()
+    budget_chunks = (cap + bounded_read.RAW_SLACK_BYTES) // len(filler)
+    assert stream.served <= budget_chunks + 2
+
+
+@pytest.mark.asyncio
+async def test_incompressible_body_at_cap_fits_raw_budget() -> None:
+    """Stored-block overhead of an incompressible body exactly at the cap stays
+    inside the raw slack, so a legitimate body is never refused by it."""
+    payload = random.Random(0).randbytes(4 * 1024 * 1024)
+    data = gzip.compress(payload, compresslevel=0)
+    assert len(data) > len(payload)
+    async with _encoded_client(data, "gzip") as client:
+        resp = await open_stream(client, _URL)
+        body = await read_capped_body(resp, max_bytes=len(payload))
+        await resp.aclose()
+    assert body == payload
 
 
 @pytest.mark.asyncio
