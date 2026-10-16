@@ -122,10 +122,10 @@ func Classify(r *ExecuteResult) *Denial {
 // denial-status exclusion is equivalent to skipping 401/403/409/424 — those stay
 // on the Classify (denial) path.
 //
-// Two broker-origin statuses are deliberately left as pass-through, because
-// RESOLVE_FAILED means "change the ask, don't retry" and both are retryable as
-// sent: 429 (rate_limit_exceeded, with Retry-After) and every 5xx. Their coded
-// mapping is tracked separately (#1531).
+// Two broker-origin statuses are deliberately excluded, because RESOLVE_FAILED
+// means "change the ask, don't retry" and both can be retryable as sent: 429
+// (rate_limit_exceeded, with Retry-After) and every 5xx. BrokerTransportError
+// classifies those.
 func BrokerError(r *ExecuteResult) *ux.CodedError {
 	if r == nil || r.Status < 400 || r.Status >= 500 || r.Status == http.StatusTooManyRequests ||
 		IsBrokerDenial(r) || errorOrigin(r) != errorOriginBroker {

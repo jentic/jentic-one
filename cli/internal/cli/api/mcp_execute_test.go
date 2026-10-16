@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1261,5 +1262,120 @@ func TestMCPExecute_BrokerRateLimitIsNotAResolveFailure(t *testing.T) {
 	payload := decodeToolJSON(t, res)
 	if payload["error_code"] == ux.CodeResolveFailed {
 		t.Fatalf("a broker 429 must not be classified RESOLVE_FAILED: %v", payload)
+	}
+}
+
+// TestMCPExecute_BrokerTransportErrorIsError pins #1531: a 5xx/429 the broker
+// itself emitted is a soft TRANSPORT_ERROR with a retryable hint keyed on the
+// problem type and the broker's Retry-After relayed as retry_after_s, never a
+// normal result. POST keeps the SDK transport from retrying the 5xx; the 429's
+// Retry-After exceeds the transport's inline wait budget.
+func TestMCPExecute_BrokerTransportErrorIsError(t *testing.T) {
+	cases := []struct {
+		name, problemType, retryAfter, target, args, wantNext string
+		status                                                int
+		wantRetryable                                         bool
+	}{
+		{"circuit open", "circuit_open", "12", "POST:/v1/pets", "", "get_started", 503, true},
+		{"runner unavailable", "runner_unavailable", "", "POST:/v1/pets", "", "get_started", 503, true},
+		{"refresh transient", "refresh_transient_error", "", "POST:/v1/pets", "", "get_started", 502, true},
+		{"timeout on an unkeyed POST", "deadline_exceeded", "", "POST:/v1/pets", "", "get_started", 504, false},
+		{"timeout on a keyed POST", "deadline_exceeded", "", "POST:/v1/pets", `,"idempotency_key":"idem-1"`, "get_started", 504, true},
+		{"scheme unsupported", "runner_scheme_unsupported", "", "POST:/v1/pets", "", "search_apis", 501, false},
+		{"unknown type", "streaming_unsupported", "", "POST:/v1/pets", "", "get_started", 500, false},
+		{"rate limited", "rate_limit_exceeded", "60", "GET:/v1/pets", "", "get_started", 429, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"type":"` + tc.problemType + `","title":"broker said ` + tc.problemType + `"}`))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"`+tc.target+`"`+tc.args+`}`))
+			if err != nil {
+				t.Fatalf("a broker transport failure must be a soft error, not a protocol error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result for a broker-origin %d", tc.status)
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != ux.CodeTransportError {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
+			}
+			if payload["retryable"] != tc.wantRetryable {
+				t.Errorf("retryable = %v, want %v", payload["retryable"], tc.wantRetryable)
+			}
+			if payload["next_tool"] != tc.wantNext {
+				t.Errorf("next_tool = %v, want %q", payload["next_tool"], tc.wantNext)
+			}
+			details, _ := payload["details"].(map[string]any)
+			if details["problem_type"] != tc.problemType || details["http_status"] != float64(tc.status) ||
+				details["origin"] != "broker" {
+				t.Errorf("details = %v", details)
+			}
+			if tc.retryAfter != "" {
+				want, _ := strconv.ParseFloat(tc.retryAfter, 64)
+				if payload["retry_after_s"] != want {
+					t.Errorf("retry_after_s = %v, want %v", payload["retry_after_s"], want)
+				}
+			} else if _, has := payload["retry_after_s"]; has {
+				t.Errorf("retry_after_s relayed without a Retry-After header: %v", payload)
+			}
+			if !strings.Contains(payload["error"].(string), "broker said "+tc.problemType) {
+				t.Errorf("error %q should carry the broker's reason", payload["error"])
+			}
+			if hint, _ := payload["actionable_step"].(string); hint == "" || strings.Contains(hint, "jentic ") {
+				t.Errorf("actionable_step must be MCP-flavored (no CLI commands), got %q", hint)
+			}
+		})
+	}
+}
+
+// TestMCPExecute_UpstreamOrigin5xxPassesThrough pins the other side of #1531: a
+// 5xx/429 the broker mirrored from the vendor, or one with no origin header, is
+// a normal result carrying the vendor's status.
+func TestMCPExecute_UpstreamOrigin5xxPassesThrough(t *testing.T) {
+	for _, tc := range []struct {
+		name, origin string
+		status       int
+	}{
+		{"upstream 503", "upstream", 503},
+		{"upstream 429", "upstream", 429},
+		{"missing origin 502", "", 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if tc.origin != "" {
+					w.Header().Set("Jentic-Error-Origin", tc.origin)
+				}
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"type":"circuit_open","error":"vendor down"}`))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("handleExecute: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("a non-broker %d must be a normal result: %v", tc.status, decodeToolJSON(t, res))
+			}
+			if payload := decodeToolJSON(t, res); payload["status"] != float64(tc.status) {
+				t.Errorf("status = %v, want %d", payload["status"], tc.status)
+			}
+		})
 	}
 }

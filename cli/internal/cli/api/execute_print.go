@@ -25,24 +25,28 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 	// A broker-origin error that is not a denial (unknown credential, unregistered
 	// operation) also means the call never reached the upstream (#1429).
 	brokerErr := agentops.BrokerError(res)
+	// A broker-origin 5xx/429 (circuit open, runner degraded, rate limited) is a
+	// transport failure, not an upstream response (#1531).
+	transportErr := agentops.BrokerTransportError(res, opts.retrySafe)
 
 	if opts.heldExecutionID != "" {
-		return a.heldExecuteOutput(cmd, opts, res, denial, brokerErr)
+		return a.heldExecuteOutput(cmd, opts, res, denial, brokerErr, transportErr)
 	}
-	return a.renderExecuteOutput(cmd, opts, res, denial, brokerErr)
+	return a.renderExecuteOutput(cmd, opts, res, denial, brokerErr, transportErr)
 }
 
 // heldExecuteOutput renders the finished outcome of a followed held call:
 // exactly like a call that ran at once, with its held execution id named on
 // stderr, in the success envelope and in the error envelope's details.
 func (a *app) heldExecuteOutput(
-	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial, brokerErr *ux.CodedError,
+	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial,
+	brokerErr, transportErr *ux.CodedError,
 ) error {
-	ran := denial == nil && brokerErr == nil
+	ran := denial == nil && brokerErr == nil && transportErr == nil
 	if ran {
 		ux.RenderHeldFinished(cmd.Context(), a.Err, opts.heldExecutionID, fmt.Sprintf("the call ran (HTTP %d)", res.Status))
 	}
-	err := a.renderExecuteOutput(cmd, opts, res, denial, brokerErr)
+	err := a.renderExecuteOutput(cmd, opts, res, denial, brokerErr, transportErr)
 	if !ran {
 		ux.RenderHeldFinished(cmd.Context(), a.Err, opts.heldExecutionID, "")
 	}
@@ -68,7 +72,8 @@ func asCodedOrNil(err error) *ux.CodedError {
 }
 
 func (a *app) renderExecuteOutput(
-	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial, brokerErr *ux.CodedError,
+	cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, denial *agentops.Denial,
+	brokerErr, transportErr *ux.CodedError,
 ) error {
 	if opts.raw {
 		// Redact before streaming, so --raw matches the redaction guarantee of
@@ -83,6 +88,9 @@ func (a *app) renderExecuteOutput(
 		}
 		if brokerErr != nil {
 			return brokerErr
+		}
+		if transportErr != nil {
+			return transportErr
 		}
 		return nil
 	}
@@ -138,6 +146,11 @@ func (a *app) renderExecuteOutput(
 	// envelope.
 	if brokerErr != nil {
 		return brokerErr
+	}
+	// A broker transport failure carries its retryable hint and any Retry-After
+	// in Details, and its recovery in Actionable, rendered the same way.
+	if transportErr != nil {
+		return transportErr
 	}
 	return nil
 }

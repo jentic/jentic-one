@@ -1,0 +1,16 @@
+exit: 0
+--- stdout ---
+{
+  "body": {
+    "error": "vendor maintenance"
+  },
+  "headers": {
+    "Content-Length": "30",
+    "Content-Type": "application/json",
+    "Jentic-Error-Origin": "upstream"
+  },
+  "schema_version": "1",
+  "status": 503
+}
+--- stderr ---
+

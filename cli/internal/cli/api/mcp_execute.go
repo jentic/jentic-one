@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -258,8 +259,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		// GET/HEAD, or a mutating call the broker de-duplicates on its
 		// Idempotency-Key. Anything else defers to the pre-send/mid-flight
 		// classification inside executeTransportError.
-		retrySafe := execReq.IdempotencyKey != "" ||
-			op.Method == http.MethodGet || op.Method == http.MethodHead
+		retrySafe := agentops.RetrySafe(op.Method, execReq.IdempotencyKey)
 		return s.executeTransportError(cctx, err, retrySafe), nil
 	}
 	s.logger.Info(toolName, "target", target, "method", op.Method, "status", res.Status, "execution_id", res.ExecutionID)
@@ -281,6 +281,15 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		// stay in details["candidates"].
 		coded.Actionable = brokerErrorToolHint(nextTool)
 		return s.softErrorExtra(cctx, coded, nextTool, map[string]any{"retryable": false}), nil
+	}
+
+	// A broker-origin 5xx/429 (circuit open, runner degraded, rate limited,
+	// scheme unsupported) is a soft TRANSPORT_ERROR, not a normal result
+	// (#1531). The retryable hint is earned from the problem type, and the
+	// broker's Retry-After rides along when it sent one.
+	retrySafe := agentops.RetrySafe(op.Method, breq.Header.Get("Idempotency-Key"))
+	if coded := agentops.BrokerTransportError(res, retrySafe); coded != nil {
+		return s.executeBrokerTransportError(cctx, coded), nil
 	}
 
 	// Everything the broker relayed — 2xx, upstream 4xx/5xx, and the ask-tier
@@ -431,6 +440,58 @@ func (s *mcpServer) executeTransportError(ctx context.Context, err error, retryS
 		}
 	}
 	return s.softErrorExtra(ctx, coded, "get_started", map[string]any{"retryable": retryable})
+}
+
+// executeBrokerTransportError maps a broker-origin 5xx/429 (agentops.
+// BrokerTransportError) onto a soft TRANSPORT_ERROR. retryable is the hint the
+// classify core earned from the problem type, and retry_after_s relays the
+// broker's Retry-After when it sent one, so the model can wait the right amount
+// before re-sending. next_tool is search_apis for an unsupported scheme (the
+// agent needs a different operation) and get_started otherwise, the same
+// pointer the other transport failures use.
+func (s *mcpServer) executeBrokerTransportError(ctx context.Context, coded *ux.CodedError) *mcp.CallToolResult {
+	status, _ := coded.Details["http_status"].(int)
+	pt, _ := coded.Details["problem_type"].(string)
+	retryable, _ := coded.Details["retryable"].(bool)
+	retryAfter, hasRetryAfter := coded.Details["retry_after_s"].(float64)
+	s.logger.Warn("broker transport failure", "status", status, "problem_type", pt, "retryable", retryable)
+
+	rec := agentops.BrokerTransportRecoveryFor(status, pt)
+	nextTool := "get_started"
+	if rec == agentops.RecoverScheme {
+		nextTool = "search_apis"
+	}
+	coded.Actionable = brokerTransportToolHint(rec, retryable, retryAfter, hasRetryAfter)
+	extra := map[string]any{"retryable": retryable}
+	if hasRetryAfter {
+		extra["retry_after_s"] = retryAfter
+	}
+	return s.softErrorExtra(ctx, coded, nextTool, extra)
+}
+
+// brokerTransportToolHint is the MCP-lane recovery prose for a broker
+// transport failure, phrased for this lane's tools (the classify core phrases
+// it for the CLI).
+func brokerTransportToolHint(rec agentops.BrokerTransportRecovery, retryable bool, retryAfter float64, hasRetryAfter bool) string {
+	wait := "Wait briefly"
+	if hasRetryAfter {
+		wait = fmt.Sprintf("Wait retry_after_s (%ss)", strconv.FormatFloat(retryAfter, 'f', -1, 64))
+	}
+	switch {
+	case rec == agentops.RecoverWait:
+		return wait + " and re-send the same call: the broker refused it before it reached the upstream API, " +
+			"so a retry cannot double-execute it. If it keeps failing, report it to your user: the broker is degraded."
+	case rec == agentops.RecoverTimeout && retryable:
+		return wait + " and re-send the same call (it is a read or carries an idempotency_key, so a retry " +
+			"cannot double-execute it)."
+	case rec == agentops.RecoverScheme:
+		return "The broker has no runner for this upstream's URL scheme, so re-sending cannot succeed. Call " +
+			"search_apis for an operation served over http(s)."
+	default:
+		return "Do not re-send this call blindly: the broker failed it in a way that may have reached the " +
+			"upstream API. Verify the effect with a read (execute_read) first, or re-send with an " +
+			"idempotency_key so the broker de-duplicates the retry. If it keeps failing, report it to your user."
+	}
 }
 
 // classifyTransportErr maps a generated-client transport failure (the request

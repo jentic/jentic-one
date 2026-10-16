@@ -55,6 +55,10 @@ type executeOptions struct {
 	// heldExecutionID names the held execution whose finished outcome
 	// executeOutput renders; empty for a call that ran at once.
 	heldExecutionID string
+	// retrySafe reports whether re-sending the call is safe (an idempotent
+	// method, or an Idempotency-Key); it keys the retry hint on a broker
+	// transport failure. False for a held execution polled by id.
+	retrySafe bool
 }
 
 func newExecuteCmd(app *app) *cobra.Command {
@@ -326,6 +330,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		return err
 	}
 
+	opts.retrySafe = agentops.RetrySafe(req.Method, req.Header.Get("Idempotency-Key"))
 	if held, ok := agentops.ParseHeld(result); ok {
 		return a.executeHeld(cmd, opts, result, held)
 	}

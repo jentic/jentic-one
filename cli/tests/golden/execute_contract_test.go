@@ -17,6 +17,8 @@ import (
 //	resolve ok   × broker denial, no directive → envelope + synthesized stderr, exit 2
 //	resolve ok   × held for approval           → held envelope + review link, exit 3
 //	resolve ok   × held, --wait, denied        → denial envelope + reviewer reason, exit 2
+//	resolve ok   × broker-origin 5xx           → envelope + coded TRANSPORT_ERROR, exit 1
+//	resolve ok   × upstream 5xx pass-through   → envelope, exit 0 (origin: upstream)
 //	resolve ok   × transport failure           → coded TRANSPORT_ERROR, exit 1
 //	resolve fail (404 / backend error)         → coded RESOLVE_FAILED, exit 2
 //
@@ -190,6 +192,26 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			`"expires_at":"2026-10-10T12:00:00Z","created_at":"2026-10-09T12:00:00Z",` +
 			`"_links":{"self":"/executions/holds/held_held1","result":"/executions/holds/held_held1/result"}}`))
 	}
+	// A broker-origin 503 (CircuitOpenError) with Retry-After: the broker
+	// fast-failed before reaching the upstream, so it is a retryable
+	// TRANSPORT_ERROR (exit 1) carrying the relayed Retry-After (#1531).
+	brokerCircuitOpen503 := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.Header().Set("Retry-After", "12")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"type":"circuit_open","title":"Upstream circuit open; the broker is fast-failing to let it recover.","status":503,"detail":"Upstream circuit open; the broker is fast-failing to let it recover.","error_origin":"broker"}`))
+	}
+	// The same status mirrored from the vendor (origin UPSTREAM): the caller's
+	// data, exit 0 — the header decides, not the status.
+	brokerUpstream503 := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Jentic-Error-Origin", "upstream")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"vendor maintenance"}`))
+	}
 
 	cases := []struct {
 		name    string
@@ -241,6 +263,16 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			name:   "execute_broker_denial_no_directive_json",
 			target: "GET:/v1/pets",
 			broker: brokerDenial424NoDirective,
+		},
+		{
+			name:   "execute_broker_transport_circuit_open_json",
+			target: "GET:/v1/pets",
+			broker: brokerCircuitOpen503,
+		},
+		{
+			name:   "execute_upstream_5xx_passthrough_json",
+			target: "GET:/v1/pets",
+			broker: brokerUpstream503,
 		},
 		{
 			name:   "execute_transport_insecure_broker",

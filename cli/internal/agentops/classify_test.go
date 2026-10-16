@@ -21,8 +21,8 @@ func brokerResult(status int, origin, body string) *ExecuteResult {
 
 // TestBrokerError pins #1429: a broker-origin 4xx that is not a denial is a
 // RESOLVE_FAILED (the call never reached the upstream), while upstream answers,
-// a missing origin header, denials, the retryable broker 429 and broker 5xx keep
-// their existing readings.
+// a missing origin header, denials, the retryable broker 429 and broker 5xx
+// (BrokerTransportError) stay off this path.
 func TestBrokerError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -45,7 +45,7 @@ func TestBrokerError(t *testing.T) {
 		{"broker denial stays on the denial path", brokerResult(403, "broker", `{"type":"action_denied"}`), false},
 		{"broker 429 is retryable, not a resolve failure", brokerResult(429, "broker",
 			`{"type":"rate_limit_exceeded","title":"Rate limit exceeded; slow down and retry after the indicated delay.","status":429,"error_origin":"broker"}`), false},
-		{"broker 5xx is out of scope", brokerResult(502, "broker", `{"type":"upstream_unreachable"}`), false},
+		{"broker 5xx is a transport error, not a resolve failure", brokerResult(502, "broker", `{"type":"upstream_unreachable"}`), false},
 		{"success", brokerResult(200, "", `{"ok":true}`), false},
 		{"nil result", nil, false},
 	}
