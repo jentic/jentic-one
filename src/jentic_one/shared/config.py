@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from jentic_one.shared.state.factory import StateBackendConfig
+from jentic_one.shared.state.factory import BackendKind, StateBackendConfig
 from jentic_one.shared.url import (
     is_loopback_host,
     is_loopback_url,
@@ -1961,13 +1961,17 @@ class ServerConfig(BaseModel):
     workers: int = Field(
         default=1,
         ge=1,
+        le=64,
         description=(
             "Number of uvicorn worker processes ``python -m jentic_one`` serves "
-            "with. Each worker is a separate process that re-loads config from "
-            "the config file and environment and runs its own lifespan: DB pools, "
-            "admission limits, caches, in-memory rate limits and Prometheus "
-            "metrics are per process. Values above 1 require PostgreSQL for every "
-            "database and are incompatible with ``server.reload``."
+            "with (1-64). Each worker is a separate process that re-reads config "
+            "from the config file and environment when it spawns and runs its own "
+            "lifespan: DB pools, admission limits, caches and Prometheus metrics "
+            "are per process, and each worker is a full interpreter (budget "
+            "memory per worker). Values above 1 require PostgreSQL for every "
+            "database, are incompatible with ``server.reload``, and require the "
+            "redis shared-state backend when the process runs the auth or broker "
+            "surface."
         ),
     )
     backend: Literal["local", "remote"] = "local"
@@ -2236,8 +2240,71 @@ class AppConfig(BaseModel):
             raise ValueError(
                 f"server.workers={self.server.workers} requires PostgreSQL, but the "
                 f"sqlite backend is configured for: {', '.join(sqlite_dbs)}. SQLite "
-                "does not support concurrent writer processes. Set server.workers "
-                "to 1 or move these databases to PostgreSQL."
+                "does not support concurrent writer processes. Every database is "
+                "checked, including ones this process's surfaces do not open. Set "
+                "server.workers to 1 or move these databases to PostgreSQL."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _multi_worker_requires_shared_state(self) -> AppConfig:
+        """Reject ``server.workers > 1`` when request state lives in process memory.
+
+        The auth and broker surfaces keep state that later requests depend on in
+        the ``broker.resilience.backend`` shared-state backend. On ``memory``
+        every worker holds its own copy, and the next request can land on any
+        worker:
+
+        - auth: the login CSRF nonce, the consent handle, the OAuth rate limits
+          and the JWT-bearer ``jti`` replay record. A login or consent step
+          answered by another worker fails, and a replayed assertion or
+          consent is accepted there.
+        - broker: ``Idempotency-Key`` claims (a retry on another worker runs the
+          upstream call again), the rate-limit buckets and the circuit-breaker
+          counters (both multiply by the worker count).
+
+        These are correctness and security guarantees, not soft per-worker
+        limits, so the config is refused rather than warned about.
+        """
+        workers = self.server.workers
+        if workers <= 1 or self.broker.resilience.backend.backend is not BackendKind.MEMORY:
+            return self
+        holders: list[str] = []
+        if "auth" in self.apps:
+            holders.append(
+                "the auth surface (login CSRF nonces, consent handles, OAuth rate "
+                "limits, JWT-bearer jti replay records)"
+            )
+        if "broker" in self.apps:
+            resilience = self.broker.resilience
+            broker_state = [
+                setting
+                for setting, enabled in (
+                    ("broker.idempotency.enabled", self.broker.idempotency.enabled),
+                    ("broker.resilience.rate_limit.enabled", resilience.rate_limit.enabled),
+                    (
+                        "broker.resilience.circuit_breaker.enabled",
+                        resilience.circuit_breaker.enabled,
+                    ),
+                )
+                if enabled
+            ]
+            if broker_state:
+                holders.append(
+                    "the broker surface (Idempotency-Key claims, rate-limit buckets, "
+                    f"circuit-breaker counters; enabled by {', '.join(broker_state)})"
+                )
+        if holders:
+            raise ValueError(
+                f"server.workers={workers} cannot run with "
+                "broker.resilience.backend.backend: memory, because each worker "
+                f"process would keep its own copy of the state held by {'; and '.join(holders)}. "
+                "Set broker.resilience.backend.backend: redis with "
+                "broker.resilience.backend.redis_url "
+                "(JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND=redis, "
+                "JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL=redis://...; needs the "
+                "jentic-one[redis] extra, which the published images do not include), "
+                "or set server.workers: 1."
             )
         return self
 

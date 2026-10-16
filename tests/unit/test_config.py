@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import threading
 import time
 from collections.abc import MutableMapping
@@ -2034,6 +2035,15 @@ _SHARED_SECRETS_ENV = {
     )
 }
 
+# Shared state on redis: the auth and broker surfaces refuse several workers on
+# the per-process memory backend.
+_REDIS_STATE_ENV = {
+    "JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND": "redis",
+    "JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL": "redis://redis.local:6379/0",
+}
+
+_MULTI_WORKER_ENV = {**_SHARED_SECRETS_ENV, **_REDIS_STATE_ENV}
+
 
 def test_server_workers_defaults_to_one(config_file: Path):
     assert load_config(config_file).server.workers == 1
@@ -2043,7 +2053,7 @@ def test_server_workers_yaml_and_env_override(tmp_path: Path, sample_config_dict
     sample_config_dict["server"] = {"workers": 3}
     path = tmp_path / "jentic-one.yaml"
     path.write_text(yaml.dump(sample_config_dict))
-    with patch.dict(os.environ, _SHARED_SECRETS_ENV, clear=False):
+    with patch.dict(os.environ, _MULTI_WORKER_ENV, clear=False):
         assert load_config(path).server.workers == 3
         with patch.dict(os.environ, {"JENTIC__SERVER__WORKERS": "4"}, clear=False):
             assert load_config(path).server.workers == 4
@@ -2053,13 +2063,29 @@ def test_server_workers_yaml_and_env_override(tmp_path: Path, sample_config_dict
 def test_server_workers_below_one_rejected(config_file: Path, workers: str):
     with (
         patch.dict(os.environ, {"JENTIC__SERVER__WORKERS": workers}, clear=False),
-        pytest.raises(ConfigError, match=r"server\.workers|workers"),
+        pytest.raises(
+            ConfigError, match=r"server\.workers\n\s+Input should be greater than or equal to 1"
+        ),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_upper_bound(config_file: Path):
+    with patch.dict(
+        os.environ, {**_MULTI_WORKER_ENV, "JENTIC__SERVER__WORKERS": "64"}, clear=False
+    ):
+        assert load_config(config_file).server.workers == 64
+    with (
+        patch.dict(os.environ, {**_MULTI_WORKER_ENV, "JENTIC__SERVER__WORKERS": "65"}, clear=False),
+        pytest.raises(
+            ConfigError, match=r"server\.workers\n\s+Input should be less than or equal to 64"
+        ),
     ):
         load_config(config_file)
 
 
 def test_server_workers_with_reload_rejected(config_file: Path):
-    env = {**_SHARED_SECRETS_ENV, "JENTIC__SERVER__WORKERS": "2", "JENTIC__SERVER__RELOAD": "true"}
+    env = {**_MULTI_WORKER_ENV, "JENTIC__SERVER__WORKERS": "2", "JENTIC__SERVER__RELOAD": "true"}
     with (
         patch.dict(os.environ, env, clear=False),
         pytest.raises(ConfigError, match="mutually exclusive"),
@@ -2086,7 +2112,7 @@ def test_server_workers_with_sqlite_rejected(
     path = tmp_path / "jentic-one.yaml"
     path.write_text(yaml.dump(sample_config_dict))
     with (
-        patch.dict(os.environ, _SHARED_SECRETS_ENV, clear=False),
+        patch.dict(os.environ, _MULTI_WORKER_ENV, clear=False),
         pytest.raises(ConfigError, match=rf"requires PostgreSQL.*configured for: {sqlite_db}\."),
     ):
         load_config(path)
@@ -2098,32 +2124,116 @@ def test_server_workers_one_with_sqlite_allowed(sqlite_stack: Path):
     assert config.server.workers == 1
 
 
-def test_server_workers_with_generated_secret_rejected(config_file: Path):
+@pytest.mark.parametrize(
+    ("secret_env", "field_path", "apps"),
+    [
+        ("JENTIC__ADMIN__AUTH__JWT_SECRET", "admin.auth.jwt_secret", "admin"),
+        ("JENTIC__ADMIN__AUTH__JWT_SECRET", "admin.auth.jwt_secret", "auth"),
+        ("JENTIC__ADMIN__AUTH__JWT_SECRET", "admin.auth.jwt_secret", "control"),
+        ("JENTIC__ADMIN__AUTH__JWT_SECRET", "admin.auth.jwt_secret", "registry"),
+        ("JENTIC__ADMIN__INVITE__PEPPER", "admin.invite.pepper", "admin"),
+        (
+            "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET",
+            "credentials.connect.state_secret",
+            "control",
+        ),
+    ],
+)
+def test_server_workers_with_generated_secret_rejected(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch, secret_env: str, field_path: str, apps: str
+):
     """Each worker would mint its own secret, so tokens would not verify across workers."""
-    env = {
-        "JENTIC__ADMIN__INVITE__PEPPER": _SHARED_SECRETS_ENV["JENTIC__ADMIN__INVITE__PEPPER"],
-        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": _SHARED_SECRETS_ENV[
-            "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET"
-        ],
-        "JENTIC__SERVER__WORKERS": "2",
-    }
-    with (
-        patch.dict(os.environ, env, clear=False),
-        pytest.raises(ConfigError, match=r"requires admin\.auth\.jwt_secret to be configured"),
-    ):
+    env = {**_MULTI_WORKER_ENV, "JENTIC__APPS": apps, "JENTIC__SERVER__WORKERS": "2"}
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv(secret_env)
+    with pytest.raises(ConfigError, match=rf"requires {re.escape(field_path)} to be configured"):
         load_config(config_file)
 
 
 def test_server_workers_ignores_secrets_the_surface_never_reads(config_file: Path):
     """A broker reads none of the guarded secrets, so their per-process values are harmless."""
-    env = {"JENTIC__APPS": "broker", "JENTIC__SERVER__WORKERS": "4"}
+    env = {**_REDIS_STATE_ENV, "JENTIC__APPS": "broker", "JENTIC__SERVER__WORKERS": "4"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.workers == 4
+
+
+def test_server_workers_production_broker_without_guarded_secrets_allowed(config_file: Path):
+    """Production fills unread secrets with a per-process value; a broker never reads them."""
+    env = {
+        **_REDIS_STATE_ENV,
+        "JENTIC_ENV": "production",
+        "JENTIC__APPS": "broker",
+        "JENTIC__SERVER__WORKERS": "4",
+    }
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.server.workers == 4
 
 
 def test_server_workers_with_configured_secrets_allowed(config_file: Path):
-    env = {**_SHARED_SECRETS_ENV, "JENTIC__SERVER__WORKERS": "2"}
+    env = {**_MULTI_WORKER_ENV, "JENTIC__SERVER__WORKERS": "2"}
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.server.workers == 2
+
+
+def test_server_workers_auth_on_memory_backend_rejected(config_file: Path):
+    """Login CSRF nonces and consent handles would live in one worker's memory."""
+    env = {**_SHARED_SECRETS_ENV, "JENTIC__APPS": "auth", "JENTIC__SERVER__WORKERS": "2"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(
+            ConfigError,
+            match=r"(?s)server\.workers=2 cannot run with broker\.resilience\.backend\.backend: "
+            r"memory.*the auth surface.*consent handles.*backend: redis",
+        ),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_broker_on_memory_backend_rejected(config_file: Path):
+    """Idempotency-Key claims would not dedupe a retry that lands on another worker."""
+    env = {"JENTIC__APPS": "broker", "JENTIC__SERVER__WORKERS": "2"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(
+            ConfigError,
+            match=r"(?s)the broker surface.*Idempotency-Key claims.*"
+            r"broker\.idempotency\.enabled.*backend: redis",
+        ),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_broker_memory_backend_with_shared_state_features_off_allowed(
+    config_file: Path,
+):
+    """With no feature that keeps state on the backend, memory holds nothing to share."""
+    env = {
+        "JENTIC__APPS": "broker",
+        "JENTIC__SERVER__WORKERS": "2",
+        "JENTIC__BROKER__IDEMPOTENCY__ENABLED": "false",
+        "JENTIC__BROKER__RESILIENCE__RATE_LIMIT__ENABLED": "false",
+        "JENTIC__BROKER__RESILIENCE__CIRCUIT_BREAKER__ENABLED": "false",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).server.workers == 2
+
+
+def test_server_workers_memory_backend_without_auth_or_broker_allowed(config_file: Path):
+    """registry/admin/control keep no request state on the shared-state backend."""
+    env = {
+        **_SHARED_SECRETS_ENV,
+        "JENTIC__APPS": "registry,admin,control",
+        "JENTIC__SERVER__WORKERS": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).server.workers == 2
+
+
+def test_server_workers_one_on_memory_backend_allowed(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__APPS": "auth,broker"}, clear=False):
+        config = load_config(config_file)
+    assert config.broker.resilience.backend.backend == "memory"

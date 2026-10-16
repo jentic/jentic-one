@@ -2288,12 +2288,13 @@ type ServerConfig struct {
 	// Reload corresponds to the JSON schema field "reload".
 	Reload bool `json:"reload,omitempty,omitzero" yaml:"reload,omitempty" mapstructure:"reload,omitempty"`
 
-	// Number of uvicorn worker processes ``python -m jentic_one`` serves with. Each
-	// worker is a separate process that re-loads config from the config file and
-	// environment and runs its own lifespan: DB pools, admission limits, caches,
-	// in-memory rate limits and Prometheus metrics are per process. Values above 1
-	// require PostgreSQL for every database and are incompatible with
-	// ``server.reload``.
+	// Number of uvicorn worker processes ``python -m jentic_one`` serves with (1-64).
+	// Each worker is a separate process that re-reads config from the config file and
+	// environment when it spawns and runs its own lifespan: DB pools, admission
+	// limits, caches and Prometheus metrics are per process, and each worker is a
+	// full interpreter (budget memory per worker). Values above 1 require PostgreSQL
+	// for every database, are incompatible with ``server.reload``, and require the
+	// redis shared-state backend when the process runs the auth or broker surface.
 	Workers int `json:"workers,omitempty,omitzero" yaml:"workers,omitempty" mapstructure:"workers,omitempty"`
 }
 
@@ -2355,6 +2356,9 @@ func (j *ServerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["workers"]; !ok || v == nil {
 		plain.Workers = 1
+	}
+	if 64 < plain.Workers {
+		return fmt.Errorf("field %s: must be <= %v", "workers", 64)
 	}
 	if 1 > plain.Workers {
 		return fmt.Errorf("field %s: must be >= %v", "workers", 1)
