@@ -101,6 +101,19 @@ func TestMCPExecute_EnvelopeMatchesSharedGoldens(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":"upstream said no"}`))
 			},
 		},
+		{
+			// A vendor 5xx the broker mirrored (origin upstream) is the caller's
+			// data on both surfaces, not a broker transport failure (#1531).
+			name:   "execute_upstream_5xx_passthrough_json",
+			target: "GET:/v1/pets",
+			broker: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header()["Date"] = nil
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Jentic-Error-Origin", "upstream")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"vendor maintenance"}`))
+			},
+		},
 	}
 
 	for _, tc := range cases {

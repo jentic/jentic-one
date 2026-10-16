@@ -792,3 +792,111 @@ async def test_non_broker_4xx_still_passes_through(broker, origin) -> None:
     env = make_env("http://127.0.0.1:8100")
     result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
     assert not result.is_error
+
+
+async def test_execute_upstream_5xx_passthrough_matches_the_shared_golden(broker) -> None:
+    """#1531 boundary: a vendor 5xx the broker mirrored (origin upstream) is a
+    normal envelope on both surfaces, byte-identical to the CLI golden."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            headers={"Content-Type": "application/json", "Jentic-Error-Origin": "upstream"},
+            content=b'{"error":"vendor maintenance"}',
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error, result.content
+
+    got = envelope_without_stamp(decode_tool_json(result))
+    assert got == shared_golden_stdout("execute_upstream_5xx_passthrough_json")
+
+
+@pytest.mark.parametrize(
+    ("status", "problem_type", "retry_after", "args", "want_retryable", "want_tool"),
+    [
+        (503, "circuit_open", "12", {}, True, None),
+        (503, "runner_unavailable", None, {}, True, None),
+        (503, "server_at_capacity", "1", {}, True, None),
+        (502, "refresh_transient_error", None, {}, True, None),
+        (504, "deadline_exceeded", None, {}, False, None),
+        (504, "deadline_exceeded", None, {"idempotency_key": "idem-1"}, True, None),
+        (
+            504,
+            "deadline_exceeded",
+            None,
+            {"headers": {"Idempotency-Key": "idem-1"}},
+            True,
+            None,
+        ),
+        (501, "runner_scheme_unsupported", None, {}, False, "search_apis"),
+        (500, "streaming_unsupported", None, {}, False, None),
+        (429, "rate_limit_exceeded", "7", {}, True, None),
+    ],
+)
+async def test_broker_transport_failure_is_a_coded_soft_error(
+    broker, status, problem_type, retry_after, args, want_retryable, want_tool
+) -> None:
+    """#1531 (Go: TestMCPExecute_BrokerTransportErrorIsError): a 5xx/429 the
+    broker itself emitted is an isError TRANSPORT_ERROR whose retryable hint
+    follows the problem type, with the broker's Retry-After relayed."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _broker_problem(
+            status, {"type": problem_type, "title": f"broker said {problem_type}"}
+        )
+        if retry_after is not None:
+            response.headers["Retry-After"] = retry_after
+        return response
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets", **args})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert f"broker said {problem_type}" in payload["error"]
+    assert f"(HTTP {status})" in payload["error"]
+    assert payload["retryable"] is want_retryable
+    # get_started is not served on this mount, so the lane filter drops it.
+    assert payload.get("next_tool") == want_tool
+    want_details: dict[str, Any] = {
+        "http_status": status,
+        "origin": "broker",
+        "problem_type": problem_type,
+        "retryable": want_retryable,
+    }
+    if retry_after is not None:
+        want_details["retry_after_s"] = int(retry_after)
+        assert payload["retry_after_s"] == int(retry_after)
+        assert f"({retry_after}s)" in payload["actionable_step"]
+    else:
+        assert "retry_after_s" not in payload
+    assert payload["details"] == want_details
+    # The advice agrees with the hint: never "re-send" a non-retryable call.
+    assert ("re-send the same call" in payload["actionable_step"]) is want_retryable
+
+
+@pytest.mark.parametrize(
+    ("status", "origin"),
+    [(503, "upstream"), (500, "upstream"), (429, "upstream"), (502, None)],
+)
+async def test_non_broker_5xx_still_passes_through(broker, status, origin) -> None:
+    """The other side of #1531: a vendor 5xx/429 the broker mirrored, or one
+    with no origin header, is the caller's data — even when its body looks like
+    a broker problem. The header decides."""
+    headers = {"Content-Type": "application/json", "Retry-After": "5"}
+    if origin:
+        headers["Jentic-Error-Origin"] = origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers=headers, content=b'{"type": "circuit_open"}')
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
+    assert not result.is_error
+    assert decode_tool_json(result)["status"] == status

@@ -1136,6 +1136,17 @@ async def _execute_tool(
         raise denial
     if (resolve_failure := ex.classify_broker_error(status, response_headers, raw)) is not None:
         raise resolve_failure
+    if (
+        broker_failure := ex.classify_broker_transport_error(
+            status,
+            response_headers,
+            raw,
+            retry_safe=bool(idempotency_key)
+            or method in ("GET", "HEAD")
+            or any(k.strip().lower() == "idempotency-key" and v.strip() for k, v in headers),
+        )
+    ) is not None:
+        raise broker_failure
     payload = ex.execute_result_payload(status, response_headers, raw, execution_id)
     held = ex.held_envelope(status, payload.get("body"))
     if held is not None:
