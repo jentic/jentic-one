@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 from starlette.requests import Request
 
@@ -75,8 +74,7 @@ def test_review_url_uses_the_request_origin_when_nothing_is_configured(
     )
 
 
-@pytest.mark.parametrize("target", ["start-broker", "start-local"])
-def test_local_split_broker_links_to_the_combined_app(target: str) -> None:
+def test_local_split_broker_links_to_the_combined_app() -> None:
     """The Makefile's standalone broker (:8100) roots its absolute links on the
     combined app (``config/local.yaml``'s port), where the admin API and the UI
     live — its own request origin would name the broker."""
@@ -86,5 +84,18 @@ def test_local_split_broker_links_to_the_combined_app(target: str) -> None:
     expected = f"JENTIC__BROKER__JOBS_API_BASE_URL=http://127.0.0.1:{local.server.port}"
     assert expected in makefile
     assert "LOCAL_BROKER_ENV :=" in makefile
-    recipe = makefile.split(f"\n{target}:", 1)[1].split("\n\n", 1)[0]
+    recipe = makefile.split("\nstart-broker:", 1)[1].split("\n\n", 1)[0]
     assert "$(LOCAL_BROKER_ENV)" in recipe
+
+
+def test_start_local_broker_links_to_the_combined_app() -> None:
+    """``make start-local`` runs ``scripts/start-local.sh``, which points the
+    broker's absolute links at the app port it starts the combined app on."""
+    root = Path(__file__).resolve().parents[3]
+    makefile = (root / "Makefile").read_text()
+    local = load_config(root / "config" / "local.yaml")
+    recipe = makefile.split("\nstart-local:", 1)[1].split("\n\n", 1)[0]
+    assert "scripts/start-local.sh" in recipe
+    script = (root / "scripts" / "start-local.sh").read_text()
+    assert f'APP_PORT="${{START_LOCAL_APP_PORT:-{local.server.port}}}"' in script
+    assert 'JENTIC__BROKER__JOBS_API_BASE_URL="http://127.0.0.1:$APP_PORT"' in script

@@ -3660,80 +3660,132 @@ type HealthResponse struct {
 }
 
 // HeldExecutionDetailResponse A held execution with the agent context and the held request a reviewer decides on.
+//
+// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","agent_owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","request":{"body":"charge=ch_3MmlLrLkdIwHu7ix0snN0B15","body_truncated":false,"method":"POST","url":"https://api.stripe.com/v1/refunds?expand[]=charge"},"review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
 type HeldExecutionDetailResponse struct {
 	// UnderscoreLinks HAL-style links for a held execution.
+	//
+	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
 
 	// AgentId The agent whose call was held.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// AgentName Display name of the agent.
+	//
+	// Examples: billing-assistant
 	AgentName *string `json:"agent_name,omitempty"`
 
 	// AgentOwnerId The agent's owner; null for an ownerless agent (admin-only).
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	AgentOwnerId *string `json:"agent_owner_id,omitempty"`
 
 	// ApiName Name of the API called.
+	//
+	// Examples: stripe
 	ApiName string `json:"api_name"`
 
 	// ApiVendor Vendor of the API called.
+	//
+	// Examples: stripe.com
 	ApiVendor string `json:"api_vendor"`
 
 	// ApiVersion Version of the API called.
+	//
+	// Examples: 2024-04-10
 	ApiVersion string `json:"api_version"`
 
 	// CreatedAt When the call was held.
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CredentialId The credential selected when the call was held.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// DecidedAt When it left `pending`.
+	//
+	// Examples: 2026-01-15T09:42:00Z
 	DecidedAt *time.Time `json:"decided_at,omitempty"`
 
 	// DecidedBy Reviewer who decided it.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	DecidedBy *string `json:"decided_by,omitempty"`
 
 	// DecisionReason Reviewer's reason.
+	//
+	// Examples: Not this account
 	DecisionReason *string `json:"decision_reason,omitempty"`
 
 	// ExecutionId Execution record written once the approved call ran.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId *string `json:"execution_id,omitempty"`
 
 	// ExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+	//
+	// Examples: held
 	ExecutionStatus *HeldExecutionDetailResponseExecutionStatus `json:"execution_status,omitempty"`
 
 	// ExpiresAt When a pending held execution expires undecided.
+	//
+	// Examples: 2026-01-15T10:30:00Z
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Id Held execution id (`held_…`).
+	//
+	// Examples: held_6968b398a1c4e2d07b5f93c6
 	Id string `json:"id"`
 
 	// MatchedRuleId The require-approval permission rule that held the call.
+	//
+	// Examples: apr_6968b398c4e1a2b3d5f60718
 	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
 
 	// Method HTTP method of the held call.
+	//
+	// Examples: POST
 	Method string `json:"method"`
 
 	// OperationId Resolved OpenAPI operation id.
+	//
+	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`
 
 	// Path Upstream path of the held call.
+	//
+	// Examples: /v1/refunds
 	Path string `json:"path"`
 
 	// Request The held call.
+	//
+	// Examples: {"body":"charge=ch_3MmlLrLkdIwHu7ix0snN0B15","body_truncated":false,"method":"POST","url":"https://api.stripe.com/v1/refunds?expand[]=charge"}
 	Request *HeldRequestResponse `json:"request,omitempty"`
 
 	// ReviewUrl Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+	//
+	// Examples: https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6
 	ReviewUrl string `json:"review_url"`
 
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
+	//
+	// Examples: pending
 	State HeldExecutionState `json:"state"`
 
 	// TraceId Trace id of the held call.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
 	TraceId *string `json:"trace_id,omitempty"`
 
 	// UpdatedAt Last change.
+	//
+	// Examples: 2026-01-15T09:42:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3741,93 +3793,162 @@ type HeldExecutionDetailResponse struct {
 type HeldExecutionDetailResponseExecutionStatus string
 
 // HeldExecutionLinksResponse HAL-style links for a held execution.
+//
+// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 type HeldExecutionLinksResponse struct {
 	// Execution The execution record, once the approved call has run.
+	//
+	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
 
 	// Result The call's result: the upstream response, or why it never ran. Present once the call has finished.
+	//
+	// Examples: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
 	Result *string `json:"result,omitempty"`
 
 	// Self This held execution.
+	//
+	// Examples: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6
 	Self string `json:"self"`
 
 	// Withdraw Withdraw the held call. Present while it is pending.
+	//
+	// Examples: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw
 	Withdraw *string `json:"withdraw,omitempty"`
 }
 
 // HeldExecutionListResponse A page of held executions.
+//
+// Examples: {"data":[{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type HeldExecutionListResponse struct {
-	Data       []HeldExecutionResponse `json:"data"`
-	HasMore    bool                    `json:"has_more"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
+	// Data The page of held executions.
+	//
+	// Examples: [{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}]
+	Data []HeldExecutionResponse `json:"data"`
+
+	// HasMore Whether more results exist after this page.
+	//
+	// Examples: true
+	HasMore bool `json:"has_more"`
+
+	// NextCursor Cursor for the next page; null when there are no more results.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // HeldExecutionResponse A call held for a human decision, and where it stands.
+//
+// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
 type HeldExecutionResponse struct {
 	// UnderscoreLinks HAL-style links for a held execution.
+	//
+	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
 
 	// AgentId The agent whose call was held.
+	//
+	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
 
 	// ApiName Name of the API called.
+	//
+	// Examples: stripe
 	ApiName string `json:"api_name"`
 
 	// ApiVendor Vendor of the API called.
+	//
+	// Examples: stripe.com
 	ApiVendor string `json:"api_vendor"`
 
 	// ApiVersion Version of the API called.
+	//
+	// Examples: 2024-04-10
 	ApiVersion string `json:"api_version"`
 
 	// CreatedAt When the call was held.
+	//
+	// Examples: 2026-01-15T09:30:00Z
 	CreatedAt time.Time `json:"created_at"`
 
 	// CredentialId The credential selected when the call was held.
+	//
+	// Examples: cred_6968b39855d91a3561684b32
 	CredentialId string `json:"credential_id"`
 
 	// DecidedAt When it left `pending`.
+	//
+	// Examples: 2026-01-15T09:42:00Z
 	DecidedAt *time.Time `json:"decided_at,omitempty"`
 
 	// DecidedBy Reviewer who decided it.
+	//
+	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	DecidedBy *string `json:"decided_by,omitempty"`
 
 	// DecisionReason Reviewer's reason.
+	//
+	// Examples: Not this account
 	DecisionReason *string `json:"decision_reason,omitempty"`
 
 	// ExecutionId Execution record written once the approved call ran.
+	//
+	// Examples: exec_6968b3982706c619fe73f0cf
 	ExecutionId *string `json:"execution_id,omitempty"`
 
 	// ExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+	//
+	// Examples: held
 	ExecutionStatus *HeldExecutionResponseExecutionStatus `json:"execution_status,omitempty"`
 
 	// ExpiresAt When a pending held execution expires undecided.
+	//
+	// Examples: 2026-01-15T10:30:00Z
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Id Held execution id (`held_…`).
+	//
+	// Examples: held_6968b398a1c4e2d07b5f93c6
 	Id string `json:"id"`
 
 	// MatchedRuleId The require-approval permission rule that held the call.
+	//
+	// Examples: apr_6968b398c4e1a2b3d5f60718
 	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
 
 	// Method HTTP method of the held call.
+	//
+	// Examples: POST
 	Method string `json:"method"`
 
 	// OperationId Resolved OpenAPI operation id.
+	//
+	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`
 
 	// Path Upstream path of the held call.
+	//
+	// Examples: /v1/refunds
 	Path string `json:"path"`
 
 	// ReviewUrl Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+	//
+	// Examples: https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6
 	ReviewUrl string `json:"review_url"`
 
 	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
+	//
+	// Examples: pending
 	State HeldExecutionState `json:"state"`
 
 	// TraceId Trace id of the held call.
+	//
+	// Examples: 4bf92f3577b34da6a3ce929d0e0e4736
 	TraceId *string `json:"trace_id,omitempty"`
 
 	// UpdatedAt Last change.
+	//
+	// Examples: 2026-01-15T09:42:00Z
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -3838,17 +3959,27 @@ type HeldExecutionResponseExecutionStatus string
 type HeldExecutionState string
 
 // HeldRequestResponse The held call exactly as it runs if approved (credentials are injected at run time).
+//
+// Examples: {"body":"charge=ch_3MmlLrLkdIwHu7ix0snN0B15","body_truncated":false,"method":"POST","url":"https://api.stripe.com/v1/refunds?expand[]=charge"}
 type HeldRequestResponse struct {
 	// Body Request body, if any.
+	//
+	// Examples: charge=ch_3MmlLrLkdIwHu7ix0snN0B15
 	Body *string `json:"body,omitempty"`
 
 	// BodyTruncated True when `body` is cut short for display.
+	//
+	// Examples: false
 	BodyTruncated *bool `json:"body_truncated,omitempty"`
 
 	// Method HTTP method.
+	//
+	// Examples: POST
 	Method string `json:"method"`
 
 	// Url Upstream URL including the query string.
+	//
+	// Examples: https://api.stripe.com/v1/refunds?expand[]=charge
 	Url string `json:"url"`
 }
 
