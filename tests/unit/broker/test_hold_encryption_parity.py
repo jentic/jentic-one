@@ -98,7 +98,7 @@ async def test_the_broker_refuses_to_hold_without_a_keyset(
 class _NeverCalledExecutor:
     called = False
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         self.called = True
         raise AssertionError("an undecryptable held payload must not run")
 

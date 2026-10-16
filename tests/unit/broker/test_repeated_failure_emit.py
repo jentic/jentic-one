@@ -13,7 +13,6 @@ flushed *before* the count query runs, or the threshold would be off by one.
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import cast
@@ -44,6 +43,7 @@ from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 _ACTOR = "agt_broker"
 _TOOLKIT = "tk_broker00000000000000000"
@@ -84,25 +84,6 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
     async with factory() as sess:
         yield sess
     await engine.dispose()
-
-
-@contextlib.asynccontextmanager
-async def _rollback_on_error(session: AsyncSession) -> AsyncGenerator[AsyncSession, None]:
-    """Mirror the router's ``ctx.admin_db.transaction()`` rollback semantics.
-
-    The real sync router wraps ``run_execution`` in a transaction that rolls
-    back on any exception (``shared/db/session.py``). We replicate just that
-    behaviour here so the test proves the manual ``session.commit()`` inside
-    ``run_execution`` persists the FAILED record + events *before* this outer
-    block tries to roll them away on the re-raised ``BrokerError``.
-    """
-    try:
-        yield session
-    except BaseException:
-        await session.rollback()
-        raise
-    else:
-        await session.commit()
 
 
 def _ctx_req() -> ExecuteRequestContext:
@@ -158,17 +139,19 @@ async def test_run_execution_emits_repeated_failure_on_broker_error(session: Asy
     await _seed_prior_failures(session, 4)
 
     with pytest.raises(BrokerError):
-        async with _rollback_on_error(session):
-            await run_execution(
-                _ctx_req(),
-                body=None,
-                headers=None,
-                session=session,
-                broker=default_broker(_FailRunner()),
-                actor_id=_ACTOR,
-                actor_type="agent",
-                security_config=config,
-            )
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            admin_db=SessionScope(session, commit=True),
+            broker=default_broker(_FailRunner()),
+            actor_id=_ACTOR,
+            actor_type="agent",
+            security_config=config,
+        )
+    # Whatever the caller rolls back on the re-raised BrokerError, the FAILED
+    # record and its events were committed by run_execution's own transaction.
+    await session.rollback()
 
     events = await _repeated_events(session)
     assert len(events) == 1
@@ -189,7 +172,7 @@ async def test_run_execution_no_repeated_failure_without_security_config(
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=default_broker(_FailRunner()),
             actor_id=_ACTOR,
             actor_type="agent",

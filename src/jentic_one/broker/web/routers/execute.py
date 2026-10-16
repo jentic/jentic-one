@@ -683,6 +683,49 @@ async def _handle(
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
 
+    outcome = await _execute_buffered(
+        request,
+        ctx_req,
+        ctx,
+        identity,
+        runner,
+        body,
+        selected_credential=selected_credential,
+        allowed_credential_ids=allowed_credential_ids,
+    )
+
+    response = _assemble_response(outcome, ctx_req)
+    if idempotency is not None and idem_key and fp is not None:
+        await idempotency.complete(
+            identity.sub,
+            idem_key,
+            fp,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            body=outcome.result.body,
+        )
+    return response
+
+
+async def _execute_buffered(
+    request: Request,
+    ctx_req: ExecuteRequestContext,
+    ctx: Context,
+    identity: Identity,
+    runner: UpstreamRunner,
+    body: bytes | None,
+    *,
+    selected_credential: ResolvedCredential | None = None,
+    allowed_credential_ids: list[str] | None = None,
+) -> ExecutionOutcome:
+    """Inject credentials, run the buffered upstream call, and persist its record.
+
+    Injection commits ``credential.accessed`` before the material is used (the
+    ``CredentialService.inject`` contract). No admin transaction is open across
+    the upstream call: ``run_execution`` opens one for the execution record only
+    after the call returns or raises, so a slow upstream never pins an admin
+    connection (or, on SQLite, the database write lock).
+    """
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(
         ctx_req,
@@ -705,33 +748,20 @@ async def _handle(
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
 
-    async with ctx.admin_db.transaction() as session:
-        broker = _resolve_broker(request, runner)
-        outcome = await run_execution(
-            ctx_req,
-            body=body,
-            headers=forwarded,
-            session=session,
-            timeout=ctx.config.broker.upstream_timeout_s,
-            broker=broker,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type.value,
-            origin=identity.origin.value,
-            security_config=ctx.config.security,
-            signing=injection.signing,
-        )
-
-    response = _assemble_response(outcome, ctx_req)
-    if idempotency is not None and idem_key and fp is not None:
-        await idempotency.complete(
-            identity.sub,
-            idem_key,
-            fp,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            body=outcome.result.body,
-        )
-    return response
+    broker = _resolve_broker(request, runner)
+    return await run_execution(
+        ctx_req,
+        body=body,
+        headers=forwarded,
+        admin_db=ctx.admin_db,
+        timeout=ctx.config.broker.upstream_timeout_s,
+        broker=broker,
+        actor_id=identity.sub,
+        actor_type=identity.actor_type.value,
+        origin=identity.origin.value,
+        security_config=ctx.config.security,
+        signing=injection.signing,
+    )
 
 
 async def _handle_streaming(

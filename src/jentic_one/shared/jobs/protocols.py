@@ -200,11 +200,11 @@ class UpstreamExecutor(Protocol):
 
     Implementations own the ``executions`` record write (the pipeline persists
     it); the worker keeps only the job-result + lifecycle-event persistence.
+    ``db`` is the worker's database: the record is written in a transaction
+    opened on it after the upstream call, never one held across the call.
     """
 
-    async def execute(
-        self, request: UpstreamExecRequest, *, session: Any
-    ) -> UpstreamExecResult: ...
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult: ...
 
 
 class JobRecord(Protocol):

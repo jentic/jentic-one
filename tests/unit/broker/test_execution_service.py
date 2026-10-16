@@ -10,6 +10,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.schemas import OperationInfo
+from tests.unit.fake_tx import SessionScope
 
 
 class _StubRunner(UpstreamRunner):
@@ -64,7 +65,7 @@ async def test_actor_fields_forwarded_to_record_execution() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -90,7 +91,7 @@ async def test_actor_fields_are_required() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="usr_default",
             actor_type="user",
@@ -115,7 +116,7 @@ async def test_operation_info_forwarded_to_record_execution() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            session=session,
+            admin_db=SessionScope(session),
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",

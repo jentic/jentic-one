@@ -58,14 +58,14 @@ class PipelineExecutor(UpstreamExecutor):
         self._registry = registry
         self._broker_factory = broker_factory
 
-    async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
         ctx_req = _ctx_from_metadata(request)
         runner = self._registry.select(request.url)
         outcome = await run_execution(
             ctx_req,
             body=request.body,
             headers=request.headers,
-            session=session,
+            admin_db=db,
             timeout=request.timeout_s,
             broker=self._broker_factory(runner),
             execution_id=request.metadata.get("execution_id"),
