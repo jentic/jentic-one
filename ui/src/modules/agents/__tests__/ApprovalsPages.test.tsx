@@ -98,7 +98,7 @@ describe('Approvals pages', () => {
 			{ route: '/agents/approvals/held_pending1', path: '/agents/approvals/:id' },
 		);
 		expect(await screen.findByLabelText('1 call awaiting your approval')).toBeInTheDocument();
-		await userEvent.type(screen.getByLabelText('Reason (optional)'), 'not this one');
+		await userEvent.type(await screen.findByLabelText('Reason (optional)'), 'not this one');
 		await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
 		expect(await screen.findByText('not this one')).toBeInTheDocument();
 		await waitFor(() =>
