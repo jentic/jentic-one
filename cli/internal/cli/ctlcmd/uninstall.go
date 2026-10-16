@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/proc"
@@ -18,9 +19,10 @@ import (
 )
 
 type uninstallOptions struct {
-	yes      bool
-	purge    bool
-	keepData bool
+	yes          bool
+	purge        bool
+	keepData     bool
+	removeSkills bool
 }
 
 // localStopTimeout bounds how long uninstall waits for a local background
@@ -48,7 +50,19 @@ func newUninstallCmd(app *app) *cobra.Command {
 			"or --keep-data to force preservation. With no flag and an interactive\n" +
 			"terminal, uninstall asks before deleting it.\n\n" +
 			"On a local (source) install it stops the background app/broker processes\n" +
-			"first so they aren't orphaned when their files are removed.",
+			"first so they aren't orphaned when their files are removed.\n\n" +
+			"Agent skills installed by `jentic skill init` live outside ~/.jentic\n" +
+			"(e.g. ~/.claude/skills/jentic, AGENTS.md managed blocks). By default\n" +
+			"uninstall leaves them in place and lists any that remain, with the\n" +
+			"command to remove them (`jentic skill remove --all`). --remove-skills\n" +
+			"(implied by --purge) removes them as part of the uninstall, using the\n" +
+			"same path as `jentic skill remove --all`: manually edited skills are\n" +
+			"kept and reported. Project-scope installs are found relative to the\n" +
+			"current directory. A skill-cleanup failure never fails the uninstall.",
+		Example: "  jenticctl uninstall\n" +
+			"  jenticctl uninstall --yes --keep-data\n" +
+			"  jenticctl uninstall --yes --remove-skills\n" +
+			"  jenticctl uninstall --yes --purge",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return app.uninstallE(opts)
@@ -56,10 +70,12 @@ func newUninstallCmd(app *app) *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompts")
 	cmd.Flags().BoolVar(&opts.purge, "purge", false,
-		"also remove the Docker stack's data volume (destroys the database)")
+		"also remove the Docker stack's data volume (destroys the database) and the installed agent skills")
 	cmd.Flags().BoolVar(&opts.keepData, "keep-data", false,
 		"preserve the Docker stack's data volume (the default; reinstall reattaches it "+
 			"and reuses jentic-one-old.yaml's encryption key)")
+	cmd.Flags().BoolVar(&opts.removeSkills, "remove-skills", false,
+		"also remove the installed Jentic agent skills (manually edited ones are kept)")
 	return cmd
 }
 
@@ -86,11 +102,15 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 	}
 
 	dir := a.Paths.Dir()
+	// --purge means "remove everything Jentic put on this machine", so it
+	// covers the agent skills too; --remove-skills asks for just that part.
+	removeSkills := opts.purge || opts.removeSkills
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(a.Out, theme.Dimf("Nothing to do: %s does not exist.", dir))
+			a.skillsOnlyCleanup(dir, removeSkills)
 			return nil
 		}
 		return fmt.Errorf("read %s: %w", dir, err)
@@ -100,6 +120,7 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 		// files, or data to clean up). Treat it like a missing directory rather
 		// than running the teardown/backup phases against nothing.
 		fmt.Fprintln(a.Out, theme.Dimf("Nothing to do: %s is empty.", dir))
+		a.skillsOnlyCleanup(dir, removeSkills)
 		return nil
 	}
 
@@ -126,11 +147,12 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 		// --purge/--keep-data primarily govern the Docker named volume. On a
 		// local (non-Docker) install the database lives under ~/.jentic/data,
 		// which the Phase 2 wipe deletes. --keep-data preserves it
-		// (see the preserved set below); only --purge on a local install has no
-		// extra effect (the wipe already removes everything), so warn just for
-		// that case rather than mislead a --keep-data operator (P2-F).
+		// (see the preserved set below); --purge on a local install has no
+		// extra data effect (the wipe already removes everything) beyond the
+		// skill removal it implies, so say so rather than mislead a
+		// --keep-data operator (P2-F).
 		if opts.purge {
-			fmt.Fprintln(a.Out, theme.Warnf("--purge is a no-op on a local install; the database under %s "+
+			fmt.Fprintln(a.Out, theme.Warnf("--purge has no extra data effect on a local install; the database under %s "+
 				"is removed by the normal teardown (pass --keep-data to preserve it).", a.Paths.DataDir()))
 		}
 	}
@@ -152,6 +174,13 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 		if err := a.stopProcess(a.Paths.BrokerPIDPath(), "broker", localStopTimeout); err != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("could not stop broker (continuing): %v", err))
 		}
+	}
+
+	// Skill removal runs before the filesystem teardown, while the install it
+	// belongs to is still intact, so a failure later in the wipe can't leave
+	// skills behind with no record of what uninstall attempted.
+	if removeSkills {
+		a.removeSkills()
 	}
 
 	// Phase 1: back up config files (overwriting any prior backup).
@@ -217,14 +246,86 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 	}
 
 	// Skill blocks live in operator config files OUTSIDE ~/.jentic (e.g.
-	// ~/.cursor, AGENTS.md), so the filesystem teardown above never touches
-	// them — and uninstall must not silently rewrite files it doesn't own.
-	// Point the operator at the exact guard-respecting command instead, so a
-	// gone stack doesn't leave dangling skills without the operator knowing how
-	// to clear them (plan.md Phase 6 skill lifecycle: "at minimum prints the
-	// exact `jentic skill remove --all` command").
-	fmt.Fprintln(a.Out, theme.Dimf("Installed skill blocks live outside %s; remove them with: jentic skill remove --all", dir))
+	// ~/.claude/skills, AGENTS.md), so the filesystem teardown above never
+	// touches them. Report what is still installed so a gone stack doesn't leave
+	// dangling skills without the operator knowing how to clear them.
+	a.reportRemainingSkills(dir)
 	return nil
+}
+
+// skillsOnlyCleanup handles the agent skills when there is no ~/.jentic install
+// to tear down: skills can outlive it (e.g. a hand-deleted ~/.jentic), so the
+// explicit removal flags still apply and the leftover report still prints.
+func (a *app) skillsOnlyCleanup(dir string, removeSkills bool) {
+	if removeSkills {
+		a.removeSkills()
+	}
+	a.reportRemainingSkills(dir)
+}
+
+// skillCleanup is the slice of the local-agent skill engine uninstall needs.
+// The default implementation delegates to the same code paths as
+// `jentic skill list` / `jentic skill remove --all`; tests swap it out.
+type skillCleanup interface {
+	InstalledSkills() ([]localagentcmd.InstalledSkill, error)
+	SkillRemoveAll() error
+}
+
+// newSkillCleanup builds the skill engine uninstall uses. A package variable so
+// tests can inject a failing implementation.
+var newSkillCleanup = func(a *app) skillCleanup { return localagentcmd.New(a.App) }
+
+// removeSkills strips every managed Jentic skill install (all operators, all
+// scopes) via the `jentic skill remove --all` path, with the user-edit guard
+// on: manually edited content is reported and left in place. Best-effort by
+// contract — a skill-cleanup error is warned, never fatal, so it can't strand
+// a half-finished uninstall.
+func (a *app) removeSkills() {
+	sc := newSkillCleanup(a)
+	installed, err := sc.InstalledSkills()
+	if err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("could not detect installed skills (continuing): %v", err))
+		return
+	}
+	if len(installed) == 0 {
+		fmt.Fprintln(a.Out, theme.Dim.Render("No installed Jentic skills to remove."))
+		return
+	}
+	if err := sc.SkillRemoveAll(); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("could not remove skills (continuing; run `jentic skill remove --all`): %v", err))
+	}
+}
+
+// reportRemainingSkills lists the Jentic skills still installed after the
+// teardown and prints the exact command that removes them. It never mutates:
+// without --purge/--remove-skills uninstall leaves files it doesn't own alone.
+// Project-scope installs are probed relative to the current directory, so the
+// listing says so. Detection failures degrade to the generic hint.
+func (a *app) reportRemainingSkills(dir string) {
+	const removeCmd = "jentic skill remove --all"
+	installed, err := newSkillCleanup(a).InstalledSkills()
+	if err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("could not detect installed skills: %v", err))
+		fmt.Fprintln(a.Out, theme.Dimf("Installed skill blocks live outside %s; remove them with: %s", dir, removeCmd))
+		return
+	}
+	if len(installed) == 0 {
+		return
+	}
+	edited := false
+	fmt.Fprintln(a.Out, theme.Warnf("Jentic skills are still installed for your agents (they point at the removed stack):"))
+	for _, s := range installed {
+		line := fmt.Sprintf("  %s/%s  %s (%s scope)", s.Operator, s.Skill, s.Display, s.Scope)
+		if s.UserEdits {
+			edited = true
+			line += " (manually edited)"
+		}
+		fmt.Fprintln(a.Out, theme.Dim.Render(line))
+	}
+	fmt.Fprintln(a.Out, theme.Dimf("Remove them with: %s", removeCmd))
+	if edited {
+		fmt.Fprintln(a.Out, theme.Dimf("Manually edited skills are kept unless you add --force: %s --force", removeCmd))
+	}
 }
 
 // uninstallDocker tears the Docker stack down before the filesystem teardown.
