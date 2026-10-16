@@ -34,6 +34,7 @@ from jentic_one.shared.config import (
     EncryptionKey,
     EntitlementConfig,
     HeldExecutionsConfig,
+    IdempotencyConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -52,6 +53,7 @@ from jentic_one.shared.config import (
     load_config,
     resolved_auth_base_url,
 )
+from jentic_one.shared.state import BackendKind, MemoryBackendConfig
 
 
 def test_loads_valid_yaml(config_file: Path, sample_config_dict: dict[str, Any]):
@@ -2256,6 +2258,37 @@ def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
     assert memory.max_entries_per_namespace == 500
     assert memory.max_bytes_per_namespace == 1_000_000
     assert memory.budgets()["idem"].max_entries == 1_000_000
+
+
+def test_an_idem_override_keeps_the_per_caller_share_unless_set():
+    memory = MemoryBackendConfig.model_validate(
+        {
+            "namespaces": {
+                "idem": {"max_entries": 10, "max_bytes": 10_000},
+                "idem-body": {"max_entries": 10, "max_bytes": 10_000, "max_owner_share": 1.0},
+                "cb": {"max_entries": 10, "max_bytes": 10_000},
+            }
+        }
+    )
+    budgets = memory.budgets()
+    assert budgets["idem"].max_owner_share == 0.1
+    assert budgets["idem-body"].max_owner_share == 1.0
+    assert budgets["cb"].max_owner_share is None
+
+
+@pytest.mark.parametrize(
+    ("backend", "configured", "expected"),
+    [
+        (BackendKind.MEMORY, None, 3_600.0),
+        (BackendKind.REDIS, None, 86_400.0),
+        (BackendKind.MEMORY, 120.0, 120.0),
+        (BackendKind.REDIS, 120.0, 120.0),
+    ],
+)
+def test_idempotency_replay_ttl_defaults_by_backend(
+    backend: BackendKind, configured: float | None, expected: float
+):
+    assert IdempotencyConfig(ttl_s=configured).replay_ttl_s(backend) == expected
 
 
 def test_server_workers_one_on_memory_backend_allowed(config_file: Path):

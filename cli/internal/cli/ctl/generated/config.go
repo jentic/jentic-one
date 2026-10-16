@@ -1323,9 +1323,14 @@ type IdempotencyConfig struct {
 	// PendingTtlS corresponds to the JSON schema field "pending_ttl_s".
 	PendingTtlS float64 `json:"pending_ttl_s,omitempty,omitzero" yaml:"pending_ttl_s,omitempty" mapstructure:"pending_ttl_s,omitempty"`
 
-	// TtlS corresponds to the JSON schema field "ttl_s".
-	TtlS float64 `json:"ttl_s,omitempty,omitzero" yaml:"ttl_s,omitempty" mapstructure:"ttl_s,omitempty"`
+	// Replay window of a completed Idempotency-Key record, in seconds. Unset, it is
+	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On
+	// memory, every record is held in process for this long, so the TTL divides the
+	// sustained idempotent request rate the idem budget can hold.
+	TtlS interface{} `json:"ttl_s,omitempty,omitzero" yaml:"ttl_s,omitempty" mapstructure:"ttl_s,omitempty"`
 }
+
+type IdempotencyConfigTtlS_0 *float64
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *IdempotencyConfig) UnmarshalJSON(value []byte) error {
@@ -1346,9 +1351,6 @@ func (j *IdempotencyConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["pending_ttl_s"]; !ok || v == nil {
 		plain.PendingTtlS = 35.0
-	}
-	if v, ok := raw["ttl_s"]; !ok || v == nil {
-		plain.TtlS = 86400.0
 	}
 	*j = IdempotencyConfig(plain)
 	return nil
@@ -1684,15 +1686,16 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // Bounds for the in-process (“memory“) shared-state backend.
 //
 // Every key belongs to a namespace, its prefix up to the first “:“
-// (“idem“ for Idempotency-Key records, “auth“ for JWT-bearer jti replay
-// records, “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker
-// counters, and so on). Each namespace has its own budget, so one key kind
-// filling up never starves another. A namespace that is full of live entries
-// refuses new writes (the request that needed it gets a 503) rather than
-// evicting a live entry. Ignored by the redis backend.
+// (“idem“ for Idempotency-Key records, “idem-body“ for their stored
+// response bodies, “auth“ for JWT-bearer jti replay records,
+// “login-csrf“ for login CSRF nonces, “cb“ for circuit-breaker counters,
+// and so on). Each namespace has its own budget, so one key kind filling up
+// never starves another. A namespace that is full of live entries refuses
+// new writes (the request that needed it gets a 503) rather than evicting a
+// live entry. Ignored by the redis backend.
 type MemoryBackendConfig struct {
-	// Default most approximate bytes (key + value + a fixed per-entry overhead) one
-	// key namespace may hold before its writes are refused.
+	// Default most approximate bytes (key + value + about 400 bytes of per-entry
+	// overhead) one key namespace may hold before its writes are refused.
 	MaxBytesPerNamespace int `json:"max_bytes_per_namespace,omitempty,omitzero" yaml:"max_bytes_per_namespace,omitempty" mapstructure:"max_bytes_per_namespace,omitempty"`
 
 	// Default most live entries one key namespace may hold before its writes are
@@ -1700,18 +1703,30 @@ type MemoryBackendConfig struct {
 	MaxEntriesPerNamespace int `json:"max_entries_per_namespace,omitempty,omitzero" yaml:"max_entries_per_namespace,omitempty" mapstructure:"max_entries_per_namespace,omitempty"`
 
 	// Per-namespace budget overrides, keyed by namespace (the key prefix before the
-	// first ``:``). ``idem`` defaults to 1000000 entries and 268435456 bytes (256
-	// MiB) unless overridden here. At most max_entries / broker.idempotency.ttl_s
-	// idempotent requests per second can be held, so size it (or lower the TTL) for
-	// your load.
+	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 1000000
+	// entries / 268435456 bytes (256 MiB) and idem-body (their stored response
+	// bodies) 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller
+	// share. The sustained idempotent request rate idem can hold is min(max_entries,
+	// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
+	// about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s
+	// at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500
+	// bytes + body length each) stop being stored for replay sooner, about 25 req/s
+	// of 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
 // Per-namespace budget overrides, keyed by namespace (the key prefix before the
-// first “:“). “idem“ defaults to 1000000 entries and 268435456 bytes (256 MiB)
-// unless overridden here. At most max_entries / broker.idempotency.ttl_s
-// idempotent requests per second can be held, so size it (or lower the TTL) for
-// your load.
+// first “:“). Unless overridden here, idem (Idempotency-Key records) is 1000000
+// entries / 268435456 bytes (256 MiB) and idem-body (their stored response bodies)
+// 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller share.
+// The sustained idempotent request rate idem can hold is min(max_entries,
+// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
+// about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s
+// at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
+// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500
+// bytes + body length each) stop being stored for replay sooner, about 25 req/s of
+// 1 KiB bodies, without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -1743,13 +1758,21 @@ func (j *MemoryBackendConfig) UnmarshalJSON(value []byte) error {
 
 // Entry-count and approximate byte budget for one memory-backend key namespace.
 type MemoryNamespaceBudgetConfig struct {
-	// Most approximate bytes (key + value + a fixed per-entry overhead) the namespace
-	// may hold.
+	// Most approximate bytes (key + value + about 400 bytes of per-entry overhead)
+	// the namespace may hold.
 	MaxBytes int `json:"max_bytes" yaml:"max_bytes" mapstructure:"max_bytes"`
 
 	// Most live entries the namespace may hold.
 	MaxEntries int `json:"max_entries" yaml:"max_entries" mapstructure:"max_entries"`
+
+	// Most of max_entries and max_bytes that one owner (the key's second ``:``
+	// segment, for idem and idem-body the calling actor) may hold; an owner over its
+	// share is refused without affecting the others. Unset, it is 0.1 for idem and
+	// idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.
+	MaxOwnerShare interface{} `json:"max_owner_share,omitempty,omitzero" yaml:"max_owner_share,omitempty" mapstructure:"max_owner_share,omitempty"`
 }
+
+type MemoryNamespaceBudgetConfigMaxOwnerShare_0 *float64
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *MemoryNamespaceBudgetConfig) UnmarshalJSON(value []byte) error {

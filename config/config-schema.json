@@ -892,9 +892,18 @@
           "type": "number"
         },
         "ttl_s": {
-          "default": 86400.0,
-          "title": "Ttl S",
-          "type": "number"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
+          "title": "Ttl S"
         }
       },
       "title": "IdempotencyConfig",
@@ -1149,11 +1158,11 @@
       "type": "object"
     },
     "MemoryBackendConfig": {
-      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``auth`` for JWT-bearer jti replay\nrecords, ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker\ncounters, and so on). Each namespace has its own budget, so one key kind\nfilling up never starves another. A namespace that is full of live entries\nrefuses new writes (the request that needed it gets a 503) rather than\nevicting a live entry. Ignored by the redis backend.",
+      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for JWT-bearer jti replay records,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by the redis backend.",
       "properties": {
         "max_bytes_per_namespace": {
           "default": 67108864,
-          "description": "Default most approximate bytes (key + value + a fixed per-entry overhead) one key namespace may hold before its writes are refused.",
+          "description": "Default most approximate bytes (key + value + about 400 bytes of per-entry overhead) one key namespace may hold before its writes are refused.",
           "minimum": 1,
           "title": "Max Bytes Per Namespace",
           "type": "integer"
@@ -1169,7 +1178,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/MemoryNamespaceBudgetConfig"
           },
-          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). ``idem`` defaults to 1000000 entries and 268435456 bytes (256 MiB) unless overridden here. At most max_entries / broker.idempotency.ttl_s idempotent requests per second can be held, so size it (or lower the TTL) for your load.",
+          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 1000000 entries / 268435456 bytes (256 MiB) and idem-body (their stored response bodies) 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller share. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500 bytes + body length each) stop being stored for replay sooner, about 25 req/s of 1 KiB bodies, without refusing requests.",
           "title": "Namespaces",
           "type": "object"
         }
@@ -1181,7 +1190,7 @@
       "description": "Entry-count and approximate byte budget for one memory-backend key namespace.",
       "properties": {
         "max_bytes": {
-          "description": "Most approximate bytes (key + value + a fixed per-entry overhead) the namespace may hold.",
+          "description": "Most approximate bytes (key + value + about 400 bytes of per-entry overhead) the namespace may hold.",
           "minimum": 1,
           "title": "Max Bytes",
           "type": "integer"
@@ -1191,6 +1200,21 @@
           "minimum": 1,
           "title": "Max Entries",
           "type": "integer"
+        },
+        "max_owner_share": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Most of max_entries and max_bytes that one owner (the key's second ``:`` segment, for idem and idem-body the calling actor) may hold; an owner over its share is refused without affecting the others. Unset, it is 0.1 for idem and idem-body and unlimited elsewhere; 1.0 lets one owner use the whole namespace.",
+          "title": "Max Owner Share"
         }
       },
       "required": [
