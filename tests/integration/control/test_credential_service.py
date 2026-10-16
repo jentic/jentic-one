@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -1732,20 +1732,42 @@ async def test_update_device_code_expired_pending_flow_does_not_block(
         )
 
 
+_OWNER_A = Identity(sub="usr_owner_a_1425", permissions=["credentials:write"])
+_OTHER_B = Identity(sub="usr_other_b_1425", permissions=["credentials:write"])
+
+
 @pytest.mark.parametrize(
     "token_url", ["http://169.254.169.254/latest/meta-data", "https://auth.example.com/v2/token"]
 )
-async def test_update_token_url_on_unknown_credential_is_not_found(
-    svc: CredentialService, clean_credentials: None, token_url: str
+@pytest.mark.parametrize("target", ["missing", "other-users"])
+async def test_update_token_url_on_invisible_credential_is_not_found(
+    svc: CredentialService,
+    clean_credentials: None,
+    monkeypatch: pytest.MonkeyPatch,
+    token_url: str,
+    target: str,
 ) -> None:
-    """A token_url edit on a credential the caller cannot see answers 404,
-    whether or not the URL would pass validation."""
+    """Pins #1425: a token_url edit on a credential the caller cannot see (one
+    that does not exist, or one another user owns) answers 404 whether or not
+    the URL would pass validation, and resolves no DNS for it: the access
+    check runs before the SSRF validator."""
+    if target == "missing":
+        credential_id, caller = "cred_does_not_exist", _ADMIN_IDENTITY
+    else:
+        created = await svc.create(_auth_code_create("Owned by A"), identity=_OWNER_A)
+        credential_id, caller = created.credential_id, _OTHER_B
+    validator = AsyncMock(side_effect=AssertionError("token_url validated before access check"))
+    monkeypatch.setattr(
+        "jentic_one.control.services.credentials.service.validate_upstream_url_async", validator
+    )
+
     with pytest.raises(CredentialNotFoundError):
         await svc.update(
-            "cred_does_not_exist",
+            credential_id,
             CredentialUpdate(type=CredentialType.OAUTH2, token_url=token_url),
-            identity=_ADMIN_IDENTITY,
+            identity=caller,
         )
+    validator.assert_not_called()
 
 
 async def test_update_oauth2_without_client_config_rejected(
