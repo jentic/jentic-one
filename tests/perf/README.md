@@ -38,7 +38,7 @@ make perf-down         # stop + wipe volumes
 | `pyspy_profile.py` (`make perf-profile`) | Where does the broker spend its CPU? | py-spy in a sidecar sharing the broker's PID namespace (image untouched), under oha closed-loop load; flamegraph SVG + CPU share per subsystem (DB client, DNS, OTel, ASGI, …). SQLAlchemy's greenlet bridge splits ORM stacks from their callers, so call-site shares are lower bounds. |
 | `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N sequential calls (one connection); aborts unless all N return 200. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the ping transaction per checkout when `pool_pre_ping` is on (the default). |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | How do faults, imports and mixed admin load behave? Roughly where's the knee? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. Closed loop suffers **coordinated omission** above the knee (slow responses lower the offered load, so queueing time is never recorded): its latencies there are a lower bound. |
-| Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. Anonymous access is read-only (Viewer, `127.0.0.1` only); edit `obs/grafana/dashboards/broker-perf.json`, or log in as Grafana's built-in `admin` (password `admin` on first start, Grafana asks to change it) for Explore. |
+| Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. Anonymous access is read-only (Viewer, `127.0.0.1` only); edit `obs/grafana/dashboards/broker-perf.json`, or log in as Grafana's built-in `admin` for Explore. Its password is `PERF_GRAFANA_ADMIN_PASSWORD` (default `admin`); Grafana's first-login prompt to change it can be skipped, so the default stays unless you set it. The UI listens on `127.0.0.1` only. |
 | `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over the latest overhead / dbcost / capacity / profile results (overhead also as a trend), plus links to every py-spy flamegraph and the latest Locust CSV. |
 
 ### Reading the overhead numbers
@@ -109,6 +109,7 @@ for Locust set them before `make perf-up` (or `docker compose up -d broker`).
 | `PERF_IMAGE` | `jentic-one/app:perf` | image for app, broker, migrate and the harness |
 | `PERF_APP_PORT` / `PERF_BROKER_PORT` / `PERF_UPSTREAM_PORT` | `18000` / `18100` / `18084` | host ports (`127.0.0.1` only) |
 | `PERF_LOCUST_PORT` / `PERF_PROM_PORT` / `PERF_GRAFANA_PORT` | `8089` / `19090` / `13000` | host ports (`127.0.0.1` only) |
+| `PERF_GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana's built-in `admin` password (read when the Grafana container is created) |
 | `PERF_WORKERS_LOCUST` | `2` | Locust worker processes for `make perf-ui` |
 | `PERF_LOCUST_ARGS` | — | extra args for the Locust master (`make perf-ui`) |
 | `PERF_RUN_S` | `600` | planned Locust run length in s; tokens must outlive it |

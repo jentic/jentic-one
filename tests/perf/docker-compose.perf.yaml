@@ -271,9 +271,12 @@ services:
     environment:
       # Anonymous users can view the provisioned dashboards but not change
       # anything. Edit the dashboard in obs/grafana/dashboards/; for Explore or
-      # admin, log in as Grafana's built-in admin (admin/admin on first start).
+      # admin, log in as Grafana's built-in admin (password from
+      # PERF_GRAFANA_ADMIN_PASSWORD, default `admin`; 127.0.0.1 only). Grafana
+      # reads it when it creates its database, i.e. on a fresh container.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${PERF_GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - ./obs/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./obs/grafana/dashboards:/var/lib/grafana/dashboards:ro
