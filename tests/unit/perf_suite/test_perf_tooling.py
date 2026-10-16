@@ -387,20 +387,37 @@ class _FakeRecord:
 
 
 def _run_pyspy_main(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, wait: Any, raw: str = "a;b 3"
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    wait: Any,
+    raw: str = "a;b 3",
+    calls: list[str] | None = None,
 ) -> list[Path]:
     """Drive ``pyspy_profile.main`` with Docker, oha and py-spy faked out.
 
     Returns the files left in the (temporary) ``results/pyspy`` directory.
+    When ``calls`` is given, the sidecar removals and profile deletions are
+    appended to it in the order they happen.
     """
     out_dir = tmp_path / "pyspy"
     out_dir.mkdir()
     env = _env()
+    log = calls if calls is not None else []
     monkeypatch.setattr(pyspy_profile, "OUT_DIR", out_dir)
     monkeypatch.setattr(PerfEnv, "load", classmethod(lambda cls, path=None: env))
     monkeypatch.setattr(pyspy_profile, "exclusive_run", lambda tool: contextlib.nullcontext())
-    for name in ("stop_oha", "stop_pyspy", "start_oha", "start_pyspy"):
+    for name in ("start_oha", "start_pyspy"):
         monkeypatch.setattr(pyspy_profile, name, lambda *a: None)
+    for name in ("stop_oha", "stop_pyspy"):
+        monkeypatch.setattr(pyspy_profile, name, lambda *a, _n=name: log.append(_n))
+    discard = pyspy_profile.discard_profile
+
+    def recording_discard(stem: str) -> None:
+        log.append("discard_profile")
+        discard(stem)
+
+    monkeypatch.setattr(pyspy_profile, "discard_profile", recording_discard)
     monkeypatch.setattr(pyspy_profile, "broker_container", lambda: "cid")
     monkeypatch.setattr(pyspy_profile, "run_oha", lambda a: _oha_json({"200": 100}))
     monkeypatch.setattr(time, "sleep", lambda s: None)
@@ -444,6 +461,26 @@ def test_every_failed_profile_run_deletes_its_files(
     with pytest.raises(error):
         _run_pyspy_main(tmp_path, monkeypatch, wait=wait, raw=raw)
     assert list(out_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("wait", "error"),
+    [
+        (_raise(subprocess.TimeoutExpired("py-spy", 61)), subprocess.TimeoutExpired),
+        (_raise(KeyboardInterrupt()), KeyboardInterrupt),
+        (lambda: 1, RuntimeError),
+    ],
+    ids=["timeout", "ctrl-c", "record-failed"],
+)
+def test_a_failed_profile_run_removes_the_sidecars_before_deleting_its_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait: Any, error: type[BaseException]
+) -> None:
+    # py-spy keeps writing until its sidecar is removed, so deleting the files
+    # first would let it recreate them after the unlink.
+    calls: list[str] = []
+    with pytest.raises(error):
+        _run_pyspy_main(tmp_path, monkeypatch, wait=wait, calls=calls)
+    assert calls == ["stop_oha", "stop_pyspy", "discard_profile"]
 
 
 def test_a_completed_profile_run_keeps_its_files(
