@@ -68,7 +68,11 @@ def md_table(headers: Sequence[str], rows: Sequence[Sequence[Any]], digits: int 
     return "\n".join([head, sep, *body])
 
 
-def git_dirty(paths: Sequence[str] = ("src", "pyproject.toml", "uv.lock")) -> bool:
+#: What the broker image is built from (``git_dirty`` / doctor provenance).
+SRC_PATHS: Final = ("src", "pyproject.toml", "uv.lock")
+
+
+def git_dirty(paths: Sequence[str] = SRC_PATHS) -> bool:
     out = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--", *paths],
         capture_output=True,
@@ -85,6 +89,8 @@ class Report:
     cmd: str
     title: str
     mode: str = "clean"
+    #: ``PERF_*`` overrides the probe applied on top of the environment.
+    variant: dict[str, str] = field(default_factory=dict)
     sections: list[str] = field(default_factory=list)
     highlights: list[str] = field(default_factory=list)
     next_steps: list[str] = field(default_factory=list)
@@ -108,7 +114,7 @@ class Report:
             "src_dirty": git_dirty(),
             "timestamp": datetime.now(UTC).isoformat(),
             "broker_mode": self.mode,
-            "variant": variant_snapshot(),
+            "variant": variant_snapshot(self.variant),
         }
         payload = {
             **meta,
@@ -117,7 +123,10 @@ class Report:
             "data": self.data,
         }
         path.write_text(json.dumps(payload, indent=2, default=str))
-        rel = path.relative_to(REPO_ROOT)
+        try:
+            rel: Path | str = path.relative_to(REPO_ROOT)
+        except ValueError:
+            rel = path
         dirty = " (src has uncommitted changes)" if meta["src_dirty"] else ""
         print(f"# {self.title}\n")
         print(
@@ -141,6 +150,17 @@ class Report:
 # --------------------------------------------------------------------------- stack helpers
 
 
+def require_ok(load: dict[str, Any], what: str) -> None:
+    """Refuse a load run where any request failed: its numbers describe the failure."""
+    ratio = load.get("ok_ratio")
+    if ratio is None or ratio < 1.0:
+        raise PrereqError(
+            f"{what}: not every request returned 200 (ok_ratio {ratio}, "
+            f"statuses {load.get('status_codes')}, errors {load.get('errors')})",
+            "make perf-agent-doctor   # stale tokens, or a broken broker",
+        )
+
+
 def env_or_fail() -> PerfEnv:
     try:
         return PerfEnv.load()
@@ -161,29 +181,97 @@ def internal_url(env: PerfEnv, vendor: str = "perf-noauth", path: str = ECHO_PAT
 
 
 def recreate_broker(overrides: dict[str, str]) -> None:
+    """Recreate the broker with ``overrides``; harness failures become :class:`PrereqError`."""
+    # Docker creates a missing bind-mount source root-owned on Linux engines.
+    TRACE_DIR.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **overrides}
-    compose("up", "-d", "--force-recreate", "--no-deps", "--wait", "broker", env=env)
-    wait_healthy(f"{BROKER_HOST}/health")
+    try:
+        compose("up", "-d", "--force-recreate", "--no-deps", "--wait", "broker", env=env)
+        wait_healthy(f"{BROKER_HOST}/health")
+    except (RuntimeError, TimeoutError) as exc:
+        raise PrereqError(
+            f"broker did not come up: {str(exc)[-300:]}",
+            "docker compose -f tests/perf/docker-compose.perf.yaml logs broker; then make perf-up",
+        ) from exc
 
 
-TRACE_ENV_KEYS: Final = ("PERF_HOOKS_PATH", "PERF_TRACE", "PERF_TRACE_FUNCS")
+#: Container env the trace hook reads; empty = clean broker.
+TRACE_ENV_KEYS: Final = ("PERF_HOOKS_PATH", "PERF_TRACE", "PERF_TRACE_FUNCS", "PERF_TRACE_PARAMS")
+#: Trace outputs (event JSONL + the hook's patch manifest) under ``TRACE_DIR``.
+TRACE_GLOBS: Final = ("*.jsonl", "*.hook.json")
+
+
+def purge_traces() -> None:
+    """Delete trace files. Only call while no traced broker holds them open."""
+    for pattern in TRACE_GLOBS:
+        for path in TRACE_DIR.glob(pattern):
+            path.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
-def broker_variant(overrides: dict[str, str], *, trace: str = "") -> Iterator[None]:
-    """Recreate the broker with ``overrides`` (+ the trace hook), restore clean on exit."""
-    traced = {"PERF_HOOKS_PATH": "/perf-hooks", "PERF_TRACE": trace} if trace else {}
+def broker_variant(
+    overrides: dict[str, str], *, trace: str = "", trace_params: bool = False
+) -> Iterator[None]:
+    """Recreate the broker with ``overrides`` (+ the trace hook), restore clean on exit.
+
+    The clean restore runs whether the variant broker came up or not, so a
+    failed start never leaves the stack traced. Traces can hold raw SQL bind
+    parameters, so they are deleted once the traced broker is gone.
+    """
+    traced: dict[str, str] = {}
+    if trace:
+        traced = {"PERF_HOOKS_PATH": "/perf-hooks", "PERF_TRACE": trace}
+        if trace_params:
+            traced["PERF_TRACE_PARAMS"] = "1"
     clean = dict.fromkeys(TRACE_ENV_KEYS, "")
     if trace:
         TRACE_DIR.mkdir(parents=True, exist_ok=True)
-        # The broker runs as uid 10001; let it write into the bind mount.
-        TRACE_DIR.chmod(0o777)
-        AGENT_DIR.chmod(0o777)
-    recreate_broker({**clean, **overrides, **traced})
+        # The broker runs as uid 10001: it may create files (write + search)
+        # but not list or delete other users' files (sticky, no read for others).
+        TRACE_DIR.chmod(0o1733)
+        purge_traces()
     try:
+        recreate_broker({**clean, **overrides, **traced})
         yield
     finally:
         recreate_broker(clean)
+        if trace:
+            purge_traces()
+
+
+def hook_manifest() -> dict[str, list[str]]:
+    """Patch targets of the traced broker(s), merged across worker pids."""
+    merged: dict[str, set[str]] = {"targets": set(), "patched": set(), "failed": set()}
+    for path in TRACE_DIR.glob("*.hook.json"):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key, values in merged.items():
+            values.update(data.get(key, []))
+    out = {k: sorted(v) for k, v in merged.items()}
+    out["missing"] = sorted(merged["targets"] - merged["patched"])
+    return out
+
+
+def require_patched(manifest: dict[str, list[str]], required: Sequence[str]) -> None:
+    """Refuse to report when the hook could not wrap a target the analysis needs."""
+    missing = [r for r in required if r not in manifest["patched"]]
+    if missing:
+        raise PrereqError(
+            f"trace hook did not patch {missing} (failed: {manifest['failed'] or 'none'}); "
+            "the target was renamed or never imported",
+            "update DEFAULT_STAGES in tests/perf/agent/hooks/sitecustomize.py to the new name",
+        )
+
+
+def hook_stats(events: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Latest swallowed-error / dropped-event counters the hook reported."""
+    stats = {"errors": 0, "dropped": 0}
+    for e in events:
+        if e.get("ev") == "hook_stats":
+            stats = {k: max(stats[k], int(e.get(k, 0))) for k in stats}
+    return stats
 
 
 class TraceTail:
