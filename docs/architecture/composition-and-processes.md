@@ -116,32 +116,66 @@ processes behind one listening socket:
 
 ```
 python -m jentic_one          # supervisor: load_config() + validation only
-  └─ uvicorn.run("jentic_one.__main__:create_app", factory=True, workers=N)
+  └─ run_workers("jentic_one.__main__:create_app", workers=N)   # uvicorn Multiprocess
        ├─ worker 1: create_app() → load_config() → Context → app → lifespan
        ├─ worker 2: …
        └─ worker N: …
 ```
 
 The supervisor builds no app. Each worker is a spawned process that re-imports
-`jentic_one.__main__` and builds its own app through `create_app`, re-loading
+`jentic_one.__main__` and builds its own app through `create_app`, re-reading
 config from the config file (`JENTIC_CONFIG_FILE`) and `JENTIC__*` environment
-it inherits. Config therefore has to be re-readable: nothing set in the
-supervisor's memory reaches a worker. The bind (`server.host` /
-`server.port`) is the same in both modes; no other uvicorn option is set.
+it inherits when it spawns. Config therefore has to be re-readable: nothing
+set in the supervisor's memory reaches a worker, and a worker respawned after
+a crash or `SIGHUP` runs on the file and environment as they are then. The
+bind (`server.host` / `server.port`) is the same in both modes; no other
+uvicorn option is set. `server.workers` is capped at 64.
+
+**Startup failures exit the container.** The supervisor
+([`shared/uvicorn_workers.py`](../../src/jentic_one/shared/uvicorn_workers.py))
+is uvicorn's own `Multiprocess` with one change: a worker that exits before
+it starts serving stops every worker, and the process exits with code 3,
+as a single-worker run does. That covers an unreachable database, a bad
+encryption keyset, the redis backend on an image without the `[redis]`
+extra, and a config edit that no longer validates when a worker respawns.
+Docker's `restart:` policy and Kubernetes' crash-loop backoff then apply.
+(Plain `uvicorn --workers` respawns such a worker every half second for
+ever, and the container stays `Running`.) A worker that dies after it
+served is respawned as usual.
 
 What `server.workers > 1` refuses, and why:
 
 | Refused | Where | Why |
 | ------- | ----- | --- |
-| Any database on the `sqlite` backend | config validation | One SQLite file serialises writers behind a single lock; N processes of request handlers and job pollers contend into `database is locked`, and an in-memory SQLite DB is not shared at all. Use PostgreSQL. |
+| Any database on the `sqlite` backend | config validation | One SQLite file serialises writers behind a single lock; N processes of request handlers and job pollers contend into `database is locked`, and an in-memory SQLite DB is not shared at all. Use PostgreSQL. Every database is checked, including ones the process's surfaces do not open. |
 | `server.reload: true` | config validation | uvicorn's reloader supervises exactly one worker. |
+| `broker.resilience.backend.backend: memory` when the process runs the **auth** surface | config validation | The login CSRF nonce, the consent handle, the OAuth rate limits and the JWT-bearer `jti` replay record live on this backend. On `memory` each worker has its own copy, and the next request can reach any worker (keep-alive lasts 5 s, and a load balancer spreads requests anyway): a login or consent step answered by another worker fails, and a replayed assertion is accepted there. |
+| `broker.resilience.backend.backend: memory` when the process runs the **broker** surface with `broker.idempotency.enabled`, `broker.resilience.rate_limit.enabled` or `broker.resilience.circuit_breaker.enabled` (all on by default) | config validation | `Idempotency-Key` claims would not stop a retry that lands on another worker from running the upstream call again (a double POST), and rate-limit buckets and breaker counters would multiply by N. |
 | An unset `admin.auth.jwt_secret`, `admin.invite.pepper` or `credentials.connect.state_secret` that a surface of the process reads | config validation | Outside production an unset secret is generated per process, so each worker would mint its own: a session JWT, invite token or connect `state` signed by one worker would fail on the next. A broker reads none of the three, so it is not affected. |
 | A one-shot config source (`JENTIC_CONFIG_FILE` on a pipe or `/dev/fd`) | `_serve`, before workers start | The supervisor drained it; the workers cannot re-read it. |
+
+The fix for both shared-state rows is
+`broker.resilience.backend.backend: redis` with
+`broker.resilience.backend.redis_url`
+(`JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND=redis`,
+`JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL`), or `server.workers: 1`.
+**The published container images do not include the `[redis]` extra**, so on
+them `server.workers > 1` is available only to processes that run neither
+the auth surface nor a broker with those three features on: in practice the
+registry/admin/control surfaces, or a broker with idempotency, rate limiting
+and the circuit breaker all disabled. Build your own image with
+`jentic-one[redis]` to run more workers for auth or a default broker
+(shipping the extra in the published images is tracked in #1786).
 
 Each worker runs the full lifespan, so everything a process owns is
 multiplied by N. That is the same model as running N replicas with one
 worker each, and these are its consequences:
 
+- **Memory multiplies by N.** Each worker is a full Python interpreter with
+  the whole package imported, plus its own pools and caches, and the
+  supervisor is one more process. Raise the container's memory limit
+  roughly N× along with its CPU limit (the broker chart's default 256Mi
+  limit fits one worker).
 - **Background loops run in every worker.** Each worker's `WorkerLoop`
   polls for jobs. Claiming is safe under concurrent pollers on PostgreSQL:
   the claim is a single `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP
@@ -167,26 +201,38 @@ worker each, and these are its consequences:
   `server.workers: 4` admits 4× `max_in_flight` and opens up to
   4× `pool_max` connections to each database. Size PostgreSQL's
   `max_connections` (or a pooler) for it.
-- **In-memory state is per process.** On the default `memory` shared-state
-  backend, broker rate limits, circuit breakers and `Idempotency-Key`
-  replay, and the auth surface's OAuth rate limits and consent anti-replay,
-  are held per worker (the supervisor logs
-  `shared_state_backend_memory_per_worker`): limits multiply by N and a
-  replayed key can reach a worker that has not seen it. Set
-  `broker.resilience.backend.backend: redis` to share them. A few limiters
-  are memory-only by design and stay per worker even on Redis: the
-  connect-flow per-actor limit (route and MCP tool), the MCP registration
-  throttle, and the JWT-bearer assertion `jti` replay cache.
+- **Two control-surface limiters are per process on any backend.** The
+  connect-flow per-actor rate limit (route and MCP tool) and the MCP
+  config-registration throttle are held in process memory by design, so
+  each cap applies per worker and an actor can reach N× the limit (the
+  supervisor logs `control_limiters_per_worker`). Both are abuse caps, not
+  correctness guarantees.
+- **Provider config changes reach one worker.** An admin write to a
+  credential provider config rebuilds the provider registry only in the
+  worker that served it (see `Context.refresh_providers`). In a process that
+  also runs control or the broker, the other workers keep the registry they
+  loaded at boot until they restart, so a connect or credential-refresh call
+  they answer uses the previous provider config (the supervisor logs
+  `provider_config_refresh_per_worker`). Restart the deployment after
+  changing provider configs. This is the same gap that separate admin and
+  control processes have (tracked in #1785).
+- **AWS Marketplace contract checks are de-phased.** With
+  `entitlement.enabled` and `pricing_model: contract`, every worker runs
+  its own `CheckoutLicense` probe at boot and on each refresh, and a
+  contended seat answers like a missing license. Each worker waits a random
+  0 to N seconds (at most 10) before each probe, so N workers do not
+  probe in lockstep on a low-seat contract. Readiness can be delayed by up
+  to that offset.
 - **Caches are per process.** The broker's token/API-key resolve cache,
   its credential-derivation and rule caches, and their single-flight
   coalescing are per worker, so a cold miss costs up to one lookup per
   worker and a revocation is bounded by each worker's cache TTL — the
-  same as across replicas. The DB-backed provider registry is refreshed
-  only in the worker that served the admin write (see `Context.refresh_providers`);
-  other workers pick up a changed provider config on their next restart.
+  same as across replicas.
 - **What is shared.** Anything in the database: job claims, login lockout
   (`failed_login_count` / `locked_until`), tokens, sessions and audit.
-  MCP's `/mcp` endpoint is stateless, so it needs no session affinity.
+  With the redis backend, everything the auth and broker surfaces keep on
+  it, including the JWT-bearer `jti` replay record. MCP's `/mcp` endpoint
+  is stateless, so it needs no session affinity.
 
 ## Lifespan ordering
 

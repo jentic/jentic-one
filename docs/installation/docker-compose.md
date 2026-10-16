@@ -72,10 +72,14 @@ services:
     environment:
       JENTIC_CONFIG_FILE: /etc/jentic/production.yaml
       JENTIC__APPS: broker
-      # One uvicorn worker uses one CPU core. Raise this to serve from several
-      # worker processes (PostgreSQL only; limits, caches and pools are per
-      # worker — see docs/architecture/composition-and-processes.md).
-      # JENTIC__SERVER__WORKERS: "4"
+      # One uvicorn worker uses one CPU core. JENTIC__SERVER__WORKERS runs
+      # several worker processes (PostgreSQL only). A broker refuses it on the
+      # default memory state backend unless idempotency, rate limiting and the
+      # circuit breaker are all disabled, and this image lacks the [redis]
+      # extra the redis backend needs. Each worker is a full process: budget
+      # CPU and memory per worker. See
+      # docs/architecture/composition-and-processes.md.
+      # JENTIC__SERVER__WORKERS: "2"
     ports: ["127.0.0.1:8100:8000"]
     restart: unless-stopped
     healthcheck: *healthcheck

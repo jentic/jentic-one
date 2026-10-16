@@ -46,12 +46,15 @@ server:
   host: 0.0.0.0
   port: 8000
   reload: false
-  # uvicorn worker processes for this container (default 1, i.e. one CPU core).
-  # Above 1 requires PostgreSQL, reload off, and the admin/invite/connect
-  # secrets set explicitly; limits, caches, in-memory rate limits and
-  # Prometheus metrics become per process (use the redis state backend and
-  # the otlp exporter). See docs/architecture/composition-and-processes.md.
-  # workers: 4
+  # uvicorn worker processes for this container (default 1, i.e. one CPU core;
+  # max 64). Above 1 requires PostgreSQL, reload off, the admin/invite/connect
+  # secrets set explicitly, and broker.resilience.backend.backend: redis when
+  # the process runs the auth surface or a broker with idempotency, rate
+  # limiting or the circuit breaker on (the published images lack the [redis]
+  # extra). Pools, admission limits, caches, memory and Prometheus metrics are
+  # per process (budget CPU and memory per worker; use the otlp exporter).
+  # See docs/architecture/composition-and-processes.md.
+  # workers: 2
   # THE public origin of this deployment (scheme + host [+ port] as clients
   # reach it, e.g. behind your load balancer / ingress). This one knob drives
   # the control/auth surfaces' externally-visible URLs: OAuth connect

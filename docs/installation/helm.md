@@ -472,18 +472,27 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   the published image today, keep `broker.replicas: 1`; scaling out means
   building your own image with the `[redis]` extra.
 - **Worker processes** — a pod serves from one uvicorn process (one CPU
-  core) by default. To use more cores per pod, set `server.workers` through
-  the subchart's `extraEnv` (`JENTIC__SERVER__WORKERS: "4"`) and raise its
-  CPU limit to match. Each worker is a separate process with its own
-  admission limit, database pools, caches and in-memory state, so the
-  Redis and `postgresql.maxConnections` rules above apply per worker as
-  they do per replica, and Prometheus metrics are per worker (prefer the
-  `otlp` exporter). Requires PostgreSQL. Details:
+  core) by default; `server.workers` (`JENTIC__SERVER__WORKERS` through the
+  subchart's `extraEnv`) runs more. On the published image this is limited:
+  the broker and the app's auth surface refuse `server.workers > 1` on the
+  `memory` backend (their idempotency, rate-limit, login and consent state
+  would split across workers), and that image cannot run the redis backend.
+  So on the published image only a broker with
+  `broker.idempotency.enabled`, `broker.resilience.rate_limit.enabled` and
+  `broker.resilience.circuit_breaker.enabled` all `false`, or a standalone
+  registry/admin/control surface, can use more workers; anything else needs
+  your own image with the `[redis]` extra and the redis backend configured.
+  When you do raise it, raise the CPU limit **and the memory limit**
+  roughly N× (each worker is a full interpreter; the broker's default
+  256Mi limit fits one), and apply the `postgresql.maxConnections` rule per
+  worker as per replica. Prometheus metrics are per worker (prefer the
+  `otlp` exporter). Requires PostgreSQL. A worker that cannot start exits
+  the container with code 3. Details:
   [composition-and-processes.md](../architecture/composition-and-processes.md#multiple-worker-processes-serverworkers).
 - **App** — the same shared-state backend also carries the auth surface's
-  OAuth rate limiters and consent-nonce anti-replay, so the same rule
-  applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
-  before scaling out. Multi-replica app surfaces are not part of the CI
+  login CSRF nonces, consent handles, OAuth rate limiters and JWT-bearer
+  `jti` replay records, so the same rule applies: keep `app.replicas: 1`
+  on the `memory` backend; configure Redis before scaling out. Multi-replica app surfaces are not part of the CI
   smoke matrix.
 - **Bundled PostgreSQL** — a single-instance StatefulSet, dev/eval-grade by
   design; HA means an external managed database (below). Its connection ceiling

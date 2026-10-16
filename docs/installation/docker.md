@@ -98,8 +98,12 @@ server:
   host: "0.0.0.0"
   port: 8000
   # uvicorn worker processes per container (default 1 = one CPU core).
-  # PostgreSQL only; see docs/architecture/composition-and-processes.md.
-  # workers: 4
+  # PostgreSQL only. The app's auth surface and a default broker refuse more
+  # than 1 on the memory state backend, and the published image lacks the
+  # [redis] extra the redis backend needs; budget CPU and memory per worker.
+  # See docs/architecture/composition-and-processes.md.
+  # workers: 2
+
 # The app's public base URL — issued OAuth/OIDC token iss/aud and connect
 # redirect URIs are derived from it.
 auth:
