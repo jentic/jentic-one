@@ -103,7 +103,8 @@ export class JobsService {
      * Get Job Result
      * Get the result of a completed job — polymorphic by kind.
      *
-     * Answers ``409`` while the job has not completed, and ``410`` once an
+     * Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+     * running, failed or cancelled), and ``410`` once an
      * approved execution's result is past
      * ``held_executions.result_retention_seconds``.
      * @returns any Successful Response

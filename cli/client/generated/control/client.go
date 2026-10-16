@@ -11245,7 +11245,8 @@ type ClientInterface interface {
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
-	// Answers ``409`` while the job has not completed, and ``410`` once an
+	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+	// running, failed or cancelled), and ``410`` once an
 	// approved execution's result is past
 	// ``held_executions.result_retention_seconds``.
 	//
@@ -15398,7 +15399,8 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 //
 // Get the result of a completed job — polymorphic by kind.
 //
-// Answers “409“ while the job has not completed, and “410“ once an
+// Answers “409“ unless the job's “status“ is “completed“ (pending,
+// running, failed or cancelled), and “410“ once an
 // approved execution's result is past
 // “held_executions.result_retention_seconds“.
 //
@@ -27759,7 +27761,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Get the result of a completed job — polymorphic by kind.
 	//
-	// Answers ``409`` while the job has not completed, and ``410`` once an
+	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+	// running, failed or cancelled), and ``410`` once an
 	// approved execution's result is past
 	// ``held_executions.result_retention_seconds``.
 	//
@@ -46360,7 +46363,8 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 //
 // Get the result of a completed job — polymorphic by kind.
 //
-// Answers “409“ while the job has not completed, and “410“ once an
+// Answers “409“ unless the job's “status“ is “completed“ (pending,
+// running, failed or cancelled), and “410“ once an
 // approved execution's result is past
 // “held_executions.result_retention_seconds“.
 //

@@ -42519,7 +42519,7 @@
     "/jobs/{job_id}/result": {
       "description": "`GET`: Get Job Result.",
       "get": {
-        "description": "Get the result of a completed job — polymorphic by kind.\n\nAnswers ``409`` while the job has not completed, and ``410`` once an\napproved execution's result is past\n``held_executions.result_retention_seconds``.",
+        "description": "Get the result of a completed job — polymorphic by kind.\n\nAnswers ``409`` unless the job's ``status`` is ``completed`` (pending,\nrunning, failed or cancelled), and ``410`` once an\napproved execution's result is past\n``held_executions.result_retention_seconds``.",
         "operationId": "getJobResult",
         "parameters": [
           {
