@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
 // skill_json_test.go pins the #830 machine contract of the mutating skill
@@ -298,4 +300,164 @@ func TestSkillUpdateJSON(t *testing.T) {
 	if len(env.Results) != 1 || env.Results[0].Action != "unchanged" {
 		t.Errorf("idempotent update results = %+v, want unchanged", env.Results)
 	}
+}
+
+// setSidecarVersion rewrites the recorded version in an owned-file install's
+// sidecar (delete it when v is empty), simulating an install made from older
+// (or unstamped) bundled content.
+func setSidecarVersion(t *testing.T, skillMD, v string) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(skillMD), ".jentic-skill.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if v == "" {
+		delete(m, "version")
+	} else {
+		m["version"] = v
+	}
+	out, _ := json.Marshal(m)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type listInstallRow struct {
+	Skill            string  `json:"skill"`
+	Scope            string  `json:"scope"`
+	Installed        bool    `json:"installed"`
+	Stale            bool    `json:"stale"`
+	Freshness        *string `json:"freshness"`
+	InstalledVersion *string `json:"installed_version"`
+	AvailableVersion string  `json:"available_version"`
+}
+
+// claudeJenticRows decodes `skill list --json` and returns claude's jentic rows.
+func claudeJenticRows(t *testing.T, stdout string) []listInstallRow {
+	t.Helper()
+	var payload struct {
+		Operators []struct {
+			Operator string           `json:"operator"`
+			Installs []listInstallRow `json:"installs"`
+		} `json:"operators"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("list --json invalid: %v\n%s", err, stdout)
+	}
+	var rows []listInstallRow
+	for _, op := range payload.Operators {
+		if op.Operator != "claude" {
+			continue
+		}
+		for _, r := range op.Installs {
+			if r.Skill == "jentic" {
+				rows = append(rows, r)
+			}
+		}
+	}
+	if len(rows) == 0 {
+		t.Fatalf("no claude/jentic rows in:\n%s", stdout)
+	}
+	return rows
+}
+
+// TestSkillListReportsStaleness pins #1342 on `skill list`: additive JSON
+// version fields per install row, a human stale marker, and a refresh nudge.
+func TestSkillListReportsStaleness(t *testing.T) {
+	h := newSkillJSONHarness(t)
+	h.mustJSON(newHumanSkillCmd, "init", "--operator", "claude", "--skill", "jentic", "--json")
+	skill := filepath.Join(h.home, ".claude", "skills", "jentic", "SKILL.md")
+	available := skillgenBundledVersion(t)
+
+	// Current install.
+	stdout, _, err := h.exec(newHumanSkillCmd, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range claudeJenticRows(t, stdout) {
+		if r.AvailableVersion != available {
+			t.Errorf("%s row available_version = %q, want %q", r.Scope, r.AvailableVersion, available)
+		}
+		if !r.Installed {
+			if r.Stale || r.Freshness != nil || r.InstalledVersion != nil {
+				t.Errorf("uninstalled %s row must carry no installed version fields: %+v", r.Scope, r)
+			}
+			continue
+		}
+		if r.Stale || deref(r.Freshness) != "current" || deref(r.InstalledVersion) != available {
+			t.Errorf("current install row = %+v", r)
+		}
+	}
+
+	// Stale install.
+	setSidecarVersion(t, skill, "1")
+	stdout, _, err = h.exec(newHumanSkillCmd, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range claudeJenticRows(t, stdout) {
+		if r.Installed && (!r.Stale || deref(r.Freshness) != "stale" || deref(r.InstalledVersion) != "1") {
+			t.Errorf("stale install row = %+v", r)
+		}
+	}
+	pretty, _, err := h.exec(newHumanSkillCmd, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pretty, "stale: v1 installed, v"+available+" available") {
+		t.Errorf("human list missing the stale marker:\n%s", pretty)
+	}
+	if !strings.Contains(pretty, "jentic skill update") {
+		t.Errorf("human list missing the refresh nudge:\n%s", pretty)
+	}
+
+	// Unstamped install: unknown, never an error.
+	setSidecarVersion(t, skill, "")
+	stdout, _, err = h.exec(newHumanSkillCmd, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range claudeJenticRows(t, stdout) {
+		if r.Installed && (r.Stale || deref(r.Freshness) != "unknown" || deref(r.InstalledVersion) != "unknown") {
+			t.Errorf("unstamped install row = %+v", r)
+		}
+	}
+	pretty, _, _ = h.exec(newHumanSkillCmd, "list")
+	if !strings.Contains(pretty, "version unknown") || strings.Contains(pretty, "jentic skill update") {
+		t.Errorf("unstamped install should read 'version unknown' with no nudge:\n%s", pretty)
+	}
+
+	// `skill update` refreshes the stamp and clears staleness.
+	setSidecarVersion(t, skill, "1")
+	env, _ := h.mustJSON(newHumanSkillCmd, "update", "--operator", "claude", "--skill", "jentic", "--json")
+	if len(env.Results) != 1 || env.Results[0].Action != "updated" {
+		t.Errorf("update of a stale install = %+v, want updated", env.Results)
+	}
+	stdout, _, _ = h.exec(newHumanSkillCmd, "list", "--json")
+	for _, r := range claudeJenticRows(t, stdout) {
+		if r.Installed && r.Stale {
+			t.Errorf("update should clear staleness: %+v", r)
+		}
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func skillgenBundledVersion(t *testing.T) string {
+	t.Helper()
+	v := skillgen.BundledVersion("jentic")
+	if v == "" {
+		t.Fatal("bundled jentic skill has no version")
+	}
+	return v
 }

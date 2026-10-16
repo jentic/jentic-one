@@ -37,6 +37,7 @@ func (a *Cmd) skillList(cmd *cobra.Command, opts *skillOptions) error {
 // a partial install is visible.
 func (a *Cmd) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
 	names := skillgen.BundledNames()
+	var stale int
 	fmt.Fprintln(a.Out, theme.Heading.Render("Supported operators"))
 	for _, ad := range reg.Adapters() {
 		glyph := theme.Dim.Render(theme.SelectOff)
@@ -60,6 +61,10 @@ func (a *Cmd) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, de
 				if st.UserEdits {
 					line += " " + theme.Warn.Render("(manually edited)")
 				}
+				line += freshnessMarker(st)
+				if st.Stale() {
+					stale++
+				}
 				fmt.Fprintln(a.Out, "    "+line)
 				shown++
 			}
@@ -70,8 +75,26 @@ func (a *Cmd) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, de
 		}
 	}
 	fmt.Fprintln(a.Out)
+	if stale > 0 {
+		fmt.Fprintln(a.Out, theme.Warnf("%d installed skill(s) are older than the bundled copy; refresh with: jentic skill update", stale))
+	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("Install with: jentic skill init [--operator <names>] [--skill <names>]"))
 	return nil
+}
+
+// freshnessMarker renders the per-install version suffix for the human list:
+// a warning for a stale install, a dim note otherwise.
+func freshnessMarker(st skillgen.InstallState) string {
+	switch st.Freshness {
+	case skillgen.FreshnessStale:
+		return " " + theme.Warnf("(stale: v%s installed, v%s available)", st.InstalledVersion, st.AvailableVersion)
+	case skillgen.FreshnessNewer:
+		return " " + theme.Dimf("(v%s, newer than bundled v%s)", st.InstalledVersion, st.AvailableVersion)
+	case skillgen.FreshnessCurrent:
+		return " " + theme.Dimf("(v%s)", st.InstalledVersion)
+	default:
+		return " " + theme.Dim.Render("(version unknown)")
+	}
 }
 
 func (a *Cmd) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
@@ -84,6 +107,14 @@ func (a *Cmd) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, dete
 		Path      string `json:"path"`
 		Installed bool   `json:"installed"`
 		UserEdits bool   `json:"user_edits"`
+		// Version fields (#1342). available_version is always the bundled
+		// copy's; installed_version and freshness are present only for an
+		// installed row, with installed_version "unknown" when the install
+		// records no readable stamp.
+		Stale            bool   `json:"stale"`
+		Freshness        string `json:"freshness,omitempty"`
+		InstalledVersion string `json:"installed_version,omitempty"`
+		AvailableVersion string `json:"available_version"`
 	}
 	type row struct {
 		Operator string `json:"operator"`
@@ -107,13 +138,23 @@ func (a *Cmd) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, dete
 		}
 		for _, name := range names {
 			for _, st := range skillgen.InstallStates(ad, name, env) {
-				r.Installs = append(r.Installs, installRow{
-					Skill:     st.Skill,
-					Scope:     string(st.Scope),
-					Path:      st.Path,
-					Installed: st.Installed,
-					UserEdits: st.UserEdits,
-				})
+				ir := installRow{
+					Skill:            st.Skill,
+					Scope:            string(st.Scope),
+					Path:             st.Path,
+					Installed:        st.Installed,
+					UserEdits:        st.UserEdits,
+					Stale:            st.Stale(),
+					AvailableVersion: st.AvailableVersion,
+				}
+				if st.Installed {
+					ir.Freshness = string(st.Freshness)
+					ir.InstalledVersion = st.InstalledVersion
+					if ir.InstalledVersion == "" {
+						ir.InstalledVersion = string(skillgen.FreshnessUnknown)
+					}
+				}
+				r.Installs = append(r.Installs, ir)
 				if st.Installed && !r.Installed {
 					r.Installed = true
 					r.InstalledPath = st.Path

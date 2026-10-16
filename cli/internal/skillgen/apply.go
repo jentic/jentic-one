@@ -116,6 +116,15 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// time, so a shipped-set rename cannot strand the old file.
 	prior, _ := readSidecar(target)
 	recorded := prior.References
+	// A recorded version that differs from the content being applied is a
+	// pending write even when the rendered bytes are identical (claude/cursor
+	// frontmatter carries no version): the sidecar stamp is what staleness
+	// detection reads, so refreshing it is a real change.
+	versionDrift := prior.BodyHash != "" && prior.Version != versionToken(c.Version)
+	if versionDrift {
+		out.Changed = true
+		out.Skipped = false
+	}
 
 	if opts.DryRun {
 		// A dry run must report the same Changed a real apply would, so
@@ -147,7 +156,9 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// predating the field). An install with NO sidecar and an unchanged body
 	// deliberately gains none here — that shape is user content force-applied
 	// over; stamping provenance onto it would claim a file we did not write.
-	if changed || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
+	// A version-only bump (same rendered bytes) refreshes the recorded version
+	// the same way, so staleness clears once the install is re-applied.
+	if changed || versionDrift || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
 		if err := writeSidecar(target, c, newBytes); err != nil {
 			return out, err
 		}
@@ -266,6 +277,7 @@ func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 		Source:     string(c.source()),
 		BaseURL:    c.BaseURL,
 		References: renderedReferences(c.Name),
+		Version:    versionToken(c.Version),
 	}
 	data, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {

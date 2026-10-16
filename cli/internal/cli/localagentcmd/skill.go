@@ -123,7 +123,12 @@ func newSkillListCmd(a *Cmd) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Show supported operators and where each skill is installed",
-		Args:  cobra.NoArgs,
+		Long: "list reports, per operator, whether its runtime is detected and where each\n" +
+			"shipped skill is installed (user and project scope), whether it has\n" +
+			"manual edits, and whether it is older than the copy bundled in this CLI\n" +
+			"(stale: vX installed, vY available). Refresh stale installs with\n" +
+			"`jentic skill update`.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.skillList(cmd, opts)
 		},
@@ -284,6 +289,18 @@ func selectSkills(want []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// InstalledSkills reports every installed skill across all supported
+// operators and scopes (deduplicated by artifact), with its recorded and
+// bundled versions. It is a read-only probe for status surfaces such as
+// `jentic doctor`; it never writes.
+func (a *Cmd) InstalledSkills() ([]skillgen.InstallState, error) {
+	env, err := a.detectEnv()
+	if err != nil {
+		return nil, err
+	}
+	return skillgen.InstalledStates(skillgen.DefaultRegistry(), env), nil
 }
 
 // canonicalSet loads the selected skills, stamped with the resolved base URL.
