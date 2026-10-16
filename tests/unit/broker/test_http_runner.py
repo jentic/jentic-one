@@ -120,7 +120,7 @@ async def test_stream_read_timeout_maps_to_broker_origin_upstream_timeout() -> N
 
 
 @pytest.mark.asyncio
-async def test_transport_error_maps_to_broker_error() -> None:
+async def test_connect_error_maps_to_upstream_connect_failed_502() -> None:
     def handle(_req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 

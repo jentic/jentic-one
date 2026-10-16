@@ -431,11 +431,7 @@ def test_broker_error_carries_contract() -> None:
         (CredentialRefreshTransientError("cred_1: Timeout"), 502, "refresh_transient_error"),
         (UpstreamResponseTooLargeError("too big"), 502, "upstream_response_too_large"),
         (TooManyCandidatesError("too many"), 503, "too_many_candidates"),
-        (
-            UpstreamTransportError("Upstream transport error (ReadError)"),
-            502,
-            ("upstream_transport_error"),
-        ),
+        (UpstreamTransportError("transport"), 502, "upstream_transport_error"),
     ],
     ids=lambda v: type(v).__name__ if isinstance(v, Exception) else str(v),
 )
