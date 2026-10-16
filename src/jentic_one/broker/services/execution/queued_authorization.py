@@ -21,8 +21,6 @@ Implements the shared ``ExecutionAuthorizer`` protocol.
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import structlog
 
 from jentic_one.broker.core.exceptions import BrokerError, OperationNotFoundError
@@ -39,25 +37,15 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.queued_denials import (
+    inactive_actor_problem,
+    queued_execution_instance,
+)
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.permissions.evaluation import rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
-
-# Mirrors the sync edge's 401 for a caller whose actor is no longer active
-# (``require_broker_identity`` → ``Unauthorized(type="unauthorized")``).
-_INACTIVE_ACTOR_DETAIL = "The actor that queued this execution is no longer active."
-
-
-def _inactive_actor_problem(instance: str) -> dict[str, object]:
-    return {
-        "type": "unauthorized",
-        "title": "Unauthorized",
-        "status": 401,
-        "detail": _INACTIVE_ACTOR_DETAIL,
-        "instance": instance,
-    }
 
 
 def _insufficient_scope_problem(instance: str) -> dict[str, object]:
@@ -69,16 +57,6 @@ def _insufficient_scope_problem(instance: str) -> dict[str, object]:
         "detail": f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
         "instance": instance,
     }
-
-
-def _broker_path(upstream_url: str) -> str:
-    """The broker request path a sync call to ``upstream_url`` would have had.
-
-    Used as the problem ``instance`` so a queued denial names the same
-    occurrence the sync route's ``request.url.path`` would.
-    """
-    parsed = urlparse(upstream_url)
-    return f"/{parsed.netloc}{parsed.path}"
 
 
 class QueuedExecutionAuthorizer:
@@ -100,7 +78,7 @@ class QueuedExecutionAuthorizer:
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         """Allow (with the current injection boundary) or deny (with a problem body)."""
-        instance = _broker_path(request.upstream_url)
+        instance = queued_execution_instance(request.upstream_url)
 
         if not await self._actor_status.is_active(
             actor_id=request.actor_id, actor_type=request.actor_type
@@ -111,7 +89,7 @@ class QueuedExecutionAuthorizer:
                 actor_id=request.actor_id,
                 actor_type=request.actor_type,
             )
-            return QueuedExecutionVerdict(allowed=False, problem=_inactive_actor_problem(instance))
+            return QueuedExecutionVerdict(allowed=False, problem=inactive_actor_problem(instance))
 
         if not await self._actor_status.holds_permission(
             actor_id=request.actor_id,

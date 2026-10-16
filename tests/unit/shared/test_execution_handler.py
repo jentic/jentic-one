@@ -68,6 +68,7 @@ class _FakeInjector:
     def __init__(self, injection: InjectedAuth) -> None:
         self._injection = injection
         self.last_trace_id: str | None = None
+        self.last_identity: Any = None
         self.last_allowed_credential_ids: Any = "unset"
         self.last_credential_id: str | None = None
         self.last_request_server_variables: Any = "unset"
@@ -88,6 +89,7 @@ class _FakeInjector:
         server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
+        self.last_identity = identity
         self.last_allowed_credential_ids = allowed_credential_ids
         self.last_credential_id = credential_id
         self.last_request_server_variables = request_server_variables
@@ -105,6 +107,18 @@ class _FakeAuthorizer:
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         self.last_request = request
         return self._verdict
+
+
+class _FakeActorStatus:
+    """Stands in for the broker's live actor-status read (``ActorStatusReader``)."""
+
+    def __init__(self, *, active: bool = True) -> None:
+        self._active = active
+        self.calls: list[tuple[str, str]] = []
+
+    async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
+        self.calls.append((actor_id, actor_type))
+        return self._active
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
@@ -239,6 +253,7 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
         execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -306,6 +321,7 @@ async def test_handler_bounds_injection_to_the_run_time_boundary(
         executor=executor,
         credential_injector=injector,
         execution_authorizer=_FakeAuthorizer(verdict),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -331,6 +347,7 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
         executor=executor,
         credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
         execution_authorizer=authorizer,
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -383,6 +400,7 @@ async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> No
         execution_authorizer=_FakeAuthorizer(
             QueuedExecutionVerdict(allowed=False, problem=problem)
         ),
+        actor_status=_FakeActorStatus(),
     )
 
     with (
@@ -430,6 +448,7 @@ async def test_handler_denied_job_keys_repeated_failure_on_the_folded_operation(
         execution_authorizer=_FakeAuthorizer(
             QueuedExecutionVerdict(allowed=False, problem={"type": "action_denied"})
         ),
+        actor_status=_FakeActorStatus(),
     )
     operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
 
@@ -461,6 +480,7 @@ async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
         ),
         credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
         execution_authorizer=authorizer,
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -488,6 +508,7 @@ async def test_handler_reauthorizes_on_the_operation_relative_path() -> None:
         ),
         credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
         execution_authorizer=authorizer,
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -521,6 +542,90 @@ def test_handler_refuses_an_injector_without_an_authorizer() -> None:
                 InjectedAuth(headers={}, query_params={}, cookies={})
             ),
         )
+
+
+def test_handler_refuses_an_injector_without_an_actor_status_reader() -> None:
+    """Wiring a credential injector without the live actor read fails closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    with pytest.raises(ValueError, match="requires an actor_status reader"):
+        ExecutionHandler(
+            executor=executor,
+            credential_injector=_FakeInjector(
+                InjectedAuth(headers={}, query_params={}, cookies={})
+            ),
+            execution_authorizer=_FakeAuthorizer(),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor_type", ["agent", "user", "service_account"])
+async def test_handler_denies_when_the_live_actor_read_is_inactive(actor_type: str) -> None:
+    """Pins #1138: an actor the live read reports inactive (disabled, archived or
+    missing — or a retired actor type) is denied with the sync edge's 401 even
+    after the authorizer allowed it; nothing is injected or dispatched."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(
+        InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+    )
+    actor_status = _FakeActorStatus(active=False)
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=actor_status,
+    )
+
+    with patch(
+        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+    ) as mock_emit:
+        result = await handler.execute(
+            "job_gone",
+            _FakeSession(),
+            payload=_payload(),
+            created_by="act_gone",
+            actor_type=actor_type,
+        )
+
+    assert actor_status.calls == [("act_gone", actor_type)]
+    assert executor.last_request is None
+    assert injector.last_identity is None
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 401
+    assert result.body["problem"]["type"] == "unauthorized"
+    assert result.body["problem"]["instance"] == "/api.example.com/v1/things"
+    assert mock_emit.await_args is not None
+    assert mock_emit.await_args.kwargs["type"] == EventType.EXECUTION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_handler_injects_for_the_live_active_identity() -> None:
+    """The identity handed to the injector carries the live ``active`` read."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(active=True),
+    )
+
+    await handler.execute(
+        "job_live", _FakeSession(), payload=_payload(), created_by="agt_live", actor_type="agent"
+    )
+
+    identity = injector.last_identity
+    assert identity is not None
+    assert identity.sub == "agt_live"
+    assert identity.actor_type == "agent"
+    assert identity.active is True
+    assert executor.last_request is not None
 
 
 @pytest.mark.asyncio
@@ -565,7 +670,10 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
         )
     )
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -598,7 +706,10 @@ async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     payload = _payload()
@@ -631,7 +742,10 @@ async def test_handler_no_credential_leaves_attribution_none() -> None:
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -750,7 +864,10 @@ async def test_handler_scopes_credentials_on_payload_server_variables() -> None:
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     authorizer = _FakeAuthorizer()
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=authorizer
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=authorizer,
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -780,7 +897,10 @@ async def test_handler_propagates_unresolved_server_variables() -> None:
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     authorizer = _FakeAuthorizer()
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=authorizer
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=authorizer,
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -807,7 +927,10 @@ async def test_handler_substitutes_server_variable_defaults() -> None:
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
     handler = ExecutionHandler(
-        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
@@ -839,6 +962,7 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
         execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
     )
 
     await handler.execute(
