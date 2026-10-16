@@ -41,9 +41,11 @@ from jentic_one.broker.services.execution.service import (
     run_execution,
 )
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state import MemoryStateBackend
 
 _ACTOR = "agt_broker"
 _TOOLKIT = "tk_broker00000000000000000"
@@ -220,6 +222,30 @@ async def test_persist_streaming_execution_emits_repeated_failure(session: Async
     events = await _repeated_events(session)
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
+
+
+async def test_persist_streaming_execution_threads_the_counter(session: AsyncSession) -> None:
+    """The counter handed to the streaming path gates the scan end to end: the
+    failures below the threshold emit nothing and the crossing one emits once."""
+    config = SecurityConfig(execution_repeated_failure_threshold=3)
+    counter = RepeatedFailureCounter(MemoryStateBackend())
+
+    for i in range(4):
+        await persist_streaming_execution(
+            session,
+            execution_id=f"exec_stream_gated_{i}",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.FAILED,
+            http_status=502,
+            duration_ms=10,
+            error="Upstream returned 502",
+            ctx_req=_ctx_req(),
+            actor_id=_ACTOR,
+            actor_type="agent",
+            security_config=config,
+            repeated_failure_counter=counter,
+        )
+        assert len(await _repeated_events(session)) == (0 if i < 2 else 1)
 
 
 async def test_streaming_completed_does_not_emit_repeated_failure(session: AsyncSession) -> None:

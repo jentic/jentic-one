@@ -15,6 +15,11 @@ import pytest
 
 redis = pytest.importorskip("redis.asyncio")
 
+from jentic_one.shared.config import SecurityConfig  # noqa: E402
+from jentic_one.shared.events.repeated_failure import (  # noqa: E402
+    RepeatedFailureCounter,
+    _AxisKey,
+)
 from jentic_one.shared.state.redis import RedisStateBackend  # noqa: E402
 
 pytestmark = pytest.mark.integration
@@ -116,6 +121,24 @@ async def test_distinct_prefixes_are_isolated(redis_url: str) -> None:
         # An idempotency claim in one environment must not block the other.
         assert await a.set_if_absent("claim", b"a", ttl_s=30.0) is True
         assert await b.set_if_absent("claim", b"b", ttl_s=30.0) is True
+    finally:
+        await a.aclose()
+        await b.aclose()
+
+
+async def test_repeated_failure_counter_is_shared_across_instances(
+    redis_url: str, prefix: str
+) -> None:
+    """Two broker instances on one Redis gate the repeated-failure scan on the
+    cluster-wide count: failures split across replicas still reach the threshold."""
+    a = RedisStateBackend(redis_url, key_prefix=prefix)
+    b = RedisStateBackend(redis_url, key_prefix=prefix)
+    config = SecurityConfig(execution_repeated_failure_threshold=4)
+    key = _AxisKey("agt_redis", "toolkit", "tk_redis", "op_redis")
+    try:
+        gates = [RepeatedFailureCounter(a), RepeatedFailureCounter(b)]
+        decisions = [await gates[i % 2].should_scan(key, (), config) for i in range(4)]
+        assert decisions == [False, False, False, True]
     finally:
         await a.aclose()
         await b.aclose()

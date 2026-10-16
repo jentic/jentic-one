@@ -1426,6 +1426,13 @@
           "title": "Credential Expiry Sweep Interval Ticks",
           "type": "integer"
         },
+        "execution_repeated_failure_counter_max_entries": {
+          "default": 10000,
+          "description": "Upper bound on live entries (per-key time buckets and dedup markers) the in-process repeated-failure counter holds on the `memory` shared-state backend. At the bound new keys are not tracked and fall back to the database scan, so the bound caps memory without hiding an emission. Ignored on Redis.",
+          "minimum": 1,
+          "title": "Execution Repeated Failure Counter Max Entries",
+          "type": "integer"
+        },
         "execution_repeated_failure_critical_threshold": {
           "default": 20,
           "minimum": 1,

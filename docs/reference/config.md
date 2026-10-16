@@ -372,6 +372,7 @@ Platform security event thresholds.
 | `security.execution_repeated_failure_threshold` | integer (>= 1) | `5` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_THRESHOLD` |  |
 | `security.execution_repeated_failure_window_s` | integer (>= 1) | `300` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_WINDOW_S` |  |
 | `security.execution_repeated_failure_critical_threshold` | integer (>= 1) | `20` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_CRITICAL_THRESHOLD` |  |
+| `security.execution_repeated_failure_counter_max_entries` | integer (>= 1) | `10000` | `JENTIC__SECURITY__EXECUTION_REPEATED_FAILURE_COUNTER_MAX_ENTRIES` | Upper bound on live entries (per-key time buckets and dedup markers) the in-process repeated-failure counter holds on the `memory` shared-state backend. At the bound new keys are not tracked and fall back to the database scan, so the bound caps memory without hiding an emission. Ignored on Redis. |
 
 ## `telemetry`
 

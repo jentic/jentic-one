@@ -81,13 +81,14 @@ def test_execution_handler_still_registered_for_broker() -> None:
     ):
         broker_ctx = _ctx(dbs={"admin", "control", "registry"})
         broker_ctx.config.broker.upstream_timeout_s = 30
-        injector, authorizer = MagicMock(), MagicMock()
+        injector, authorizer, counter = MagicMock(), MagicMock(), MagicMock()
         result = app_factory._start_worker(
             broker_ctx,
             {"broker"},
             upstream_executor=MagicMock(),
             credential_injector=injector,
             execution_authorizer=authorizer,
+            repeated_failure_counter=counter,
         )
         import_handler.assert_not_called()
         assert result is not None
@@ -97,6 +98,8 @@ def test_execution_handler_still_registered_for_broker() -> None:
         kwargs = execution_handler.call_args.kwargs
         assert kwargs["credential_injector"] is injector
         assert kwargs["execution_authorizer"] is authorizer
+        # The broker's repeated-failure scan gate reaches the async path too.
+        assert kwargs["repeated_failure_counter"] is counter
 
 
 def test_catalog_scanner_gated_on_registry_app() -> None:

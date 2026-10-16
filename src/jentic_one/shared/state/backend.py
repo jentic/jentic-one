@@ -80,6 +80,10 @@ class SharedStateBackend(KeyValueStore, RateLimitStore, AtomicStore, Protocol):
     """
 
 
+class StateCapacityError(RuntimeError):
+    """A bounded :class:`MemoryStateBackend` has no room for a new live key."""
+
+
 @dataclass(slots=True)
 class _Entry:
     """A stored value with its monotonic-clock expiry deadline."""
@@ -111,12 +115,47 @@ class MemoryStateBackend:
     memory until process exit. For the per-process, autoscaled scope this targets
     that is acceptable; a periodic background sweep is a possible follow-up if a
     workload accumulates many write-only short-TTL keys.
+
+    ``max_entries`` optionally bounds the key-value/counter map (token buckets
+    are not counted). Creating a new key on a full map first sweeps expired
+    entries; if the map is still full the write raises
+    :class:`StateCapacityError` rather than evicting a live entry, so a caller
+    whose correctness depends on a counter never silently loses one — it sees
+    the error and falls back. ``None`` (the default) leaves the map unbounded.
     """
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        max_entries: int | None = None,
+    ) -> None:
+        if max_entries is not None and max_entries < 1:
+            raise ValueError(f"max_entries must be positive, got {max_entries}")
         self._clock = clock
+        self._max_entries = max_entries
+        # Lower bound on the earliest deadline in the map: until the clock passes
+        # it a sweep cannot free anything, so a full map rejects new keys in O(1)
+        # instead of rescanning every entry on every write.
+        self._next_sweep_at = float("inf")
         self._kv: dict[str, _Entry] = {}
         self._buckets: dict[str, _Bucket] = {}
+
+    def _reserve(self, key: str) -> None:
+        """Ensure there is room to create *key*, or raise :class:`StateCapacityError`."""
+        if self._max_entries is None or key in self._kv or len(self._kv) < self._max_entries:
+            return
+        now = self._clock()
+        if now >= self._next_sweep_at:
+            for stale in [k for k, e in self._kv.items() if e.expires_at <= now]:
+                del self._kv[stale]
+            self._next_sweep_at = min(
+                (e.expires_at for e in self._kv.values()), default=float("inf")
+            )
+        if len(self._kv) >= self._max_entries:
+            raise StateCapacityError(
+                f"memory state backend is full ({self._max_entries} live entries)"
+            )
 
     def _live_entry(self, key: str) -> _Entry | None:
         """Return the entry for *key* if present and not expired, else evict it."""
@@ -133,13 +172,19 @@ class MemoryStateBackend:
         return entry.value if entry is not None else None
 
     async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
-        self._kv[key] = _Entry(value=value, expires_at=self._clock() + ttl_s)
+        self._reserve(key)
+        self._store(key, value, self._clock() + ttl_s)
 
     async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
         if self._live_entry(key) is not None:
             return False
-        self._kv[key] = _Entry(value=value, expires_at=self._clock() + ttl_s)
+        self._reserve(key)
+        self._store(key, value, self._clock() + ttl_s)
         return True
+
+    def _store(self, key: str, value: bytes, expires_at: float) -> None:
+        self._kv[key] = _Entry(value=value, expires_at=expires_at)
+        self._next_sweep_at = min(self._next_sweep_at, expires_at)
 
     async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
         # The fresh-window TTL reset below (and the redis backend's value == amount
@@ -149,12 +194,14 @@ class MemoryStateBackend:
             raise ValueError(f"incr_with_ttl amount must be positive, got {amount}")
         now = self._clock()
         entry = self._live_entry(key)
+        if entry is None:
+            self._reserve(key)
         current = int(entry.value) if entry is not None else 0
         new_value = current + amount
         # A fresh window resets the TTL; an existing counter keeps its deadline
         # so a sliding burst can't indefinitely extend the window.
         expires_at = entry.expires_at if entry is not None else now + ttl_s
-        self._kv[key] = _Entry(value=str(new_value).encode(), expires_at=expires_at)
+        self._store(key, str(new_value).encode(), expires_at)
         return new_value
 
     async def token_bucket(

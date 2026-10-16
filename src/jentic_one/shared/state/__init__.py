@@ -9,6 +9,7 @@ from jentic_one.shared.state.backend import (
     RateLimitDecision,
     RateLimitStore,
     SharedStateBackend,
+    StateCapacityError,
 )
 from jentic_one.shared.state.factory import (
     BackendKind,
@@ -25,5 +26,6 @@ __all__ = [
     "RateLimitStore",
     "SharedStateBackend",
     "StateBackendConfig",
+    "StateCapacityError",
     "build_state_backend",
 ]
