@@ -13,15 +13,18 @@ ASGI with the real registry resolver and binding deriver. They assert:
 - the ``revision_id`` from ``GET .../revisions/{revision_id}`` and from the import
   job result pins the same way;
 - the ``rev_<hex>`` label still pins (backward compatibility);
-- a pinned revision wins over the live one for a URL both serve, and the pin
-  resolves to exactly the listed revision.
+- a pinned revision wins over the live one for a URL both serve — over HTTP
+  through ``_handle`` — and the pin resolves to exactly the listed revision;
+- a ``revision_id`` pin the caller may not use (another API's revision, a random
+  id, an archived revision, another user's draft) is refused with the problem
+  type its ``rev_`` equivalent gets, and the detail echoes the id as sent.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -58,6 +61,7 @@ pytestmark = pytest.mark.integration
 
 VENDOR = "public-pin-example"
 NAME = "widgets"
+OTHER_NAME = "sprockets"
 VERSION = "1.0.0"
 # A public IP literal: the broker's SSRF pre-check passes it without a DNS
 # lookup, and no test here ever reaches the upstream.
@@ -65,6 +69,7 @@ HOST = "93.184.215.14"
 WIDGETS_PATH = f"/{HOST}/v1/widgets"
 GADGETS_PATH = f"/{HOST}/v1/gadgets"
 WRITER = "usr_public_pin_writer"
+OTHER_WRITER = "usr_public_pin_other_writer"
 REVISIONS_URL = f"/apis/{VENDOR}/{NAME}/{VERSION}/revisions"
 
 
@@ -75,10 +80,12 @@ def _agent() -> Identity:
     )
 
 
-def _spec_source(paths: list[str]) -> dict[str, Any]:
+def _spec_source(
+    paths: list[str], *, name: str = NAME, submitted_by: str = WRITER
+) -> dict[str, Any]:
     spec = {
         "openapi": "3.1.0",
-        "info": {"title": "Widgets", "version": VERSION, "description": uuid.uuid4().hex},
+        "info": {"title": name.title(), "version": VERSION, "description": uuid.uuid4().hex},
         "servers": [{"url": f"https://{HOST}"}],
         "paths": {
             path: {
@@ -95,19 +102,21 @@ def _spec_source(paths: list[str]) -> dict[str, Any]:
         "content": json.dumps(spec),
         "filename": "openapi.json",
         "vendor": VENDOR,
-        "api_name": NAME,
+        "api_name": name,
         "version": VERSION,
-        "submitted_by": WRITER,
+        "submitted_by": submitted_by,
     }
 
 
-async def _import(ctx: Context, paths: list[str]) -> dict[str, Any]:
+async def _import(
+    ctx: Context, paths: list[str], *, name: str = NAME, submitted_by: str = WRITER
+) -> dict[str, Any]:
     """Import a spec as a draft and return its import-job result entry."""
     result = await ImportHandler(ctx).execute(
         job_id=f"job_{uuid.uuid4().hex[:20]}",
         session=None,
-        payload={"sources": [_spec_source(paths)]},
-        created_by=WRITER,
+        payload={"sources": [_spec_source(paths, name=name, submitted_by=submitted_by)]},
+        created_by=submitted_by,
     )
     revision: dict[str, Any] = result.body["revisions"][0]
     return revision
@@ -198,6 +207,17 @@ def _assert_matched(resp: httpx.Response) -> None:
     assert resp.json()["type"] == "no_credential_binding"
 
 
+async def _promote(ctx: Context, imported: dict[str, Any]) -> str:
+    """Promote an imported draft to the live revision; return its ``revision_id``."""
+    revision_id: str = imported["revision_id"]
+    await RevisionService(ctx).promote(VENDOR, NAME, VERSION, revision_id, identity=_operator())
+    return revision_id
+
+
+def _operator() -> Identity:
+    return Identity(sub=WRITER, permissions=["apis:write"])
+
+
 async def test_listed_revision_id_pins_a_draft_only_url(env: Context) -> None:
     await _import(env, ["/v1/widgets"])
     (revision_id,) = await _listed_revision_ids(env, state="draft")
@@ -239,23 +259,20 @@ async def test_rev_hex_label_still_pins(env: Context) -> None:
 
 
 async def test_listed_revision_id_pins_over_the_live_revision(env: Context) -> None:
-    live = await _import(env, ["/v1/widgets"])
-    await RevisionService(env).promote(
-        VENDOR,
-        NAME,
-        VERSION,
-        live["revision_id"],
-        identity=Identity(sub=WRITER, permissions=["apis:write"]),
-    )
+    live = await _promote(env, await _import(env, ["/v1/widgets"]))
     await _import(env, ["/v1/widgets", "/v1/gadgets"])
     (draft_id,) = await _listed_revision_ids(env, state="draft")
-    assert draft_id != live["revision_id"]
+    assert draft_id != live
 
     async with _broker(env) as broker:
         unpinned = await broker.get(GADGETS_PATH)
         pinned = await broker.get(GADGETS_PATH, headers=_pin(draft_id))
+        # The live revision serves this URL too, so the broker discovers it
+        # unpinned first and then re-resolves through the pin (``resolve_pin_for_api``).
+        pinned_over_live = await broker.get(WIDGETS_PATH, headers=_pin(draft_id))
     assert unpinned.status_code == 404, unpinned.text
     _assert_matched(pinned)
+    _assert_matched(pinned_over_live)
 
     # The pin resolves to exactly the listed draft, and a URL both revisions
     # serve answers from the draft when pinned and from the live one unpinned.
@@ -275,3 +292,55 @@ async def test_listed_revision_id_pins_over_the_live_revision(env: Context) -> N
     assert live_hit is not None
     assert draft_hit is not None
     assert live_hit.operation.id != draft_hit.operation.id
+
+
+async def _other_apis_revision(ctx: Context) -> str:
+    """A draft of a *different* API (same vendor and host) — a cross-API pin."""
+    return str((await _import(ctx, ["/v1/widgets"], name=OTHER_NAME))["revision_id"])
+
+
+async def _random_revision(_ctx: Context) -> str:
+    return str(uuid.uuid4())
+
+
+async def _archived_revision(ctx: Context) -> str:
+    revision_id: str = (await _import(ctx, ["/v1/widgets"]))["revision_id"]
+    await RevisionService(ctx).archive(VENDOR, NAME, VERSION, revision_id, identity=_operator())
+    return revision_id
+
+
+async def _other_writers_draft(ctx: Context) -> str:
+    return str((await _import(ctx, ["/v1/widgets"], submitted_by=OTHER_WRITER))["revision_id"])
+
+
+@pytest.mark.parametrize(
+    ("make_revision", "status", "problem_type"),
+    [
+        pytest.param(_other_apis_revision, 422, "unknown_revision_pin", id="another-apis-revision"),
+        pytest.param(_random_revision, 422, "unknown_revision_pin", id="random-revision-id"),
+        pytest.param(_archived_revision, 422, "archived_revision_pin", id="archived-revision"),
+        pytest.param(
+            _other_writers_draft, 403, "unauthorized_revision_pin", id="another-users-draft"
+        ),
+    ],
+)
+async def test_unusable_revision_id_pin_is_refused_and_echoes_the_sent_id(
+    env: Context,
+    make_revision: Callable[[Context], Awaitable[str]],
+    status: int,
+    problem_type: str,
+) -> None:
+    # A live revision serves the URL, so the pin is resolved for the discovered
+    # API and refused rather than skipped. The refusal names the ``revision_id``
+    # exactly as the caller sent it, never the internal ``rev_`` label.
+    await _promote(env, await _import(env, ["/v1/widgets"]))
+    revision_id = await make_revision(env)
+
+    async with _broker(env) as broker:
+        resp = await broker.get(WIDGETS_PATH, headers=_pin(revision_id))
+
+    assert resp.status_code == status, resp.text
+    body = resp.json()
+    assert body["type"] == problem_type
+    assert f"{VENDOR}:{NAME}:{VERSION}={revision_id}" in body["detail"]
+    assert "rev_" not in body["detail"]
