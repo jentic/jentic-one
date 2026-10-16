@@ -45,8 +45,14 @@ from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 
 def _tombstone_email(user_id: str) -> str:
-    """The anonymized email a deleted user's retained row carries — its delete marker."""
+    """The anonymized email a deleted user's retained row carries."""
     return f"deleted-{user_id}@local"
+
+
+def _ensure_not_deleted(user: User, action: str) -> None:
+    """Refuse ``action`` on a deleted user: delete is terminal (``deleted_at`` is set)."""
+    if user.deleted_at is not None:
+        raise ConflictError(f"Cannot {action} a deleted user")
 
 
 def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[str]) -> str:
@@ -299,6 +305,9 @@ class UserService:
                 session, [user_id, identity.sub]
             )
             ensure_can_manage(user_id, identity, permission_sets)
+            # A deleted row keeps its tombstone email: rewriting it would make
+            # the retained row look like a live account again.
+            _ensure_not_deleted(user, "update")
 
             before = {
                 "email": user.email,
@@ -370,12 +379,7 @@ class UserService:
             )
             ensure_can_manage(user_id, identity, permission_sets)
             await ensure_not_last_active_admin(session, user_id)
-            await UserRepository.update(
-                session,
-                user_id,
-                email=_tombstone_email(user_id),
-                active=False,
-            )
+            await UserRepository.mark_deleted(session, user_id, email=_tombstone_email(user_id))
             await UserRepository.revoke_login_sessions(session, user_id)
             await ExternalIdentityRepository.delete_for_user(session, user_id)
             await cancel_queued_executions_for_actor(
@@ -439,14 +443,13 @@ class UserService:
             user = await UserRepository.get_by_id(session, user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
-            # Delete is terminal: the tombstoned row is kept for history and
-            # audit references, never brought back to an active account.
-            if user.email == _tombstone_email(user_id):
-                raise ConflictError("Cannot enable a deleted user")
             permission_sets = await UserPermissionGrantRepository.get_permission_sets(
                 session, [user_id, identity.sub]
             )
             ensure_can_manage(user_id, identity, permission_sets)
+            # Delete is terminal: the tombstoned row is kept for history and
+            # audit references, never brought back to an active account.
+            _ensure_not_deleted(user, "enable")
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -470,6 +473,7 @@ class UserService:
                 session, [user_id, identity.sub]
             )
             ensure_can_manage(user_id, identity, permission_sets)
+        _ensure_not_deleted(user, "reissue an invite for")
         if user.invite_state == InviteState.REDEEMED:
             raise ConflictError("Cannot reissue invite for a user who has already redeemed")
 

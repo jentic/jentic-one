@@ -23,6 +23,7 @@ from jentic_one.admin.services._support.passwords import (
 from jentic_one.admin.services._support.tokens import InvalidTokenError, decode_jwt, issue_jwt
 from jentic_one.admin.services.errors import (
     AccountLockedError,
+    ConflictError,
     InvalidCredentialsError,
     InvalidInputError,
     SessionExpiredError,
@@ -478,6 +479,10 @@ class AuthService:
             user = await UserRepository.get_by_email(session, email)
             if user is None:
                 raise UserEmailNotFoundError(email)
+            if user.deleted_at is not None:
+                # Delete is terminal: a reset would hand the retained row a
+                # fresh credential.
+                raise ConflictError("Cannot reset the password of a deleted user")
 
             await UserSecretRepository.set_password_hash(
                 session,

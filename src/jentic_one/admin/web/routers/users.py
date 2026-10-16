@@ -138,7 +138,9 @@ async def get_user(
 
 @router.patch(
     "/users/{user_id}",
-    responses=with_responses(not_found(), conflict("The email is already in use")),
+    responses=with_responses(
+        not_found(), conflict("The email is already in use, or the user has been deleted")
+    ),
 )
 async def update_user(
     user_id: Annotated[
@@ -151,7 +153,8 @@ async def update_user(
     """Update a user's profile fields.
 
     Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-    else only themselves. Any other user answers 404.
+    else only themselves. Any other user answers 404. A deleted user cannot be
+    edited (409).
     """
     view = await user_svc.update(
         user_id,
@@ -226,7 +229,12 @@ async def enable_user(
     return Response(status_code=204)
 
 
-@router.post("/users/{user_id}:reissue-invite")
+@router.post(
+    "/users/{user_id}:reissue-invite",
+    responses=with_responses(
+        not_found(), conflict("The user has already redeemed an invite, or has been deleted")
+    ),
+)
 async def reissue_invite(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))

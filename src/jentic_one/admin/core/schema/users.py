@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import Boolean, Index, Integer, String, column
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,6 +11,7 @@ from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.types import UTCDateTime
 
 
 class User(AuditableMixin, AdminBase):
@@ -46,3 +49,7 @@ class User(AuditableMixin, AdminBase):
     session_generation: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Set when the user is deleted (terminal-but-kept): the row stays for
+    # history and audit references, and the admin service refuses to enable,
+    # edit or reset the password of a row that carries it.
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

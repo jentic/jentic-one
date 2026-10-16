@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, exists, select
 from sqlalchemy import func as sa_func
@@ -206,6 +206,22 @@ class UserRepository:
         user.session_generation = User.session_generation + 1
         await session.flush()
         await session.refresh(user, ["session_generation"])
+        return user
+
+    @staticmethod
+    async def mark_deleted(session: AsyncSession, user_id: str, *, email: str) -> User:
+        """Tombstone the user: anonymize the email, deactivate, stamp ``deleted_at``.
+
+        ``deleted_at`` is the durable delete marker; the anonymized email can be
+        edited later, the marker cannot (the service refuses to edit a deleted user).
+        """
+        user = await session.get(User, user_id)
+        if user is None:
+            raise UserNotFoundError(user_id)
+        user.email = email
+        user.active = False
+        user.deleted_at = datetime.now(UTC)
+        await session.flush()
         return user
 
     @staticmethod

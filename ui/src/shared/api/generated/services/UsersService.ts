@@ -277,7 +277,8 @@ export class UsersService {
      * Update a user's profile fields.
      *
      * Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-     * else only themselves. Any other user answers 404.
+     * else only themselves. Any other user answers 404. A deleted user cannot be
+     * edited (409).
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
@@ -307,7 +308,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `The email is already in use`,
+                409: `The email is already in use, or the user has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -444,6 +445,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user has already redeemed an invite, or has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
