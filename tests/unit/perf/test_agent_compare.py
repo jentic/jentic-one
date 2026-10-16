@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -262,6 +263,16 @@ def test_require_fresh_turns_stale_tokens_into_a_prereq() -> None:
     with pytest.raises(PrereqError, match="jak caller") as exc:
         base.require_fresh(env, callers=["jak"], run_s=60)
     assert exc.value.fix == "make perf-provision"
+
+
+def test_require_fresh_says_shorten_a_probe_longer_than_the_token_lifetime() -> None:
+    now = time.time()
+    env = PerfEnv(app_url="a", broker_url="b", upstream_url="u", agent_id="ag")
+    env.callers = {"jak": Caller("jak", "jak_x", "ag", expires_at=now + 600, issued_at=now)}
+    with pytest.raises(PrereqError, match="longer than the token lifetime") as exc:
+        base.require_fresh(env, callers=["jak"], run_s=3600)
+    assert "perf-provision" not in exc.value.fix
+    assert "DURATION" in exc.value.fix
 
 
 def test_run_lock_refuses_while_another_perf_tool_holds_it(

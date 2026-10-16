@@ -176,11 +176,21 @@ def env_or_fail() -> PerfEnv:
 def require_fresh(
     env: PerfEnv, *, callers: Iterable[str] | None, run_s: float, admin: bool = False
 ) -> None:
-    """Refuse a probe whose tokens expire before it can finish (fast 401s, not data)."""
+    """Refuse a probe whose tokens expire before it can finish (fast 401s, not data).
+
+    A run longer than a token's whole lifetime can't be fixed by re-provisioning
+    (``check_fresh`` says so); the probe has to be shortened instead.
+    """
     try:
         env.check_fresh(callers=callers, admin=admin, run_s=run_s)
     except SystemExit as exc:
-        raise PrereqError(str(exc.code), "make perf-provision") from None
+        why = str(exc.code)
+        fix = (
+            "shorten the probe (DURATION / SECONDS / N) or raise the TTLs in config.perf.yaml"
+            if "longer than the token lifetime" in why
+            else "make perf-provision"
+        )
+        raise PrereqError(why, fix) from None
 
 
 @contextlib.contextmanager
