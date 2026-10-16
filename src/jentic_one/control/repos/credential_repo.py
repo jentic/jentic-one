@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, raiseload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -346,6 +346,7 @@ class CredentialRepository:
         vendor: str,
         name: str | None,
         version: str | None,
+        account_ref_providers: Collection[str],
         exclude_ids: Sequence[str] = (),
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
@@ -358,10 +359,12 @@ class CredentialRepository:
 
         An interactive OAuth grant (authorization_code / device_code) counts
         as connected only while it can mint a token, matching the redacted
-        view's ``connected`` flag: a managed-provider account reference, or a
-        live token row that is unrevoked and either refreshable or unexpired.
-        One whose grant was dropped or revoked needs a reconnect, so it is
-        not offered for reuse.
+        view's ``connected`` flag: an account reference on one of
+        ``account_ref_providers`` (``ProviderRegistry.account_ref_provider_names``),
+        or a live token row that is unrevoked and either refreshable or
+        unexpired. One whose grant was dropped or revoked needs a reconnect,
+        so it is not offered for reuse, even when ``provider_account_ref``
+        holds an identity-echo display name.
         """
         now = datetime.now(UTC)
         live_grant = (
@@ -383,7 +386,10 @@ class CredentialRepository:
             Credential.active.is_(True),
             or_(
                 Credential.type.not_in(_INTERACTIVE_OAUTH_TYPES),
-                Credential.provider_account_ref.is_not(None),
+                and_(
+                    Credential.provider.in_(sorted(account_ref_providers)),
+                    Credential.provider_account_ref.is_not(None),
+                ),
                 live_grant,
             ),
         )

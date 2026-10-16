@@ -124,16 +124,23 @@ class TokenRefresher:
         disconnect, or a ``token_url`` move to another origin, which takes this
         same lock to drop the row), so the credential must be reconnected. The
         snapshot's refresh token is never used in that case: it belongs to the
-        old grant and may be bound to a different token endpoint. Managed
-        providers that hold no local token row (``provider_account_ref`` set)
-        mint from the account reference instead.
+        old grant and may be bound to a different token endpoint. Only a
+        provider that connects as an account reference
+        (``ProviderRegistry.mints_from_account_ref``) mints with no row, from
+        ``provider_account_ref``; on any other provider that column is just a
+        display name and does not stand in for a grant.
         """
         async with self._ctx.control_db.transaction() as session:
             if advisory_lock:
                 await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
             row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
             if row is None or row.revoked_at is not None:
-                if row is not None or not resolved.provider_account_ref:
+                mints_from_ref = (
+                    row is None
+                    and bool(resolved.provider_account_ref)
+                    and self._ctx.providers.mints_from_account_ref(resolved.provider)
+                )
+                if not mints_from_ref:
                     logger.warning(
                         "refresh_grant_missing",
                         credential_id=resolved.credential_id,

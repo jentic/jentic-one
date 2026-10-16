@@ -1663,6 +1663,7 @@ class ConnectSessionService:
                 version=version,
                 exclude_ids=[row.credential_id],
                 filters=filters,
+                account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
             tokens = {
                 c.id: await OAuthTokenRepository.get_by_credential(session, c.id)

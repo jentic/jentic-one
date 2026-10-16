@@ -16,12 +16,16 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import delete, text
 
 from jentic_one.admin.repos import AgentCredentialBindingRepository
+from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
+from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import PipedreamProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from tests.web.control.conftest import CRED_WRITER_IDENTITY, _build_app, _effective
@@ -397,19 +401,42 @@ async def test_authorization_code_connected_flips_on_token(
 
 
 async def test_managed_provider_account_ref_counts_as_connected(
-    cred_writer_client: TestClient, web_context: Context
+    cred_writer_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Managed providers (e.g. Pipedream) complete connect by stamping
+    """Providers that connect as an account reference (e.g. Pipedream) stamp
     `provider_account_ref` without a local token row — the ref alone must
     read as connected, or the picker would warn forever on a working
-    credential.
+    credential. On any other provider the ref is only a display name (the
+    connect-session identity echo writes one), so without a token row the
+    credential stays disconnected (#1425).
     """
+    pipedream = PipedreamProvider(
+        PipedreamProviderConfig(
+            project_id="proj_webtest",
+            client_id="pd-client",
+            client_secret=SecretStr("pd-secret"),
+        )
+    )
+    monkeypatch.setattr(
+        web_context,
+        "_providers",
+        ProviderRegistry({**web_context.providers.list_all(), "webtest_pipedream": pipedream}),
+    )
     cred_id = _create_oauth2(
         cred_writer_client, grant_type="authorization_code", name="web-cred-managed"
     )
     async with web_context.control_db.session() as session:
         await session.execute(
             text("UPDATE credentials SET provider_account_ref = 'acc_webtest' WHERE id = :cred"),
+            {"cred": cred_id},
+        )
+        await session.commit()
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["connected"] is False
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("UPDATE credentials SET provider = 'webtest_pipedream' WHERE id = :cred"),
             {"cred": cred_id},
         )
         await session.commit()

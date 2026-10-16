@@ -52,6 +52,25 @@ class ProviderRegistry:
         """Return all registered providers (read-only snapshot)."""
         return dict(self._providers)
 
+    def mints_from_account_ref(self, name: str) -> bool:
+        """Whether credentials on provider *name* connect as an account reference.
+
+        The single "managed provider" predicate: such a credential is connected
+        by its ``provider_account_ref`` and refreshes from it, with no local
+        token row. Every other provider keeps its grant in ``oauth_tokens``,
+        so a set ``provider_account_ref`` there is only a display name. An
+        unknown provider is not one, so a credential on it fails closed as
+        needing a reconnect.
+        """
+        try:
+            return self.get(name).mints_from_account_ref
+        except UnknownProviderError:
+            return False
+
+    def account_ref_provider_names(self) -> frozenset[str]:
+        """Registry names for which :meth:`mints_from_account_ref` holds (for SQL filters)."""
+        return frozenset(name for name in self._providers if self.mints_from_account_ref(name))
+
     @classmethod
     def from_config(cls, cfg: CredentialsConfig) -> ProviderRegistry:
         """Build a registry from configuration, always including StaticProvider."""

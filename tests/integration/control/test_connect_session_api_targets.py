@@ -46,7 +46,10 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
-from jentic_one.control.services.credentials.schemas.credentials import CredentialUpdate
+from jentic_one.control.services.credentials.schemas.credentials import (
+    CredentialUpdate,
+    OAuth2Redacted,
+)
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
@@ -1060,9 +1063,17 @@ async def test_agent_archived_between_check_and_bind_is_refused(
 
 
 async def _existing_credential(
-    ctx: Context, *, oauth_scope: str | None = None, name: str = "Mine"
+    ctx: Context,
+    *,
+    oauth_scope: str | None = None,
+    name: str = "Mine",
+    provider_account_ref: str | None = None,
 ) -> str:
-    """A connected credential of the owner's covering the API (OAuth when a scope is given)."""
+    """A connected credential of the owner's covering the API (OAuth when a scope is given).
+
+    ``provider_account_ref`` stands in for the identity-echo display name a
+    connect-session finalise writes onto a ``direct_oauth2`` credential.
+    """
     credential_id = generate_ksuid("cred")
     async with ctx.control_db.transaction() as session:
         session.add(
@@ -1075,6 +1086,7 @@ async def _existing_credential(
                 api_name=_NAME,
                 created_by=_OWNER_ID,
                 state="connected",
+                provider_account_ref=provider_account_ref,
             )
         )
         await session.flush()
@@ -1169,30 +1181,39 @@ async def test_oauth_credential_without_a_live_grant_is_not_offered(env: Context
     """Pins #1425: a credential whose grant was dropped (a cross-origin
     token_url move) or revoked needs a reconnect, so the review does not
     offer it for reuse even when the session requests no scopes, and a
-    confirm naming it is refused."""
+    confirm naming it is refused. A ``direct_oauth2`` credential carrying an
+    identity-echo ``provider_account_ref`` is no exception: the ref is a
+    display name there, not a grant, so it reads as disconnected too."""
     await _import(env, _OAUTH_SCHEME)
     created = await _connect(env)
     live = await _existing_credential(env, oauth_scope="read", name="live")
     dropped = await _existing_credential(env, oauth_scope="read", name="dropped")
-    revoked = await _existing_credential(env, oauth_scope="read", name="revoked")
-    await CredentialService(env).update(
-        dropped,
-        CredentialUpdate(
-            type=CredentialType.OAUTH2,
-            token_url="https://login.other.example.org/token",
-            client_secret="moved-secret",  # pragma: allowlist secret
-        ),
-        identity=_OWNER,
+    echoed = await _existing_credential(
+        env, oauth_scope="read", name="echoed", provider_account_ref="alice"
     )
+    revoked = await _existing_credential(env, oauth_scope="read", name="revoked")
+    for moved in (dropped, echoed):
+        view = await CredentialService(env).update(
+            moved,
+            CredentialUpdate(
+                type=CredentialType.OAUTH2,
+                token_url="https://login.other.example.org/token",
+                client_secret="moved-secret",  # pragma: allowlist secret
+            ),
+            identity=_OWNER,
+        )
+        assert isinstance(view.details, OAuth2Redacted)
+        assert view.details.connected is False
     async with env.control_db.transaction() as session:
         await OAuthTokenRepository.mark_revoked(session, revoked)
 
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     assert [c.credential_id for c in review.existing_credentials] == [live]
 
-    with pytest.raises(ExistingCredentialNotFoundError):
-        await _confirm_existing(env, created.session_id, dropped)
-    assert not await _bound(env, _AGENT_ID, dropped)
+    for refused in (dropped, echoed):
+        with pytest.raises(ExistingCredentialNotFoundError):
+            await _confirm_existing(env, created.session_id, refused)
+        assert not await _bound(env, _AGENT_ID, refused)
 
 
 async def test_reauthorize_only_when_no_other_agent_is_bound(env: Context) -> None:
