@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import time
 import uuid
 from pathlib import Path
 from types import ModuleType
@@ -16,6 +17,7 @@ from tests.perf import pyspy_profile
 from tests.perf.agent import __main__ as agent_main
 from tests.perf.agent import base, sqltrace, stages
 from tests.perf.agent.base import PrereqError
+from tests.perf.common import Caller, PerfEnv
 
 HOOK_PATH = Path(sqltrace.__file__).parent / "hooks" / "sitecustomize.py"
 
@@ -273,14 +275,83 @@ def test_cmd_cpu_capture_runtime_error_is_a_prereq(monkeypatch: pytest.MonkeyPat
         agent_main.cmd_cpu([])
 
 
-def test_cmd_cpu_deletes_the_profile_when_its_analysis_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    files = [tmp_path / "run.txt", tmp_path / "run.svg"]
-    files[0].write_text("a;b 3\ntruncat")
+def _cpu_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: str) -> list[Path]:
+    """Fake a captured ``agent cpu`` profile under a temporary repo root."""
+    out_dir = tmp_path / "pyspy"
+    out_dir.mkdir()
+    files = [out_dir / "run.txt", out_dir / "run.svg"]
+    files[0].write_text(raw)
     files[1].write_text("<svg/>")
-    monkeypatch.setattr(pyspy_profile, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(agent_main, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pyspy_profile, "OUT_DIR", out_dir)
     monkeypatch.setattr(pyspy_profile, "capture", lambda **_: ("run", {"ok_ratio": 1.0}))
-    with pytest.raises(ValueError):
+    return files
+
+
+def _finish_raising(exc: BaseException) -> Any:
+    def finish(self: base.Report) -> Path:
+        raise exc
+
+    return finish
+
+
+@pytest.mark.parametrize(
+    ("raw", "finish", "error"),
+    [
+        ("a;b 3\ntruncat", lambda self: Path("unused"), ValueError),
+        ("a;b 3", _finish_raising(OSError("disk full")), OSError),
+        ("a;b 3", _finish_raising(KeyboardInterrupt()), KeyboardInterrupt),
+    ],
+    ids=["analysis-failed", "artifact-write-failed", "ctrl-c-during-write"],
+)
+def test_cmd_cpu_deletes_the_profile_when_it_fails_before_the_artifact_is_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+    finish: Any,
+    error: type[BaseException],
+) -> None:
+    files = _cpu_profile(tmp_path, monkeypatch, raw)
+    monkeypatch.setattr(base.Report, "finish", finish)
+    with pytest.raises(error):
         agent_main.cmd_cpu([])
     assert not any(f.exists() for f in files)
+
+
+def test_cmd_cpu_keeps_the_profile_once_its_artifact_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = _cpu_profile(tmp_path, monkeypatch, "a;b 3")
+    written: list[dict[str, Any]] = []
+
+    def finish(self: base.Report) -> Path:
+        written.append(self.data)
+        return tmp_path / "cpu.json"
+
+    monkeypatch.setattr(base.Report, "finish", finish)
+    assert agent_main.cmd_cpu([]) == 0
+    assert all(f.exists() for f in files)
+    assert written[0]["flamegraph"] == "pyspy/run.svg"
+
+
+def test_cmd_cpu_says_lower_duration_when_the_run_outlasts_the_token_lifetime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Drives the real capture() up to its check_fresh, so the message is the one
+    # agent cpu users see: it must name only knobs agent cpu has.
+    now = time.time()
+    env = PerfEnv(
+        app_url="a",
+        broker_url="b",
+        upstream_url="u",
+        agent_id="ag",
+        callers={"jak": Caller("jak", "jak_x", "ag", expires_at=now + 60, issued_at=now)},
+        vendors={"perf-noauth": {"alias": "noauth"}},
+    )
+    monkeypatch.setattr(PerfEnv, "load", classmethod(lambda cls, path=None: env))
+    with pytest.raises(PrereqError) as exc:
+        agent_main.cmd_cpu([])
+    assert "--duration" in str(exc.value)
+    assert not {"--only", "--repeat"} & set(str(exc.value).split())
+    assert "DURATION" in exc.value.fix
+    assert "doctor" not in exc.value.fix

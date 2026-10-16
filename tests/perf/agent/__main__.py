@@ -44,7 +44,13 @@ from tests.perf.agent.base import (
     require_ok,
     run_lock,
 )
-from tests.perf.common import DEFAULT_IMAGE, REPO_ROOT, compose, git_sha
+from tests.perf.common import (
+    DEFAULT_IMAGE,
+    REPO_ROOT,
+    TokenLifetimeTooShortError,
+    compose,
+    git_sha,
+)
 
 REQUIRED = ("postgres", "app", "broker", "smoke-upstream")
 #: The image the compose stack runs (``PERF_IMAGE`` overrides it, as in run metadata).
@@ -261,17 +267,30 @@ def cmd_cpu(argv: list[str]) -> int:
         )
     except pyspy_profile.LoadError as exc:
         raise PrereqError(f"cpu load: {exc}", "make perf-agent-doctor") from exc
+    except TokenLifetimeTooShortError as exc:
+        # Re-provisioning can't help: the token's whole lifetime is shorter than the run.
+        raise PrereqError(
+            str(exc.code), "lower DURATION or raise the TTLs in config.perf.yaml"
+        ) from None
     except SystemExit as exc:
         # Stale tokens, the run lock held, or no broker: all fixable prerequisites.
         raise PrereqError(str(exc.code), "make perf-agent-doctor") from None
     except RuntimeError as exc:
         # py-spy record failed, or a sidecar could not be removed afterwards.
         raise PrereqError(f"cpu: {exc}", "make perf-agent-doctor") from exc
-    raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
+    # Any failure up to and including the artifact write (or Ctrl-C) deletes the
+    # profile, so results/pyspy/ never keeps one without a cpu report behind it.
     with pyspy_profile.discard_on_failure(stem):
-        require_ok(load, "cpu load")
-        summary = pyspy_profile.analyse(raw)
-        hot = line_hotspots(raw)
+        _cpu_report(args, stem, load)
+    return 0
+
+
+def _cpu_report(args: argparse.Namespace, stem: str, load: dict[str, Any]) -> None:
+    """Analyse a captured profile and write the ``cpu`` artifact."""
+    raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
+    require_ok(load, "cpu load")
+    summary = pyspy_profile.analyse(raw)
+    hot = line_hotspots(raw)
     svg = (pyspy_profile.OUT_DIR / f"{stem}.svg").relative_to(REPO_ROOT)
     rep = Report("cpu", f"Broker CPU under load — c={args.concurrency}, {args.vendor}")
     rep.data = {"args": vars(args), "load": load, "profile": summary, "lines": hot}
@@ -323,7 +342,6 @@ def cmd_cpu(argv: list[str]) -> int:
         "make perf-agent-compare BASE=<this ARTIFACT>",
     ]
     rep.finish()
-    return 0
 
 
 # --------------------------------------------------------------------------- resilience
