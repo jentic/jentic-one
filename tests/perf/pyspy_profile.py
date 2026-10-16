@@ -1,12 +1,14 @@
 """CPU-profile the broker under closed-loop load with py-spy.
 
-A throwaway ``python:3.12-slim`` sidecar joins the broker container's PID
-namespace (``--pid=container:… --cap-add SYS_PTRACE``), installs py-spy and
-samples PID 1 (``--subprocesses`` follows uvicorn workers). The broker image is
+A ``python:3.12-slim`` sidecar joins the broker container's PID namespace
+(``--pid=container:… --cap-add SYS_PTRACE``) and installs py-spy *before* the
+load starts (so a slow PyPI never eats into the timed window), then samples
+PID 1 (``--subprocesses`` follows uvicorn workers). The broker image is
 untouched. Meanwhile oha drives ``-c N`` closed-loop load through the broker.
 
-Outputs in ``results/pyspy/``: the raw collapsed stacks, a flamegraph SVG, and
-a JSON summary with CPU share per subsystem plus the hottest frames. The
+Outputs in ``results/pyspy/``: the raw collapsed stacks and a flamegraph SVG,
+recorded concurrently over the same window, plus a JSON summary with CPU
+share per subsystem plus the hottest frames. The
 subsystem buckets are first-match on the stack, in the order of ``BUCKETS``.
 
 Usage::
@@ -75,26 +77,45 @@ def broker_container() -> str:
     return cid
 
 
-def pyspy(cid: str, args: str) -> None:
+PYSPY_CONTAINER = "jentic-perf-pyspy"
+
+
+def start_pyspy(cid: str) -> None:
+    """One sidecar in the broker's PID namespace, py-spy installed before any load."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    script = f"pip install -q py-spy >/dev/null 2>&1 && py-spy {args}"
+    stop_pyspy()
     subprocess.run(
         [
             "docker",
             "run",
-            "--rm",
+            "-d",
+            "--name",
+            PYSPY_CONTAINER,
             f"--pid=container:{cid}",
             "--cap-add",
             "SYS_PTRACE",
             "-v",
             f"{OUT_DIR}:/out",
             PYSPY_IMAGE,
-            "sh",
-            "-c",
-            script,
+            "sleep",
+            "infinity",
         ],
         check=True,
+        capture_output=True,
     )
+    subprocess.run(
+        ["docker", "exec", PYSPY_CONTAINER, "pip", "install", "-q", "py-spy"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def stop_pyspy() -> None:
+    subprocess.run(["docker", "rm", "-f", PYSPY_CONTAINER], capture_output=True, check=False)
+
+
+def record(args: str) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(["docker", "exec", PYSPY_CONTAINER, "py-spy", "record", *args.split()])
 
 
 def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
@@ -142,8 +163,10 @@ def main(argv: list[str] | None = None) -> int:
     token = env.caller(args.caller).token
     stem = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{args.vendor}-c{args.concurrency}"
     cid = broker_container()
-    # Load runs for warm-up (10 s, covers pip install) + both recordings.
-    load_s = 10 + 2 * args.duration + 10
+    # Raw (for the bucket table) and SVG recorded concurrently over the same
+    # window; --nonblocking samplers only read memory, so they don't stack up
+    # pauses on the broker.
+    warm_s, load_s = 5, 5 + args.duration + 5
     result: dict[str, Any] = {}
 
     def load() -> None:
@@ -153,17 +176,27 @@ def main(argv: list[str] | None = None) -> int:
         )  # fmt: skip
         result.update(summarise(run_oha(a), 200))
 
+    print("starting py-spy sidecar (pip install py-spy) ...", flush=True)
+    start_pyspy(cid)
     start_oha()
     try:
         loader = threading.Thread(target=load, daemon=True)
         loader.start()
-        time.sleep(5)
-        common = f"--pid 1 --subprocesses --nonblocking --duration {args.duration}"
-        pyspy(cid, f"record {common} --rate {args.rate} --format raw --output /out/{stem}.txt")
-        pyspy(cid, f"record {common} --rate {args.rate} --output /out/{stem}.svg")
+        time.sleep(warm_s)
+        common = (
+            f"--pid 1 --subprocesses --nonblocking --duration {args.duration} --rate {args.rate}"
+        )
+        procs = [
+            record(f"{common} --format raw --output /out/{stem}.txt"),
+            record(f"{common} --output /out/{stem}.svg"),
+        ]
+        codes = [proc.wait(timeout=args.duration + 60) for proc in procs]
+        if any(codes):
+            raise RuntimeError(f"py-spy record failed: exit codes {codes}")
         loader.join(timeout=load_s + 30)
     finally:
         stop_oha()
+        stop_pyspy()
 
     summary = analyse(OUT_DIR / f"{stem}.txt")
     print(f"load: {result.get('rps', 0):.1f} rps  p50={result.get('p50_ms', 0):.1f}ms")

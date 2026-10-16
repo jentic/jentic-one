@@ -181,6 +181,49 @@ def capacity_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def profile_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
+    prof = run["profile"]
+    load_ = run.get("load", {})
+    label = (
+        f"{run.get('vendor')} c={run.get('concurrency')}, "
+        f"{load_.get('rps', 0):.0f} rps - {_label(run)}"
+    )
+    charts = []
+    for key, title in (
+        ("buckets", "Broker CPU by subsystem (py-spy, exclusive)"),
+        ("probes", "Broker CPU by call site (py-spy, inclusive lower bound)"),
+    ):
+        items = sorted(prof.get(key, {}).items(), key=lambda kv: kv[1])
+        if not items:
+            continue
+        charts.append(
+            {
+                "title": f"{title} - {label}",
+                "data": [
+                    {
+                        "type": "bar",
+                        "orientation": "h",
+                        "y": [k for k, _ in items],
+                        "x": [round(v * 100, 2) for _, v in items],
+                    }
+                ],
+                "layout": {"xaxis": {"title": "% of broker CPU"}, "margin": {"l": 220}},
+            }
+        )
+    return charts
+
+
+def profile_links(runs: list[dict[str, Any]]) -> str:
+    links = "".join(
+        f'<li><a href="{html.escape(r["flamegraph"])}">{html.escape(r["flamegraph"])}</a> '
+        f"({html.escape(str(r.get('vendor')))} c={r.get('concurrency')}, "
+        f"{r.get('load', {}).get('rps', 0):.0f} rps)</li>"
+        for r in reversed(runs)
+        if r.get("flamegraph")
+    )
+    return f"<h2>py-spy flamegraphs</h2><ul>{links}</ul>" if links else ""
+
+
 def locust_table() -> str:
     files = sorted(RESULTS_DIR.glob("*_stats.csv"), key=lambda p: p.stat().st_mtime)
     if not files:
@@ -246,10 +289,16 @@ def main(argv: list[str] | None = None) -> int:
     capacity = load("capacity")
     if capacity:
         charts += capacity_charts(capacity[-1])
+    profiles = load("profile")
+    if profiles:
+        charts += profile_charts(profiles[-1])
     if not charts:
-        print("no results yet — run make perf-overhead / perf-dbcost first", file=sys.stderr)
+        print(
+            "no results yet — run make perf-overhead / perf-dbcost / perf-profile first",
+            file=sys.stderr,
+        )
         return 1
-    args.out.write_text(render(charts, locust_table()))
+    args.out.write_text(render(charts, profile_links(profiles) + locust_table()))
     print(f"wrote {args.out}")
     if args.open:
         webbrowser.open(args.out.as_uri())

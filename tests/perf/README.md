@@ -36,7 +36,7 @@ make perf-down         # stop + wipe volumes
 | `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the `pool_pre_ping` ping transaction per checkout. |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | Where's the knee? What happens under faults, imports, mixed admin load? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. |
 | Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. |
-| `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over every `results/*.json`. |
+| `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over the latest overhead / dbcost / capacity / profile results (overhead also as a trend), plus links to every py-spy flamegraph and the latest Locust CSV. |
 
 ### Reading the overhead numbers
 
