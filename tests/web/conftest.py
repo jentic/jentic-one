@@ -57,9 +57,11 @@ async def seeded_jwt_user(ctx: Context, user_id: str) -> AsyncGenerator[str]:
 
     ``verify_token`` re-checks the user row on every request (#1139), so a
     hand-minted user JWT only authenticates when its subject exists and is
-    active. The row is seeded with the exact id the test's claims carry.
+    active. The row is seeded with the exact id the test's claims carry; a row
+    a crashed earlier run left behind under that id is cleared first.
     """
     async with ctx.admin_db.session() as session:
+        await session.execute(delete(User).where(User.id == user_id))
         await UserRepository.create(
             session,
             id=user_id,

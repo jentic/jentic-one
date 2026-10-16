@@ -15,11 +15,15 @@ go through the real app built by the composition root.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partialmethod
+from pathlib import Path
 
 import pytest
+import structlog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import delete, select
@@ -39,10 +43,16 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.services import AuthService, UserService
 from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services.errors import ConflictError
+from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.auth import LoginPayload
+from jentic_one.admin.web.routers import events as events_router
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.mcp.installer import mcp_lifespan
-from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.identity import ChangePasswordPayload, Identity
+from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
+from jentic_one.shared.auth.verify import verify_token
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState
 
@@ -50,10 +60,11 @@ pytestmark = pytest.mark.integration
 
 _SEED_MARKER = "usr_jwt_status_seed"
 _PASSWORD = "jwt-status-password-123"  # pragma: allowlist secret
+_NEW_PASSWORD = "jwt-status-password-456"  # pragma: allowlist secret
 _ADMIN_EMAIL = "jwt-status-admin@test.local"
 _USER_EMAIL = "jwt-status-user@test.local"
 #: What the target user's login JWT carries — enough to pass every probe route.
-_USER_PERMISSIONS = {"users:read", "apis:read", "credentials:read"}
+_USER_PERMISSIONS = {"users:read", "apis:read", "credentials:read", "events:read"}
 
 _FULL = ["registry", "admin", "control", "auth"]
 
@@ -165,10 +176,11 @@ def _assert_refused(resp: Response) -> None:
 
 
 @pytest.mark.parametrize("probe", _PROBES, ids=lambda p: f"{'+'.join(p.apps)}:{p.path}")
-async def test_disabled_user_jwt_refused_then_revived_on_enable(
+async def test_disabled_user_jwt_refused_and_stays_refused_after_enable(
     integration_context: Context, actors: _Actors, probe: _Probe
 ) -> None:
-    """Login → disable → the unexpired JWT is refused; enable → the same JWT works again."""
+    """Login → disable → the unexpired JWT is refused; enable → that JWT stays
+    refused (disable revokes the session), while a fresh login works."""
     ctx = integration_context
     token = await _login(ctx)
     users = UserService(ctx)
@@ -180,7 +192,8 @@ async def test_disabled_user_jwt_refused_then_revived_on_enable(
         _assert_refused(await _get(client, probe.path, token))
 
         await users.enable(actors.user_id, identity=_operator(actors))
-        assert (await _get(client, probe.path, token)).status_code == 200
+        _assert_refused(await _get(client, probe.path, token))
+        assert (await _get(client, probe.path, await _login(ctx))).status_code == 200
 
 
 @pytest.mark.parametrize("apps", [_FULL, ["admin"], ["control"]], ids="+".join)
@@ -196,6 +209,12 @@ async def test_deleted_user_jwt_refused(
         assert (await _get(client, path, token)).status_code == 200
 
         await UserService(ctx).delete(actors.user_id, identity=_operator(actors))
+        _assert_refused(await _get(client, path, token))
+
+        # Delete is terminal: the tombstoned account cannot be re-enabled, so
+        # its JWT can never come back that way either.
+        with pytest.raises(ConflictError):
+            await UserService(ctx).enable(actors.user_id, identity=_operator(actors))
         _assert_refused(await _get(client, path, token))
 
         # A hard-removed row (no users row at all) fails closed the same way.
@@ -263,3 +282,162 @@ async def test_agent_token_unaffected_by_user_status_check(
         resp = await _get(client, "/me", access)
         assert resp.status_code == 200, resp.text
         assert resp.json()["id"] == agent.id
+
+
+async def test_password_change_revokes_other_sessions(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """A password change ends every session issued before it; the bundle it returns works."""
+    ctx = integration_context
+    earlier = await _login(ctx)
+    identity = Identity(sub=actors.user_id, email=_USER_EMAIL, permissions=[])
+    bundle = await AuthService(ctx).change_own_password(
+        ChangePasswordPayload(current_password=_PASSWORD, new_password=_NEW_PASSWORD),
+        identity=identity,
+    )
+
+    async with _client(ctx, _FULL) as client:
+        _assert_refused(await _get(client, "/users/me", earlier))
+        assert (await _get(client, "/users/me", bundle.access_token)).status_code == 200
+
+
+async def test_password_reset_revokes_sessions(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """An operator password reset ends every session issued under the old password."""
+    ctx = integration_context
+    token = await _login(ctx)
+    await AuthService(ctx).reset_password(email=_USER_EMAIL, temporary_password=_NEW_PASSWORD)
+
+    async with _client(ctx, _FULL) as client:
+        _assert_refused(await _get(client, "/users/me", token))
+
+
+def _secret(ctx: Context) -> str:
+    return ctx.config.admin.auth.jwt_secret.get_secret_value()
+
+
+@pytest.mark.parametrize("reason", ["missing", "inactive", "revoked"])
+async def test_refusal_logs_reason(
+    integration_context: Context, actors: _Actors, reason: str
+) -> None:
+    """Each refusal is the same InvalidTokenError on the wire, but the server-side
+    ``jwt_user_inactive`` line names why: missing row, disabled user, or revoked session."""
+    ctx = integration_context
+    token = await _login(ctx)
+    users = UserService(ctx)
+    if reason == "missing":
+        token = issue_jwt(
+            {"sub": "usr_jwt_status_absent", "actor_type": "user", "permissions": []},
+            _secret(ctx),
+            300,
+        )
+    else:
+        await users.disable(actors.user_id, identity=_operator(actors))
+        if reason == "revoked":
+            await users.enable(actors.user_id, identity=_operator(actors))
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(InvalidTokenError):
+        await verify_token(token, secret=_secret(ctx), ctx=ctx)
+
+    refusals = [e for e in logs if e["event"] == "jwt_user_inactive"]
+    assert [e["reason"] for e in refusals] == [reason]
+
+
+@pytest.fixture()
+async def unreachable_admin_ctx(
+    integration_config: AppConfig, tmp_path: Path
+) -> AsyncGenerator[Context, None]:
+    """A Context whose admin database cannot be reached (the other databases are real)."""
+    admin = integration_config.databases.admin
+    if admin.backend == "sqlite":
+        # A file under a directory that does not exist: SQLite cannot open it.
+        unreachable = admin.model_copy(update={"path": str(tmp_path / "absent" / "admin.db")})
+    else:
+        # Nothing listens on port 1: the connect is refused.
+        unreachable = admin.model_copy(update={"port": 1})
+    databases = integration_config.databases.model_copy(update={"admin": unreachable})
+    async with Context(integration_config.model_copy(update={"databases": databases})) as ctx:
+        yield ctx
+
+
+@pytest.mark.parametrize("probe", _PROBES, ids=lambda p: f"{'+'.join(p.apps)}:{p.path}")
+async def test_admin_db_unavailable_is_503_not_401(
+    unreachable_admin_ctx: Context, probe: _Probe
+) -> None:
+    """When the users-row read cannot run, the caller is still refused, but with a
+    retryable 503 ``database_unavailable`` — never the 401 that tells a client its
+    session is dead."""
+    ctx = unreachable_admin_ctx
+    token = issue_jwt(
+        {"sub": "usr_jwt_status_any", "actor_type": "user", "permissions": ["org:admin"]},
+        _secret(ctx),
+        300,
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        async with _client(ctx, list(probe.apps)) as client:
+            resp = await _get(client, probe.path, token)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["type"] == "database_unavailable"
+    assert "SELECT" not in resp.text
+    assert any(e["event"] == "jwt_user_status_unavailable" for e in logs)
+
+
+async def test_admin_db_unavailable_is_503_on_mcp_mount(
+    unreachable_admin_ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``/mcp`` gate answers 503 too, not the 401 challenge that would send the
+    client off to re-authenticate."""
+    ctx = unreachable_admin_ctx
+    monkeypatch.setattr(ctx.config.server.mcp, "enabled", True)
+    token = issue_jwt(
+        {"sub": "usr_jwt_status_any", "actor_type": "user", "permissions": ["org:admin"]},
+        _secret(ctx),
+        300,
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+    app = _build_app(ctx, _FULL)
+    async with (
+        mcp_lifespan(app, ctx),
+        AsyncClient(transport=ASGITransport(app=app), base_url="https://testserver") as client,
+    ):
+        resp = await client.post("/mcp", json=body, headers=headers)
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["type"] == "database_unavailable"
+    assert "www-authenticate" not in resp.headers
+
+
+async def test_open_event_stream_ends_when_user_disabled(
+    integration_context: Context, actors: _Actors, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An open ``/events/stream`` re-verifies its credential, so disabling the user
+    ends the stream instead of letting it run on indefinitely."""
+    ctx = integration_context
+    monkeypatch.setattr(events_router, "_STREAM_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(
+        EventStreamService,
+        "stream",
+        partialmethod(EventStreamService.stream, poll_interval_seconds=0.05),
+    )
+    token = await _login(ctx)
+
+    async with _client(ctx, _FULL) as client:
+        # The ASGI transport returns once the response body ends, so the request
+        # only completes if the stream closes itself.
+        request = asyncio.create_task(_get(client, "/events/stream", token))
+        await asyncio.sleep(0.3)
+        assert not request.done(), "the stream must stay open while the user is active"
+        await UserService(ctx).disable(actors.user_id, identity=_operator(actors))
+        resp = await asyncio.wait_for(request, timeout=10)
+
+    assert resp.status_code == 200
+    assert "event: heartbeat" in resp.text
