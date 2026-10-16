@@ -27,6 +27,7 @@ make perf-capacity     # ~7 min: throughput vs concurrency for 1/2/4 workers
 make perf-profile      # ~2 min: py-spy flamegraph + CPU share per subsystem
 make perf-report       # results/report.html
 make perf-down         # stop + wipe volumes
+make perf-help         # every target, incl. the agent probes below
 ```
 
 ## What each tool answers
@@ -86,6 +87,43 @@ bearer, API key in header/query/cookie, sigv4), caller auth (`jak_` API key,
 opaque `at_` token, HS256 JWT), revision pinning, streaming vs buffered
 persistence, idempotency replay, cold caches (all TTLs 0) and
 `Prefer: respond-async` (time-to-202 only — completion is `AsyncJobUser`).
+
+Targets live in [`Makefile`](Makefile) next to this README; the root
+`Makefile` passes `make perf-<target>` through (with variables), so run them
+from the repo root.
+
+## Agent probes
+
+Targeted diagnostics for a coding agent (or a human) chasing a specific
+question. Each prints markdown — tables, mechanically derived highlights with
+`file:line`, and `NEXT:` suggestions — then `ARTIFACT: <json>` as its last line
+(full data under `results/agent/`). Exit codes: `0` ran, `2` prerequisite
+missing (the output names the fix), `3` regression (`compare`; `make` itself
+reports a failing recipe as 2, so `compare` also prints `RESULT: REGRESSED`).
+
+| Target | Answers | Knobs |
+| ------ | ------- | ----- |
+| `perf-agent-doctor` | Is the stack up, are the tokens valid, was `jentic-one/app:perf` built from this checkout? | — |
+| `perf-agent-sql` | Which SQL does one call run, from which line? Sessions / pre-pings / transactions / zero-row SELECTs / read-only COMMITs per plane; statements grouped by (SQL, callsite); a median request's timeline; `EXPLAIN (ANALYZE, BUFFERS)` of the costliest SELECTs. | `N CALLER CACHE=warm\|cold VENDOR` |
+| `perf-agent-stages` | Where does a call's wall time go? p50/p99/mean per stage (identity, discovery, authorization, credential resolution, upstream headers vs body, persistence, events) and event-loop lag, under closed-loop load. | `C DURATION CALLER VENDOR FUNCS=mod:Qual,...` |
+| `perf-agent-cpu` | Which lines burn CPU at saturation? py-spy subsystem shares plus the hottest `jentic_one` `file:line` (deepest own frame and inclusive), and the flamegraph path. | `C DURATION CALLER VENDOR` |
+| `perf-agent-resilience` | Do faults behave? Disconnect / always-503 / idempotent replay / async jobs per streaming mode, retry with the breaker off; Locust assertion failures and broker error logs grouped by event + traceback location. | `SECONDS SCENARIOS` |
+| `perf-agent-compare` | Did my change help? Diffs two artifacts of one kind (agent `sql`/`stages`/`cpu`, or classic `overhead`/`capacity`/`dbcost`/`profile`); counts compare exactly, timings with a tolerance. | `BASE HEAD TOLERANCE` |
+
+The loop: `perf-agent-doctor` → a probe → read the tables and the cited lines
+→ change the code → `make perf-build && make perf-up` → the same probe →
+`perf-agent-compare BASE=<first ARTIFACT>`.
+
+**Traced broker.** `sql` and `stages` recreate the broker with
+[`agent/hooks/sitecustomize.py`](agent/hooks/sitecustomize.py) on its
+`PYTHONPATH` (mounted read-only; the image and `src/` are untouched) and
+restore the clean broker afterwards. The hook patches SQLAlchemy events,
+`DatabaseSession`, and the stage functions as their modules load, tagging every
+event with the broker's request id, and writes JSONL from a background thread.
+Traced timings carry the hook's overhead: use them to rank, and the classic
+benches for absolute numbers. ORM statements execute in SQLAlchemy greenlets
+that inherit the context but not the caller's frames, so callsites come from a
+contextvar set where our code opens a session or calls `execute`/`get`/`flush`.
 
 ## Stack variants
 
@@ -179,5 +217,5 @@ and `.perf-env.json` (live tokens for the local stack).
 
 ## Known gaps
 
-* No per-stage breakdown inside the broker yet (auth / discovery / credential /
-  upstream / persistence) — overhead is measured end to end.
+* Per-stage timings (`perf-agent-stages`) come from the traced broker only;
+  the classic overhead bench is end to end.
