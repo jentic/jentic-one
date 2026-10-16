@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, checkA11y, renderWithProviders, screen } from '@/__tests__/test-utils';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
@@ -109,6 +110,36 @@ describe('OAuthPopupReturn', () => {
 			// Strict target origin — never '*'.
 			window.location.origin,
 		);
+	});
+
+	it('posts exactly once under StrictMode effect replay', () => {
+		vi.spyOn(window, 'close').mockImplementation(() => {});
+		const post = vi.fn();
+		Object.defineProperty(window, 'opener', {
+			configurable: true,
+			writable: true,
+			value: { postMessage: post },
+		});
+		// Probe: proves strict effects are live in this render, so a single post
+		// is the guard working rather than effects simply firing once.
+		let probeMounts = 0;
+		function EffectProbe() {
+			useEffect(() => {
+				probeMounts += 1;
+			}, []);
+			return null;
+		}
+
+		renderWithProviders(
+			<>
+				<EffectProbe />
+				<OAuthPopupReturn />
+			</>,
+			{ route: '/oauth/connected?status=ok', reactStrictMode: true },
+		);
+
+		expect(probeMounts).toBe(2);
+		expect(post).toHaveBeenCalledTimes(1);
 	});
 
 	it('forwards the error status in the advisory message', () => {

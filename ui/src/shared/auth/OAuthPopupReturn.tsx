@@ -66,7 +66,12 @@ export function OAuthPopupReturn() {
 	// Notify the opener (advisory) so it can short-circuit its poll. Restrict the
 	// target origin to our own — the opener is same-origin (SPA under /app), and
 	// a strict origin prevents the message leaking to an unexpected document.
+	// A one-shot ref keeps it to a single post per mount: StrictMode replays
+	// effects (mount → unmount → remount) and a post can't be undone in a cleanup.
+	const notifiedRef = useRef(false);
 	useEffect(() => {
+		if (notifiedRef.current) return;
+		notifiedRef.current = true;
 		try {
 			const message: OAuthConnectMessage = {
 				type: OAUTH_CONNECT_MESSAGE_TYPE,
