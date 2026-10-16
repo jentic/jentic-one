@@ -227,7 +227,7 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
-| `broker.streaming_persist_timeout_s` | number (> 0) | `10.0` | `JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S` | Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on `app.background_tasks` (`kind=streaming_execution_persist`, `outcome=timed_out`). |
+| `broker.streaming_persist_timeout_s` | number (> 0) | `10.0` | `JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S` | Budget (seconds) for writing one streaming execution's record and lifecycle event, and the FAILED record of a buffered call that ended in an unmapped error (a 500). The write runs off the request, so it never delays the client; past the budget it is abandoned, logged and counted on `app.background_tasks` (`kind=streaming_execution_persist` or `unmapped_failure_persist`, `outcome=timed_out`). |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

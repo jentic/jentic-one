@@ -116,7 +116,7 @@ async def test_streaming_execution_persists_failed_record(
             status=ExecutionStatus.FAILED,
             http_status=502,
             duration_ms=15,
-            error="upstream_error: ConnectionError",
+            error="upstream_transport_error",
             ctx_req=ctx_req,
             actor_id="agent-integ-1",
             actor_type="agent",
@@ -131,7 +131,7 @@ async def test_streaming_execution_persists_failed_record(
     assert record.status == ExecutionStatus.FAILED
     assert record.http_status == 502
     assert record.duration_ms == 15
-    assert record.error == "upstream_error: ConnectionError"
+    assert record.error == "upstream_transport_error"
 
 
 @pytest.mark.asyncio

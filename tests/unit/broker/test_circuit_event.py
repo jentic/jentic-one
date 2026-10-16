@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,11 +10,13 @@ import pytest
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.exceptions import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.services.execution.service import (
     _circuit_event_last_emitted,
     default_broker,
     run_execution,
 )
+from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.schemas import OperationInfo
 
@@ -157,3 +160,78 @@ async def test_circuit_open_different_hosts_emit_independently() -> None:
         c for c in mock_emit.call_args_list if c.kwargs.get("type") == "upstream.circuit_open"
     ]
     assert len(circuit_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_buffered_circuit_open_records_the_problem_type_and_counts_a_failure() -> None:
+    """The buffered record uses the streaming vocabulary: the problem type, not the detail.
+
+    It counts one FAILED execution but adds no duration sample (no upstream
+    round trip), the same policy as the streaming path.
+    """
+    with (
+        patch.object(service_module, "record_execution", new_callable=AsyncMock) as mock_record,
+        patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit,
+        patch.object(service_module._executions_total, "add") as count,
+        patch.object(service_module._execution_duration, "record") as duration,
+        pytest.raises(CircuitOpenError),
+    ):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=AsyncMock(),
+            broker=default_broker(_CircuitOpenRunner()),
+            actor_id="agt_abc123",
+            actor_type="agent",
+        )
+
+    mock_record.assert_awaited_once()
+    assert mock_record.call_args.kwargs["error"] == "circuit_open"
+    (failed,) = [
+        c for c in mock_emit.call_args_list if c.kwargs.get("type") == EventType.EXECUTION_FAILED
+    ]
+    assert failed.kwargs["summary"] == "Execution failed: circuit_open"
+    count.assert_called_once_with(1, {"operation": "getThing", "status": ExecutionStatus.FAILED})
+    duration.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_circuit_open_emits_the_same_rate_limited_event() -> None:
+    """A streaming circuit fast-fail raises ``upstream.circuit_open`` under the same cooldown."""
+    with (
+        patch.object(service_module, "record_execution", new_callable=AsyncMock),
+        patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit,
+    ):
+        for _ in range(2):
+            await service_module.persist_streaming_execution(
+                AsyncMock(),
+                execution_id="exec_stream_circuit",
+                started_at=datetime.now(UTC),
+                status=ExecutionStatus.FAILED,
+                http_status=None,
+                duration_ms=0,
+                error="circuit_open",
+                ctx_req=_ctx_req(),
+                actor_id="agt_abc123",
+                actor_type="agent",
+                circuit_open=True,
+            )
+        await service_module.persist_streaming_execution(
+            AsyncMock(),
+            execution_id="exec_stream_timeout",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.FAILED,
+            http_status=None,
+            duration_ms=0,
+            error="upstream_timeout",
+            ctx_req=_ctx_req(host="other.example.com"),
+            actor_id="agt_abc123",
+            actor_type="agent",
+        )
+
+    circuit_calls = [
+        c for c in mock_emit.call_args_list if c.kwargs.get("type") == "upstream.circuit_open"
+    ]
+    assert len(circuit_calls) == 1
+    assert circuit_calls[0].kwargs["data"] == {"host": "api.example.com"}
