@@ -667,7 +667,9 @@ components:
         post-authentication error responses: with durations once the
         upstream was called (e.g. a `504`), and as stage names only for an
         error the Broker raises before the upstream call (e.g. `404`,
-        `403`, `409`, `424`). It never appears on `401`, a missing-permission
+        `403`, `409`, `424`). `jentic-upstream` includes the circuit-breaker
+        check, so a circuit-open `503` carries durations even though no
+        upstream request was sent. It never appears on `401`, a missing-permission
         `403`, a rate-limit `429` or a load-shed `503`.
       schema:
         type: string

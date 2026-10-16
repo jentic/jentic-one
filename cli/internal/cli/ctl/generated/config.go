@@ -251,10 +251,12 @@ type BrokerConfig struct {
 	// ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``,
 	// ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated
 	// callers. A broker-generated error raised before the upstream call lists the
-	// stages that ran without durations. Off by default: timing data aids
-	// side-channel probing and fingerprinting, so enable it only where callers are
-	// trusted with it (e.g. while diagnosing latency). Streaming responses carry only
-	// the stages known before the headers are sent (no ``jentic-persist``).
+	// stages that ran without durations. ``jentic-upstream`` includes the
+	// circuit-breaker check, so a circuit-open ``503`` carries durations even though
+	// no upstream request was sent. Off by default: timing data aids side-channel
+	// probing and fingerprinting, so enable it only where callers are trusted with it
+	// (e.g. while diagnosing latency). Streaming responses carry only the stages
+	// known before the headers are sent (no ``jentic-persist``).
 	ServerTiming bool `json:"server_timing,omitempty,omitzero" yaml:"server_timing,omitempty" mapstructure:"server_timing,omitempty"`
 
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".

@@ -236,7 +236,9 @@ where an authenticated caller could compare server-side branches (an unknown
 revision pin versus another caller's draft), and a server-measured duration
 strips the network noise that otherwise hides the difference. Once the
 upstream was called, the durations are reported in full: success, an upstream
-error status, or a transport failure such as `504`.
+error status, or a transport failure such as `504`. `jentic-upstream` includes
+the circuit-breaker check, so a circuit-open `503` also carries durations even
+though no upstream request was sent.
 
 The flag is **off by default** and should stay off on deployments exposed to
 callers you don't trust with it. On successful calls, per-stage latencies
