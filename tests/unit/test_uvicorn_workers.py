@@ -42,9 +42,15 @@ def _supervisor(factory: str, port: int, workers: int = 2) -> subprocess.Popen[b
     )
 
 
-@pytest.mark.parametrize("factory", ["failing_factory", "failing_lifespan_factory"])
+@pytest.mark.parametrize(
+    "factory", ["failing_factory", "failing_lifespan_factory", "sigkilled_factory"]
+)
 def test_worker_startup_failure_exits_with_startup_failure_code(factory: str) -> None:
-    """uvicorn's own supervisor respawns such a worker forever; this one stops and exits 3."""
+    """uvicorn's own supervisor respawns such a worker forever; this one stops and exits 3.
+
+    ``sigkilled_factory`` dies by signal (negative exit code, never 3), so it is
+    caught only because the worker reports when it starts serving.
+    """
     proc = _supervisor(factory, _free_port())
     try:
         assert proc.wait(timeout=_TIMEOUT_S) == STARTUP_FAILURE

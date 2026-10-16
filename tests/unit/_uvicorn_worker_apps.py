@@ -6,12 +6,20 @@ name, so it must not pull in the application.
 
 from __future__ import annotations
 
+import os
+import signal
 from typing import Any
 
 
 def failing_factory() -> Any:
     """App factory that raises, like ``create_app`` on a config that no longer validates."""
     raise RuntimeError("boom: app factory failed")
+
+
+def sigkilled_factory() -> Any:
+    """App factory whose process is SIGKILLed mid-boot, like the OOM killer during import."""
+    os.kill(os.getpid(), signal.SIGKILL)
+    raise AssertionError("unreachable: SIGKILL is not catchable")
 
 
 def failing_lifespan_factory() -> Any:

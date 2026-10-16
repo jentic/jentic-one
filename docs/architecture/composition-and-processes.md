@@ -133,11 +133,14 @@ uvicorn option is set. `server.workers` is capped at 64.
 
 **Startup failures exit the container.** The supervisor
 ([`shared/uvicorn_workers.py`](../../src/jentic_one/shared/uvicorn_workers.py))
-is uvicorn's own `Multiprocess` with one change: a worker that exits before
+is uvicorn's own `Multiprocess` with one change: a worker that dies before
 it starts serving stops every worker, and the process exits with code 3,
 as a single-worker run does. That covers an unreachable database, a bad
 encryption keyset, the redis backend on an image without the `[redis]`
-extra, and a config edit that no longer validates when a worker respawns.
+extra, a config edit that no longer validates when a worker respawns, and a
+worker killed by a signal during boot (most often the out-of-memory killer
+when the memory limit was not raised for N workers). Each worker reports
+when it starts serving, so the supervisor does not rely on the exit code.
 Docker's `restart:` policy and Kubernetes' crash-loop backoff then apply.
 (Plain `uvicorn --workers` respawns such a worker every half second for
 ever, and the container stays `Running`.) A worker that dies after it
