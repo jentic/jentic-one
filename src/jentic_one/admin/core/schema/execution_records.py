@@ -24,13 +24,17 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         Index("ix_execution_records_status", "status"),
         Index("ix_execution_records_actor", "actor_id", "actor_type"),
         Index("ix_execution_records_credential_id", "credential_id"),
+        # Covers the repeated-failure count in ``shared/events/repeated_failure.py``:
+        # equality on actor, credential (the live consumer axis) and operation,
+        # then the ``started_at`` window range, over failed rows only.
         Index(
-            "ix_execution_records_repeated_failure_scan",
+            "ix_execution_records_repeated_failure_credential_scan",
             "actor_id",
-            "toolkit_id",
+            "credential_id",
             "operation_id",
             "started_at",
             postgresql_where=text("status = 'failed'"),
+            sqlite_where=text("status = 'failed'"),
         ),
     )
 
