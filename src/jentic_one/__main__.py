@@ -39,9 +39,9 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
-from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.url import is_loopback_host
+from jentic_one.shared.uvicorn_workers import run_workers
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
@@ -161,9 +161,10 @@ def _service_name() -> str:
 def create_app() -> FastAPI:
     """Factory entry point for uvicorn (``factory=True``: reload and multi-worker modes).
 
-    Loads configuration from the config file and environment on each
-    invocation, so every reload or ``server.workers`` process picks up the same
-    settings as the parent process.
+    Re-reads configuration from the config file and environment on each
+    invocation. A reload or ``server.workers`` process therefore runs on the
+    config as it is when that process spawns (including a respawn after a
+    crash or SIGHUP), not on the parent's validated snapshot.
     """
     config = load_config()
     configure_logging(config)
@@ -172,6 +173,54 @@ def create_app() -> FastAPI:
     apps = config.apps
     ctx = _build_context(config, apps)
     return _build_app(ctx, apps)
+
+
+def _warn_per_worker_hazards(config: AppConfig) -> None:
+    """Log the per-worker caveats that ``server.workers > 1`` accepts.
+
+    State that breaks across workers is refused at config validation; these
+    are the degradations that remain bounded and are only worth knowing about.
+    """
+    logger = structlog.get_logger(__name__)
+    workers = config.server.workers
+    apps = set(config.apps)
+    if config.observability.metrics.exporter == "prometheus":
+        logger.warning(
+            "prometheus_metrics_per_worker",
+            workers=workers,
+            detail=(
+                "each worker process keeps its own Prometheus registry and there "
+                "is no multiprocess aggregation, so a /metrics/ scrape reports "
+                "only the worker that answered it. Use the otlp exporter (the "
+                "OpenTelemetry SDK stamps each worker with its own "
+                "service.instance.id), or run one worker per container and "
+                "scale replicas."
+            ),
+        )
+    if "control" in apps:
+        logger.warning(
+            "control_limiters_per_worker",
+            workers=workers,
+            detail=(
+                "the control surface's connect-flow per-actor rate limit and MCP "
+                "config-registration throttle are held in process memory on every "
+                "shared-state backend, so each cap applies per worker and an actor "
+                "can reach the worker count times the limit."
+            ),
+        )
+    if "admin" in apps and apps & PROVIDER_REGISTRY_SURFACES:
+        logger.warning(
+            "provider_config_refresh_per_worker",
+            workers=workers,
+            detail=(
+                "an admin write to a credential provider config rebuilds the "
+                "provider registry only in the worker that served it; the other "
+                "workers keep the registry they loaded at boot until they restart, "
+                "so connect and credential-refresh calls they answer use the "
+                "previous provider config. Restart the deployment after changing "
+                "provider configs, or run one worker per container."
+            ),
+        )
 
 
 def _serve() -> None:
@@ -300,8 +349,8 @@ def _serve() -> None:
         # the config file and environment it inherits. A one-shot source was
         # drained here and cannot be re-read by the workers, so refuse rather
         # than hang every worker's boot. (SQLite databases, generated
-        # per-process secrets and ``server.reload`` are rejected when the
-        # config loads.)
+        # per-process secrets, in-memory auth/broker state and
+        # ``server.reload`` are rejected when the config loads.)
         if oneshot_config_source_active():
             raise ConfigError(
                 f"server.workers={workers} needs a config source each worker process "
@@ -310,37 +359,13 @@ def _serve() -> None:
                 "server.workers to 1."
             )
         logger.info("uvicorn_multi_worker_start", workers=workers)
-        if config.observability.metrics.exporter == "prometheus":
-            logger.warning(
-                "prometheus_metrics_per_worker",
-                workers=workers,
-                detail=(
-                    "each worker process keeps its own Prometheus registry and there "
-                    "is no multiprocess aggregation, so a /metrics/ scrape reports "
-                    "only the worker that answered it. Use the otlp exporter (the "
-                    "OpenTelemetry SDK stamps each worker with its own "
-                    "service.instance.id), or run one worker per container and "
-                    "scale replicas."
-                ),
-            )
-        if config.broker.resilience.backend.backend is BackendKind.MEMORY:
-            logger.warning(
-                "shared_state_backend_memory_per_worker",
-                workers=workers,
-                detail=(
-                    "broker.resilience.backend.backend is 'memory', so rate limits, "
-                    "circuit breakers, Idempotency-Key replay and the auth surface's "
-                    "OAuth rate limits and consent anti-replay are per worker process: "
-                    "limits multiply by the worker count and a replayed key can reach "
-                    "a worker that has not seen it. Configure the redis backend to "
-                    "share them."
-                ),
-            )
-        uvicorn.run(
+        _warn_per_worker_hazards(config)
+        # Not ``uvicorn.run``: its supervisor respawns a worker that fails to
+        # start forever and never exits non-zero (see ``run_workers``).
+        run_workers(
             _FACTORY_IMPORT_STRING,
             host=config.server.host,
             port=config.server.port,
-            factory=True,
             workers=workers,
         )
         return
