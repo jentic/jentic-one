@@ -135,7 +135,9 @@ silent gap.
 
 **Compare thresholds.** `perf-agent-compare` first checks the two runs are
 comparable: every request returned 200, and the probe arguments, `PERF_*`
-variant and broker mode match (`FORCE=1` overrides and says why). Then:
+variant and broker mode match (`FORCE=1` overrides and says why). A knob or
+broker mode only one side records is not a difference, so a `perf-agent-cpu`
+artifact compares with a classic `perf-profile` one. Then:
 
 | Metric | Regresses when |
 | ------ | -------------- |

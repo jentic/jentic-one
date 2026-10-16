@@ -169,6 +169,57 @@ def test_compare_malformed_or_mismatched_artifacts_exit_prereq(artifact_dir: Pat
         compare.main(["--base", str(garbage)])
 
 
+def _cpu_artifact(directory: Path, stamp: str, *, concurrency: int = 16) -> Path:
+    """What ``make perf-agent-cpu`` writes: knobs under data.args, clean broker."""
+    payload = {
+        "cmd": "cpu",
+        "timestamp": f"2026-10-16T{stamp}+00:00",
+        "broker_mode": "clean",
+        "variant": {},
+        "data": {
+            "args": {
+                "concurrency": concurrency,
+                "duration": 30,
+                "caller": "jak",
+                "vendor": "perf-noauth",
+            },
+            "load": {"rps": 400.0, "ok_ratio": 1.0},
+            "profile": {"buckets": {"db": 0.4, "http": 0.3}},
+        },
+    }
+    path = directory / f"20261016T{stamp.replace(':', '')}Z-cpu.json"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _profile_artifact(directory: Path, stamp: str, *, concurrency: int = 16) -> Path:
+    """What classic ``make perf-profile`` writes: knobs at top level, no broker_mode."""
+    payload = {
+        "scenario": "profile",
+        "timestamp": f"2026-10-16T{stamp}+00:00",
+        "variant": {},
+        "vendor": "perf-noauth",
+        "caller": "jak",
+        "concurrency": concurrency,
+        "load": {"rps": 410.0, "ok_ratio": 1.0},
+        "profile": {"buckets": {"db": 0.41, "http": 0.3}},
+    }
+    path = directory / "classic" / f"20261016T{stamp.replace(':', '')}Z-profile.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def test_compare_cpu_with_classic_profile(artifact_dir: Path) -> None:
+    cpu = _cpu_artifact(artifact_dir, "10:00:00")
+    prof = _profile_artifact(artifact_dir, "11:00:00")
+    assert compare.differences(compare.load(cpu)[1], compare.load(prof)[1]) == []
+    assert compare.main(["--base", str(cpu), "--head", str(prof)]) == 0
+    other = _profile_artifact(artifact_dir, "12:00:00", concurrency=32)
+    with pytest.raises(PrereqError, match=r"args\.concurrency: 16 -> 32"):
+        compare.main(["--base", str(cpu), "--head", str(other)])
+
+
 def test_failures_detects_classic_ok_ratio() -> None:
     capacity = {"rows": [{"config": "1x2", "ok_ratio": 0.5}, {"config": "2x4", "ok_ratio": 1.0}]}
     assert compare.failures(capacity) == ["1x2: ok_ratio 0.500"]

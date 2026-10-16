@@ -10,8 +10,10 @@ classic results (``results/*-{overhead,capacity,dbcost,profile}.json``).
 ``HEAD`` defaults to the newest artifact of the same kind written after ``BASE``.
 
 Comparability: both runs must have succeeded (every request answered 200) and
-share their arguments, ``PERF_*`` variant and broker mode. Otherwise compare
-refuses with exit 2 and lists the differences; ``--force`` compares anyway.
+share their arguments, ``PERF_*`` variant and broker mode. A knob or broker mode
+recorded by only one side is not a difference, so an agent ``cpu`` run compares
+with a classic ``profile`` run (same vendor, caller and concurrency). Otherwise
+compare refuses with exit 2 and lists the differences; ``--force`` compares anyway.
 
 Thresholds:
 
@@ -135,6 +137,11 @@ def _data(p: dict[str, Any]) -> dict[str, Any]:
 
 #: Probe arguments that change what is printed, not what is measured.
 NON_IDENTITY_ARGS = frozenset({"explain"})
+#: Knobs the classic tools record at top level; agent probes keep them under ``data.args``.
+TOP_LEVEL_KNOBS = ("vendor", "caller", "concurrency")
+#: Identity keys where a value recorded on only one side is not a difference
+#: (classic tools record fewer knobs and always run a clean broker).
+ONE_SIDED_OK = frozenset({"args", "broker_mode"})
 
 
 def _without(args: Any, keys: frozenset[str]) -> Any:
@@ -142,16 +149,23 @@ def _without(args: Any, keys: frozenset[str]) -> Any:
 
 
 def run_identity(p: dict[str, Any]) -> dict[str, Any]:
-    """What must match for two runs to be comparable (absent keys are ignored)."""
+    """What must match for two runs to be comparable, in one shape for every kind.
+
+    Knobs go under ``args`` whether the artifact keeps them in ``data.args``
+    (agent probes) or at top level (classic tools), so ``cpu`` and ``profile``
+    runs line up.
+    """
+    args = _data(p).get("args")
+    knobs: Any = _without(args, NON_IDENTITY_ARGS) if args is not None else {}
+    if isinstance(knobs, dict):
+        for key in TOP_LEVEL_KNOBS:
+            if key in p:
+                knobs.setdefault(key, p[key])
     ident: dict[str, Any] = {
         "variant": p.get("variant", {}),
         "broker_mode": p.get("broker_mode"),
-        "args": _without(_data(p).get("args"), NON_IDENTITY_ARGS),
+        "args": knobs,
     }
-    # Classic profile artifacts record their knobs at top level.
-    for key in ("vendor", "caller", "concurrency"):
-        if key in p:
-            ident[key] = p[key]
     return {k: v for k, v in ident.items() if v is not None}
 
 
@@ -160,8 +174,13 @@ def differences(base: dict[str, Any], head: dict[str, Any]) -> list[str]:
     out: list[str] = []
     for key in sorted(set(b) | set(h)):
         bv, hv = b.get(key), h.get(key)
+        lenient = key in ONE_SIDED_OK
+        if lenient and (bv is None or hv is None):
+            continue
         if isinstance(bv, dict) and isinstance(hv, dict):
             for sub in sorted(set(bv) | set(hv)):
+                if lenient and (sub not in bv or sub not in hv):
+                    continue
                 if bv.get(sub) != hv.get(sub):
                     out.append(f"{key}.{sub}: {bv.get(sub)!r} -> {hv.get(sub)!r}")
         elif bv != hv:
