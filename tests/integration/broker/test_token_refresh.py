@@ -30,7 +30,11 @@ from jentic_one.control.services.credentials.providers.direct_oauth2 import (
     InvalidGrantError,
 )
 from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
-from jentic_one.shared.config import DirectOAuth2ProviderConfig, EgressConfig
+from jentic_one.shared.config import (
+    ControlEgressConfig,
+    DirectOAuth2ProviderConfig,
+    EgressConfig,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import StoredCredentialType
@@ -58,6 +62,7 @@ class _RotatingVendor(DirectOAuth2Provider):
         self.expires_in = expires_in
         self.live_refresh_token = live_refresh_token
         self.sent_refresh_tokens: list[str] = []
+        self.sent_egress: list[EgressConfig | None] = []
         self._generation = 0
 
     async def _post_token(
@@ -65,6 +70,7 @@ class _RotatingVendor(DirectOAuth2Provider):
     ) -> dict[str, str]:
         sent = payload["refresh_token"]
         self.sent_refresh_tokens.append(sent)
+        self.sent_egress.append(egress)
         # Widen the race window so concurrent callers queue on the lock.
         await asyncio.sleep(0.1)
         if sent != self.live_refresh_token:
@@ -169,6 +175,35 @@ async def test_refresh_expired_token_rotates_and_persists(
     assert token == "at-1"
     assert vendor.sent_refresh_tokens == ["rt-0"]
     assert await _stored_refresh_token(ctx) == "rt-1"
+
+
+async def test_broker_refresh_uses_this_process_control_egress(
+    integration_context: Context, clean_tokens: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broker's refresh posts under the policy from its own config's ``control.egress``.
+
+    In a split deployment that is the broker surface's config, so the allowlist
+    must be set there as well as on the control surface.
+    """
+    ctx = integration_context
+    monkeypatch.setattr(ctx.config.broker.egress, "allowed_private_subnets", ["10.50.0.0/16"])
+    monkeypatch.setattr(
+        ctx.config.control,
+        "egress",
+        ControlEgressConfig(allowed_internal_domains=[".corp.internal"]),
+    )
+    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
+    await _seed(ctx, access="at-0", refresh="rt-0")
+
+    await TokenRefresher(ctx).ensure_fresh(resolved=await _snapshot(ctx), caller="t")
+
+    assert len(vendor.sent_egress) == 1
+    egress = vendor.sent_egress[0]
+    assert egress is not None
+    assert (egress.allowed_private_subnets, egress.allowed_internal_domains) == (
+        ["10.50.0.0/16"],
+        [".corp.internal"],
+    )
 
 
 @pytest.mark.parametrize(

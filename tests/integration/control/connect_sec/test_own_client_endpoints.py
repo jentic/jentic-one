@@ -3,13 +3,16 @@
 The API's spec may be agent- or user-submitted, so its declared
 ``authorizationUrl`` / ``tokenUrl`` are never a fallback for the approver's
 own client: the approver enters both endpoints, and they pass the upstream
-URL policy (https only, no private or metadata targets).
+URL policy (https only, no private or metadata targets beyond what the
+operator's ``control.egress`` allowlist names).
 """
 
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 from pydantic import SecretStr
 
@@ -21,6 +24,11 @@ from jentic_one.control.services.integrations.connect_session_service import (
     OwnClientConfirm,
 )
 from jentic_one.control.services.integrations.errors import OwnClientInvalidError
+from jentic_one.control.services.integrations.flow_handlers.auth_code import (
+    AuthCodeExchangeError,
+    AuthCodeFlowHandler,
+)
+from jentic_one.shared.config import ControlEgressConfig
 from jentic_one.shared.context import Context
 from tests.integration.control.connect_sec.support import (
     AGENT_ID,
@@ -177,15 +185,29 @@ async def test_approver_endpoints_are_the_ones_used(env: Context) -> None:
     )
 
 
-async def test_broker_egress_allowlist_does_not_open_the_approvers_endpoints(
-    env: Context, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("broker_subnets", "control_subnets"),
+    [
+        ([], None),
+        (["10.0.0.0/8"], []),
+    ],
+    ids=["strict-default", "control-override-stricter-than-broker"],
+)
+async def test_approvers_endpoints_follow_the_control_egress_policy_when_refused(
+    env: Context,
+    monkeypatch: pytest.MonkeyPatch,
+    broker_subnets: list[str],
+    control_subnets: list[str] | None,
 ) -> None:
-    """The approver-entered OAuth endpoints use the strict policy.
+    """Approver-entered endpoints are checked under ``control.egress``, as on ``POST /credentials``.
 
-    The broker's allowlist covers where agents' API calls may go; it never lets
-    the approver's client secret be posted to a private address.
+    With no allowlist, or a ``control.egress`` override narrower than
+    ``broker.egress``, a private token endpoint is refused at confirm.
     """
-    monkeypatch.setattr(env.config.broker.egress, "allowed_private_subnets", ["10.0.0.0/8"])
+    monkeypatch.setattr(env.config.broker.egress, "allowed_private_subnets", broker_subnets)
+    monkeypatch.setattr(
+        env.config.control, "egress", ControlEgressConfig(allowed_private_subnets=control_subnets)
+    )
     await import_spec(env, _HOSTILE_OAUTH)
     created = await connect(env, requested_scopes=["read"])
     async with client(env, OWNER) as owner:
@@ -198,3 +220,67 @@ async def test_broker_egress_allowlist_does_not_open_the_approvers_endpoints(
             ),
         )
     assert (refused.status_code, refused.json()["type"]) == (400, "own_oauth_client_invalid")
+    assert _CLIENT_SECRET not in refused.text
+
+
+@pytest.mark.parametrize(
+    ("broker_subnets", "control_subnets"),
+    [
+        (["10.0.0.0/8"], None),
+        ([], ["10.0.0.0/8"]),
+    ],
+    ids=["inherited-from-broker", "control-override"],
+)
+async def test_allowlisted_in_network_idp_works_end_to_end_for_the_approvers_client(
+    env: Context,
+    monkeypatch: pytest.MonkeyPatch,
+    broker_subnets: list[str],
+    control_subnets: list[str] | None,
+) -> None:
+    """An allowlisted in-network IdP is accepted at confirm and reached, pinned, on the exchange.
+
+    Narrowing ``control.egress`` afterwards refuses the exchange before any
+    request carries the client secret.
+    """
+    monkeypatch.setattr(env.config.broker.egress, "allowed_private_subnets", broker_subnets)
+    monkeypatch.setattr(
+        env.config.control, "egress", ControlEgressConfig(allowed_private_subnets=control_subnets)
+    )
+    await import_spec(env, _HOSTILE_OAUTH, origin="user", submitted_by=AGENT_ID)
+    created = await connect(env, requested_scopes=["read"])
+    result = await svc(env).confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=OwnClientConfirm(
+            client_id="approver-client",
+            client_secret=SecretStr(_CLIENT_SECRET),
+            authorize_url="https://10.1.2.3/authorize",
+            token_url="https://10.1.2.3/token",
+            confirmed_scopes=["read"],
+            checks=checks(await digest(env, created.session_id)),
+        ),
+        identity=OWNER,
+    )
+    assert isinstance(result, AuthCodeConfirmResult)
+    row = await session_row(env, created.session_id)
+    assert row is not None
+
+    sent: list[httpx.Request] = []
+
+    def _token(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"access_token": "at-ok", "expires_in": 3600})
+
+    with patch.object(
+        httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_token)
+    ):
+        tokens = await AuthCodeFlowHandler(env).complete_from_callback(row, code="the-code")
+        assert tokens.access_token == "at-ok"
+        assert [(r.url.host, r.url.path) for r in sent] == [("10.1.2.3", "/token")]
+
+        monkeypatch.setattr(
+            env.config.control, "egress", ControlEgressConfig(allowed_private_subnets=[])
+        )
+        with pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"):
+            await AuthCodeFlowHandler(env).complete_from_callback(row, code="the-code")
+    assert len(sent) == 1
