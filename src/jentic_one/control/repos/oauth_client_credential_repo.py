@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from enum import Enum, auto
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
+
+
+class _Unset(Enum):
+    TOKEN = auto()
+
+
+UNSET = _Unset.TOKEN
 
 
 class OAuthClientCredentialRepository:
@@ -48,10 +57,13 @@ class OAuthClientCredentialRepository:
         *,
         encrypted_client_secret: str | None = None,
         token_url: str | None = None,
-        scope: str | None = None,
-        clear_scope: bool = False,
+        scope: str | _Unset | None = UNSET,
     ) -> OAuthClientCredential | None:
-        """Apply each provided field independently; ``clear_scope`` drops the stored scope."""
+        """Apply each provided field independently.
+
+        ``scope`` is tri-state: ``UNSET`` keeps the stored scope, ``None``
+        (or ``""``) clears it, and any other string replaces it.
+        """
         row = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
         if row is None:
             return None
@@ -59,10 +71,9 @@ class OAuthClientCredentialRepository:
             row.encrypted_client_secret = encrypted_client_secret
         if token_url is not None:
             row.token_url = token_url
-        if clear_scope:
-            row.scope = None
-        elif scope is not None:
-            row.scope = scope
+        if not isinstance(scope, _Unset):
+            # "" carries no scope-token; store it as cleared, never as "".
+            row.scope = scope or None
         await session.flush()
         return row
 

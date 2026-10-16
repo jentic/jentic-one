@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
+from jentic_one.admin.repos import AuditRepository
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
@@ -22,7 +23,11 @@ from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientC
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
-from jentic_one.control.repos import CredentialRepository, OAuthAppRegistrationRepository
+from jentic_one.control.repos import (
+    CredentialRepository,
+    OAuthAppRegistrationRepository,
+    OAuthTokenRepository,
+)
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
@@ -51,6 +56,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseDataError
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.credentials import CredentialType
 
 _ADMIN_IDENTITY = Identity(sub="admin_user", email="admin@test.com", permissions=["org:admin"])
@@ -807,15 +813,32 @@ async def test_server_variables_none_by_default(
     [
         {"type": CredentialType.BEARER_TOKEN, "name": ""},
         {"type": CredentialType.BEARER_TOKEN, "token": ""},
+        {"type": CredentialType.API_KEY, "key": ""},
+        {"type": CredentialType.BASIC, "username": ""},
         {"type": CredentialType.BASIC, "password": ""},
         {"type": CredentialType.OAUTH2, "client_secret": ""},
+        {"type": CredentialType.OAUTH2, "token_url": ""},
         {"type": CredentialType.SIGV4, "access_key_id": "", "secret_access_key": ""},
+        {"type": CredentialType.SIGV4, "session_token": ""},
+        {"type": CredentialType.SIGV4, "aws_region": ""},
+        {"type": CredentialType.SIGV4, "aws_service": ""},
+        # Whitespace-only is as empty as "" once injected into a header.
+        {"type": CredentialType.BEARER_TOKEN, "token": "  "},
+        {"type": CredentialType.API_KEY, "key": " "},
+        {"type": CredentialType.BASIC, "password": "\t"},
+        {"type": CredentialType.BEARER_TOKEN, "name": " "},
+        # Scope items are single RFC 6749 scope-tokens.
+        {"type": CredentialType.OAUTH2, "scopes": [""]},
+        {"type": CredentialType.OAUTH2, "scopes": ["read", " "]},
+        {"type": CredentialType.OAUTH2, "scopes": ["a b"]},
     ],
 )
 async def test_update_rejects_empty_secret_fields(
     svc: CredentialService, clean_credentials: None, fields: dict[str, object]
 ) -> None:
-    """Pins #1425: "" is never a valid replacement secret, even below the web layer."""
+    """Pins #1425: a blank secret/signing field or a malformed scope item is
+    rejected below the web layer. Validation runs before the stored type is
+    checked, so one bearer credential serves every variant."""
     created = await svc.create(
         CredentialCreate(type=CredentialType.BEARER_TOKEN, name="E", api=_api(), token="tok"),
         identity=_ADMIN_IDENTITY,
@@ -857,13 +880,13 @@ async def test_update_oauth2_token_url_and_scopes_apply_without_secret(
         created.credential_id,
         CredentialUpdate(
             type=CredentialType.OAUTH2,
-            token_url="https://other.example.com/t",
+            token_url="https://auth.example.com/v2/token",
             scopes=["c"],
         ),
         identity=_ADMIN_IDENTITY,
     )
     assert isinstance(updated.details, OAuth2Redacted)
-    assert updated.details.token_url == "https://other.example.com/t"
+    assert updated.details.token_url == "https://auth.example.com/v2/token"
     assert updated.details.scopes == ["c"]
     assert updated.updated_at is not None
     assert updated.updated_at > created.created_at
@@ -903,13 +926,13 @@ async def test_update_device_code_applies_token_url_and_scopes(
         created.credential_id,
         CredentialUpdate(
             type=CredentialType.OAUTH2,
-            token_url="https://other.example.com/t",
+            token_url="https://auth.example.com/v2/token",
             scopes=["read", "write"],
         ),
         identity=_ADMIN_IDENTITY,
     )
     assert isinstance(updated.details, OAuth2Redacted)
-    assert updated.details.token_url == "https://other.example.com/t"
+    assert updated.details.token_url == "https://auth.example.com/v2/token"
     assert updated.details.scopes == ["read", "write"]
 
     cleared = await svc.update(
@@ -1003,3 +1026,222 @@ async def test_update_no_auth_name_and_active(
     assert updated.active is False
     assert updated.updated_at is not None
     assert updated.updated_at > created.created_at
+
+
+def _auth_code_create(name: str) -> CredentialCreate:
+    return CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name=name,
+        api=_api(),
+        grant_type="authorization_code",
+        token_url="https://auth.example.com/token",
+        authorize_url="https://auth.example.com/authorize",
+        client_id="ac-client",
+        client_secret="ac-secret-original",  # pragma: allowlist secret
+        scopes=["read"],
+    )
+
+
+async def _connect(control_db: DatabaseSession, credential_id: str) -> None:
+    """Stand in for a completed sign-in: a live token row with a refresh token."""
+    async with control_db.transaction() as session:
+        await OAuthTokenRepository.create(
+            session,
+            credential_id=credential_id,
+            encrypted_access_token="enc-access",
+            encrypted_refresh_token="enc-refresh",
+            created_by=_ADMIN_IDENTITY.sub,
+        )
+
+
+async def _has_token(control_db: DatabaseSession, credential_id: str) -> bool:
+    async with control_db.session() as session:
+        return await OAuthTokenRepository.get_by_credential(session, credential_id) is not None
+
+
+async def test_update_auth_code_cross_origin_token_url_requires_secret(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A token_url on another origin would receive the stored client secret and
+    refresh token, neither of which the caller can read. It needs client_secret
+    in the same PATCH and drops the live token; same-origin path edits don't."""
+    created = await svc.create(_auth_code_create("Auth code"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    await _connect(control_db, cid)
+
+    with pytest.raises(InvalidCredentialInputError, match="client_secret"):
+        await svc.update(
+            cid,
+            CredentialUpdate(type=CredentialType.OAUTH2, token_url="https://evil.example.net/t"),
+            identity=_ADMIN_IDENTITY,
+        )
+    current = await svc.get(cid, identity=_ADMIN_IDENTITY)
+    assert isinstance(current.details, OAuth2Redacted)
+    assert current.details.token_url == "https://auth.example.com/token"
+    assert await _has_token(control_db, cid)
+
+    # Explicit default port and a new path keep the origin.
+    same_origin = await svc.update(
+        cid,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2, token_url="https://AUTH.example.com:443/oauth/token"
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(same_origin.details, OAuth2Redacted)
+    assert same_origin.details.connected is True
+    assert await _has_token(control_db, cid)
+
+    async with control_db.session() as session:
+        row = await session.get(OAuthClientCredential, cid)
+        assert row is not None
+        secret_before = row.encrypted_client_secret
+    moved = await svc.update(
+        cid,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2,
+            token_url="https://login.other.example.org/token",
+            client_secret="ac-secret-new",  # pragma: allowlist secret
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(moved.details, OAuth2Redacted)
+    assert moved.details.token_url == "https://login.other.example.org/token"
+    assert moved.details.connected is False
+    assert not await _has_token(control_db, cid)
+    async with control_db.session() as session:
+        row = await session.get(OAuthClientCredential, cid)
+        assert row is not None
+        assert row.encrypted_client_secret != secret_before
+
+
+async def test_update_device_code_cross_origin_token_url_rejected(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """Device flow has no secret to re-enter, so a token_url on another origin
+    is refused and the live token stays where it is."""
+    created = await svc.create(_device_code_create("Device move"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    await _connect(control_db, cid)
+
+    with pytest.raises(InvalidCredentialInputError, match="origin"):
+        await svc.update(
+            cid,
+            CredentialUpdate(type=CredentialType.OAUTH2, token_url="https://evil.example.net/t"),
+            identity=_ADMIN_IDENTITY,
+        )
+    current = await svc.get(cid, identity=_ADMIN_IDENTITY)
+    assert isinstance(current.details, OAuth2Redacted)
+    assert current.details.token_url == "https://auth.example.com/token"
+    assert current.details.connected is True
+    assert await _has_token(control_db, cid)
+
+
+async def test_update_device_code_frozen_while_flow_pending(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A pending device flow polls the stored token_url and stamps the confirmed
+    scopes on success, so neither is editable until the flow ends."""
+    created = await svc.create(_device_code_create("Device pending"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    async with control_db.transaction() as session:
+        await DeviceAuthorizationCredentialRepository.update_fields(
+            session,
+            cid,
+            encrypted_device_code="enc-device-code",
+            user_code="ABCD-1234",
+            granted_scopes=["read"],
+        )
+
+    for edit in (
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read", "write"]),
+        CredentialUpdate(type=CredentialType.OAUTH2, token_url="https://auth.example.com/v2/token"),
+    ):
+        with pytest.raises(InvalidCredentialInputError, match="in progress"):
+            await svc.update(cid, edit, identity=_ADMIN_IDENTITY)
+    async with control_db.session() as session:
+        dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(session, cid)
+        assert dfc is not None
+        assert dfc.granted_scopes == ["read"]
+        assert dfc.token_url == "https://auth.example.com/token"
+
+    # Header edits don't touch the flow and stay allowed.
+    renamed = await svc.update(
+        cid,
+        CredentialUpdate(type=CredentialType.OAUTH2, name="Device renamed"),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert renamed.name == "Device renamed"
+
+
+async def test_update_oauth2_without_client_config_rejected(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """An OAuth2 credential with no client row (a managed provider) answers a
+    client-field edit with 400, and the header edit in the same PATCH rolls back."""
+    created = await svc.create(_auth_code_create("No client row"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    async with control_db.transaction() as session:
+        await session.execute(delete(OAuthClientCredential).where(OAuthClientCredential.id == cid))
+
+    with pytest.raises(InvalidCredentialInputError, match="no client configuration"):
+        await svc.update(
+            cid,
+            CredentialUpdate(type=CredentialType.OAUTH2, name="Renamed", scopes=["write"]),
+            identity=_ADMIN_IDENTITY,
+        )
+    current = await svc.get(cid, identity=_ADMIN_IDENTITY)
+    assert current.name == "No client row"
+
+
+async def test_update_oauth2_audit_diff_records_config_not_secrets(
+    svc: CredentialService, clean_credentials: None, integration_context: Context
+) -> None:
+    """The audit diff of a config edit names what changed (token_url, scopes)
+    and flags the secret rotation, without ever carrying a secret value."""
+    created = await svc.create(_auth_code_create("Audited"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    await svc.update(
+        cid,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2,
+            token_url="https://login.other.example.org/token",
+            client_secret="ac-secret-rotated",  # pragma: allowlist secret
+            scopes=["read", "write"],
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    async with integration_context.admin_db.session() as session:
+        entries = await AuditRepository.list_by_target(session, AuditTargetType.CREDENTIAL, cid)
+    updates = [e for e in entries if e.action == AuditAction.UPDATE]
+    assert len(updates) == 1
+    entry = updates[0]
+    assert entry.diff is not None
+    assert entry.diff["modified"]["token_url"] == {
+        "old": "https://auth.example.com/token",
+        "new": "https://login.other.example.org/token",
+    }
+    assert entry.diff["modified"]["scopes"] == {"old": ["read"], "new": ["read", "write"]}
+    assert entry.diff["added"]["client_secret_rotated"] is True
+    recorded = repr((entry.before, entry.after, entry.diff))
+    assert "ac-secret" not in recorded
+
+
+async def test_create_rejects_malformed_scopes(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Create applies the same scope-token rule as update."""
+    with pytest.raises(InvalidCredentialInputError, match="scope"):
+        await svc.create(
+            CredentialCreate(
+                type=CredentialType.OAUTH2,
+                name="Bad scopes",
+                api=_api(),
+                grant_type="client_credentials",
+                token_url="https://auth.example.com/token",
+                client_id="client-123",
+                client_secret="secret-456",  # pragma: allowlist secret
+                scopes=["read write"],
+            ),
+            identity=_ADMIN_IDENTITY,
+        )

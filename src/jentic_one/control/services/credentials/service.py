@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
+from urllib.parse import urlsplit
 
 import structlog
 from pydantic import SecretStr
@@ -23,6 +24,7 @@ from jentic_one.control.repos import (
     CustomerAPIKeyRepository,
     OAuthAppRegistrationRepository,
     OAuthClientCredentialRepository,
+    OAuthTokenRepository,
     PermissionRuleSetRepository,
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
@@ -30,6 +32,7 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.oauth_client_credential_repo import UNSET as SCOPE_UNSET
 from jentic_one.control.repos.pending_import_lookup_repo import PendingImportLookupRepository
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
@@ -104,7 +107,7 @@ from jentic_one.shared.permissions.evaluation import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url, validate_upstream_url_async
 
 logger = structlog.get_logger()
 
@@ -130,6 +133,61 @@ _NON_EMPTY_UPDATE_FIELDS = (
     "aws_region",
     "aws_service",
 )
+# Secret update fields per credential type, and the boolean marker the audit
+# ``after`` snapshot carries when one is replaced (the value never is).
+_SECRET_ROTATION_MARKERS: dict[CredentialType, tuple[tuple[str, str], ...]] = {
+    CredentialType.BEARER_TOKEN: (("token", "token_rotated"),),
+    CredentialType.API_KEY: (("key", "key_rotated"),),
+    CredentialType.BASIC: (("password", "password_rotated"),),
+    CredentialType.OAUTH2: (("client_secret", "client_secret_rotated"),),
+    CredentialType.SIGV4: (
+        ("secret_access_key", "secret_access_key_rotated"),
+        ("session_token", "session_token_rotated"),
+    ),
+}
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _is_blank_str(value: str | None, *, missing: bool = False) -> bool:
+    """True for an empty or whitespace-only string; ``None`` counts iff *missing*."""
+    if value is None:
+        return missing
+    return not value.strip()
+
+
+def _validate_scope_tokens(scopes: Sequence[str]) -> None:
+    """Reject scope items that are not a single RFC 6749 scope-token.
+
+    Scopes are stored and sent space-joined, so an empty item or one holding
+    whitespace would silently vanish or split into several scopes.
+    """
+    for scope in scopes:
+        if not scope or any(ch.isspace() for ch in scope):
+            raise InvalidCredentialInputError(
+                f"Invalid scope {scope!r}: each scope must be non-empty and contain no whitespace"
+            )
+
+
+def _url_origin(url: str) -> tuple[str, str, int | None]:
+    """``(scheme, host, port)`` of *url*, with the scheme's default port filled in."""
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or "").lower(), port or _DEFAULT_PORTS.get(scheme)
+
+
+def _same_origin(new_url: str, stored_url: str | None) -> bool:
+    """Whether *new_url* keeps the origin of *stored_url* (no stored URL never matches)."""
+    return bool(stored_url) and _url_origin(new_url) == _url_origin(stored_url or "")
+
+
+def _no_client_config_error() -> InvalidCredentialInputError:
+    # A managed-provider credential can exist without stored client config; a
+    # 200 that persisted nothing would hide the dropped edit.
+    return InvalidCredentialInputError("This oauth2 credential has no client configuration to edit")
 
 
 class _UnmatchedScopeWarning(NamedTuple):
@@ -1172,9 +1230,16 @@ class CredentialService:
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
-        """Update/rotate a credential."""
+        """Update/rotate a credential.
+
+        Payload-only checks, including the DNS-resolving ``token_url``
+        validation, run before the write transaction opens so no resolver
+        call holds a DB write lock.
+        """
         self._validate_update_fields(payload)
+        validated_token_url = await self._validate_update_token_url(payload)
         access_filters = build_access_filters(identity, Credential)
+        oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
@@ -1182,7 +1247,7 @@ class CredentialService:
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
 
-            before_state = {"name": credential.name, "active": credential.active}
+            before_state = self._audit_snapshot(credential)
 
             wire_type = to_wire(StoredCredentialType(credential.type))
             if payload.type != wire_type:
@@ -1271,7 +1336,9 @@ class CredentialService:
                 or payload.token_url is not None
                 or payload.scopes is not None
             ):
-                await self._apply_oauth2_update(session, credential, payload)
+                oauth_token_dropped = await self._apply_oauth2_update(
+                    session, credential, payload, validated_token_url=validated_token_url
+                )
                 changed = True
 
             elif payload.type == CredentialType.SIGV4:
@@ -1326,7 +1393,10 @@ class CredentialService:
                 session, _registration_ids([credential])
             )
             view = self._to_redacted(credential, registration_names=names)
-            after_state = {"name": credential.name, "active": credential.active}
+            after_state = self._audit_snapshot(credential)
+            after_state.update(self._rotation_markers(payload))
+            if oauth_token_dropped:
+                after_state["oauth_token_dropped"] = True
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
         # is a no-op — no timestamp bump and no audit noise.
@@ -1500,15 +1570,37 @@ class CredentialService:
 
     async def _apply_oauth2_update(
         self,
+        # ``Any`` because control services must not import sqlalchemy
+        # (tests/arch/test_no_direct_db.py); the repos type it as AsyncSession.
         session: Any,
         credential: Credential,
         payload: CredentialUpdate,
-    ) -> None:
+        *,
+        validated_token_url: str | None,
+    ) -> bool:
         """Apply each provided OAuth2 client field independently.
 
-        A token_url or scopes edit must not depend on the caller re-sending
-        the client secret, and token_url is always SSRF-validated when sent.
-        ``scopes=[]`` clears the stored scopes; omitting it keeps them.
+        A token_url or scopes edit does not depend on the caller re-sending
+        the client secret; ``validated_token_url`` is the already
+        SSRF-validated ``payload.token_url``. ``scopes=[]`` clears the stored
+        scopes; omitting it keeps them.
+
+        A token_url whose origin (scheme, host, port) differs from the stored
+        one redirects where the stored client secret and refresh token are
+        sent, and neither can be read back by the caller. So a cross-origin
+        change requires ``client_secret`` in the same PATCH, and it drops the
+        live ``oauth_token`` row so the old grant is never presented to the
+        new origin; the credential must be reconnected. Same-origin path edits
+        apply on their own.
+
+        Raises ``InvalidCredentialInputError`` (400) when the credential uses
+        a shared app registration, when it has no stored client config (a
+        managed provider), on a cross-origin token_url without
+        ``client_secret``, and for device_code credentials on a
+        ``client_secret``, a cross-origin token_url, or a token_url/scopes edit
+        while a device flow is pending.
+
+        Returns ``True`` when the live ``oauth_token`` row was dropped.
         """
         credential_id = credential.id
         if credential.oauth_app_registration_id is not None:
@@ -1520,103 +1612,208 @@ class CredentialService:
                 "edit the registration instead"
             )
 
-        validated_token_url: str | None = None
-        if payload.token_url is not None:
-            try:
-                validated_token_url = validate_upstream_url(payload.token_url)
-            except ValueError as exc:
-                raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
-
         if StoredCredentialType(credential.type) == StoredCredentialType.OAUTH2_DEVICE_CODE:
-            # Device flow (RFC 8628) is a public client: there is no secret to
-            # rotate, and its client config lives on its own table.
-            if payload.client_secret is not None:
-                raise InvalidCredentialInputError(
-                    "client_secret is not used by device_code credentials"
-                )
-            device_fields: dict[str, Any] = {}
-            if validated_token_url is not None:
-                device_fields["token_url"] = validated_token_url
-            if payload.scopes is not None:
-                device_fields["requested_scopes"] = payload.scopes or None
-                # ``granted_scopes`` records what the last connect asked for
-                # and takes precedence in the redacted view; it is re-stamped
-                # by the next connect, so drop it or the edit is masked.
-                device_fields["granted_scopes"] = None
-            found = (
-                await DeviceAuthorizationCredentialRepository.update_fields(
-                    session, credential_id, **device_fields
-                )
-                is not None
+            await self._apply_device_code_update(
+                session, credential_id, payload, validated_token_url=validated_token_url
             )
-        else:
-            encrypted_secret = (
+            return False
+
+        occ = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
+        if occ is None:
+            raise _no_client_config_error()
+        cross_origin = validated_token_url is not None and not _same_origin(
+            validated_token_url, occ.token_url
+        )
+        if cross_origin and payload.client_secret is None:
+            raise InvalidCredentialInputError(
+                "Changing the token_url origin (scheme, host or port) requires "
+                "re-entering client_secret in the same request"
+            )
+        await OAuthClientCredentialRepository.update(
+            session,
+            credential_id,
+            encrypted_client_secret=(
                 self._ctx.encryption.encrypt(payload.client_secret)
                 if payload.client_secret is not None
                 else None
-            )
-            found = (
-                await OAuthClientCredentialRepository.update(
-                    session,
-                    credential_id,
-                    encrypted_client_secret=encrypted_secret,
-                    token_url=validated_token_url,
-                    scope=" ".join(payload.scopes) if payload.scopes else None,
-                    clear_scope=payload.scopes is not None and not payload.scopes,
-                )
-                is not None
-            )
-        if not found:
-            # A managed-provider credential can exist without stored client
-            # config; a 200 that persisted nothing would hide the dropped edit.
+            ),
+            token_url=validated_token_url,
+            scope=" ".join(payload.scopes) if payload.scopes is not None else SCOPE_UNSET,
+        )
+        if not cross_origin:
+            return False
+        dropped = await OAuthTokenRepository.delete_by_credential(session, credential_id)
+        if dropped:
+            # Re-load the eager relationship so the returned view reports the
+            # credential as disconnected.
+            await session.refresh(credential, attribute_names=["oauth_token"])
+        return dropped
+
+    @staticmethod
+    async def _apply_device_code_update(
+        session: Any,
+        credential_id: str,
+        payload: CredentialUpdate,
+        *,
+        validated_token_url: str | None,
+    ) -> None:
+        """Apply a device_code (RFC 8628) client-config edit; see ``_apply_oauth2_update``.
+
+        Device flow is a public client: there is no secret to rotate or to
+        re-enter as proof of ownership, so a cross-origin token_url is refused
+        outright. The device_code minted at the (unchanged) authorization
+        endpoint would otherwise be polled at, and redeemable by, the new
+        origin. A pending flow polls with the stored token_url and stamps the
+        confirmed scopes on success, so both stay frozen until it ends.
+        """
+        if payload.client_secret is not None:
             raise InvalidCredentialInputError(
-                "This oauth2 credential has no client configuration to edit"
+                "client_secret is not used by device_code credentials"
             )
+        dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
+        if dfc is None:
+            raise _no_client_config_error()
+        if dfc.encrypted_device_code is not None:
+            raise InvalidCredentialInputError(
+                "A device authorization flow is in progress for this credential; "
+                "retry once it completes or expires"
+            )
+        if validated_token_url is not None and not _same_origin(validated_token_url, dfc.token_url):
+            raise InvalidCredentialInputError(
+                "device_code credentials cannot move token_url to a different origin "
+                "(scheme, host or port); create a new credential instead"
+            )
+        device_fields: dict[str, Any] = {}
+        if validated_token_url is not None:
+            device_fields["token_url"] = validated_token_url
+        if payload.scopes is not None:
+            device_fields["requested_scopes"] = payload.scopes or None
+            # ``granted_scopes`` records what the last connect asked for and
+            # takes precedence in the redacted view; the next connect stamps
+            # it again, so drop it or the edit is masked. The live token keeps
+            # its own granted ``scope``.
+            device_fields["granted_scopes"] = None
+        await DeviceAuthorizationCredentialRepository.update_fields(
+            session, credential_id, **device_fields
+        )
+
+    @staticmethod
+    async def _validate_update_token_url(payload: CredentialUpdate) -> str | None:
+        """SSRF-validate an OAuth2 ``token_url`` edit; ``None`` when none is sent.
+
+        The single update-path call site for upstream-URL validation. It
+        resolves DNS off the event loop, so callers run it before opening the
+        write transaction.
+        """
+        if payload.type != CredentialType.OAUTH2 or payload.token_url is None:
+            return None
+        try:
+            return await validate_upstream_url_async(payload.token_url)
+        except ValueError as exc:
+            raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
+
+    @staticmethod
+    def _audit_snapshot(credential: Credential) -> dict[str, Any]:
+        """Non-secret state of a credential for the audit before/after diff.
+
+        Values are copied so a later in-place ORM mutation can't rewrite the
+        ``before`` snapshot. Secret material never appears here; rotations are
+        recorded as boolean markers by ``_rotation_markers``.
+        """
+        state: dict[str, Any] = {
+            "name": credential.name,
+            "active": credential.active,
+            "server_variables": (
+                dict(credential.server_variables) if credential.server_variables else None
+            ),
+        }
+        stored_type = StoredCredentialType(credential.type)
+        wire_type = to_wire(stored_type)
+        if wire_type == CredentialType.BASIC:
+            bc = credential.basic_credential
+            state["username"] = bc.username if bc else None
+        elif wire_type == CredentialType.OAUTH2:
+            if stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE:
+                dfc = credential.device_authorization_credential
+                state["token_url"] = dfc.token_url if dfc else None
+                state["scopes"] = list(dfc.requested_scopes or []) if dfc else []
+                state["granted_scopes"] = list(dfc.granted_scopes or []) if dfc else []
+            else:
+                occ = credential.oauth_client_credential
+                state["token_url"] = occ.token_url if occ else None
+                state["scopes"] = occ.scope.split() if occ and occ.scope else []
+        elif wire_type == CredentialType.SIGV4:
+            sig = credential.sigv4_credential
+            state["access_key_id"] = sig.access_key_id if sig else None
+            state["aws_region"] = sig.region if sig else None
+            state["aws_service"] = sig.service if sig else None
+            state["has_session_token"] = bool(sig and sig.encrypted_session_token)
+        return state
+
+    @staticmethod
+    def _rotation_markers(payload: CredentialUpdate) -> dict[str, bool]:
+        """``{"<secret>_rotated": True}`` for each secret the update replaced."""
+        return {
+            marker: True
+            for field, marker in _SECRET_ROTATION_MARKERS.get(payload.type, ())
+            if getattr(payload, field) is not None
+        }
 
     @staticmethod
     def _validate_update_fields(payload: CredentialUpdate) -> None:
-        """Reject empty name/secret/signing fields — "" is never a valid replacement.
+        """Reject blank name/secret/signing fields and malformed scope items.
 
-        ``None`` means "leave unchanged"; an empty string would otherwise be
-        stored and injected as e.g. ``X-Api-Key: `` or ``Basic :pw``.
+        ``None`` means "leave unchanged"; a blank string would otherwise be
+        stored and injected as e.g. ``X-Api-Key:  `` or ``Basic :pw``.
         """
         for field in _NON_EMPTY_UPDATE_FIELDS:
-            if getattr(payload, field) == "":
+            if _is_blank_str(getattr(payload, field)):
                 raise InvalidCredentialInputError(f"Field '{field}' must not be empty")
+        if payload.scopes is not None:
+            _validate_scope_tokens(payload.scopes)
 
     def _validate_create_fields(self, payload: CredentialCreate, *, managed: bool) -> None:
-        """Validate required fields per type before touching encryption/DB."""
+        """Validate required fields per type before touching encryption/DB.
+
+        A whitespace-only value counts as missing, as on update.
+        """
+        if payload.scopes is not None:
+            _validate_scope_tokens(payload.scopes)
         if payload.type == CredentialType.BEARER_TOKEN:
-            if not payload.token:
+            if _is_blank_str(payload.token, missing=True):
                 raise InvalidCredentialInputError("Field 'token' is required for bearer_token")
         elif payload.type == CredentialType.API_KEY:
-            if not payload.key:
+            if _is_blank_str(payload.key, missing=True):
                 raise InvalidCredentialInputError("Field 'key' is required for api_key")
-            if not payload.location:
+            if _is_blank_str(payload.location, missing=True):
                 raise InvalidCredentialInputError("Field 'location' is required for api_key")
-            if not payload.field_name:
+            if _is_blank_str(payload.field_name, missing=True):
                 raise InvalidCredentialInputError("Field 'field_name' is required for api_key")
         elif payload.type == CredentialType.BASIC:
-            if not payload.username:
+            if _is_blank_str(payload.username, missing=True):
                 raise InvalidCredentialInputError("Field 'username' is required for basic")
-            if not payload.password:
+            if _is_blank_str(payload.password, missing=True):
                 raise InvalidCredentialInputError("Field 'password' is required for basic")
         elif payload.type == CredentialType.OAUTH2 and not managed:
-            if not payload.token_url:
+            if _is_blank_str(payload.token_url, missing=True):
                 raise InvalidCredentialInputError("Field 'token_url' is required for oauth2")
-            if not payload.client_id:
+            if _is_blank_str(payload.client_id, missing=True):
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
             # Device flow (RFC 8628) is a public-client flow — no secret.
-            if payload.grant_type != "device_code" and not payload.client_secret:
+            if payload.grant_type != "device_code" and _is_blank_str(
+                payload.client_secret, missing=True
+            ):
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
         elif payload.type == CredentialType.SIGV4:
-            if not payload.access_key_id:
+            if _is_blank_str(payload.access_key_id, missing=True):
                 raise InvalidCredentialInputError("Field 'access_key_id' is required for sigv4")
-            if not payload.secret_access_key:
+            if _is_blank_str(payload.secret_access_key, missing=True):
                 raise InvalidCredentialInputError("Field 'secret_access_key' is required for sigv4")
-            if not payload.aws_region:
+            if _is_blank_str(payload.aws_region, missing=True):
                 raise InvalidCredentialInputError("Field 'aws_region' is required for sigv4")
-            if not payload.aws_service:
+            if _is_blank_str(payload.aws_service, missing=True):
                 raise InvalidCredentialInputError("Field 'aws_service' is required for sigv4")
 
     @staticmethod
