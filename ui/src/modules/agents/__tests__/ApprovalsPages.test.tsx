@@ -100,7 +100,10 @@ describe('Approvals pages', () => {
 		expect(await screen.findByLabelText('1 call awaiting your approval')).toBeInTheDocument();
 		await userEvent.type(await screen.findByLabelText('Reason (optional)'), 'not this one');
 		await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
-		expect(await screen.findByText('not this one')).toBeInTheDocument();
+		// Anchor on the Outcome card, as the approve test does: it renders only
+		// once the decision lands, so the reason below is the recorded one.
+		expect(await screen.findByText('Decided by')).toBeInTheDocument();
+		expect(screen.getByText('not this one')).toBeInTheDocument();
 		await waitFor(() =>
 			expect(screen.queryByLabelText(/awaiting your approval/)).not.toBeInTheDocument(),
 		);
