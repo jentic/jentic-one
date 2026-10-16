@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.aws.sigv4 import SigV4Material
+from jentic_one.shared.events.credential_access import PendingCredentialAccess
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,12 @@ class InjectedAuth:
     execution record, and join the ``CREDENTIAL_ACCESSED`` audit event to an
     execution via ``trace_id``. Both are ``None`` when no credential was used
     (inline auth, credential-less API, or a resolve-fail before injection).
+
+    ``access_audit`` is set only when the caller asked the injector to defer
+    the ``CREDENTIAL_ACCESSED`` event: the caller then owns writing it — in the
+    execution record's transaction, with
+    :meth:`PendingCredentialAccess.record_standalone` as the exit guard.
+    ``None`` means the event was already committed (or no credential was used).
     """
 
     headers: dict[str, str]
@@ -42,6 +49,7 @@ class InjectedAuth:
     credential_id: str | None = None
     credential_name: str | None = None
     signing: SigV4Material | None = None
+    access_audit: PendingCredentialAccess | None = None
 
 
 class CredentialInjector(Protocol):

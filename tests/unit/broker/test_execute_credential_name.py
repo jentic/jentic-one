@@ -83,9 +83,7 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
         ),
     )
     audit = AsyncMock(return_value="evt_1")
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     await CredentialService(_ctx()).inject(
         api_vendor="stripe",
@@ -142,9 +140,7 @@ async def test_credential_name_forwarded_when_header_present(
         ),
     )
     audit = AsyncMock(return_value="evt_1")
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     await CredentialService(_ctx()).inject(
         api_vendor="stripe",

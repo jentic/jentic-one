@@ -294,6 +294,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            credential_access=None,
         )
 
 
@@ -339,6 +340,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            credential_access=None,
         )
 
 

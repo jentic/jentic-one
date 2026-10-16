@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import secrets
 import unicodedata
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -156,6 +157,7 @@ async def emit_event(
     actor_id: str | None = None,
     actor_type: str | None = None,
     tags: set[EventTag] | None = None,
+    created_at: datetime | None = None,
 ) -> str:
     """Create an event within the caller's transaction and return its ID.
 
@@ -185,6 +187,7 @@ async def emit_event(
         created_by=created_by,
         actor_id=actor_id,
         actor_type=actor_type,
+        created_at=created_at,
     )
     # NB: this forwards the event to the sink *before* the caller's transaction
     # commits (``sink.record`` is a synchronous queue put). If the enclosing
@@ -242,6 +245,7 @@ async def emit_credential_access(
     credential_name: str | None = None,
     actor_name: str | None = None,
     trace_id: str | None = None,
+    created_at: datetime | None = None,
 ) -> str:
     """Emit a credential-access audit event and return its ID.
 
@@ -268,6 +272,9 @@ async def emit_credential_access(
     tuple alone is three ``String(100)`` columns, which with two named entities
     would otherwise overflow ``Event.summary`` and take down credential
     injection for a cosmetic reason.
+
+    ``created_at`` is the moment of access when the event is written after the
+    fact (see :class:`~jentic_one.shared.events.credential_access.PendingCredentialAccess`).
     """
     api = summary_text(
         "/".join(part for part in (api_vendor, api_name, api_version) if part) or api_vendor
@@ -283,6 +290,7 @@ async def emit_credential_access(
         trace_id=trace_id,
         actor_id=actor_id,
         actor_type=actor_type,
+        created_at=created_at,
         data={
             "credential_id": credential_id,
             "provider": provider,

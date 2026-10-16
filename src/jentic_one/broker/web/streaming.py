@@ -31,6 +31,7 @@ from contextlib import AsyncExitStack
 from fastapi import Response
 from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from jentic_one.broker.adapters.runners.base import (
     RunnerRequest,
@@ -48,6 +49,7 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.shared.broker.execution import StreamingOutcome
 
 __all__ = [
+    "ExitGuardedResponse",
     "StreamingOutcome",
     "guarded_body",
     "open_streaming_response",
@@ -144,6 +146,33 @@ def _metadata_headers(
     if status_code in (401, 403) and ctx_req.has_server_variable:
         metadata[JenticHeader.HINT.value] = REGION_MISMATCH_HINT
     return metadata
+
+
+class ExitGuardedResponse(Response):
+    """Delegate to ``inner`` and always await ``on_exit`` once it has finished.
+
+    Starlette runs a response's ``BackgroundTask`` only when the body was sent
+    without raising: a mid-stream upstream error, a transfer-deadline abort or a
+    client disconnect surfacing as an exception skip it. ``on_exit`` runs on
+    every exit path (shielded, so a cancellation cannot interrupt it), after
+    the inner response's own background task when that one ran.
+    """
+
+    def __init__(self, inner: Response, on_exit: Callable[[], Awaitable[None]]) -> None:
+        # ``Response.__init__`` would render a body; this wrapper has none.
+        self._inner = inner
+        self._on_exit = on_exit
+        self.status_code = inner.status_code
+        self.raw_headers = inner.raw_headers
+        self.background = None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await self._inner(scope, receive, send)
+        finally:
+            await asyncio.shield(self._on_exit())
+        if self.background is not None:
+            await self.background()
 
 
 async def open_streaming_response(

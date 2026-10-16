@@ -53,11 +53,11 @@ from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProt
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import (
-    emit_credential_access,
     emit_event_best_effort,
     summary_label,
     valid_trace_id_or_none,
 )
+from jentic_one.shared.events.credential_access import PendingCredentialAccess
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
@@ -100,6 +100,7 @@ class CredentialService:
         preresolved: ResolvedCredential | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        defer_access_audit: bool = False,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -128,6 +129,14 @@ class CredentialService:
         path already ran :meth:`select` (it needed the credential id for rule
         evaluation *before* any secret is decrypted), so injection reuses that
         result instead of resolving twice.
+
+        ``defer_access_audit`` hands the ``CREDENTIAL_ACCESSED`` event back on
+        ``InjectedAuth.access_audit`` instead of committing it here, so the
+        caller can write it in the execution record's transaction (one admin
+        write session per call, #1702). The caller then owns the write on every
+        exit path (see :class:`PendingCredentialAccess`). Off by default: the
+        event is committed before the material is returned, and a failed audit
+        write fails the injection.
         """
         if not api_vendor:
             return _EMPTY
@@ -205,27 +214,28 @@ class CredentialService:
                     ),
                 ) from exc
 
-            async with self._ctx.admin_db.transaction() as session:
-                await emit_credential_access(
-                    session,
-                    actor_id=identity.sub,
-                    actor_type=identity.actor_type.value,
-                    credential_id=resolved.credential_id,
-                    provider=resolved.provider,
-                    wire_type=resolved.wire_type.value,
-                    api_vendor=api.vendor,
-                    api_name=api.name,
-                    api_version=api.version,
-                    credential_owner=resolved.created_by,
-                    credential_name=resolved.name,
-                    # The resolver that authenticated this caller already read
-                    # the agent row, so the summary can name the actor the way
-                    # it names the credential (#1543); empty degrades to the id.
-                    actor_name=identity.actor_name,
-                    # Sanitised: emit_event raises on a malformed trace_id, and
-                    # a 500 here would fail the whole execute request (#903).
-                    trace_id=valid_trace_id_or_none(trace_id),
-                )
+            access = PendingCredentialAccess(
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                credential_id=resolved.credential_id,
+                provider=resolved.provider,
+                wire_type=resolved.wire_type.value,
+                api_vendor=api.vendor,
+                api_name=api.name,
+                api_version=api.version,
+                credential_owner=resolved.created_by,
+                credential_name=resolved.name,
+                # The resolver that authenticated this caller already read
+                # the agent row, so the summary can name the actor the way
+                # it names the credential (#1543); empty degrades to the id.
+                actor_name=identity.actor_name,
+                # Sanitised: emit_event raises on a malformed trace_id, and
+                # a 500 here would fail the whole execute request (#903).
+                trace_id=valid_trace_id_or_none(trace_id),
+            )
+            if not defer_access_audit:
+                async with self._ctx.admin_db.transaction() as session:
+                    await access.write(session)
             return InjectedAuth(
                 headers=result.headers,
                 query_params=result.query_params,
@@ -234,6 +244,7 @@ class CredentialService:
                 credential_id=resolved.credential_id,
                 credential_name=resolved.name,
                 signing=result.signing,
+                access_audit=access if defer_access_audit else None,
             )
         except CredentialNotProvisionedError as exc:
             # Defensive: resolve-phase mapping lives in ``_resolve_mapped``; kept

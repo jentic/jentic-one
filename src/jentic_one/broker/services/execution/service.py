@@ -35,6 +35,7 @@ from jentic_one.shared.events import (
     emit_event,
     valid_trace_id_or_none,
 )
+from jentic_one.shared.events.credential_access import PendingCredentialAccess
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
@@ -131,6 +132,7 @@ async def run_execution(
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
+    credential_access: PendingCredentialAccess | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -143,6 +145,12 @@ async def run_execution(
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
     ``executions`` row matches; the sync router omits it and a fresh id is minted.
+
+    ``credential_access`` is the deferred ``CREDENTIAL_ACCESSED`` audit event of
+    the credential injected into ``headers``: it is written first in
+    ``session`` on both the success and the FAILED branch, so it commits with
+    the execution record. The caller keeps the exit guard for every path that
+    never reaches persistence.
     """
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
@@ -191,6 +199,8 @@ async def run_execution(
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
+        if credential_access is not None:
+            await credential_access.emit(session)
         await _persist(
             ctx_req,
             session=session,
@@ -257,6 +267,8 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
+    if credential_access is not None:
+        await credential_access.emit(session)
     await _persist(
         ctx_req,
         session=session,
@@ -347,12 +359,14 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    credential_access: PendingCredentialAccess | None = None,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
     Called from the background task after the streaming response body completes
     (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    buffered path for observability parity. ``credential_access`` (the deferred
+    ``CREDENTIAL_ACCESSED`` event) is written first, in the same transaction.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
@@ -366,6 +380,8 @@ async def persist_streaming_execution(
         stream=True,
     )
 
+    if credential_access is not None:
+        await credential_access.emit(session)
     await record_execution(
         session,
         execution_id=execution_id,

@@ -31,7 +31,14 @@ class EventRepository:
         created_by: str | None,
         actor_id: str | None = None,
         actor_type: str | None = None,
+        created_at: datetime | None = None,
     ) -> Event:
+        """Add + flush one event; ``created_at`` overrides the flush-time default.
+
+        The override lets an emitter that writes an event after the fact (the
+        deferred ``credential.accessed`` audit) keep the moment the event
+        actually happened as its timestamp.
+        """
         event = Event(
             type=type,
             severity=severity,
@@ -46,6 +53,8 @@ class EventRepository:
             actor_id=actor_id,
             actor_type=actor_type,
         )
+        if created_at is not None:
+            event.created_at = created_at
         session.add(event)
         await session.flush()
         return event

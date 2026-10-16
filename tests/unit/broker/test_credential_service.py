@@ -578,9 +578,7 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
         ),
     )
     audit = AsyncMock(return_value="evt_1")
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     result = await _service(_ctx()).inject(
         api_vendor="stripe",
@@ -633,9 +631,7 @@ async def test_inject_with_invalid_trace_id_emits_uncorrelated_audit_event(
         ),
     )
     audit = AsyncMock(return_value="evt_1")
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     result = await _service(_ctx()).inject(
         api_vendor="stripe",
@@ -656,9 +652,7 @@ async def test_failed_resolution_emits_no_audit_event(monkeypatch: pytest.Monkey
     """A resolution failure must not emit a credential-access audit event."""
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
     audit = AsyncMock()
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     with pytest.raises(CredentialNotProvisionedError):
         await _service(_ctx()).inject(
@@ -751,9 +745,7 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
 
     monkeypatch.setattr("jentic_one.broker.services.credentials.orchestrator.inject_auth", _boom)
     access = AsyncMock()
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", access
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", access)
     emit_evt = AsyncMock(return_value="evt_1")
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.emit_event_best_effort", emit_evt
@@ -797,9 +789,7 @@ async def test_access_event_names_the_credential_owner(
         ),
     )
     audit = AsyncMock(return_value="evt_1")
-    monkeypatch.setattr(
-        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
-    )
+    monkeypatch.setattr("jentic_one.shared.events.credential_access.emit_credential_access", audit)
 
     await _service(_ctx()).inject(
         api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY

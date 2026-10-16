@@ -93,7 +93,7 @@ from jentic_one.broker.web.deps import (
     IdempotencyStoreDep,
     RequireExecuteAccess,
 )
-from jentic_one.broker.web.streaming import StreamingOutcome
+from jentic_one.broker.web.streaming import ExitGuardedResponse, StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.protocols import (
@@ -111,6 +111,7 @@ from jentic_one.shared.events import (
     mint_trace_id,
     valid_trace_id_or_none,
 )
+from jentic_one.shared.events.credential_access import PendingCredentialAccess
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -164,8 +165,13 @@ async def _persist_streaming_outcome(
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
+    credential_access: PendingCredentialAccess | None = None,
 ) -> None:
     """Best-effort persistence of a streaming execution record.
+
+    ``credential_access`` (the deferred ``CREDENTIAL_ACCESSED`` event) commits
+    in the same transaction; when that transaction fails, the streaming
+    handler's exit guard still writes it on its own.
 
     Extracted so unit tests can exercise the real logic without invoking the full
     handler.
@@ -193,6 +199,7 @@ async def _persist_streaming_outcome(
                 actor_type=actor_type,
                 origin=origin,
                 security_config=ctx.config.security,
+                credential_access=credential_access,
             )
     except Exception:
         _streaming_persist_failures.add(1)
@@ -390,6 +397,11 @@ async def _resolve_credentials(
     resolves nothing. ``credential_id`` (``Jentic-Credential-Id``)
     disambiguates *within* that boundary — it can never select a credential
     outside it.
+
+    The ``CREDENTIAL_ACCESSED`` event comes back deferred on
+    ``access_audit``: both sync paths commit it with the execution record
+    (one admin write session per call) and guard every other exit with
+    ``record_standalone``.
     """
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
@@ -403,6 +415,7 @@ async def _resolve_credentials(
         preresolved=preresolved,
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
+        defer_access_audit=True,
     )
 
 
@@ -683,44 +696,16 @@ async def _handle(
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
 
-    credential_name = request.headers.get("jentic-credential-name")
-    injection = await _resolve_credentials(
+    outcome = await _execute_buffered(
+        request,
         ctx_req,
         ctx,
         identity,
-        credential_name,
+        runner,
+        body,
         preresolved=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
-    ctx_req.credential_id = injection.credential_id
-    ctx_req.credential_name = injection.credential_name
-    if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
-
-    async with ctx.admin_db.transaction() as session:
-        broker = _resolve_broker(request, runner)
-        outcome = await run_execution(
-            ctx_req,
-            body=body,
-            headers=forwarded,
-            session=session,
-            timeout=ctx.config.broker.upstream_timeout_s,
-            broker=broker,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type.value,
-            origin=identity.origin.value,
-            security_config=ctx.config.security,
-            signing=injection.signing,
-        )
-
     response = _assemble_response(outcome, ctx_req)
     if idempotency is not None and idem_key and fp is not None:
         await idempotency.complete(
@@ -732,6 +717,78 @@ async def _handle(
             body=outcome.result.body,
         )
     return response
+
+
+async def _execute_buffered(
+    request: Request,
+    ctx_req: ExecuteRequestContext,
+    ctx: Context,
+    identity: Identity,
+    runner: UpstreamRunner,
+    body: bytes | None,
+    *,
+    preresolved: ResolvedCredential | None = None,
+    allowed_credential_ids: list[str] | None = None,
+) -> ExecutionOutcome:
+    """Inject credentials, run the buffered call and persist it in one admin write.
+
+    The deferred ``CREDENTIAL_ACCESSED`` event, the execution record and its
+    lifecycle event share one admin transaction; the exit guard writes the
+    event on its own for every path that never commits that transaction.
+    """
+    credential_name = request.headers.get("jentic-credential-name")
+    injection = await _resolve_credentials(
+        ctx_req,
+        ctx,
+        identity,
+        credential_name,
+        preresolved=preresolved,
+        allowed_credential_ids=allowed_credential_ids,
+        credential_id=request.headers.get("jentic-credential-id"),
+    )
+    access_audit = injection.access_audit
+    try:
+        ctx_req.upstream_url, auth_headers = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
+        ctx_req.credential_id = injection.credential_id
+        ctx_req.credential_name = injection.credential_name
+        if injection.server_variables or ctx_req.server_variable_defaults:
+            try:
+                validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
+            except ValueError as exc:
+                raise UpstreamUrlNotAllowedError(
+                    detail=str(exc), type="invalid_upstream_url"
+                ) from exc
+        forwarded = forward_headers(request.headers, auth_headers)
+
+        # One admin write session: the deferred CREDENTIAL_ACCESSED event, the
+        # execution record and its lifecycle event commit together — on the
+        # FAILED branch too (run_execution commits before re-raising).
+        async with ctx.admin_db.transaction() as session:
+            broker = _resolve_broker(request, runner)
+            outcome = await run_execution(
+                ctx_req,
+                body=body,
+                headers=forwarded,
+                session=session,
+                timeout=ctx.config.broker.upstream_timeout_s,
+                broker=broker,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                origin=identity.origin.value,
+                security_config=ctx.config.security,
+                signing=injection.signing,
+                credential_access=access_audit,
+            )
+    finally:
+        # Exit guard: any path that did not commit the event with an execution
+        # record (a raise before persistence, a rolled-back transaction, a
+        # cancellation) writes it on its own. A no-op on the committed path.
+        if access_audit is not None:
+            await access_audit.record_standalone(ctx.admin_db)
+
+    return outcome
 
 
 async def _handle_streaming(
@@ -767,49 +824,70 @@ async def _handle_streaming(
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
-    ctx_req.credential_id = injection.credential_id
-    ctx_req.credential_name = injection.credential_name
-    if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
+    access_audit = injection.access_audit
+    try:
+        ctx_req.upstream_url, auth_headers = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
+        ctx_req.credential_id = injection.credential_id
+        ctx_req.credential_name = injection.credential_name
+        if injection.server_variables or ctx_req.server_variable_defaults:
+            try:
+                validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
+            except ValueError as exc:
+                raise UpstreamUrlNotAllowedError(
+                    detail=str(exc), type="invalid_upstream_url"
+                ) from exc
+        forwarded = forward_headers(request.headers, auth_headers)
 
-    execution_id = mint_execution_id()
-    started_at = datetime.now(UTC)
-    runner_request = RunnerRequest(
-        method=ctx_req.method,
-        url=ctx_req.upstream_url,
-        headers=forwarded,
-        body=body,
-        timeout_s=ctx.config.broker.upstream_timeout_s,
-        signing=injection.signing,
-    )
-
-    async def _persist_callback(outcome: StreamingOutcome) -> None:
-        await _persist_streaming_outcome(
-            outcome,
-            ctx,
-            ctx_req,
-            started_at,
-            identity.sub,
-            identity.actor_type.value,
-            origin=identity.origin.value,
+        execution_id = mint_execution_id()
+        started_at = datetime.now(UTC)
+        runner_request = RunnerRequest(
+            method=ctx_req.method,
+            url=ctx_req.upstream_url,
+            headers=forwarded,
+            body=body,
+            timeout_s=ctx.config.broker.upstream_timeout_s,
+            signing=injection.signing,
         )
 
-    broker = _resolve_broker(request, runner)
-    return await broker.execute_streaming(
-        runner,
-        runner_request,
-        ctx_req,
-        execution_id,
-        transfer_deadline_s=upstream_cfg.transfer_deadline_s,
-        background_callback=_persist_callback,
-    )
+        async def _persist_callback(outcome: StreamingOutcome) -> None:
+            await _persist_streaming_outcome(
+                outcome,
+                ctx,
+                ctx_req,
+                started_at,
+                identity.sub,
+                identity.actor_type.value,
+                origin=identity.origin.value,
+                credential_access=access_audit,
+            )
+
+        broker = _resolve_broker(request, runner)
+        response = await broker.execute_streaming(
+            runner,
+            runner_request,
+            ctx_req,
+            execution_id,
+            transfer_deadline_s=upstream_cfg.transfer_deadline_s,
+            background_callback=_persist_callback,
+        )
+    except BaseException:
+        # No response will be sent (connect failure, open circuit, a raise
+        # before the call): nothing else will write the deferred event.
+        if access_audit is not None:
+            await access_audit.record_standalone(ctx.admin_db)
+        raise
+    if access_audit is None:
+        return response
+
+    async def _audit_exit_guard() -> None:
+        # A no-op when the persistence callback committed the event; covers a
+        # body that raised (the background task is then skipped) and a failed
+        # persistence transaction.
+        await access_audit.record_standalone(ctx.admin_db)
+
+    return ExitGuardedResponse(response, _audit_exit_guard)
 
 
 def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:
