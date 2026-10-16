@@ -1,0 +1,555 @@
+{
+  "uid": "jentic-broker-perf",
+  "title": "Broker perf",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "jentic",
+    "perf"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Broker execution duration (server-side)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(broker_execution_duration_ms_milliseconds_bucket[1m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(broker_execution_duration_ms_milliseconds_bucket[1m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP server p99 by surface",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, job) (rate(http_server_duration_milliseconds_bucket[1m])))",
+          "legendFormat": "{{job}} p99"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(http_server_duration_milliseconds_bucket[1m])))",
+          "legendFormat": "{{job}} p50"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Request rate by surface / status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum by (job, http_status_code) (rate(http_server_duration_milliseconds_count[1m]))",
+          "legendFormat": "{{job}} {{http_status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Broker in-flight / shed / rate-limited",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(broker_admission_in_flight)",
+          "legendFormat": "in-flight"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_rate_limited_total[1m]))",
+          "legendFormat": "rate-limited/s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_deadline_exceeded_total[1m]))",
+          "legendFormat": "deadline exceeded/s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Resilience: retries, breaker",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_retry_attempts_total[1m]))",
+          "legendFormat": "retry attempts/s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_retry_exhausted_total[1m]))",
+          "legendFormat": "retry exhausted/s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_circuit_open_total[1m]))",
+          "legendFormat": "breaker opens/s"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_circuit_would_block_total[1m]))",
+          "legendFormat": "breaker blocks/s"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Credential-binding cache hit ratio",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_credential_binding_cache_hits_total[1m])) / (sum(rate(broker_credential_binding_cache_hits_total[1m])) + sum(rate(broker_credential_binding_cache_misses_total[1m])))",
+          "legendFormat": "hit ratio"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Postgres connections by role / state",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum by (usename, state) (pg_stat_activity_count{datname=\"jentic\"})",
+          "legendFormat": "{{usename}} {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Postgres commits / rollbacks per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "rate(pg_stat_database_xact_commit{datname=\"jentic\"}[1m])",
+          "legendFormat": "commits/s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"jentic\"}[1m])",
+          "legendFormat": "rollbacks/s"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Process CPU by surface",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "rate(process_cpu_seconds_total[1m])",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Process RSS by surface",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "process_resident_memory_bytes",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Spec import duration",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ingest_duration_ms_milliseconds_bucket[1m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ingest_duration_ms_milliseconds_bucket[1m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Streaming persist failures",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "perf-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "perf-prom"
+          },
+          "expr": "sum(rate(broker_streaming_execution_persist_failures_total[1m]))",
+          "legendFormat": "persist failures/s"
+        }
+      ]
+    }
+  ]
+}

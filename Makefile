@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-build perf-up perf-provision perf-overhead perf-dbcost perf-ui perf-load perf-obs perf-report perf-down help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -296,3 +296,49 @@ release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGIST
 		echo "Prerelease version — not moving :latest"; \
 		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA)) [$(RELEASE_PLATFORMS)]"; \
 	fi
+
+# ─── Broker perf / load suite (tests/perf, see tests/perf/README.md) ──────
+# Local-only: a self-contained compose stack (Postgres + app + broker + the
+# smoke-upstream harness) with in-network load generators. Never run in CI.
+PERF_COMPOSE := docker compose -f tests/perf/docker-compose.perf.yaml
+PERF_USERS ?= 50
+PERF_SPAWN ?= 10
+PERF_TIME ?= 2m
+PERF_CLASSES ?= BrokerEchoUser
+
+perf-build: build-base ## Perf: build jentic-one/app:perf from this checkout
+	docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:perf .
+
+perf-up: ## Perf: start db + migrate + app + broker + upstream harness
+	@mkdir -p tests/perf/results
+	$(PERF_COMPOSE) up -d --wait postgres migrate app broker smoke-upstream
+
+perf-provision: ## Perf: vendors, credentials, bindings, callers -> tests/perf/results/.perf-env.json
+	uv run python -m tests.perf.provision
+
+perf-overhead: ## Perf: oha open-loop A/B, direct vs via broker (ARGS="--quick" / "--only a,b")
+	uv run python -m tests.perf.bench_overhead $(ARGS)
+
+perf-dbcost: ## Perf: per-call statements/transactions per DB plane (pg_stat_statements)
+	uv run python -m tests.perf.dbcost --all $(ARGS)
+
+perf-ui: ## Perf: Locust web UI (master + worker) on http://127.0.0.1:8089
+	$(PERF_COMPOSE) --profile load up -d --scale locust-worker=$${PERF_WORKERS_LOCUST:-2} locust-master locust-worker
+	@echo "Locust UI: http://127.0.0.1:8089"
+
+perf-load: ## Perf: headless Locust run (PERF_CLASSES, PERF_USERS, PERF_SPAWN, PERF_TIME, PERF_SHAPE)
+	@stamp=$$(date -u +%Y%m%dT%H%M%SZ); \
+	$(PERF_COMPOSE) --profile load run --rm -T --no-deps locust-master \
+		-f /work/tests/perf/locustfile.py --headless -u $(PERF_USERS) -r $(PERF_SPAWN) -t $(PERF_TIME) \
+		--only-summary --csv /work/tests/perf/results/$$stamp-locust \
+		--html /work/tests/perf/results/$$stamp-locust.html $(PERF_CLASSES)
+
+perf-obs: ## Perf: Prometheus (:19090) + Grafana (:13000, "Broker perf" dashboard)
+	$(PERF_COMPOSE) --profile obs up -d --wait prometheus grafana postgres-exporter
+	@echo "Grafana: http://127.0.0.1:13000/d/jentic-broker-perf"
+
+perf-report: ## Perf: render tests/perf/results/*.json into results/report.html
+	uv run python -m tests.perf.report
+
+perf-down: ## Perf: stop the perf stack and wipe its volumes
+	$(PERF_COMPOSE) --profile load --profile tools --profile obs down -v --remove-orphans

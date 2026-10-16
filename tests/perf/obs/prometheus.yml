@@ -1,0 +1,24 @@
+# Scrapes the perf stack (profile `obs`). The surfaces mount the Prometheus
+# exporter at /metrics/ (trailing slash: Starlette redirects the bare path).
+# NOTE: the standalone broker's /metrics mount is currently shadowed by its
+# catch-all route (answers 401) — broker panels stay empty until that's fixed;
+# the app and Postgres targets work.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: app
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["app:8000"]
+  - job_name: broker
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["broker:8000"]
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
