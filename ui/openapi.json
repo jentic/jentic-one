@@ -17745,12 +17745,12 @@
             "group_by": "api",
             "since": 1767225600,
             "stats": {
-              "active_now": 0,
+              "active_now": 2,
               "avg_ms": 245.6,
               "failed": 80,
               "p50_ms": 180.0,
               "p95_ms": 720.0,
-              "pending": 0,
+              "pending": 3,
               "success": 1200,
               "total": 1280
             },
@@ -17823,12 +17823,12 @@
             "$ref": "#/components/schemas/UsageStatsBlock",
             "examples": [
               {
-                "active_now": 0,
+                "active_now": 2,
                 "avg_ms": 245.6,
                 "failed": 80,
                 "p50_ms": 180.0,
                 "p95_ms": 720.0,
-                "pending": 0,
+                "pending": 3,
                 "success": 1200,
                 "total": 1280
               }
@@ -17887,21 +17887,21 @@
         "description": "Overall usage statistics for a time window.",
         "examples": [
           {
-            "active_now": 0,
+            "active_now": 2,
             "avg_ms": 245.6,
             "failed": 80,
             "p50_ms": 180.0,
             "p95_ms": 720.0,
-            "pending": 0,
+            "pending": 3,
             "success": 1200,
             "total": 1280
           }
         ],
         "properties": {
           "active_now": {
-            "description": "Reserved count of in-flight executions; currently always 0.",
+            "description": "Number of asynchronous executions a worker is running right now, regardless of the window. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.",
             "examples": [
-              0
+              2
             ],
             "title": "Active Now",
             "type": "integer"
@@ -17953,9 +17953,9 @@
             "title": "P95 Ms"
           },
           "pending": {
-            "description": "Reserved count of pending executions; currently always 0.",
+            "description": "Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.",
             "examples": [
-              0
+              3
             ],
             "title": "Pending",
             "type": "integer"
@@ -43607,12 +43607,12 @@
                   "group_by": "api",
                   "since": 1767225600,
                   "stats": {
-                    "active_now": 0,
+                    "active_now": 2,
                     "avg_ms": 245.6,
                     "failed": 80,
                     "p50_ms": 180.0,
                     "p95_ms": 720.0,
-                    "pending": 0,
+                    "pending": 3,
                     "success": 1200,
                     "total": 1280
                   },
@@ -49926,7 +49926,7 @@
             }
           },
           {
-            "description": "Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.",
+            "description": "Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.",
             "examples": {
               "example": {
                 "summary": "Example query value for `invite_state`",
@@ -49945,7 +49945,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.",
+              "description": "Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.",
               "examples": [
                 "pending"
               ],

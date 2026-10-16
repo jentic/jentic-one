@@ -23,9 +23,11 @@ import pytest
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import ExecutionRecordRepository
-from jentic_one.admin.repos.monitoring_repo import MonitoringRepository
+from jentic_one.admin.repos.monitoring_repo import MonitoringRepository, UsageQueryFilters
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models import JobKind, JobStatus
 
 pytestmark = pytest.mark.integration
 
@@ -38,6 +40,40 @@ async def clean_execution_records(admin_db: DatabaseSession) -> AsyncGenerator[N
     yield
     async with admin_db.session() as session:
         await session.execute(delete(ExecutionRecord))
+        await session.commit()
+
+
+@pytest.fixture()
+async def clean_jobs(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+    async with admin_db.session() as session:
+        await session.execute(delete(Job))
+        await session.commit()
+    yield
+    async with admin_db.session() as session:
+        await session.execute(delete(Job))
+        await session.commit()
+
+
+async def _seed_job(
+    admin_db: DatabaseSession,
+    created_at: datetime,
+    status: JobStatus,
+    *,
+    kind: JobKind = JobKind.EXECUTION,
+    created_by: str = "usr_test",
+    api_vendor: str = "github",
+    api_name: str = "rest",
+) -> None:
+    async with admin_db.session() as session:
+        session.add(
+            Job(
+                kind=kind,
+                status=status,
+                created_at=created_at,
+                created_by=created_by,
+                payload={"api_vendor": api_vendor, "api_name": api_name},
+            )
+        )
         await session.commit()
 
 
@@ -260,3 +296,71 @@ async def test_grouped_top_by_agent_concat_key(
     # The agent key is `actor_type/actor_id` — built with `||` concat so it works
     # on SQLite (Postgres-only `concat()` used to break this on SQLite).
     assert top[0].key == "user/usr_test"
+
+
+async def test_overall_stats_counts_unfinished_execution_jobs(
+    admin_db: DatabaseSession, clean_execution_records: None, clean_jobs: None
+) -> None:
+    """``pending`` counts unfinished execution jobs in the window; ``active_now`` running ones."""
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=1)
+    until = now + timedelta(minutes=1)
+    await _seed(admin_db, now, "completed", duration_ms=100)
+
+    # In the window: two unfinished, plus finished and non-execution jobs that never count.
+    await _seed_job(admin_db, now - timedelta(minutes=5), JobStatus.QUEUED)
+    await _seed_job(admin_db, now - timedelta(minutes=4), JobStatus.RUNNING)
+    for finished in (
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.DEAD_LETTER,
+    ):
+        await _seed_job(admin_db, now - timedelta(minutes=3), finished)
+    await _seed_job(admin_db, now - timedelta(minutes=2), JobStatus.QUEUED, kind=JobKind.IMPORT)
+    # Before the window: a running job counts towards active_now only; a queued one
+    # counts towards neither.
+    await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.RUNNING)
+    await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.QUEUED)
+    await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.COMPLETED)
+    # At the exclusive upper bound: outside the window.
+    await _seed_job(admin_db, until, JobStatus.QUEUED)
+
+    async with admin_db.session() as session:
+        stats = await MonitoringRepository.overall_stats(session, cutoff, until)
+
+    assert stats.total == 1
+    assert stats.success == 1
+    # Only the two running execution jobs (one in the window, one before it) are
+    # active; queued jobs never are, wherever they sit.
+    assert stats.pending == 2
+    assert stats.active_now == 2
+
+
+async def test_overall_stats_unfinished_counts_follow_filters(
+    admin_db: DatabaseSession, clean_execution_records: None, clean_jobs: None
+) -> None:
+    """The usage filters narrow ``pending`` and ``active_now`` like the other counts."""
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=1)
+    until = now + timedelta(minutes=1)
+    await _seed_job(admin_db, now, JobStatus.QUEUED)
+    await _seed_job(admin_db, now, JobStatus.RUNNING, created_by="agnt_other")
+    await _seed_job(admin_db, now, JobStatus.QUEUED, api_vendor="stripe", api_name="payments")
+    await _seed_job(admin_db, now - timedelta(hours=3), JobStatus.RUNNING)
+
+    async def _stats(filters: UsageQueryFilters) -> tuple[int, int]:
+        async with admin_db.session() as session:
+            stats = await MonitoringRepository.overall_stats(
+                session, cutoff, until, filters=filters
+            )
+        return stats.pending, stats.active_now
+
+    assert await _stats(UsageQueryFilters()) == (3, 2)
+    assert await _stats(UsageQueryFilters(actor_id="usr_test")) == (2, 1)
+    assert await _stats(UsageQueryFilters(actor_id="agnt_other")) == (1, 1)
+    assert await _stats(UsageQueryFilters(api_vendor="github", api_name="rest")) == (2, 2)
+    assert await _stats(UsageQueryFilters(api_vendor="stripe", api_name="payments")) == (1, 0)
+    # Execution jobs carry no toolkit, and no unfinished execution has a final status.
+    assert await _stats(UsageQueryFilters(toolkit_id="tk_test000000000000000000")) == (0, 0)
+    assert await _stats(UsageQueryFilters(status="completed")) == (0, 0)

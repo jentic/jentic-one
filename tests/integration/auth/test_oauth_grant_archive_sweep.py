@@ -29,7 +29,7 @@ from sqlalchemy import select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.repos import AgentRepository
+from jentic_one.admin.repos import ActorPermissionGrantRepository, AgentRepository
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminService
 from jentic_one.auth.services.agent_service import AgentService
@@ -124,6 +124,55 @@ async def test_archive_revokes_active_grants_and_fails_refresh_closed(
             assert (event.data or {}).get("reason") == AGENT_ARCHIVE_REVOCATION_REASON
             assert event.created_by == admin_id
             assert "because agent 'grant-test-agent' was archived" in event.summary
+
+
+async def test_archive_audits_the_permission_grant_wipe(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Archive records a REVOKE on the agent snapshotting the permissions it
+    held, in the same transaction that deletes the grants."""
+    ctx = integration_context
+    owner = await seeds.seed_user(ctx, "usr_arp_owner")
+    admin_id = await seeds.seed_user(ctx, "usr_arp_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=owner, scopes=["apis:read", "agents:read"])
+
+    await AgentService(ctx).archive(agent_id, identity=_admin_identity(admin_id))
+
+    async with ctx.admin_db.session() as session:
+        assert await ActorPermissionGrantRepository.list_for_actor(session, agent_id) == []
+        result = await session.execute(
+            select(AuditEntry).where(
+                AuditEntry.target_type == "agent",
+                AuditEntry.target_id == agent_id,
+                AuditEntry.action == "revoke",
+            )
+        )
+        revokes = list(result.scalars().all())
+    assert len(revokes) == 1
+    assert revokes[0].before == {"permissions": ["agents:read", "apis:read"]}
+    assert revokes[0].after == {"permissions": []}
+    assert revokes[0].actor_id == admin_id
+    assert revokes[0].reason == "permissions revoked: agent was archived"
+
+
+async def test_archive_without_permissions_writes_no_permission_revoke(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """An agent holding no permissions gets no empty REVOKE entry on archive."""
+    ctx = integration_context
+    owner = await seeds.seed_user(ctx, "usr_arn_owner")
+    admin_id = await seeds.seed_user(ctx, "usr_arn_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=owner, scopes=[])
+
+    await AgentService(ctx).archive(agent_id, identity=_admin_identity(admin_id))
+
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(AuditEntry.action).where(
+                AuditEntry.target_type == "agent", AuditEntry.target_id == agent_id
+            )
+        )
+        assert list(result.scalars().all()) == ["archive"]
 
 
 async def test_disable_leaves_grants_active_by_design(

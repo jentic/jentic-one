@@ -33,7 +33,14 @@ def _make_ctx() -> MagicMock:
 
 def _sample_stats_row() -> OverallStatsRow:
     return OverallStatsRow(
-        total=100, success=80, failed=20, avg_ms=250.0, p50_ms=200.0, p95_ms=500.0
+        total=100,
+        success=80,
+        failed=20,
+        avg_ms=250.0,
+        p50_ms=200.0,
+        p95_ms=500.0,
+        pending=3,
+        active_now=5,
     )
 
 
@@ -222,33 +229,6 @@ def test_trend_points_follow_bucket_tier() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_and_active_now_always_zero() -> None:
-    ctx = _make_ctx()
-    svc = MonitoringService(ctx)
-
-    with patch.object(svc, "_query_usage", new_callable=AsyncMock) as mock_query:
-        mock_query.return_value = UsageStats(
-            since=1000,
-            until=87400,
-            bucket_seconds=3600,
-            group_by="api",
-            total=100,
-            success=80,
-            failed=20,
-            pending=0,
-            avg_ms=250.0,
-            p50_ms=200.0,
-            p95_ms=500.0,
-            active_now=0,
-            buckets=[],
-            top=[],
-        )
-        result = await svc.get_usage_stats(since=1000, until=87400)
-        assert result.pending == 0
-        assert result.active_now == 0
-
-
-@pytest.mark.asyncio
 async def test_filters_are_included_in_cache_key() -> None:
     ctx = _make_ctx()
     svc = MonitoringService(ctx)
@@ -333,8 +313,8 @@ async def test_query_usage_assembles_response_correctly() -> None:
     assert result.total == 100
     assert result.success == 80
     assert result.failed == 20
-    assert result.pending == 0
-    assert result.active_now == 0
+    assert result.pending == 3
+    assert result.active_now == 5
     assert result.avg_ms == 250.0
     assert result.p50_ms == 200.0
     assert result.p95_ms == 500.0

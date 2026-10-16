@@ -3,7 +3,8 @@ Release-scoped Ingress, off by default.
 
 One Ingress for the whole release rather than one per subchart: parts mode
 fronts several surfaces behind a single host, and the gateway subchart already
-owns the prefix-to-surface map (deploy/docker/nginx/parts-gateway.conf). So the
+owns the prefix-to-surface map (its configmap, kept identical to
+deploy/docker/nginx/parts-gateway.conf by tests/arch/test_gateway_routes.py). So the
 default backend is resolved once — the gateway service when the gateway is
 enabled, otherwise the app service — and paths route to it rather than being
 re-listed here. Restating the nginx map in Helm would create a second copy that

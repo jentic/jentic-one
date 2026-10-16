@@ -7275,7 +7275,7 @@ type UsageBucket struct {
 
 // UsageResponse Full usage statistics response.
 //
-// Examples: {"bucket_seconds":86400,"buckets":[{"avg_ms":231.4,"failed":2,"success":40,"total":42,"ts":1767225600}],"group_by":"api","since":1767225600,"stats":{"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280},"top":[{"avg_ms":212.8,"failed":12,"key":"stripe.com/stripe","label":"Stripe","success":330,"total":342,"trend":[40,52,47,61,58,84]}],"until":1769903999}
+// Examples: {"bucket_seconds":86400,"buckets":[{"avg_ms":231.4,"failed":2,"success":40,"total":42,"ts":1767225600}],"group_by":"api","since":1767225600,"stats":{"active_now":2,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":3,"success":1200,"total":1280},"top":[{"avg_ms":212.8,"failed":12,"key":"stripe.com/stripe","label":"Stripe","success":330,"total":342,"trend":[40,52,47,61,58,84]}],"until":1769903999}
 type UsageResponse struct {
 	// BucketSeconds Width of each entry in `buckets`, in seconds; chosen from the window length.
 	//
@@ -7299,7 +7299,7 @@ type UsageResponse struct {
 
 	// Stats Overall usage statistics for a time window.
 	//
-	// Examples: {"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280}
+	// Examples: {"active_now":2,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":3,"success":1200,"total":1280}
 	Stats UsageStatsBlock `json:"stats"`
 
 	// Top The entities with the most executions in the window, most first.
@@ -7315,11 +7315,11 @@ type UsageResponse struct {
 
 // UsageStatsBlock Overall usage statistics for a time window.
 //
-// Examples: {"active_now":0,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":0,"success":1200,"total":1280}
+// Examples: {"active_now":2,"avg_ms":245.6,"failed":80,"p50_ms":180,"p95_ms":720,"pending":3,"success":1200,"total":1280}
 type UsageStatsBlock struct {
-	// ActiveNow Reserved count of in-flight executions; currently always 0.
+	// ActiveNow Number of asynchronous executions a worker is running right now, regardless of the window. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.
 	//
-	// Examples: 0
+	// Examples: 2
 	ActiveNow int `json:"active_now"`
 
 	// AvgMs Mean execution duration in milliseconds; 0 when there were no executions.
@@ -7342,9 +7342,9 @@ type UsageStatsBlock struct {
 	// Examples: 720
 	P95Ms *float32 `json:"p95_ms"`
 
-	// Pending Reserved count of pending executions; currently always 0.
+	// Pending Number of asynchronous executions queued in the window that have not finished yet (still queued or running). They are not part of `total`, which counts finished executions only. A synchronous execution is counted once it finishes, never here. The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes this 0, since no unfinished execution has a final status.
 	//
-	// Examples: 0
+	// Examples: 3
 	Pending int `json:"pending"`
 
 	// Success Number of those executions that completed.
@@ -8271,7 +8271,7 @@ type ListUsersParams struct {
 	// Limit Maximum number of users to return (1-200, default 50).
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// InviteState Only return users with this stored invite state; lapsed invites are stored as `pending`, so `expired` matches no users.
+	// InviteState Only return users in this invite state. `expired` matches pending users whose invite has lapsed; `pending` matches only those with a live invite.
 	InviteState *InviteState `form:"invite_state,omitempty" json:"invite_state,omitempty"`
 }
 

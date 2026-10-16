@@ -93,7 +93,14 @@ class UsageStatsBlock(BaseModel):
     success: int = Field(description="Number of those executions that completed.", examples=[1200])
     failed: int = Field(description="Number of those executions that failed.", examples=[80])
     pending: int = Field(
-        description="Reserved count of pending executions; currently always 0.", examples=[0]
+        description=(
+            "Number of asynchronous executions queued in the window that have not finished yet "
+            "(still queued or running). They are not part of `total`, which counts finished "
+            "executions only. A synchronous execution is counted once it finishes, never here. "
+            "The `toolkit_id`, `api_id` and `agent_id` filters apply; a `status` filter makes "
+            "this 0, since no unfinished execution has a final status."
+        ),
+        examples=[3],
     )
     avg_ms: float = Field(
         description="Mean execution duration in milliseconds; 0 when there were no executions.",
@@ -108,7 +115,12 @@ class UsageStatsBlock(BaseModel):
         examples=[720.0],
     )
     active_now: int = Field(
-        description="Reserved count of in-flight executions; currently always 0.", examples=[0]
+        description=(
+            "Number of asynchronous executions a worker is running right now, regardless of the "
+            "window. Queued executions not yet picked up by a worker are not counted. The same "
+            "filters apply as for `pending`."
+        ),
+        examples=[2],
     )
 
 

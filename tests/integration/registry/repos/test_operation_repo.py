@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import structlog.testing
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
@@ -291,3 +292,72 @@ async def test_revision_path_method_uniqueness(
         async with registry_db.session() as session:
             await OperationRepository.bulk_create(session, rev.id, ops, created_by="usr_test")
             await session.commit()
+
+
+async def test_bulk_create_coerces_duplicate_and_over_long_operation_ids(
+    registry_db: DatabaseSession, sample_revision: tuple[Api, ApiRevision]
+) -> None:
+    """Pins #1437: duplicate and over-long spec operationIds are coerced to
+    unique, column-sized values rather than raising IntegrityError/DataError.
+
+    The first holder keeps the id, later duplicates get ``_<n>`` suffixes that
+    skip ids the spec declares itself (``dup_2``), and over-long ids are
+    truncated to the column length — including when the suffix must fit."""
+    _, rev = sample_revision
+    long_id = "L" * 400
+    ops = [
+        OperationInput(path="/a", method="GET", operation_id="dup"),
+        OperationInput(path="/b", method="GET", operation_id="dup"),
+        OperationInput(path="/c", method="GET", operation_id="dup_2"),
+        OperationInput(path="/d", method="GET", operation_id="dup"),
+        OperationInput(path="/e", method="GET", operation_id=long_id),
+        OperationInput(path="/f", method="GET", operation_id=long_id),
+        OperationInput(path="/g", method="GET"),
+        OperationInput(path="/h", method="GET"),
+    ]
+
+    async with registry_db.session() as session:
+        ids = await OperationRepository.bulk_create(session, rev.id, ops, created_by="usr_test")
+        await session.commit()
+
+    async with registry_db.session() as session:
+        stored = await OperationRepository.list_for_revision(session, revision_id=rev.id)
+    assert len(ids) == len(ops)
+    assert {op.path: op.operation_id for op in stored} == {
+        "/a": "dup",
+        "/b": "dup_3",
+        "/c": "dup_2",
+        "/d": "dup_4",
+        "/e": "L" * 255,
+        "/f": "L" * 253 + "_2",
+        "/g": None,
+        "/h": None,
+    }
+
+
+async def test_bulk_create_stores_blank_and_non_string_operation_ids_as_null(
+    registry_db: DatabaseSession, sample_revision: tuple[Api, ApiRevision]
+) -> None:
+    """Pins #1437: repeated empty/whitespace-only or non-string operationIds
+    are stored as NULL rather than colliding on the unique constraint (or
+    raising TypeError on a malformed spec's integer id)."""
+    _, rev = sample_revision
+    ops = [
+        OperationInput(path="/e1", method="GET", operation_id=""),
+        OperationInput(path="/e2", method="GET", operation_id=""),
+        OperationInput(path="/w1", method="GET", operation_id="   "),
+        OperationInput(path="/w2", method="GET", operation_id="   "),
+        OperationInput(path="/n1", method="GET", operation_id=42),  # type: ignore[arg-type]
+        OperationInput(path="/n2", method="GET", operation_id=42),  # type: ignore[arg-type]
+    ]
+
+    with structlog.testing.capture_logs() as logs:
+        async with registry_db.session() as session:
+            await OperationRepository.bulk_create(session, rev.id, ops, created_by="usr_test")
+            await session.commit()
+
+    async with registry_db.session() as session:
+        stored = await OperationRepository.list_for_revision(session, revision_id=rev.id)
+    assert {op.path: op.operation_id for op in stored} == {op.path: None for op in ops}
+    reasons = sorted(e["reasons"][0] for e in logs if e["event"] == "spec_operation_id_coerced")
+    assert reasons == ["blank"] * 4 + ["not_string"] * 2

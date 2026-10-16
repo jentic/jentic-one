@@ -439,3 +439,106 @@ async def test_redeemed_invite_not_derived_as_expired(
         await session.execute(delete(UserSecret).where(UserSecret.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
+
+
+@pytest.fixture()
+async def interleaved_invite_users(
+    integration_context: Context, admin_user: str
+) -> AsyncGenerator[tuple[list[str], list[str]], None]:
+    """Three lapsed-invite and two live-invite pending users, newest first, interleaved.
+
+    ``created_at`` is pinned in the future so these rows head the roster in a
+    known order (expired, live, expired, live, expired), independent of other
+    users in the database.
+    """
+    ctx = integration_context
+    service = UserService(ctx)
+    base = datetime.now(UTC) + timedelta(days=1)
+    expired_ids: list[str] = []
+    live_ids: list[str] = []
+    for i, lapsed in enumerate([True, False, True, False, True]):
+        created = await service.create(
+            UserCreatePayload(
+                email=f"invite-filter-{i}@test.local", first_name=f"Filter{i}", last_name="User"
+            ),
+            identity=Identity(sub=admin_user, email="test@local"),
+        )
+        user_id = created.user.id
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(created_at=base - timedelta(minutes=i))
+            )
+            if lapsed:
+                await session.execute(
+                    update(InviteToken)
+                    .where(InviteToken.user_id == user_id)
+                    .values(expires_at=datetime.now(UTC) - timedelta(hours=1))
+                )
+            await session.commit()
+        (expired_ids if lapsed else live_ids).append(user_id)
+
+    yield expired_ids, live_ids
+
+    async with ctx.admin_db.session() as session:
+        for uid in expired_ids + live_ids:
+            await session.execute(delete(InviteToken).where(InviteToken.user_id == uid))
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == uid)
+            )
+            await session.execute(delete(UserSecret).where(UserSecret.user_id == uid))
+            await session.execute(delete(User).where(User.id == uid))
+        await session.commit()
+
+
+async def test_list_filter_expired_returns_only_lapsed_pending_users(
+    integration_context: Context, interleaved_invite_users: tuple[list[str], list[str]]
+) -> None:
+    """Pins #1618: ``expired`` filters on the derived state, not the stored column."""
+    expired_ids, live_ids = interleaved_invite_users
+    service = UserService(integration_context)
+
+    page = await service.list_all(limit=200, invite_state=InviteState.EXPIRED, identity=_ORG_ADMIN)
+
+    listed = [u.id for u in page.data]
+    assert listed[: len(expired_ids)] == expired_ids
+    assert not set(live_ids) & set(listed)
+    assert all(u.invite_state == InviteState.EXPIRED for u in page.data)
+
+
+async def test_list_filter_pending_excludes_lapsed_invites(
+    integration_context: Context, interleaved_invite_users: tuple[list[str], list[str]]
+) -> None:
+    """Pins #1618: ``pending`` excludes stored-pending users whose invite has lapsed."""
+    expired_ids, live_ids = interleaved_invite_users
+    service = UserService(integration_context)
+
+    page = await service.list_all(limit=200, invite_state=InviteState.PENDING, identity=_ORG_ADMIN)
+
+    listed = [u.id for u in page.data]
+    assert listed[: len(live_ids)] == live_ids
+    assert not set(expired_ids) & set(listed)
+    assert all(u.invite_state == InviteState.PENDING for u in page.data)
+
+
+@pytest.mark.parametrize("invite_state", [InviteState.EXPIRED, InviteState.PENDING])
+async def test_list_filter_invite_state_paginates_with_exact_page_sizes(
+    integration_context: Context,
+    interleaved_invite_users: tuple[list[str], list[str]],
+    invite_state: InviteState,
+) -> None:
+    """The derived-state filter runs before LIMIT, so every page is full until the last."""
+    expired_ids, live_ids = interleaved_invite_users
+    expected = expired_ids if invite_state == InviteState.EXPIRED else live_ids
+    service = UserService(integration_context)
+
+    first = await service.list_all(limit=1, invite_state=invite_state, identity=_ORG_ADMIN)
+    assert [u.id for u in first.data] == expected[:1]
+    assert first.has_more is True
+    assert first.next_cursor is not None
+
+    second = await service.list_all(
+        cursor=first.next_cursor, limit=1, invite_state=invite_state, identity=_ORG_ADMIN
+    )
+    assert [u.id for u in second.data] == expected[1:2]

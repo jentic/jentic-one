@@ -83,6 +83,13 @@ jobs:
               # exported backend config schema against the Pydantic models, so
               # a hand-edit to the artifact must run the suite (GEN-10).
               - 'config/config-schema.json'
+              # tests/arch/test_gateway_routes.py checks the split-deploy
+              # gateway maps (Docker + Helm) against the route tables of the
+              # backends each image runs (JENTIC__APPS in its Dockerfile), so a
+              # deploy-only edit to any of them must run the suite.
+              - 'deploy/docker/nginx/**'
+              - 'deploy/docker/*.Dockerfile'
+              - 'deploy/helm/jentic-one/charts/gateway/templates/**'
               # The auth-theme drift guards (tests/unit/auth/web/
               # test_theme_tokens.py) pin the packaged auth.css palette and the
               # inline logo SVG to these SPA sources. A ui-only edit to either

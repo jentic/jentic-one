@@ -126,8 +126,7 @@ def _rename_column_and_constraints(
     alembic's batch mode rebuilds the table — and the column rename and the unique
     swap must sit in **separate** batch blocks: a constraint created in the same
     block that renames the column it spans is silently dropped on the rebuild,
-    which would take the ``ON CONFLICT (actor_id, permission)`` upsert in
-    ``EffectsRepository.grant_permission_to_actor`` with it.
+    which would take the ``(actor_id, permission)`` unique constraint with it.
     """
     if op.get_bind().dialect.name == "postgresql":
         op.alter_column(table, old_column, new_column_name=new_column)

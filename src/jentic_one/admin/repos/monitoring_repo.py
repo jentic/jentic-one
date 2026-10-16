@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, Text, case, cast, func, literal, select
+from sqlalchemy import Select, Text, case, cast, false, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
-from jentic_one.shared.models import ExecutionStatus
+from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
 
 
 def _is_postgres(session: AsyncSession) -> bool:
@@ -70,6 +71,30 @@ class UsageQueryFilters:
             clauses.append(ExecutionRecord.status == self.status)
         return clauses
 
+    def to_job_clauses(self) -> list[ColumnElement[bool]]:
+        """The same filters applied to execution jobs.
+
+        An execution job carries its attribution in its payload and its actor
+        on ``created_by``. Two filters can never match an unfinished job, so
+        each excludes every job:
+
+        - ``toolkit_id`` is legacy. Toolkits were removed (#1498) and no
+          execution job is attributed to one since, so the filter only
+          narrows historical ``execution_records``.
+        - ``status`` names a terminal execution status, which an unfinished
+          job never has.
+        """
+        clauses: list[ColumnElement[bool]] = []
+        if self.toolkit_id is not None or self.status is not None:
+            clauses.append(false())
+        if self.api_vendor is not None:
+            clauses.append(Job.payload["api_vendor"].as_string() == self.api_vendor)
+        if self.api_name is not None:
+            clauses.append(Job.payload["api_name"].as_string() == self.api_name)
+        if self.actor_id is not None:
+            clauses.append(Job.created_by == self.actor_id)
+        return clauses
+
 
 @dataclass(slots=True, frozen=True)
 class DailyBucketRow:
@@ -96,6 +121,8 @@ class OverallStatsRow:
     avg_ms: float
     p50_ms: float | None
     p95_ms: float | None
+    pending: int
+    active_now: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -215,6 +242,34 @@ class MonitoringRepository:
                 .within_group(ExecutionRecord.duration_ms)
                 .label("p95_ms"),
             ]
+        # Executions are recorded only once they finish, so the unfinished ones
+        # come from the execution jobs (async runs; a synchronous run has no row
+        # until it returns). `pending` is every unfinished job queued in the
+        # window; `active_now` is only the jobs a worker is running right now.
+        # Scalar subqueries keep everything in one round trip.
+        execution_job = [
+            Job.kind == JobKind.EXECUTION,
+            *(filters.to_job_clauses() if filters else []),
+        ]
+        pending_col = (
+            select(func.count())
+            .select_from(Job)
+            .where(
+                *execution_job,
+                Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
+                Job.created_at >= cutoff,
+                Job.created_at < until,
+            )
+            .scalar_subquery()
+            .label("pending")
+        )
+        active_now_col = (
+            select(func.count())
+            .select_from(Job)
+            .where(*execution_job, Job.status == JobStatus.RUNNING)
+            .scalar_subquery()
+            .label("active_now")
+        )
         stmt = select(
             func.count().label("total"),
             func.count()
@@ -222,6 +277,8 @@ class MonitoringRepository:
             .label("success"),
             func.count().filter(ExecutionRecord.status == ExecutionStatus.FAILED).label("failed"),
             func.coalesce(func.avg(ExecutionRecord.duration_ms), 0).label("avg_ms"),
+            pending_col,
+            active_now_col,
             *percentile_cols,
         ).where(ExecutionRecord.started_at >= cutoff, ExecutionRecord.started_at < until)
         if filters:
@@ -236,6 +293,8 @@ class MonitoringRepository:
             avg_ms=float(row.avg_ms),
             p50_ms=float(p50) if p50 is not None else None,
             p95_ms=float(p95) if p95 is not None else None,
+            pending=row.pending,
+            active_now=row.active_now,
         )
 
     @staticmethod

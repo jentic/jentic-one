@@ -76,8 +76,8 @@ async def list_users(
     invite_state: InviteState | None = Query(
         default=None,
         description=(
-            "Only return users with this stored invite state; lapsed invites are stored as "
-            "`pending`, so `expired` matches no users."
+            "Only return users in this invite state. `expired` matches pending users whose "
+            "invite has lapsed; `pending` matches only those with a live invite."
         ),
         openapi_examples=ex.example("pending"),
     ),
