@@ -202,7 +202,11 @@ async def test_handler_pipeline_db_error_redacts_sql_from_log_and_event_summary(
         ) as mock_emit,
     ):
         result = await handler.execute(
-            "job-sql", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
+            "job-sql",
+            SessionScope(_FakeSession()),
+            payload=_payload(),
+            created_by="usr_test",
+            actor_type="user",
         )
 
     assert result.body["status"] == "failed"
