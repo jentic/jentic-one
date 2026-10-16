@@ -1251,6 +1251,8 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     )
     new_revision_id = uuid.UUID(reimport.body["revisions"][0]["revision_id"])
     assert new_revision_id != overlay_revision_id
+    # Same API row and the overlay's revision was archived: the #1078 guard lets it through.
+    assert "supersede_skipped" not in reimport.body["revisions"][0]
 
     async with registry_db.session() as session:
         api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
@@ -1809,6 +1811,148 @@ async def test_supersede_falls_back_to_enqueue_id_when_no_backing_overlay(
         # Fallback to the enqueue-time id deprecated it (no regression vs pre-#940).
         assert overlay_row.status == "deprecated"
         assert overlay_row.deprecated_reason == "superseded_by_reimport"
+
+
+@pytest.mark.parametrize("clean_row_has_current_revision", [False, True])
+async def test_supersede_onto_different_api_row_leaves_overlay_confirmed(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+    clean_row_has_current_revision: bool,
+) -> None:
+    """#1078: a supersede re-import that lands on a *different* API row deprecates nothing.
+
+    Transition-window shape: a confirmed overlay serves a pre-#1067 vendor-doubled row
+    (``posthog-com/posthog-com-posthog-api``) and the authorized A4b re-import resolves
+    the clean identity (``posthog-com/posthog-api``) — a different ``Api`` row. The ingest
+    archives only the clean row's active revision (if any), so the overlay's revision is
+    still served on the doubled row. The worker must leave the overlay CONFIRMED and record
+    the skip on the job result. Parametrized over the resolver's two branches: the clean
+    row has no current revision (nothing archived → enqueue-id fallback) or has one (the
+    archived revision has no backing overlay → enqueue-id fallback).
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler,
+        vendor="posthog-com",
+        name="posthog-com-posthog-api",
+        version="1.0.0",
+        origin="catalog",
+    )
+    if clean_row_has_current_revision:
+        await _import_base(
+            handler, vendor="posthog-com", name="posthog-api", version="1.0.0", origin="catalog"
+        )
+
+    async with registry_db.session() as session:
+        doubled = (
+            await session.execute(select(Api).where(Api.name == "posthog-com-posthog-api"))
+        ).scalar_one()
+        doubled_api_id = doubled.id
+        overlay = Overlay(
+            api_id=doubled_api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    materialize = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "PostHog", "version": "1.0.0"},
+                            "servers": [{"url": "https://overlaid.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "posthog-com",
+                    "api_name": "posthog-com-posthog-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = uuid.UUID(materialize.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay_id)
+            .values(status="confirmed", confirmed_revision_id=overlay_revision_id)
+        )
+        await session.commit()
+
+    reimport = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "PostHog", "version": "1.0.0"},
+                            "servers": [{"url": "https://upstream-fresh.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "posthog-com",
+                    "api_name": "posthog-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_id,
+        },
+        created_by="usr_operator",
+    )
+    [revision] = reimport.body["revisions"]
+    assert revision["api"]["name"] == "posthog-api"
+    assert revision["supersede_skipped"] == "api_mismatch"
+
+    async with registry_db.session() as session:
+        doubled = (await session.execute(select(Api).where(Api.id == doubled_api_id))).scalar_one()
+        # The overlay's revision is still the served revision of the doubled row...
+        assert doubled.current_revision_id == overlay_revision_id
+        overlay_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == overlay_revision_id))
+        ).scalar_one()
+        assert overlay_rev.state == "imported"
+        # ...so the overlay must still read CONFIRMED.
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.status == "confirmed"
+        assert overlay_row.deprecated_at is None
+        assert overlay_row.deprecated_reason is None
 
 
 async def test_deprecate_superseded_overlay_is_idempotent_under_repeat(

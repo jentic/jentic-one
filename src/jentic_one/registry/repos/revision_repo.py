@@ -341,6 +341,18 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def state_of(session: AsyncSession, revision_id: uuid.UUID) -> str | None:
+        """The lifecycle ``state`` of a revision by id, or ``None`` if it doesn't exist.
+
+        A single-column lookup used by the A4b supersede guard to check whether an
+        overlay's confirmed revision is still active (served) before auto-deprecating it.
+        """
+        result = await session.execute(
+            select(ApiRevision.state).where(ApiRevision.id == revision_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def archive_one(session: AsyncSession, revision_id: uuid.UUID) -> int:
         """Archive a single *active* revision by id (CAS on state). Returns rowcount.
 
