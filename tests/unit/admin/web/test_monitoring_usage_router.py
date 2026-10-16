@@ -5,11 +5,16 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
-from jentic_one.admin.services.monitoring_service import MonitoringService
+from jentic_one.admin.services.monitoring_service import (
+    MonitoringService,
+    UsageFilters,
+    UsageStats,
+)
 from jentic_one.admin.web.deps import get_monitoring_service
 from jentic_one.admin.web.routers.monitoring import router
 from jentic_one.admin.web.schemas.monitoring import (
@@ -26,6 +31,25 @@ from jentic_one.shared.web.errors import request_validation_error_handler
 
 async def _fake_identity() -> Identity:
     return Identity(sub="usr_test", permissions=["org:admin"])
+
+
+def _empty_stats() -> UsageStats:
+    return UsageStats(
+        since=0,
+        until=86400,
+        bucket_seconds=3600,
+        group_by="api",
+        total=0,
+        success=0,
+        failed=0,
+        pending=0,
+        avg_ms=0.0,
+        p50_ms=None,
+        p95_ms=None,
+        active_now=0,
+        buckets=[],
+        top=[],
+    )
 
 
 @pytest.fixture()
@@ -52,6 +76,41 @@ def test_usage_rejects_unknown_group_by_with_422(
     assert resp.status_code == 422
     assert resp.json()["detail"][0]["loc"] == ["query", "group_by"]
     usage_service.get_usage_stats.assert_not_called()
+
+
+def test_usage_ignores_toolkit_id_param(usage_client: TestClient, usage_service: AsyncMock) -> None:
+    """Pins #1745: ``toolkit_id`` is not a filter on ``GET /monitoring/usage``.
+
+    The request gets a 200, no filter reaches the service, and one
+    ``removed_query_param_ignored`` INFO names the param and the caller but
+    never the value.
+    """
+    usage_service.get_usage_stats.return_value = _empty_stats()
+    with structlog.testing.capture_logs() as logs:
+        resp = usage_client.get("/monitoring/usage", params={"toolkit_id": "tk_abc"})
+    assert resp.status_code == 200
+    assert usage_service.get_usage_stats.call_args.kwargs["filters"] == UsageFilters()
+    ignored = [log for log in logs if log["event"] == "removed_query_param_ignored"]
+    assert ignored == [
+        {
+            "event": "removed_query_param_ignored",
+            "log_level": "info",
+            "param": "toolkit_id",
+            "route": "/monitoring/usage",
+            "actor_id": "usr_test",
+        }
+    ]
+
+
+def test_usage_without_ignored_params_logs_nothing(
+    usage_client: TestClient, usage_service: AsyncMock
+) -> None:
+    """A request that only sends supported filters emits no ``removed_query_param_ignored``."""
+    usage_service.get_usage_stats.return_value = _empty_stats()
+    with structlog.testing.capture_logs() as logs:
+        resp = usage_client.get("/monitoring/usage", params={"api_id": "stripe/payments"})
+    assert resp.status_code == 200
+    assert not [log for log in logs if log["event"] == "removed_query_param_ignored"]
 
 
 def test_usage_response_serializes_correctly() -> None:

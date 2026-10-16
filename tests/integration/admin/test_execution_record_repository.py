@@ -177,10 +177,10 @@ async def test_list_all_with_filters(
         await session.commit()
 
     async with admin_db.session() as session:
-        by_toolkit = await ExecutionRecordRepository.list_all(
-            session, toolkit_id="tk_a000000000000000000000"
+        by_trace = await ExecutionRecordRepository.list_all(
+            session, trace_id="trace1__________________________"
         )
-        assert len(by_toolkit) == 2
+        assert len(by_trace) == 1
 
         by_status = await ExecutionRecordRepository.list_all(session, status=["failed"])
         assert len(by_status) == 1

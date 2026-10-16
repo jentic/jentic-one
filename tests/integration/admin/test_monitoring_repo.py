@@ -337,6 +337,5 @@ async def test_overall_stats_unfinished_counts_follow_filters(
     assert await _stats(UsageQueryFilters(actor_id="agnt_other")) == (1, 1)
     assert await _stats(UsageQueryFilters(api_vendor="github", api_name="rest")) == (2, 2)
     assert await _stats(UsageQueryFilters(api_vendor="stripe", api_name="payments")) == (1, 0)
-    # Execution jobs carry no toolkit, and no unfinished execution has a final status.
-    assert await _stats(UsageQueryFilters(toolkit_id="tk_test000000000000000000")) == (0, 0)
+    # No unfinished execution has a final status.
     assert await _stats(UsageQueryFilters(status="completed")) == (0, 0)
