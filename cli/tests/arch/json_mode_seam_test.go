@@ -14,6 +14,7 @@ import (
 // Each entry is a reviewed split between command construction and rendering.
 var jsonFlagResolvedElsewhere = map[string]string{
 	"internal/cli/api/execute.go":         "internal/cli/api/execute_print.go",
+	"internal/cli/api/executions.go":      "internal/cli/api/execute_print.go",
 	"internal/cli/localagentcmd/skill.go": "internal/cli/localagentcmd/skill_list.go",
 }
 
