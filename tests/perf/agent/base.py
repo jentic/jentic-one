@@ -27,6 +27,7 @@ from tests.perf.common import (
     RESULTS_DIR,
     PerfEnv,
     RestoreStep,
+    TokenLifetimeTooShortError,
     compose,
     exclusive_run,
     git_sha,
@@ -179,18 +180,16 @@ def require_fresh(
     """Refuse a probe whose tokens expire before it can finish (fast 401s, not data).
 
     A run longer than a token's whole lifetime can't be fixed by re-provisioning
-    (``check_fresh`` says so); the probe has to be shortened instead.
+    (``check_fresh`` raises ``TokenLifetimeTooShortError``); the probe has to be
+    shortened instead.
     """
     try:
         env.check_fresh(callers=callers, admin=admin, run_s=run_s)
+    except TokenLifetimeTooShortError as exc:
+        fix = "shorten the probe (DURATION / SECONDS / N) or raise the TTLs in config.perf.yaml"
+        raise PrereqError(str(exc.code), fix) from None
     except SystemExit as exc:
-        why = str(exc.code)
-        fix = (
-            "shorten the probe (DURATION / SECONDS / N) or raise the TTLs in config.perf.yaml"
-            if "longer than the token lifetime" in why
-            else "make perf-provision"
-        )
-        raise PrereqError(why, fix) from None
+        raise PrereqError(str(exc.code), "make perf-provision") from None
 
 
 @contextlib.contextmanager

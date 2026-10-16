@@ -271,3 +271,16 @@ def test_cmd_cpu_capture_runtime_error_is_a_prereq(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(pyspy_profile, "capture", capture)
     with pytest.raises(PrereqError, match="cpu: py-spy record failed"):
         agent_main.cmd_cpu([])
+
+
+def test_cmd_cpu_deletes_the_profile_when_its_analysis_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = [tmp_path / "run.txt", tmp_path / "run.svg"]
+    files[0].write_text("a;b 3\ntruncat")
+    files[1].write_text("<svg/>")
+    monkeypatch.setattr(pyspy_profile, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(pyspy_profile, "capture", lambda **_: ("run", {"ok_ratio": 1.0}))
+    with pytest.raises(ValueError):
+        agent_main.cmd_cpu([])
+    assert not any(f.exists() for f in files)

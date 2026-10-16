@@ -268,9 +268,10 @@ def cmd_cpu(argv: list[str]) -> int:
         # py-spy record failed, or a sidecar could not be removed afterwards.
         raise PrereqError(f"cpu: {exc}", "make perf-agent-doctor") from exc
     raw = pyspy_profile.OUT_DIR / f"{stem}.txt"
-    require_ok(load, "cpu load")
-    summary = pyspy_profile.analyse(raw)
-    hot = line_hotspots(raw)
+    with pyspy_profile.discard_on_failure(stem):
+        require_ok(load, "cpu load")
+        summary = pyspy_profile.analyse(raw)
+        hot = line_hotspots(raw)
     svg = (pyspy_profile.OUT_DIR / f"{stem}.svg").relative_to(REPO_ROOT)
     rep = Report("cpu", f"Broker CPU under load — c={args.concurrency}, {args.vendor}")
     rep.data = {"args": vars(args), "load": load, "profile": summary, "lines": hot}

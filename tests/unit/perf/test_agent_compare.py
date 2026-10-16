@@ -269,10 +269,30 @@ def test_require_fresh_says_shorten_a_probe_longer_than_the_token_lifetime() -> 
     now = time.time()
     env = PerfEnv(app_url="a", broker_url="b", upstream_url="u", agent_id="ag")
     env.callers = {"jak": Caller("jak", "jak_x", "ag", expires_at=now + 600, issued_at=now)}
-    with pytest.raises(PrereqError, match="longer than the token lifetime") as exc:
+    with pytest.raises(PrereqError, match="jak caller") as exc:
         base.require_fresh(env, callers=["jak"], run_s=3600)
     assert "perf-provision" not in exc.value.fix
     assert "DURATION" in exc.value.fix
+
+
+@pytest.mark.parametrize(
+    ("raised", "fix"),
+    [
+        (common.TokenLifetimeTooShortError("any wording"), "DURATION"),
+        (SystemExit("longer than the token lifetime, but a plain SystemExit"), "perf-provision"),
+    ],
+)
+def test_require_fresh_picks_the_fix_by_exception_type_not_message(
+    raised: SystemExit, fix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def check_fresh(self: PerfEnv, **_: Any) -> None:
+        raise raised
+
+    monkeypatch.setattr(PerfEnv, "check_fresh", check_fresh)
+    env = PerfEnv(app_url="a", broker_url="b", upstream_url="u", agent_id="ag")
+    with pytest.raises(PrereqError) as exc:
+        base.require_fresh(env, callers=None, run_s=60)
+    assert fix in exc.value.fix
 
 
 def test_run_lock_refuses_while_another_perf_tool_holds_it(
