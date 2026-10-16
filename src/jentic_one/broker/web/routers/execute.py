@@ -165,11 +165,10 @@ _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 def _off_request_admin_transaction(ctx: Context) -> AbstractAsyncContextManager[Any]:
-    """The admin transaction of a record write that runs after the response.
+    """Open the admin transaction for both off-request record writes.
 
-    The one entry point for both off-request writes (a streaming execution's
-    record and a buffered call's unmapped-failure record), so a bound on how
-    many of them hold an admin connection at once applies to both.
+    Used by a streaming execution's record and a buffered call's
+    unmapped-failure record, both written after the response.
     """
     return ctx.admin_db.transaction()
 
@@ -182,6 +181,8 @@ def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
     ``Exception`` handler, is a 500; a dedicated handler (problem details, a
     Starlette ``HTTPException``, a 503 for an unavailable database) maps it to
     its own status, so it is a 500 only when it carries ``status_code`` 500.
+    A dedicated handler for an exception without ``status_code`` is assumed
+    not to answer 500.
     """
     handlers = app.exception_handlers
 
@@ -273,7 +274,9 @@ async def _persist_unmapped_failure(
     ``broker.streaming_persist_timeout_s``, so the 500 never waits on the admin
     DB. A DB failure, timeout or shutdown cancellation propagates to the
     registry, which logs it and counts it on ``app.background_tasks``
-    (``kind=unmapped_failure_persist``).
+    (``kind=unmapped_failure_persist``). It never returns without writing, so
+    a lost record is counted as ``failed``, ``timed_out`` or ``cancelled``,
+    never as ``completed``.
     """
     async with _off_request_admin_transaction(ctx) as session:
         await persist_unmapped_failure(
