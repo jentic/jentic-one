@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 _configured = False
 _prometheus_active = False
+_provider: MeterProvider | None = None
 
 #: Histogram instruments that get the configured latency buckets
 #: (``observability.metrics.latency_buckets_ms``), by recorded unit.
@@ -46,19 +47,32 @@ def metric_views(config: MetricsConfig) -> list[View]:
     Each latency histogram gets ``config.latency_buckets_ms`` as explicit
     bucket boundaries in its own recorded unit (divided by 1000 for the
     seconds-unit instrument); every other instrument keeps the SDK default
-    aggregation. Boundaries are floats so the Prometheus ``le`` label renders
-    like the SDK defaults (``le="15.0"``).
+    aggregation. Each View matches on name *and* unit, so an instrument that
+    reuses one of these names with a different unit keeps the SDK default
+    buckets rather than getting boundaries that are 1000x off. Boundaries are
+    floats so the Prometheus ``le`` label renders like the SDK defaults
+    (``le="15.0"``).
     """
     buckets_ms = tuple(float(b) for b in config.latency_buckets_ms)
     ms = ExplicitBucketHistogramAggregation(boundaries=buckets_ms)
     s = ExplicitBucketHistogramAggregation(boundaries=tuple(b / 1000 for b in buckets_ms))
     return [
         *(
-            View(instrument_type=Histogram, instrument_name=name, aggregation=ms)
+            View(
+                instrument_type=Histogram,
+                instrument_name=name,
+                instrument_unit="ms",
+                aggregation=ms,
+            )
             for name in _LATENCY_HISTOGRAMS_MS
         ),
         *(
-            View(instrument_type=Histogram, instrument_name=name, aggregation=s)
+            View(
+                instrument_type=Histogram,
+                instrument_name=name,
+                instrument_unit="s",
+                aggregation=s,
+            )
             for name in _LATENCY_HISTOGRAMS_S
         ),
     ]
@@ -70,7 +84,7 @@ def configure_metrics(service_name: str, config: MetricsConfig) -> MeterProvider
     Returns the MeterProvider if one was created, or None for the "none" exporter.
     Idempotent — subsequent calls return immediately.
     """
-    global _configured, _prometheus_active
+    global _configured, _prometheus_active, _provider
     if _configured:
         current = metrics.get_meter_provider()
         if isinstance(current, MeterProvider):
@@ -97,6 +111,7 @@ def configure_metrics(service_name: str, config: MetricsConfig) -> MeterProvider
     provider = MeterProvider(resource=resource, metric_readers=[reader], views=metric_views(config))
 
     metrics.set_meter_provider(provider)
+    _provider = provider
     return provider
 
 
@@ -115,12 +130,20 @@ def make_metrics_asgi_app() -> Any | None:
 def reset_metrics() -> None:
     """Reset metrics state — for testing only.
 
-    Clears both this module's guard flags and OpenTelemetry's set-once
-    global so a fresh `configure_metrics()` call in the next test takes
-    effect. Touches OTel internals on purpose; if a future SDK release
-    breaks the attribute names, fix it here in one place.
+    Shuts down the MeterProvider that `configure_metrics()` created (so its
+    ``PrometheusMetricReader`` unregisters from the process-global
+    ``prometheus_client`` registry instead of being scraped again by the next
+    test; providers a test installs itself are left to that test), then clears
+    this module's guard flags and OpenTelemetry's set-once global so a fresh
+    `configure_metrics()` call in the next test takes effect. Touches OTel
+    internals on purpose; if a future SDK release breaks the attribute names,
+    fix it here in one place.
     """
-    global _configured, _prometheus_active
+    global _configured, _prometheus_active, _provider
+    if _provider is not None:
+        # Bounded: an OTLP reader flushes on shutdown, and tests have no collector.
+        _provider.shutdown(timeout_millis=1_000)
+        _provider = None
     _configured = False
     _prometheus_active = False
     metrics._internal._METER_PROVIDER = None

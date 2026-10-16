@@ -499,10 +499,10 @@ class MetricsConfig(BaseModel):
         max_length=MAX_LATENCY_BUCKETS,
         description=(
             "Explicit histogram bucket boundaries (milliseconds, strictly increasing, "
-            "all > 0) for the request-latency histograms: http.server.duration and "
-            "broker.execution.duration_ms in ms, and http.server.request.duration "
-            "(stable HTTP semconv) in seconds, derived by dividing by 1000. As an env "
-            "var, a comma-separated list."
+            "all > 0) for the request-latency histograms listed in "
+            "docs/operations/monitoring.md; seconds-unit histograms get the list "
+            "divided by 1000. Must be identical on every process whose series are "
+            "aggregated together. As an env var, a comma-separated list."
         ),
     )
 

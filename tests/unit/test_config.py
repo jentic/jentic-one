@@ -157,6 +157,7 @@ def test_latency_buckets_default_yaml_and_env(
         ([0, 1, 2], "greater than 0"),
         ([-1, 1], "greater than 0"),
         ([1, float("inf")], "finite number"),
+        ([1, float("nan")], "finite number"),
         ([float(i) for i in range(1, 66)], "at most 64 items"),
     ],
 )
