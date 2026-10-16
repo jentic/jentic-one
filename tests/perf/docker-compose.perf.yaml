@@ -17,6 +17,9 @@
 # Profiles: `load` (locust master/worker), `tools` (oha), `obs` (prometheus,
 # grafana, postgres-exporter). Variant knobs are environment variables read
 # below (PERF_*); tests/perf/README.md lists them.
+#
+# Third-party images are pinned by tag + digest so run-over-run numbers compare
+# like with like; result JSON records the resolved image of every service.
 
 name: jentic-perf
 
@@ -42,7 +45,7 @@ volumes:
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16.13@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
     command:
       - postgres
       - -c
@@ -166,7 +169,7 @@ services:
 
   # ── load generators (profiles: tools, load) ────────────────────────────────
   oha:
-    image: ghcr.io/hatoo/oha:latest
+    image: ghcr.io/hatoo/oha:1.16.0@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f
     profiles: [tools]
     # Large request bodies (100 KB / 1 MB) are passed by file, not argv.
     volumes:
@@ -175,7 +178,7 @@ services:
     cpus: ${PERF_LOADGEN_CPUS:-2}
 
   locust-master:
-    image: locustio/locust:latest
+    image: locustio/locust:2.46.7@sha256:8492fcaa6a07314551590f579219204e459d9fdc9dde060843bd2896e7a7259f
     profiles: [load]
     volumes:
       - ../../tests:/work/tests:ro
@@ -201,6 +204,8 @@ services:
       PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
       PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
       PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
+      PERF_RUN_S: ${PERF_RUN_S:-600}
+      PERF_LOCUST_WORKERS: ${PERF_WORKERS_LOCUST:-1}
     command: >-
       -f /work/tests/perf/locustfile.py --master --class-picker
       --host http://broker:8000 ${PERF_LOCUST_ARGS:-}
@@ -208,7 +213,7 @@ services:
     networks: [perf]
 
   locust-worker:
-    image: locustio/locust:latest
+    image: locustio/locust:2.46.7@sha256:8492fcaa6a07314551590f579219204e459d9fdc9dde060843bd2896e7a7259f
     profiles: [load]
     volumes:
       - ../../tests:/work/tests:ro
@@ -234,6 +239,8 @@ services:
       PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
       PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
       PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
+      PERF_RUN_S: ${PERF_RUN_S:-600}
+      PERF_LOCUST_WORKERS: ${PERF_WORKERS_LOCUST:-1}
     command: -f /work/tests/perf/locustfile.py --worker --master-host locust-master
     depends_on: [locust-master]
     networks: [perf]
@@ -241,7 +248,7 @@ services:
 
   # ── observability (profile: obs) ────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     profiles: [obs]
     volumes:
       - ./obs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -250,7 +257,7 @@ services:
     networks: [perf]
 
   postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
     profiles: [obs]
     environment:
       DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/jentic?sslmode=disable"  # pragma: allowlist secret
@@ -259,7 +266,7 @@ services:
     networks: [perf]
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     profiles: [obs]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"

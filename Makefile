@@ -5,10 +5,10 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-build perf-up perf-provision perf-overhead perf-dbcost perf-capacity perf-profile perf-ui perf-load perf-obs perf-report perf-down help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES)) perf-build perf-up perf-provision perf-overhead perf-dbcost perf-capacity perf-profile perf-ui perf-load perf-obs perf-report perf-down
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
 
@@ -305,6 +305,7 @@ PERF_USERS ?= 50
 PERF_SPAWN ?= 10
 PERF_TIME ?= 2m
 PERF_CLASSES ?= BrokerEchoUser
+PERF_WORKERS_LOCUST ?= 2
 
 perf-build: build-base ## Perf: build jentic-one/app:perf from this checkout
 	docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:perf .
@@ -328,14 +329,18 @@ perf-capacity: ## Perf: closed-loop throughput sweep, workers x CPUs x concurren
 perf-profile: ## Perf: py-spy CPU profile of the broker under closed-loop load (ARGS="--concurrency 32")
 	uv run python -m tests.perf.pyspy_profile $(ARGS)
 
-perf-ui: ## Perf: Locust web UI (master + worker) on http://127.0.0.1:8089
-	$(PERF_COMPOSE) --profile load up -d --scale locust-worker=$${PERF_WORKERS_LOCUST:-2} locust-master locust-worker
+perf-ui: ## Perf: Locust web UI (master + PERF_WORKERS_LOCUST workers) on http://127.0.0.1:8089
+	PERF_WORKERS_LOCUST=$(PERF_WORKERS_LOCUST) $(PERF_COMPOSE) --profile load up -d \
+		--scale locust-worker=$(PERF_WORKERS_LOCUST) locust-master locust-worker
 	@echo "Locust UI: http://127.0.0.1:8089"
 
+# A PERF_SHAPE ends the run itself (its tick returns None), so -t is left off:
+# a fixed PERF_TIME would cut a step ramp short of PERF_MAX_USERS.
 perf-load: ## Perf: headless Locust run (PERF_CLASSES, PERF_USERS, PERF_SPAWN, PERF_TIME, PERF_SHAPE)
 	@stamp=$$(date -u +%Y%m%dT%H%M%SZ); \
 	$(PERF_COMPOSE) --profile load run --rm -T --no-deps locust-master \
-		-f /work/tests/perf/locustfile.py --headless -u $(PERF_USERS) -r $(PERF_SPAWN) -t $(PERF_TIME) \
+		-f /work/tests/perf/locustfile.py --headless -u $(PERF_USERS) -r $(PERF_SPAWN) \
+		$(if $(PERF_SHAPE),,-t $(PERF_TIME)) \
 		--only-summary --csv /work/tests/perf/results/$$stamp-locust \
 		--html /work/tests/perf/results/$$stamp-locust.html $(PERF_CLASSES)
 
