@@ -98,7 +98,11 @@ DeadlineRunner( RetryRunner( CircuitBreakerRunner( SigV4SigningRunner( HttpRunne
 
 - **`DeadlineRunner`** — outermost whole-call wall-clock budget, distinct
   from per-attempt transport timeouts; expiry is a `504` with a `wait`
-  directive.
+  directive. The transport reports each send it starts on a per-call
+  dispatch probe (`broker/adapters/runners/dispatch.py`), so a deadline that
+  runs out before any request bytes left (queued for a per-host permit, or
+  between connect-failed retries) is marked as "nothing was sent", while one
+  that cuts off a send in progress is treated as "the upstream may have acted".
 - **`RetryRunner`** — retries only when safe: the failure happened before
   the request was sent, or the method is idempotent, or the caller supplied
   an idempotency key. Exponential backoff with full jitter; honors

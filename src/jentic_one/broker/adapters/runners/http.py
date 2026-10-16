@@ -36,6 +36,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     UpstreamRunner,
 )
+from jentic_one.broker.adapters.runners.dispatch import DispatchProbe, current_dispatch_probe
 from jentic_one.broker.core.exceptions import (
     BrokerError,
     UpstreamResponseTooLargeError,
@@ -235,13 +236,21 @@ class HttpRunner(UpstreamRunner):
 
     async def run(self, request: RunnerRequest) -> RunnerResult:
         host = httpx.URL(request.url).host
+        # Report this call's sends so a deadline that fires while the call waits
+        # for a permit, or between retry attempts, knows nothing was sent.
+        probe = current_dispatch_probe()
+        if probe is not None:
+            probe.reporting = True
         async with self._bulkhead.guard(host):
-            return await self._run(request, host)
+            return await self._run(request, host, probe)
 
-    async def _run(self, request: RunnerRequest, host: str) -> RunnerResult:
+    async def _run(
+        self, request: RunnerRequest, host: str, probe: DispatchProbe | None
+    ) -> RunnerResult:
         start = time.perf_counter()
         with _tracer.start_as_current_span("broker.upstream_request") as span:
             span.set_attribute("http.url_host", host)
+            sent_before = False
             try:
                 req = self._client.build_request(
                     method=request.method,
@@ -250,6 +259,8 @@ class HttpRunner(UpstreamRunner):
                     headers=self._outbound_headers(request.headers),
                     timeout=request.timeout_s,
                 )
+                if probe is not None:
+                    sent_before = probe.begin_send()
                 resp = await self._client.send(req, stream=True)
                 try:
                     body = await self._read_capped(resp)
@@ -259,6 +270,11 @@ class HttpRunner(UpstreamRunner):
                 # One mapping for every transport failure (see
                 # ``_map_transport_error``); a connect-phase failure is
                 # ``pre_send`` so the retry decorator may retry it for any method.
+                if probe is not None and isinstance(
+                    exc, (httpx.ConnectError, UpstreamHostUnresolvedError)
+                ):
+                    # Connect-phase failure: nothing reached the upstream.
+                    probe.send_ruled_out(sent_before)
                 _record_transport_error(span, exc)
                 logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
                 # ``from None``: a chained cause would put the raw message back
