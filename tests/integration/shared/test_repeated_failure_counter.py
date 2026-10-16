@@ -13,7 +13,8 @@ database (no DB mocking) to pin that:
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Iterator
+import random
+from collections.abc import AsyncGenerator, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -21,7 +22,6 @@ from typing import Any
 import pytest
 from sqlalchemy import delete, event, func, select, update
 
-import jentic_one.shared.events.repeated_failure as repeated_failure_mod
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.config import SecurityConfig
@@ -40,6 +40,9 @@ pytestmark = pytest.mark.integration
 
 _PREFIX = "integ-rf-counter-"
 _ACTOR = "agt_rf_counter"
+_GATED_ACTOR = "agt_rf_diff_gated"
+_UNGATED_ACTOR = "agt_rf_diff_ungated"
+_ACTORS = (_ACTOR, _GATED_ACTOR, _UNGATED_ACTOR)
 _TOOLKIT = "tk_rf_counter"
 _CREDENTIAL = "cred_rf_counter"
 _OPERATION = OperationInfo(id="op_rf_counter", path="/v1/things", method="GET")
@@ -58,7 +61,7 @@ async def clean_rows(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
             await session.execute(
                 delete(ExecutionRecord).where(ExecutionRecord.id.like(f"{_PREFIX}%"))
             )
-            await session.execute(delete(Event).where(Event.actor_id == _ACTOR))
+            await session.execute(delete(Event).where(Event.actor_id.in_(_ACTORS)))
 
     await _cleanup()
     yield
@@ -163,7 +166,7 @@ async def test_below_threshold_failures_issue_no_statements(admin_db: DatabaseSe
 async def test_scan_renders_the_status_filter_inline(admin_db: DatabaseSession) -> None:
     """The scan's ``status`` filter is a SQL literal, not a bind parameter, so a
     generic prepared plan can still match the ``status = 'failed'`` partial
-    indexes on Postgres."""
+    index on the credential axis."""
     failures = _Failures(admin_db, None)
     (scan,) = _scans(await failures.fail())
     assert "status = 'failed'" in scan
@@ -220,13 +223,12 @@ async def test_toolkit_path_failures_count_toward_the_credential_key(
 class _BrokenStore(MemoryStateBackend):
     """A shared-state backend whose every call fails (e.g. Redis is down)."""
 
-    async def get(self, key: str) -> bytes | None:
-        raise ConnectionError("state backend down")
-
     async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
         raise ConnectionError("state backend down")
 
-    async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
+    async def incr_and_read(
+        self, incr_keys: Sequence[str], read_keys: Sequence[str], *, ttl_s: float
+    ) -> tuple[list[int], list[bytes | None]]:
         raise ConnectionError("state backend down")
 
 
@@ -264,7 +266,7 @@ class _VirtualClock:
 
 @pytest.mark.asyncio
 async def test_sustained_critical_outage_keeps_the_gate_closed(
-    admin_db: DatabaseSession, monkeypatch: pytest.MonkeyPatch
+    admin_db: DatabaseSession,
 ) -> None:
     """Pins the sustained-outage case the gate exists for: one failure every 2s
     for ~12 minutes with the default thresholds (5 / 20, 300s window).
@@ -281,9 +283,6 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
     start = datetime.now(UTC).timestamp() - 86_400
     real_start = datetime.now(UTC)
     clock = _VirtualClock(start)
-    monkeypatch.setattr(
-        repeated_failure_mod, "_utcnow", lambda: datetime.fromtimestamp(clock.now, tz=UTC)
-    )
     counter = RepeatedFailureCounter(MemoryStateBackend(clock=clock), clock=clock)
 
     scanned_at: list[float] = []
@@ -312,6 +311,7 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
                     trace_id="a" * 32,
                     config=config,
                     failure_counter=counter,
+                    clock=clock,
                 )
             # Stamp any event emitted just now with the virtual time.
             await session.execute(
@@ -351,3 +351,128 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
     # In particular nothing scans between the ERROR event leaving the window
     # (t=310) and the first CRITICAL leaving it (t=340).
     assert not [t for t in scanned_at if 310 <= t < 340], scanned_at
+
+
+_DIFF_CONFIG = SecurityConfig(
+    execution_repeated_failure_threshold=3,
+    execution_repeated_failure_critical_threshold=6,
+    execution_repeated_failure_window_s=60,
+)
+
+
+def _arrivals(seed: int, count: int) -> list[tuple[float, bool]]:
+    """Seeded failure times (seconds from a bucket boundary) and whether each
+    carries a toolkit as well as the credential.
+
+    Phases mix rates below, around and far above both thresholds, idle gaps
+    longer than the window (events and markers age out), and bursts that
+    straddle a bucket boundary.
+    """
+    window = _DIFF_CONFIG.execution_repeated_failure_window_s
+    gaps_by_phase = {
+        "sparse": (window / 3, window / 1.5),  # ~1.5-3 per window
+        "near": (window / 8, window / 4),  # ~4-8 per window: threshold..critical
+        "dense": (window / 40, window / 10),  # well above critical
+    }
+    rng = random.Random(seed)
+    t = 0.0
+    out: list[tuple[float, bool]] = []
+    while len(out) < count:
+        phase = rng.choice(["sparse", "near", "dense", "edge", "idle"])
+        if phase == "idle":
+            t += rng.uniform(window, 2.5 * window)
+            continue
+        if phase == "edge":
+            boundary = (t // window + 1) * window
+            t = max(t, boundary - rng.uniform(1, 5))
+            gaps = [rng.uniform(0.5, 2) for _ in range(rng.randint(3, 8))]
+        else:
+            lo, hi = gaps_by_phase[phase]
+            gaps = [rng.uniform(lo, hi) for _ in range(rng.randint(3, 15))]
+        for gap in gaps:
+            t += gap
+            out.append((t, rng.random() < 0.5))
+    return out[:count]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seed", [1708, 1744, 20261016])
+async def test_gate_matches_ungated_detector(admin_db: DatabaseSession, seed: int) -> None:
+    """The gate's safety property: for any arrival pattern it emits exactly the
+    events the unconditional scan emits, at the same moments.
+
+    The same seeded failure sequence runs through a gated detector and an
+    ungated one (``failure_counter=None``) on disjoint actors, sharing one
+    virtual clock (scan window, records, events, counter buckets and TTLs).
+    Credential-only failures and toolkit + credential failures interleave, so
+    the credential-axis scan also counts toolkit-path records.
+    """
+    window = _DIFF_CONFIG.execution_repeated_failure_window_s
+    day_ago = datetime.now(UTC).timestamp() - 86_400
+    start = day_ago - day_ago % window
+    real_start = datetime.now(UTC)
+    clock = _VirtualClock(start)
+    counter = RepeatedFailureCounter(MemoryStateBackend(clock=clock), clock=clock)
+    scans = {_GATED_ACTOR: 0, _UNGATED_ACTOR: 0}
+
+    for i, (offset, with_toolkit) in enumerate(_arrivals(seed, 150)):
+        clock.now = start + offset
+        virtual_now = datetime.fromtimestamp(clock.now, tz=UTC)
+        for tag, actor, gate in (("g", _GATED_ACTOR, counter), ("u", _UNGATED_ACTOR, None)):
+            toolkit_id = _TOOLKIT if with_toolkit else None
+            async with admin_db.transaction() as session:
+                await record_execution(
+                    session,
+                    execution_id=f"{_PREFIX}{tag}{i}",  # ids are varchar(30)
+                    toolkit_id=toolkit_id,
+                    trace_id="a" * 32,
+                    started_at=virtual_now,
+                    status=ExecutionStatus.FAILED,
+                    operation=_OPERATION,
+                    actor_id=actor,
+                    actor_type="agent",
+                    credential_id=_CREDENTIAL,
+                )
+                with _statements(admin_db) as captured:
+                    await maybe_emit_repeated_failure(
+                        session,
+                        actor_id=actor,
+                        actor_type="agent",
+                        toolkit_id=toolkit_id,
+                        credential_id=_CREDENTIAL,
+                        operation=_OPERATION,
+                        trace_id="a" * 32,
+                        config=_DIFF_CONFIG,
+                        failure_counter=gate,
+                        clock=clock,
+                    )
+                scans[actor] += len(_scans(captured))
+                await session.execute(
+                    update(Event)
+                    .where(Event.actor_id == actor, Event.created_at >= real_start)
+                    .values(created_at=virtual_now)
+                )
+
+    async with admin_db.session() as session:
+        rows = (
+            await session.execute(
+                select(Event.actor_id, Event.severity, Event.created_at, Event.data)
+                .where(
+                    Event.type == EventType.EXECUTION_REPEATED_FAILURE,
+                    Event.actor_id.in_((_GATED_ACTOR, _UNGATED_ACTOR)),
+                )
+                .order_by(Event.created_at, Event.severity)
+            )
+        ).all()
+    emitted: dict[str, list[tuple[str, str, float]]] = {_GATED_ACTOR: [], _UNGATED_ACTOR: []}
+    for actor, severity, created_at, data in rows:
+        axis = "toolkit" if "toolkit_id" in data else "credential"
+        stamp = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
+        emitted[actor].append((severity, axis, round(stamp.timestamp() - start, 3)))
+
+    assert emitted[_GATED_ACTOR] == emitted[_UNGATED_ACTOR]
+    # Non-vacuous: the sequence exercises both severities on both axes, and the
+    # gate actually skipped scans.
+    kinds = {(sev, axis) for sev, axis, _ in emitted[_UNGATED_ACTOR]}
+    assert {("error", "toolkit"), ("error", "credential"), ("critical", "credential")} <= kinds
+    assert scans[_GATED_ACTOR] < scans[_UNGATED_ACTOR], scans
