@@ -40,24 +40,28 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.state import (
-    AtomicStore,
     BackendKind,
     KeyValueStore,
     MemoryStateBackend,
     StateBackendConfig,
+    WindowCounterStore,
 )
 
 logger = structlog.get_logger(__name__)
 
 _KEY_PREFIX = "repeated_failure"
+# Windows a failure stays countable: the bucket TTL, the estimate's span
+# (current + previous bucket) and the degraded span after a backend error all
+# use it, so they cannot drift apart.
+_SPAN_WINDOWS = 2
 
 
-class CounterStore(AtomicStore, KeyValueStore, Protocol):
-    """The two shared-state roles the counter needs: atomic counters + TTL'd keys."""
+class CounterStore(WindowCounterStore, KeyValueStore, Protocol):
+    """The shared-state roles the counter needs: the windowed step + TTL'd markers."""
 
 
 @dataclass(frozen=True, slots=True)
-class _AxisKey:
+class AxisKey:
     """One aggregation key of the scan: actor + consumer axis + operation."""
 
     actor_id: str
@@ -76,7 +80,8 @@ class RepeatedFailureCounter:
 
     **Counting.** Each failure increments a time bucket of width
     ``execution_repeated_failure_window_s`` (``floor(now / window)``) with an
-    atomic ``incr_with_ttl`` that expires after two windows. The estimate for
+    atomic increment whose key expires two windows after it is created. The
+    estimate for
     the scan's window ``[now - window, now]`` is *current + previous* bucket —
     that span always covers the window, so the estimate is an upper bound on the
     failures the scan can count. A record's ``started_at`` precedes its failure,
@@ -99,6 +104,14 @@ class RepeatedFailureCounter:
     count — with CRITICAL marking ERROR, a sustained CRITICAL outage keeps the
     gate closed regardless.
 
+    **Slack.** The estimate spans up to two windows, so it can reach about twice
+    the scan's true count. The zero-statement guarantee holds while the
+    *estimate* is below the threshold: a key failing steadily at between half
+    the threshold and the threshold per window still scans on most failures
+    without emitting, and CRITICAL stays a possible pick (and unmarked) while
+    the estimate alone reaches the critical threshold. That costs scans, never
+    an emission.
+
     **Keys.** The scan's toolkit axis counts every record with that toolkit and
     its credential axis every record with that credential (toolkit-path records
     included), so a failure increments the toolkit key *and* the credential key
@@ -107,10 +120,24 @@ class RepeatedFailureCounter:
     **Multi-instance.** On Redis the counter is cluster-wide, so the rule holds
     across replicas (up to clock skew between instances at bucket edges, which
     already shifts the scan's own ``started_at`` window). On the ``memory``
-    backend it is per process: a multi-replica deployment on ``memory`` — not a
-    supported topology for the broker's shared state — would only scan once one
-    replica alone sees ``threshold`` failures, delaying (or for a thin spread,
-    missing) an emission the unconditional scan would make.
+    backend it is per process, and several worker processes serving one broker
+    count as several instances just like several replicas: each process would
+    only scan once it alone sees ``threshold`` failures, delaying (or for a thin
+    spread, missing) an emission the unconditional scan would make. So
+    :func:`build_repeated_failure_counter` builds no gate on ``memory`` when
+    told the broker runs in more than one process.
+
+    **Every writer counts.** The estimate bounds the scan's count only if every
+    failed ``ExecutionRecord`` the scan can see was counted: every caller that
+    persists a failed record and runs the detection must pass the *same*
+    counter. A caller that passes none adds records the scan counts but the
+    buckets don't, so the gated callers could skip a due scan
+    (``tests/arch/test_repeated_failure_counter_threading.py`` pins the call
+    sites). For the same
+    reason, a Redis whose ``maxmemory-policy`` evicts keys (any ``allkeys-*`` or
+    ``volatile-*`` policy — every bucket key carries a TTL) breaks the bound
+    without raising; under ``noeviction`` a full Redis rejects the write, which
+    fails open below.
 
     **Failure.** Any backend error (Redis down, a bounded memory store full)
     fails open: the scan runs exactly as without a counter. An error can drop an
@@ -118,8 +145,13 @@ class RepeatedFailureCounter:
     be inside a window, so the process keeps scanning every failure for two
     windows after its last error (still counting, so the gate resumes warm). On
     Redis an increment dropped by one instance can still hide that failure from
-    the others' gates for those two windows. The first error logs a warning;
-    later ones log at debug so an outage doesn't flood the log.
+    the others' gates for those two windows. The first error after a healthy
+    call logs a warning; repeats log at debug so an outage doesn't flood the
+    log, and the next successful call logs the recovery.
+
+    Each gated failure costs one backend round trip
+    (:meth:`~jentic_one.shared.state.WindowCounterStore.incr_and_read`): it
+    runs inside the caller's open transaction, so it must stay a single step.
     """
 
     def __init__(self, store: CounterStore, *, clock: Callable[[], float] = time.time) -> None:
@@ -129,38 +161,41 @@ class RepeatedFailureCounter:
         self._degraded_until = float("-inf")
 
     async def should_scan(
-        self, key: _AxisKey, extra_keys: tuple[_AxisKey, ...], config: SecurityConfig
+        self, key: AxisKey, extra_keys: tuple[AxisKey, ...], config: SecurityConfig
     ) -> bool:
         """Count one failure under *key* (+ *extra_keys*); True when the scan must run."""
         window = config.execution_repeated_failure_window_s
+        span_s = _SPAN_WINDOWS * window
         now = self._clock()
+        bucket = int(now // window)
+        severities = (EventSeverity.ERROR, EventSeverity.CRITICAL)
         try:
-            bucket = int(now // window)
-            current = await self._store.incr_with_ttl(
-                self._bucket_key(key, window, bucket), ttl_s=2 * window
+            counts, reads = await self._store.incr_and_read(
+                [self._bucket_key(k, window, bucket) for k in (key, *extra_keys)],
+                [
+                    self._bucket_key(key, window, bucket - 1),
+                    *(self._marker_key(key, window, s) for s in severities),
+                ],
+                ttl_s=span_s,
             )
-            for extra in extra_keys:
-                await self._store.incr_with_ttl(
-                    self._bucket_key(extra, window, bucket), ttl_s=2 * window
-                )
-            previous = await self._store.get(self._bucket_key(key, window, bucket - 1))
-            estimate = current + (int(previous) if previous is not None else 0)
-            if now < self._degraded_until:
-                return True
-            if estimate < config.execution_repeated_failure_threshold:
-                return False
-            for severity in _possible_severities(estimate, config):
-                if await self._store.get(self._marker_key(key, window, severity)) is None:
-                    return True
-            return False
-        except Exception:
-            self._degraded_until = now + 2 * window
-            self._log_unavailable(key)
+        except Exception as exc:
+            self._degraded_until = now + span_s
+            self._log_unavailable(key, exc)
             return True
+        self._log_recovered(key)
+
+        previous, *markers = reads
+        estimate = counts[0] + (int(previous) if previous is not None else 0)
+        if now < self._degraded_until:
+            return True
+        if estimate < config.execution_repeated_failure_threshold:
+            return False
+        marked = {s for s, marker in zip(severities, markers, strict=True) if marker is not None}
+        return any(s not in marked for s in _possible_severities(estimate, config))
 
     async def note_dedup_hit(
         self,
-        key: _AxisKey,
+        key: AxisKey,
         severity: EventSeverity,
         event_created_at: datetime,
         config: SecurityConfig,
@@ -183,25 +218,39 @@ class RepeatedFailureCounter:
         try:
             for covered in _DEDUP_COVERS[severity]:
                 await self._store.set(self._marker_key(key, window, covered), b"1", ttl_s=ttl_s)
-        except Exception:
-            self._log_unavailable(key)
+        except Exception as exc:
+            self._log_unavailable(key, exc)
 
-    def _log_unavailable(self, key: _AxisKey) -> None:
-        log = logger.debug if self._warned else logger.warning
+    def _log_unavailable(self, key: AxisKey, exc: Exception) -> None:
+        # Fail-open is an expected degraded path: a warning with the error type,
+        # the traceback only at debug.
+        context = {
+            "actor_id": key.actor_id,
+            "operation_id": key.operation_id,
+            "error_type": type(exc).__name__,
+        }
+        if self._warned:
+            logger.debug("repeated_failure_counter_unavailable", **context, exc_info=True)
+            return
         self._warned = True
-        log(
-            "repeated_failure_counter_unavailable",
+        logger.warning("repeated_failure_counter_unavailable", **context)
+
+    def _log_recovered(self, key: AxisKey) -> None:
+        if not self._warned:
+            return
+        self._warned = False
+        logger.info(
+            "repeated_failure_counter_recovered",
             actor_id=key.actor_id,
             operation_id=key.operation_id,
-            exc_info=True,
         )
 
     @staticmethod
-    def _bucket_key(key: _AxisKey, window: int, bucket: int) -> str:
+    def _bucket_key(key: AxisKey, window: int, bucket: int) -> str:
         return f"{_KEY_PREFIX}:{window}:n:{bucket}:{key.digest()}"
 
     @staticmethod
-    def _marker_key(key: _AxisKey, window: int, severity: EventSeverity) -> str:
+    def _marker_key(key: AxisKey, window: int, severity: EventSeverity) -> str:
         return f"{_KEY_PREFIX}:{window}:seen:{severity.value}:{key.digest()}"
 
 
@@ -216,11 +265,6 @@ _DEDUP_COVERS: dict[EventSeverity, tuple[EventSeverity, ...]] = {
     EventSeverity.ERROR: (EventSeverity.ERROR,),
     EventSeverity.CRITICAL: (EventSeverity.CRITICAL, EventSeverity.ERROR),
 }
-
-
-def _utcnow() -> datetime:
-    """Wall-clock "now" for the scan's window (a seam for timeline tests)."""
-    return datetime.now(UTC)
 
 
 def _possible_severities(estimate: int, config: SecurityConfig) -> list[EventSeverity]:
@@ -239,16 +283,25 @@ def build_repeated_failure_counter(
     backend_config: StateBackendConfig,
     shared_backend: CounterStore,
     security_config: SecurityConfig,
-) -> RepeatedFailureCounter:
+    *,
+    processes: int = 1,
+) -> RepeatedFailureCounter | None:
     """Build the counter over the process's shared-state backend.
 
     Redis is shared as-is (bounded by its own TTLs and memory policy). On the
     ``memory`` backend the counter gets a dedicated store capped at
     ``execution_repeated_failure_counter_max_entries`` so a high-cardinality failure
     storm can neither grow without bound nor crowd out other shared state.
+
+    ``processes`` is how many worker processes serve this broker. A per-process
+    ``memory`` count would see only a share of each key's failures and could
+    hide an emission, so with more than one process on ``memory`` this returns
+    ``None``: no gate, and every failure runs the scan.
     """
     if backend_config.backend is BackendKind.REDIS:
         return RepeatedFailureCounter(shared_backend)
+    if processes > 1:
+        return None
     return RepeatedFailureCounter(
         MemoryStateBackend(
             max_entries=security_config.execution_repeated_failure_counter_max_entries
@@ -267,6 +320,7 @@ async def maybe_emit_repeated_failure(
     config: SecurityConfig,
     credential_id: str | None = None,
     failure_counter: RepeatedFailureCounter | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> None:
     """Emit ``execution.repeated_failure`` when failures cross the threshold.
 
@@ -298,6 +352,8 @@ async def maybe_emit_repeated_failure(
     ``failure_counter`` gates the queries: when supplied, a failure the counter
     proves cannot emit issues no DB statement (see
     :class:`RepeatedFailureCounter`). ``None`` runs the queries on every failure.
+    ``clock`` (epoch seconds) is "now" for the scan's window; pass the counter's
+    clock when driving both on a virtual time base.
     """
     # An aggregate key needs an operation plus a consumer axis to be meaningful;
     # with neither toolkit nor credential there is nothing to count.
@@ -312,19 +368,19 @@ async def maybe_emit_repeated_failure(
         event_axis = Event.data["toolkit_id"].as_string() == toolkit_id
         axis_label = f"toolkit {toolkit_id}"
         axis_data: dict[str, str] = {"toolkit_id": toolkit_id}
-        gate_key = _AxisKey(actor_id, "toolkit", toolkit_id, operation_id)
+        gate_key = AxisKey(actor_id, "toolkit", toolkit_id, operation_id)
     else:
         record_axis = ExecutionRecord.credential_id == credential_id
         event_axis = Event.data["credential_id"].as_string() == credential_id
         axis_label = f"credential {credential_id}"
         axis_data = {"credential_id": credential_id or ""}
-        gate_key = _AxisKey(actor_id, "credential", credential_id or "", operation_id)
+        gate_key = AxisKey(actor_id, "credential", credential_id or "", operation_id)
 
     if failure_counter is not None:
         # A toolkit-path failure that also carries a credential is counted by the
         # credential-axis scan too, so it must feed that key as well.
         extra_keys = (
-            (_AxisKey(actor_id, "credential", credential_id, operation_id),)
+            (AxisKey(actor_id, "credential", credential_id, operation_id),)
             if toolkit_id and credential_id
             else ()
         )
@@ -338,16 +394,17 @@ async def maybe_emit_repeated_failure(
         # ExecutionRecord down with it. Rolling back only the nested block keeps
         # the best-effort promise for DB-level failures too.
         async with session.begin_nested():
-            now = _utcnow()
+            now = datetime.fromtimestamp(clock(), tz=UTC)
             window_start = now - timedelta(seconds=config.execution_repeated_failure_window_s)
 
             count_stmt = (
                 select(func.count())
                 .select_from(ExecutionRecord)
                 .where(
-                    # Rendered inline (not a bind parameter) so Postgres can match
-                    # the ``WHERE status = 'failed'`` partial indexes even under a
-                    # generic prepared-statement plan.
+                    # Rendered inline (not a bind parameter) so the planner can
+                    # match the ``WHERE status = 'failed'`` partial index
+                    # (``ix_execution_records_repeated_failure_credential_scan``)
+                    # even under a generic prepared-statement plan.
                     ExecutionRecord.status
                     == literal(ExecutionStatus.FAILED.value, String, literal_execute=True),
                     ExecutionRecord.actor_id == actor_id,

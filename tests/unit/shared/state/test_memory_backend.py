@@ -161,6 +161,30 @@ async def test_bounded_backend_sweeps_expired_entries_to_make_room(clock: FakeCl
     assert await backend.get("long") == b"1"
 
 
+async def test_incr_and_read_increments_then_reads_in_order(clock: FakeClock) -> None:
+    """One step increments every counter (TTL set only on creation) and reads the
+    rest; missing keys read as ``None``."""
+    backend = MemoryStateBackend(clock=clock)
+    await backend.set("marker", b"1", ttl_s=100.0)
+
+    assert await backend.incr_and_read(["a", "b"], ["prev", "marker"], ttl_s=10.0) == (
+        [1, 1],
+        [None, b"1"],
+    )
+    clock.advance(6.0)
+    assert await backend.incr_and_read(["a"], ["b"], ttl_s=10.0) == ([2], [b"1"])
+
+    clock.advance(5.0)  # past the creation TTL: the window does not slide
+    assert await backend.incr_and_read(["a"], [], ttl_s=10.0) == ([1], [])
+
+
+async def test_incr_and_read_respects_the_bound(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=1)
+    await backend.incr_and_read(["a"], [], ttl_s=10.0)
+    with pytest.raises(StateCapacityError):
+        await backend.incr_and_read(["a", "b"], [], ttl_s=10.0)
+
+
 def test_bounded_backend_rejects_non_positive_bound() -> None:
     with pytest.raises(ValueError, match="max_entries"):
         MemoryStateBackend(max_entries=0)

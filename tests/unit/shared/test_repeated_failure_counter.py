@@ -8,6 +8,7 @@ deterministic clock (the DB-backed statement counts live in
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import pytest
@@ -15,8 +16,8 @@ from structlog.testing import capture_logs
 
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events.repeated_failure import (
+    AxisKey,
     RepeatedFailureCounter,
-    _AxisKey,
     _possible_severities,
     build_repeated_failure_counter,
 )
@@ -29,9 +30,9 @@ _CONFIG = SecurityConfig(
     execution_repeated_failure_critical_threshold=6,
     execution_repeated_failure_window_s=_WINDOW,
 )
-_KEY = _AxisKey("agt_1", "toolkit", "tk_1", "op_1")
-_OTHER_KEY = _AxisKey("agt_1", "toolkit", "tk_1", "op_2")
-_CRED_KEY = _AxisKey("agt_1", "credential", "cred_1", "op_1")
+_KEY = AxisKey("agt_1", "toolkit", "tk_1", "op_1")
+_OTHER_KEY = AxisKey("agt_1", "toolkit", "tk_1", "op_2")
+_CRED_KEY = AxisKey("agt_1", "credential", "cred_1", "op_1")
 
 
 class FakeClock:
@@ -58,8 +59,8 @@ def counter(clock: FakeClock) -> RepeatedFailureCounter:
 async def _fail(
     counter: RepeatedFailureCounter,
     times: int = 1,
-    key: _AxisKey = _KEY,
-    extra: tuple[_AxisKey, ...] = (),
+    key: AxisKey = _KEY,
+    extra: tuple[AxisKey, ...] = (),
 ) -> list[bool]:
     return [await counter.should_scan(key, extra, _CONFIG) for _ in range(times)]
 
@@ -181,30 +182,67 @@ async def test_a_stale_dedup_hit_sets_no_marker(
 
 
 class _BrokenStore(MemoryStateBackend):
-    async def get(self, key: str) -> bytes | None:
-        raise ConnectionError("down")
+    """A backend that is down until ``up`` is set (e.g. Redis restarting)."""
+
+    def __init__(self, *, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.up = False
 
     async def set(self, key: str, value: bytes, *, ttl_s: float) -> None:
-        raise ConnectionError("down")
+        if not self.up:
+            raise ConnectionError("down")
+        await super().set(key, value, ttl_s=ttl_s)
 
-    async def incr_with_ttl(self, key: str, *, ttl_s: float, amount: int = 1) -> int:
-        raise ConnectionError("down")
+    async def incr_and_read(
+        self, incr_keys: Sequence[str], read_keys: Sequence[str], *, ttl_s: float
+    ) -> tuple[list[int], list[bytes | None]]:
+        if not self.up:
+            raise ConnectionError("down")
+        return await super().incr_and_read(incr_keys, read_keys, ttl_s=ttl_s)
 
 
 async def test_backend_failure_fails_open_and_warns_once(clock: FakeClock) -> None:
     """A dead backend scans on every failure; only the first error is a warning."""
-    counter = RepeatedFailureCounter(_BrokenStore(), clock=clock)
+    counter = RepeatedFailureCounter(_BrokenStore(clock=clock), clock=clock)
     with capture_logs() as logs:
         assert await _fail(counter, 3) == [True, True, True]
         await counter.note_dedup_hit(_KEY, EventSeverity.ERROR, _at(clock), _CONFIG)
 
-    levels = [e["log_level"] for e in logs if e["event"] == "repeated_failure_counter_unavailable"]
-    assert levels == ["warning", "debug", "debug", "debug"]
+    unavailable = [e for e in logs if e["event"] == "repeated_failure_counter_unavailable"]
+    assert [e["log_level"] for e in unavailable] == ["warning", "debug", "debug", "debug"]
+    # An expected degraded path: the warning names the error, no traceback.
+    assert unavailable[0]["error_type"] == "ConnectionError"
+    assert "exc_info" not in unavailable[0]
+    assert all(e.get("exc_info") for e in unavailable[1:])
+
+
+async def test_recovery_logs_once_and_rearms_the_warning(clock: FakeClock) -> None:
+    """After the backend comes back, the next outage warns again (not debug)."""
+    store = _BrokenStore(clock=clock)
+    counter = RepeatedFailureCounter(store, clock=clock)
+    with capture_logs() as logs:
+        await _fail(counter, 2)  # outage 1
+        store.up = True
+        await _fail(counter, 2)  # recovered
+        store.up = False
+        await _fail(counter)  # outage 2
+
+    events = [
+        (e["event"], e["log_level"])
+        for e in logs
+        if e["event"].startswith("repeated_failure_counter_")
+    ]
+    assert events == [
+        ("repeated_failure_counter_unavailable", "warning"),
+        ("repeated_failure_counter_unavailable", "debug"),
+        ("repeated_failure_counter_recovered", "info"),
+        ("repeated_failure_counter_unavailable", "warning"),
+    ]
 
 
 async def test_a_full_bounded_store_fails_open(clock: FakeClock) -> None:
     """At the memory bound a new key is not tracked — its failures scan instead
-    of being silently undercounted."""
+    of being silently undercounted (and, below, so does every other key)."""
     counter = RepeatedFailureCounter(MemoryStateBackend(clock=clock, max_entries=1), clock=clock)
     assert await _fail(counter, key=_KEY) == [False]
     assert await _fail(counter, key=_OTHER_KEY) == [True]
@@ -222,10 +260,25 @@ async def test_gate_stays_open_for_two_windows_after_a_backend_error(clock: Fake
     assert await _fail(counter, key=_KEY) == [False]
 
 
+async def test_a_full_bounded_store_degrades_every_key(clock: FakeClock) -> None:
+    """Pins the documented capacity behaviour: one rejected key makes *every*
+    key scan, warm ones included, until two windows after the last rejection."""
+    counter = RepeatedFailureCounter(MemoryStateBackend(clock=clock, max_entries=2), clock=clock)
+    assert await _fail(counter, key=_KEY) == [False]  # 1 bucket entry
+    assert await _fail(counter, key=_OTHER_KEY) == [False]  # 2: full
+    assert await _fail(counter, key=_CRED_KEY) == [True]  # rejected
+    assert await _fail(counter, key=_KEY) == [True]  # warm key, still degraded
+    clock.now += _WINDOW
+    assert await _fail(counter, key=_CRED_KEY) == [True]  # rejected again: renewed
+    clock.now += 2 * _WINDOW - 1
+    assert await _fail(counter, key=_KEY) == [True]
+
+
 def test_memory_backend_gets_a_dedicated_bounded_store() -> None:
     shared = MemoryStateBackend()
     config = SecurityConfig(execution_repeated_failure_counter_max_entries=7)
     counter = build_repeated_failure_counter(StateBackendConfig(), shared, config)
+    assert counter is not None
     store = counter._store
     assert isinstance(store, MemoryStateBackend)
     assert store is not shared
@@ -237,4 +290,23 @@ def test_redis_backend_is_shared_as_is() -> None:
     counter = build_repeated_failure_counter(
         StateBackendConfig(backend=BackendKind.REDIS), shared, SecurityConfig()
     )
+    assert counter is not None
     assert counter._store is shared
+
+
+def test_memory_backend_across_several_processes_builds_no_gate() -> None:
+    """Per-process memory counts would each see only a share of a key's failures
+    and could hide an emission, so several processes on memory scan every failure;
+    Redis stays shared whatever the process count."""
+    shared = MemoryStateBackend()
+    config = SecurityConfig()
+    assert build_repeated_failure_counter(StateBackendConfig(), shared, config, processes=2) is None
+    assert (
+        build_repeated_failure_counter(StateBackendConfig(), shared, config, processes=1)
+        is not None
+    )
+    redis_counter = build_repeated_failure_counter(
+        StateBackendConfig(backend=BackendKind.REDIS), shared, config, processes=4
+    )
+    assert redis_counter is not None
+    assert redis_counter._store is shared
