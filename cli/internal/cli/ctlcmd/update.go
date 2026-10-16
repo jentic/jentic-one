@@ -140,14 +140,15 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 
 	// With no stack installed there is nothing for the stack half to update.
 	// An explicit --stack-only is refused; a combined run updates the CLI only,
-	// so a missing stack is never reported as a CLI/stack divergence.
+	// so a missing stack is never reported as a CLI/stack divergence. The note
+	// is printed only once an update will actually run (below).
+	stackSkipped := false
 	if doStack && !stackInstalled {
 		if opts.stackOnly {
 			return fmt.Errorf("no stack installed: %s not found — run `jenticctl install` first", a.Paths.InstallConfigPath())
 		}
 		doStack = false
-		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Dim.Render("  no stack installed; updating the CLI only (run `jenticctl install` to set one up)"))
+		stackSkipped = true
 	}
 
 	// A brew-managed CLI is never swapped by us — the CLI half delegates to
@@ -184,6 +185,11 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
 		return nil
+	}
+
+	if stackSkipped {
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Dim.Render("  no stack installed; updating the CLI only (run `jenticctl install` to set one up)"))
 	}
 
 	// Only the stack lags: don't re-swap (or brew-upgrade) a CLI that is
@@ -276,9 +282,10 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 }
 
 // Package-level seams over update's external effects (release lookup, CLI
-// swap, skill refresh, stack rebuild, local build and migrations, Docker calls) so the update flow can be
-// tested end to end without network, binaries, or a Docker daemon. Tests that
-// swap these globals must not run with t.Parallel().
+// swap, skill refresh, stack rebuild, local build and migrations, Docker
+// calls) so the update flow can be tested end to end without network,
+// binaries, or a Docker daemon. Tests that swap these globals must not run
+// with t.Parallel().
 var (
 	latestReleaseTag     = update.LatestReleaseTag
 	swapCLI              = (*app).updateCLI

@@ -530,6 +530,29 @@ func TestUpdateNoStackInstallUpdatesCLIOnly(t *testing.T) {
 	}
 }
 
+// An already-current CLI-only install reports "up to date" without the
+// contradictory "updating the CLI only" note.
+func TestUpdateNoStackInstallAlreadyCurrent(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, "", "v0.28.0", "")
+	f := stubUpdateFlow(t, "v0.28.0")
+	useRealStackRebuild(t)
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE on a current CLI-only install: %v", err)
+	}
+	out := a.Out.(*bytes.Buffer).String()
+	if len(f.cliSwaps) != 0 {
+		t.Errorf("CLI swaps = %v, want none", f.cliSwaps)
+	}
+	if !strings.Contains(out, "Already up to date (v0.28.0); nothing to rebuild.") {
+		t.Errorf("output missing the up-to-date line:\n%s", out)
+	}
+	if strings.Contains(out, "updating the CLI only") {
+		t.Errorf("up-to-date run announced a CLI update:\n%s", out)
+	}
+}
+
 // A brew re-run whose cask already reached latest skips brew entirely.
 func TestUpdateBrewRerunSkipsCLIHalf(t *testing.T) {
 	a := testApp(t)
