@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import metrics
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics import Histogram, MeterProvider
 from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from prometheus_client import make_asgi_app
 
@@ -26,6 +27,64 @@ if TYPE_CHECKING:
 
 _configured = False
 _prometheus_active = False
+
+#: Explicit histogram bucket boundaries, in milliseconds, for request-latency
+#: instruments. The OTel default buckets (0, 5, 10, 25, 50, 75, 100, …) are too
+#: coarse below 25 ms to resolve broker overhead; the dense low end gives
+#: meaningful p50/p99 for in-process cost, and the tail reaches the 30 s default
+#: upstream timeout for slow upstream calls. Floats so the Prometheus ``le``
+#: label renders like the SDK defaults (``le="15.0"``).
+LOW_LATENCY_BUCKETS_MS: tuple[float, ...] = (
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    50.0,
+    100.0,
+    250.0,
+    500.0,
+    1000.0,
+    2500.0,
+    5000.0,
+    10000.0,
+    30000.0,
+)
+
+#: The same boundaries in seconds, for instruments recorded in ``s``.
+LOW_LATENCY_BUCKETS_S: tuple[float, ...] = tuple(b / 1000 for b in LOW_LATENCY_BUCKETS_MS)
+
+#: Histogram instruments that get the low-latency buckets, by recorded unit.
+#: ``http.server.duration`` (ms) is what the ASGI/FastAPI instrumentation emits
+#: under the default semconv mode; ``http.server.request.duration`` (s) is its
+#: stable-semconv replacement (``OTEL_SEMCONV_STABILITY_OPT_IN=http``).
+_LOW_LATENCY_HISTOGRAMS_MS: tuple[str, ...] = (
+    "http.server.duration",
+    "broker.execution.duration_ms",
+)
+_LOW_LATENCY_HISTOGRAMS_S: tuple[str, ...] = ("http.server.request.duration",)
+
+
+def metric_views() -> list[View]:
+    """Return the Views applied to the global MeterProvider.
+
+    Each latency histogram gets explicit bucket boundaries in its own recorded
+    unit; every other instrument keeps the SDK default aggregation.
+    """
+    ms = ExplicitBucketHistogramAggregation(boundaries=LOW_LATENCY_BUCKETS_MS)
+    s = ExplicitBucketHistogramAggregation(boundaries=LOW_LATENCY_BUCKETS_S)
+    return [
+        *(
+            View(instrument_type=Histogram, instrument_name=name, aggregation=ms)
+            for name in _LOW_LATENCY_HISTOGRAMS_MS
+        ),
+        *(
+            View(instrument_type=Histogram, instrument_name=name, aggregation=s)
+            for name in _LOW_LATENCY_HISTOGRAMS_S
+        ),
+    ]
 
 
 def configure_metrics(service_name: str, config: MetricsConfig) -> MeterProvider | None:
@@ -58,7 +117,7 @@ def configure_metrics(service_name: str, config: MetricsConfig) -> MeterProvider
             otlp_exporter, export_interval_millis=config.export_interval_seconds * 1000
         )
 
-    provider = MeterProvider(resource=resource, metric_readers=[reader])
+    provider = MeterProvider(resource=resource, metric_readers=[reader], views=metric_views())
 
     metrics.set_meter_provider(provider)
     return provider

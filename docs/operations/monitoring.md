@@ -140,3 +140,11 @@ its record was silently dropped — the only signal that happened),
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
+
+Request-latency histograms — `http.server.duration` (ms; or
+`http.server.request.duration` in seconds under
+`OTEL_SEMCONV_STABILITY_OPT_IN=http`) and `broker.execution.duration_ms` —
+are exported with explicit bucket boundaries of 1, 2, 5, 10, 15, 20, 25, 50,
+100, 250, 500, 1000, 2500, 5000, 10000 and 30000 ms, so `histogram_quantile`
+p50/p99 resolve sub-25 ms latencies and the tail reaches the default 30 s
+upstream timeout. Other histograms keep the OpenTelemetry default buckets.
