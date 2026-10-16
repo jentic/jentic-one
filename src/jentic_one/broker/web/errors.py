@@ -33,6 +33,9 @@ from jentic_one.shared.web.errors import sanitize_validation_errors
 
 _PROBLEM_JSON = "application/problem+json"
 
+# The DB error detail is already SQL-free; the cap keeps the log line short.
+_MAX_LOGGED_DETAIL = 200
+
 logger = structlog.get_logger(__name__)
 
 
@@ -104,12 +107,21 @@ async def handle_database_unavailable(
     """Answer a transient broker-DB failure (e.g. a lost pooled connection) with a 503.
 
     The client gets a static detail — the wrapped driver message can carry
-    connection internals (CWE-209); the raw error is logged server-side. No
-    retry directive is attached: the failure can land after the upstream call
-    was dispatched (e.g. persisting its record), so blindly re-sending a
+    connection internals (CWE-209). The server log carries the error type and
+    the short, SQL-free detail at warning level, without a traceback: the
+    chained SQLAlchemy cause renders the statement and its bound parameters.
+    No retry directive is attached: the failure can land after the upstream
+    call was dispatched (e.g. persisting its record), so blindly re-sending a
     non-idempotent call could execute it twice.
     """
-    logger.error("broker_database_unavailable", path=request.url.path, exc_info=exc)
+    cause = exc.__cause__
+    logger.warning(
+        "broker_database_unavailable",
+        path=request.url.path,
+        error_type=type(exc).__name__,
+        cause=type(cause).__name__ if cause is not None else None,
+        error=exc.detail[:_MAX_LOGGED_DETAIL],
+    )
     return problem_response(
         503,
         "The broker's database is temporarily unavailable",
