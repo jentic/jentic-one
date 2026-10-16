@@ -32347,7 +32347,7 @@
     "/auth/refresh": {
       "description": "`POST`: Refresh session token.",
       "post": {
-        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``invalid_credentials`` for deactivated users, non-user tokens, or opaque\n(non-JWT) credentials. Clients should then send the user back to login.",
+        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``unauthorized`` from the auth gate for a disabled, deleted or unknown user,\nand 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)\ncredentials. Clients should then send the user back to login.",
         "operationId": "refreshSession",
         "responses": {
           "200": {
