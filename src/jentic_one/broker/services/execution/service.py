@@ -131,6 +131,7 @@ async def run_execution(
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
+    has_idempotency_key: bool = False,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -143,6 +144,9 @@ async def run_execution(
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
     ``executions`` row matches; the sync router omits it and a fresh id is minted.
+
+    ``has_idempotency_key`` tells the retry gate the caller sent an
+    ``Idempotency-Key``; ``headers`` never carries it (it is broker-consumed).
     """
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
@@ -164,6 +168,7 @@ async def run_execution(
         body=body,
         timeout_s=timeout,
         signing=signing,
+        has_idempotency_key=has_idempotency_key,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
