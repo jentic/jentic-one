@@ -16,9 +16,13 @@ expand to tens of MB in a single step (a decompression bomb). Requests ask for
 gzip or deflate coding, optionally listed alongside no-op ``identity``
 tokens), the raw stream is inflated incrementally with an output bound, so
 the memory held is at most ``max_bytes`` plus one :data:`DECODE_STEP_BYTES`
-step and one raw network chunk. Bytes after the end of the compressed stream
-are refused rather than buffered. Any other ``Content-Encoding`` — including
-stacked real codings such as ``deflate, gzip`` — is refused.
+step and one raw network chunk. The compressed stream must reach its end:
+bytes after it are refused rather than buffered, and a stream that stops
+before it is refused as truncated. Raw (wire) bytes of a compressed body are
+capped separately at ``max_bytes`` plus :data:`RAW_SLACK_BYTES`, so input
+that inflates to little or nothing (an endless gzip header field, empty
+stored blocks) cannot keep the download going. Any other ``Content-Encoding``
+— including stacked real codings such as ``deflate, gzip`` — is refused.
 """
 
 from __future__ import annotations
@@ -34,6 +38,12 @@ from jentic_one.shared.url_validation import validate_upstream_url_async
 
 #: Largest decoded piece produced per inflate step of a compressed body.
 DECODE_STEP_BYTES = 64 * 1024
+
+#: Raw bytes a compressed body may carry beyond its decoded cap. Deflate's
+#: worst case (incompressible data in stored blocks) adds about 5 bytes per
+#: 64 KiB plus the gzip/zlib framing, so a legitimate body under the cap stays
+#: well inside this margin.
+RAW_SLACK_BYTES = 64 * 1024
 
 
 class UpstreamBodyError(Exception):
@@ -138,8 +148,10 @@ class _Inflater:
         wbits = 16 + zlib.MAX_WBITS if is_gzip else zlib.MAX_WBITS
         self._decoder = zlib.decompressobj(wbits=wbits)
         self._raw_fallback = not is_gzip
+        self._fed = False
 
     def feed(self, data: bytes, out: _CappedBuffer) -> None:
+        self._fed = self._fed or bool(data)
         while data:
             # Input past the end of the compressed stream would only pile up in
             # ``unused_data`` (uncounted and unbounded), so it is refused.
@@ -169,10 +181,17 @@ class _Inflater:
             out.add(piece)
 
     def finish(self, out: _CappedBuffer) -> None:
+        # An empty body carries no compressed stream at all and decodes to
+        # nothing; a non-empty one that stops before end-of-stream is
+        # truncated, and zlib's ``flush`` would silently return the prefix.
+        if not self._fed:
+            return
         try:
             out.add(self._decoder.flush())
         except zlib.error as exc:
             raise UndecodableBodyError(f"corrupt compressed body: {exc}") from exc
+        if not self._decoder.eof:
+            raise UndecodableBodyError("truncated compressed body")
 
 
 def _inflater_for(resp: httpx.Response) -> _Inflater | None:
@@ -199,9 +218,13 @@ async def read_capped_body(resp: httpx.Response, max_bytes: int) -> bytes:
     count. The cap applies to the decoded body: a gzip/deflate body is inflated
     in steps of at most :data:`DECODE_STEP_BYTES`, each counted before the next
     is produced, so peak memory stays within ``max_bytes`` plus one step and
-    one raw chunk however far the body would expand. Any data after the end of
-    the compressed stream, any other ``Content-Encoding`` (stacked real
-    codings included), or a corrupt compressed stream raises
+    one raw chunk however far the body would expand. The raw bytes of a
+    compressed body are capped too, at ``max_bytes`` plus
+    :data:`RAW_SLACK_BYTES` (``ResponseTooLargeError``), so the stream stops
+    being pulled even when it decodes to almost nothing. Any data after the
+    end of the compressed stream, a compressed stream that ends before its
+    end-of-stream marker (truncated), any other ``Content-Encoding`` (stacked
+    real codings included), or a corrupt compressed stream raises
     ``UndecodableBodyError``.
     """
     content_length = resp.headers.get("content-length")
@@ -215,10 +238,15 @@ async def read_capped_body(resp: httpx.Response, max_bytes: int) -> bytes:
         out.add(resp.content)
         return out.value()
     inflater = _inflater_for(resp)
+    raw_budget = max_bytes + RAW_SLACK_BYTES
+    raw_total = 0
     async for raw in resp.aiter_raw():
         if inflater is None:
             out.add(raw)
         else:
+            raw_total += len(raw)
+            if raw_total > raw_budget:
+                raise ResponseTooLargeError
             inflater.feed(raw, out)
     if inflater is not None:
         inflater.finish(out)

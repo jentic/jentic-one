@@ -439,3 +439,21 @@ async def test_fetch_json_unsupported_content_encoding_is_a_fetch_error() -> Non
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     with _patched(client), pytest.raises(CatalogFetchError, match="unsupported content-encoding"):
         await fetch_json("https://example.com/openapi.json", config=IngestConfig())
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_truncated_gzip_is_a_fetch_error() -> None:
+    """A gzip body cut off before its end-of-stream marker is a fetch error, not
+    the short JSON prefix it happened to decode to."""
+    truncated = gzip.compress(b'{"openapi": "3.1.0"}')[:-8]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=CountingChunkedStream(n_chunks=1, chunk=truncated),
+            headers={"content-encoding": "gzip"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client), pytest.raises(CatalogFetchError, match="truncated compressed body"):
+        await fetch_json("https://example.com/openapi.json", config=IngestConfig())
