@@ -11,6 +11,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
@@ -53,7 +54,10 @@ async def resolve_identity(request: Request) -> Identity:
     verify_token: TokenVerifier = request.app.state.verify_token
     try:
         identity = await verify_token(credential, request)
-    except (Unauthorized, Forbidden):
+    except (Unauthorized, Forbidden, DatabaseUnavailableError):
+        # A database that cannot answer is not a bad credential: the surface's
+        # handler turns it into a retryable 503 (the caller is still refused),
+        # so a DB blip never reads to a client as "your session is dead".
         raise
     except Exception:
         raise Unauthorized(
@@ -76,6 +80,32 @@ async def resolve_identity(request: Request) -> Identity:
         actor_type=identity.actor_type.value,
     )
     return identity
+
+
+CredentialRecheck = Callable[[], Coroutine[Any, Any, bool]]
+
+
+def get_credential_recheck(request: Request) -> CredentialRecheck:
+    """A re-verifier for the request's own credential, for responses that outlive the request.
+
+    A streaming response (``/events/stream``) authenticates once, then stays
+    open far longer than any single verification. The returned callable runs
+    the presented credential back through the app's verifier and answers
+    whether it is still good — ``False`` once the token has expired, been
+    revoked, or its actor disabled or deleted (#1139). Any failure, including
+    a database that cannot answer, reads as ``False``: the stream fails closed
+    and a reconnect gets the precise 401/503.
+    """
+
+    async def _recheck() -> bool:
+        verify_token: TokenVerifier = request.app.state.verify_token
+        try:
+            await verify_token(extract_credential(request), request)
+        except Exception:
+            return False
+        return True
+
+    return _recheck
 
 
 def get_current_identity(
