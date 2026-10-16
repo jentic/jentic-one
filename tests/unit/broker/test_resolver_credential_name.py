@@ -15,6 +15,8 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.shared.schemas import APIReference
 
+pytestmark = pytest.mark.usefixtures("load_material_spy")
+
 
 def _make_credential(
     *,

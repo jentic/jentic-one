@@ -45,39 +45,6 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
 }
 
 
-async def _load_material(session: AsyncSession, credentials: Sequence[Credential]) -> None:
-    """Populate each credential's type-matching child with one query per relationship.
-
-    Credentials without a child row get ``None`` (as the ``selectin`` default
-    would). With duplicate child rows the first one wins, mirroring the
-    ``uselist=False`` selectin behaviour.
-    """
-    owners_by_rel: dict[str, list[Credential]] = defaultdict(list)
-    for credential in credentials:
-        rel = _MATERIAL_RELATIONSHIP.get(credential.type)
-        if rel is not None:
-            owners_by_rel[rel].append(credential)
-
-    for rel, owners in owners_by_rel.items():
-        prop = Credential.__mapper__.relationships[rel]
-        child_cls: Any = prop.mapper.class_
-        back = prop.back_populates
-        stmt = select(child_cls).where(child_cls.credential_id.in_([c.id for c in owners]))
-        if back:
-            # The parent is already in the identity map; set it below rather
-            # than letting the child's own ``selectin`` back-reference query.
-            stmt = stmt.options(lazyload(getattr(child_cls, back)))
-        rows = await session.execute(stmt)
-        child_by_owner: dict[str, Any] = {}
-        for child in rows.scalars():
-            child_by_owner.setdefault(child.credential_id, child)
-        for owner in owners:
-            child = child_by_owner.get(owner.id)
-            set_committed_value(owner, rel, child)
-            if child is not None and back:
-                set_committed_value(child, back, owner)
-
-
 class CredentialRepository:
     """Data access layer for Credential entities — flush-only, never commits."""
 
@@ -133,12 +100,14 @@ class CredentialRepository:
 
     @staticmethod
     async def list_by_vendor(session: AsyncSession, api_vendor: str) -> list[Credential]:
-        """Fetch candidates for a vendor — the broker's per-call resolution query.
+        """Fetch candidate credential headers for a vendor — no secret material.
 
-        Only the secret-material child matching each candidate's ``type`` is
-        loaded (one query per distinct type present, none for ``NO_AUTH``)
-        instead of the model's default ``selectin`` fan-out over every child
-        table. The other child relationships ``raise`` on access.
+        This is the broker's per-call resolution query. Every secret-material
+        child relationship ``raise``s on access instead of being loaded (the
+        model's default is a ``selectin`` fan-out over every child table), so
+        material of candidates the caller filters out is never read. A caller
+        that needs material calls :meth:`load_material` on the credential(s)
+        it actually uses.
 
         Widen the prefilter to also match the caller's raw (un-slugified) input so
         historical rows persisted before vendor normalization still surface as
@@ -150,9 +119,46 @@ class CredentialRepository:
             .where(Credential.api_vendor.in_({api_vendor, normalized}))
             .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
         )
-        credentials = list(result.scalars().all())
-        await _load_material(session, credentials)
-        return credentials
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def load_material(session: AsyncSession, credentials: Sequence[Credential]) -> None:
+        """Populate each credential's type-matching secret-material child.
+
+        Issues one ``WHERE credential_id IN (…)`` query per distinct child
+        relationship needed by ``credentials`` and none for ``NO_AUTH``, so a
+        single credential costs at most one query that reads only its own row.
+        Child relationships not matching a credential's ``type`` are left as
+        they were (``raise`` on access for :meth:`list_by_vendor` results).
+
+        Credentials without a child row get ``None`` (as the ``selectin`` default
+        would). With duplicate child rows the first one wins, mirroring the
+        ``uselist=False`` selectin behaviour.
+        """
+        owners_by_rel: dict[str, list[Credential]] = defaultdict(list)
+        for credential in credentials:
+            rel = _MATERIAL_RELATIONSHIP.get(credential.type)
+            if rel is not None:
+                owners_by_rel[rel].append(credential)
+
+        for rel, owners in owners_by_rel.items():
+            prop = Credential.__mapper__.relationships[rel]
+            child_cls: Any = prop.mapper.class_
+            back = prop.back_populates
+            stmt = select(child_cls).where(child_cls.credential_id.in_([c.id for c in owners]))
+            if back:
+                # The parent is already in the identity map; set it below rather
+                # than letting the child's own ``selectin`` back-reference query.
+                stmt = stmt.options(lazyload(getattr(child_cls, back)))
+            rows = await session.execute(stmt)
+            child_by_owner: dict[str, Any] = {}
+            for child in rows.scalars():
+                child_by_owner.setdefault(child.credential_id, child)
+            for owner in owners:
+                child = child_by_owner.get(owner.id)
+                set_committed_value(owner, rel, child)
+                if child is not None and back:
+                    set_committed_value(child, back, owner)
 
     @staticmethod
     async def list_all(

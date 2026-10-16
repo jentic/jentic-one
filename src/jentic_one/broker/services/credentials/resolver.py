@@ -224,6 +224,10 @@ class CredentialResolver:
             stored_type = StoredCredentialType(credential.type)
             wire_type = to_wire(stored_type)
 
+            # ``list_by_vendor`` returns headers only; read secret material for
+            # the single winner alone, so unbound/inactive/non-covering
+            # candidates' rows are never selected (and 404/409 read none).
+            await CredentialRepository.load_material(session, [credential])
             return self._build_resolved(credential, wire_type, stored_type)
 
     @staticmethod
