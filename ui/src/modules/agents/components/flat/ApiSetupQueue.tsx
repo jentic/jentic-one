@@ -57,24 +57,24 @@ import {
 	useBindCredentialToAgents,
 } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { AccessRulesStep } from '@/shared/credentials/components/AccessRulesStep';
+import {
+	AccessRulesStep,
+	useDeviceAwareConnect,
+	type ConnectedCredentialInfo,
+	CreateCredentialFlow,
+	type CreatedCredentialInfo,
+	CredentialOptions,
+} from '@/shared/credentials/components';
 import {
 	rulesForPreset,
 	type RulesPreset,
 	type ScopeReach,
 } from '@/shared/credentials/lib/accessPresets';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
-import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
-import type { ConnectedCredentialInfo } from '@/shared/credentials/components/VendorConnectFlow';
-import {
-	CreateCredentialFlow,
-	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialFlow';
 import {
 	credentialAwaitsConsent,
 	type CredentialChoice,
 } from '@/shared/credentials/lib/credentialIdentity';
-import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
 import {
 	addedViaLabel,
 	anotherCredentialWarning,

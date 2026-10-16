@@ -2342,13 +2342,21 @@ def _env_overrides() -> dict[str, Any]:
 # Alembic env loads it per database). The first read is cached so later loads
 # see the same document. Regular files keep re-reading from disk.
 #
-# The cache key is the source's fstat identity (device, inode) plus the path
-# string, never the path alone: fd numbers are recycled by the kernel, so two
-# different files can appear as the same ``/dev/fd/N`` within one process, and
-# a path-string key would silently serve the first file's contents for the
+# The cache key is the source's stat identity (device, inode, ctime) plus the
+# path string, never the path alone: fd numbers are recycled by the kernel, so
+# two different files can appear as the same ``/dev/fd/N`` within one process,
+# and a path-string key would silently serve the first file's contents for the
 # second. Keying on identity also keeps ``/dev/fd/N`` of a *regular* file
 # re-readable (rotation-safe) and covers ``/proc/self/fd/N`` spellings.
-_ONESHOT_CONFIG_CACHE: dict[tuple[int, int, str], str] = {}
+#
+# (device, inode) alone is not a stable identity: macOS reports pipes with
+# st_dev 0 and recycles a freed pipe's st_ino for the next pipe, and a deleted
+# and recreated named FIFO can land on a reused inode. The ctime (set at
+# creation, bumped by every write, frozen once the writer closes) separates
+# those. Linux pipe ctimes are tick-granular and can coincide across pipes, but
+# Linux pipe inodes are not recycled, so the tuple stays distinct on both.
+# (#1499)
+_ONESHOT_CONFIG_CACHE: dict[tuple[int, int, int, str], str] = {}
 _ONESHOT_CACHE_LOCK = threading.Lock()
 
 # A forked child never received the one-shot document itself; drop the parent's
@@ -2366,13 +2374,17 @@ def oneshot_config_source_active() -> bool:
     return bool(_ONESHOT_CONFIG_CACHE)
 
 
+def _oneshot_cache_key(st: os.stat_result, path: Path) -> tuple[int, int, int, str]:
+    return (st.st_dev, st.st_ino, st.st_ctime_ns, str(path))
+
+
 def _read_config_text(path: Path) -> str:
     """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
     # Cache lookup by stat identity happens before open(): opening a named FIFO
     # whose writer has gone blocks forever, and a cache hit must not reopen it.
     st = os.stat(path)
     if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
-        key = (st.st_dev, st.st_ino, str(path))
+        key = _oneshot_cache_key(st, path)
         with _ONESHOT_CACHE_LOCK:
             if key in _ONESHOT_CONFIG_CACHE:
                 # "Why didn't my config change take effect" needs a trail: a
@@ -2389,10 +2401,13 @@ def _read_config_text(path: Path) -> str:
             # semantics), so rewind before reading.
             f.seek(0)
             return f.read()
-        key = (fst.st_dev, fst.st_ino, str(path))
         # The drain-and-cache is a single critical section: a concurrent loader
         # must wait and take the cached document, never race the pipe read.
         with _ONESHOT_CACHE_LOCK:
+            # Stat inside the lock: a loader that waited here while another
+            # drained a still-streaming source must see the post-drain ctime
+            # the drainer stored, not the one from before the lock.
+            key = _oneshot_cache_key(os.fstat(f.fileno()), path)
             if key in _ONESHOT_CONFIG_CACHE:
                 _logger.info("oneshot_config_cache_reused", source=str(path))
                 return _ONESHOT_CONFIG_CACHE[key]
@@ -2406,6 +2421,10 @@ def _read_config_text(path: Path) -> str:
                     "already drained by another reader, or the supervisor closed it "
                     "without writing"
                 )
+            # Every write bumps the ctime, so the stored key is taken after the
+            # drain, once the writer has closed: later loads see the same
+            # frozen identity.
+            key = _oneshot_cache_key(os.fstat(f.fileno()), path)
             return _ONESHOT_CONFIG_CACHE.setdefault(key, text)
 
 

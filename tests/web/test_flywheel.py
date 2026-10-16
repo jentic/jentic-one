@@ -10,11 +10,11 @@ database, spanning three surfaces (admin `/users`, auth `/agents`, control
   4. reads are verified BY ROLE — who can list what, who is 403'd, and that the
      owner-scoping filter shows admins everything but non-admins only their own.
 
-This is the durable version of `scripts/flywheel_manual.py`. Actors are switched
-by minting per-actor JWTs with ``issue_jwt`` (the real ``resolve_identity`` path),
-mirroring ``tests/web/admin/test_users.py``. Deterministic across repeat runs:
-every entity uses a unique suffix and is created through the real API, and the
-seeded users/permissions are cleaned up on teardown.
+Actors are switched by minting per-actor JWTs with ``issue_jwt`` (the real
+``resolve_identity`` path), mirroring ``tests/web/admin/test_users.py``.
+Deterministic across repeat runs: every entity uses a unique suffix and is
+created through the real API, and the seeded users/permissions are cleaned up
+on teardown.
 
 Postgres-only: like the rest of ``tests/web`` it builds the combined app against
 the Postgres fixtures (``tests/web/conftest.py`` has no SQLite backend switch),

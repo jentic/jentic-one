@@ -15,8 +15,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialFlow';
-import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
+	useConnectAfterCreate,
+} from '@/shared/credentials/components';
 import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
 import type { WorkspaceDigestRow } from '@/modules/discover/api';
 

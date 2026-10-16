@@ -76,10 +76,7 @@ class AgentResponse(BaseModel):
     )
     has_api_key: bool = Field(
         default=False,
-        description=(
-            "Whether the agent currently has an active API key; only populated by"
-            " `GET /agents/{agent_id}`, and false in other responses."
-        ),
+        description="Whether the agent currently has an active API key.",
         examples=[True],
     )
 

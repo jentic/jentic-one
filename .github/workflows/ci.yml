@@ -101,6 +101,10 @@ jobs:
               - 'src/**'
               - 'tests/integration/**'
               - 'tests/web/**'
+              # Shared Postgres-fixture settings imported by both suites above,
+              # and the fixture bootstrap `make start-fixtures` runs.
+              - 'tests/harness/postgres.py'
+              - 'scripts/setup.sh'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'Makefile'

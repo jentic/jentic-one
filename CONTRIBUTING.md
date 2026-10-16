@@ -165,6 +165,9 @@ make test-smoke         # liveness against running services
 - Unit tests must not require external services.
 - Integration tests run against PostgreSQL fixtures (`make start-fixtures` /
   `make stop-fixtures`).
+- If 5432 is taken, set `JENTIC_PG_PORT` (e.g. `JENTIC_PG_PORT=55432`) for both
+  `make start-fixtures` and the test run — the fixtures publish Postgres on it
+  and the integration and web harnesses connect to it.
 - Use synthetic/fabricated data in tests — never real credentials or data.
 
 ## Architecture & conventions

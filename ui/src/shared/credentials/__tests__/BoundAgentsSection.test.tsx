@@ -19,7 +19,12 @@ import { EditCredentialSheet } from '@/shared/credentials/components/EditCredent
  */
 function seedBoundAgents(
 	credentialId: string,
-	rows: Array<{ agent_id: string; agent_name: string; suspended?: boolean }>,
+	rows: Array<{
+		agent_id: string;
+		agent_name: string;
+		suspended?: boolean;
+		suspended_reason?: string | null;
+	}>,
 ) {
 	worker.use(
 		http.get('/credentials/:cid/agents', ({ params }) => {
@@ -34,6 +39,7 @@ function seedBoundAgents(
 					rule_set_id: null,
 					status: 'active',
 					suspended: r.suspended ?? false,
+					suspended_reason: r.suspended_reason ?? null,
 				})),
 				has_more: false,
 				next_cursor: null,
@@ -131,7 +137,27 @@ describe('BoundAgentsSection (edit-credential sheet)', () => {
 		renderSheet('cred_github_1');
 
 		const row = await screen.findByTestId('bound-agent-row');
-		expect(within(row).getByTestId('bound-agent-suspended')).toHaveTextContent('Suspended');
+		expect(within(row).getByTestId('bound-agent-suspended')).toHaveTextContent(/^Suspended$/);
+	});
+
+	it('says when a binding was suspended because its API was deleted', async () => {
+		resetCredentialsStore([
+			makeMockCredential({ credential_id: 'cred_github_1', name: 'GitHub PAT' }),
+		]);
+		seedBoundAgents('cred_github_1', [
+			{
+				agent_id: 'agnt_active_1',
+				agent_name: 'support-agent',
+				suspended: true,
+				suspended_reason: 'api_deleted',
+			},
+		]);
+		renderSheet('cred_github_1');
+
+		const row = await screen.findByTestId('bound-agent-row');
+		expect(within(row).getByTestId('bound-agent-suspended')).toHaveTextContent(
+			'Suspended · API deleted',
+		);
 	});
 
 	it('shows an honest empty state when no agent is bound', async () => {

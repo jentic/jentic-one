@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -106,3 +107,24 @@ class AgentCredentialRepository:
         result = await session.execute(stmt)
         cred = result.scalar_one_or_none()
         return cred is not None and cred.api_key_hash is not None
+
+    @staticmethod
+    async def agent_ids_with_api_key(session: AsyncSession, agent_ids: Iterable[str]) -> set[str]:
+        """Return the subset of ``agent_ids`` that have an active API key.
+
+        The batch form of :meth:`has_api_key`: one query for a whole page of
+        agents. An empty input returns an empty set without querying.
+        """
+        ids = list(dict.fromkeys(agent_ids))
+        if not ids:
+            return set()
+        stmt = (
+            select(AgentCredential.agent_id)
+            .where(
+                AgentCredential.agent_id.in_(ids),
+                AgentCredential.api_key_hash.is_not(None),
+            )
+            .distinct()
+        )
+        result = await session.execute(stmt)
+        return set(result.scalars().all())

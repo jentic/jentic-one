@@ -7,8 +7,10 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import argon2
 import jwt
 import pytest
+from argon2 import profiles as argon2_profiles
 from sqlalchemy import delete
 
 from jentic_one.admin.core.permissions import ORG_ADMIN
@@ -230,46 +232,113 @@ async def test_authenticate_lockout_at_threshold(
         await session.commit()
 
 
-async def test_authenticate_burns_dummy_hash_on_early_rejections(
+def _count_password_verifies(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[int]]:
+    """Replace both argon2 entry points ``authenticate`` uses with counters.
+
+    Returns ``(dummy_calls, real_calls)``; the real verify always mismatches.
+    """
+    dummy_calls: list[int] = []
+    real_calls: list[int] = []
+    monkeypatch.setattr(auth_service_module, "dummy_verify_password", lambda: dummy_calls.append(1))
+
+    def _fake_verify(_plain: str, _hashed: str) -> bool:
+        real_calls.append(1)
+        return False
+
+    monkeypatch.setattr(auth_service_module, "verify_password", _fake_verify)
+    return dummy_calls, real_calls
+
+
+@pytest.mark.parametrize(
+    "arm",
+    ["unknown_email", "inactive_user", "missing_secret_row", "null_password_hash", "locked"],
+)
+async def test_authenticate_burns_dummy_verify_on_early_rejection(
+    integration_context: Context,
+    auth_user: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    arm: str,
+) -> None:
+    """Structural pin for the timing equalizer (#1298): every rejection arm
+    that skips the real argon2 verify burns exactly one dummy verification
+    instead, so response timing cannot separate account existence. A refactor
+    that drops the dummy from any arm fails here. (Deliberately not a
+    wall-clock timing test.)"""
+    ctx = integration_context
+    service = AuthService(ctx)
+    user_id, email = auth_user
+    expected_error: type[Exception] = InvalidCredentialsError
+    extra_user_id: str | None = None
+
+    if arm == "unknown_email":
+        email = "nobody@nowhere.com"
+    elif arm == "locked":
+        expected_error = AccountLockedError
+        async with ctx.admin_db.session() as session:
+            await UserSecretRepository.lock_until(
+                session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+            )
+            await session.commit()
+    else:
+        # A dedicated user per arm: inactive (with a valid secret), active with
+        # no ``UserSecret`` row, or active with a secret whose hash is NULL.
+        email = f"dummy-verify-{arm.replace('_', '-')}@test.local"
+        async with ctx.admin_db.session() as session:
+            user = await UserRepository.create(
+                session,
+                email=email,
+                first_name="Dummy",
+                last_name="Verify",
+                active=arm != "inactive_user",
+                invite_state=InviteState.REDEEMED,
+                created_by="usr_test",
+            )
+            extra_user_id = user.id
+            if arm != "missing_secret_row":
+                await UserSecretRepository.create(
+                    session,
+                    user_id=user.id,
+                    password_hash=(
+                        hash_password("correct-password") if arm == "inactive_user" else None
+                    ),
+                    created_by="usr_test",
+                )
+            await session.commit()
+
+    dummy_calls, real_calls = _count_password_verifies(monkeypatch)
+    try:
+        with pytest.raises(expected_error):
+            await service.authenticate(LoginPayload(email=email, password="correct-password"))
+        assert len(dummy_calls) == 1
+        assert real_calls == []
+    finally:
+        async with ctx.admin_db.session() as session:
+            if extra_user_id is not None:
+                await session.execute(delete(UserSecret).where(UserSecret.user_id == extra_user_id))
+                await session.execute(delete(User).where(User.id == extra_user_id))
+            else:
+                await UserSecretRepository.unlock(session, user_id)
+            await session.commit()
+
+
+async def test_authenticate_wrong_password_skips_dummy_verify(
     integration_context: Context,
     auth_user: tuple[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Structural pin for the timing equalizer: every rejection arm that
-    skips the real argon2 verify (unknown email, locked account) burns the
-    dummy verification instead, so response timing cannot separate account
-    existence. The wrong-password arm runs the real verify and must NOT also
-    pay the dummy. (Deliberately not a wall-clock timing test.)"""
+    """The wrong-password arm pays the REAL argon2 verify and must not also
+    burn the dummy (that would make it the one slower arm)."""
     user_id, email = auth_user
     ctx = integration_context
-    service = AuthService(ctx)
+    dummy_calls, real_calls = _count_password_verifies(monkeypatch)
 
-    dummy_calls: list[int] = []
-    monkeypatch.setattr(auth_service_module, "dummy_verify_password", lambda: dummy_calls.append(1))
-
-    # Unknown email: no secret row to verify → the dummy is burned.
     with pytest.raises(InvalidCredentialsError):
-        await service.authenticate(LoginPayload(email="nobody@nowhere.com", password="any"))
-    assert len(dummy_calls) == 1
+        await AuthService(ctx).authenticate(LoginPayload(email=email, password="wrong-password"))
+    assert dummy_calls == []
+    assert len(real_calls) == 1
 
-    # Wrong password on a real account: the REAL verify runs; no dummy.
-    with pytest.raises(InvalidCredentialsError):
-        await service.authenticate(LoginPayload(email=email, password="wrong-password"))
-    assert len(dummy_calls) == 1
-
-    # Locked account short-circuits before the real verify → dummy again.
     async with ctx.admin_db.session() as session:
-        await UserSecretRepository.lock_until(
-            session, user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
-        )
-        await session.commit()
-    with pytest.raises(AccountLockedError):
-        await service.authenticate(LoginPayload(email=email, password="correct-password"))
-    assert len(dummy_calls) == 2
-
-    # Cleanup: unlock and reset the failure counter.
-    async with ctx.admin_db.session() as session:
-        await UserSecretRepository.unlock(session, user_id)
+        await UserSecretRepository.reset_failed_logins(session, user_id)
         await session.commit()
 
 
@@ -279,6 +348,19 @@ async def test_dummy_verify_password_runs_real_argon2() -> None:
     passwords_module.dummy_verify_password()
     assert passwords_module._DUMMY_HASH is not None
     assert passwords_module._DUMMY_HASH.startswith("$argon2")
+
+
+def test_password_hasher_uses_rfc9106_low_memory_profile() -> None:
+    """Pins the argon2id cost that ``AuthService.authenticate`` relies on as
+    the timing floor beneath its millisecond-scale DB-write asymmetry."""
+    params = passwords_module._hasher._parameters
+    assert params == argon2_profiles.RFC_9106_LOW_MEMORY
+    assert (params.type, params.time_cost, params.memory_cost, params.parallelism) == (
+        argon2.Type.ID,
+        3,
+        65536,
+        4,
+    )
 
 
 async def test_password_rotation_required_reads_flag(

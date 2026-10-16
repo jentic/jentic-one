@@ -109,6 +109,13 @@ class AuthService:
                 # Timing equalizer: every early rejection pays one argon2
                 # verification, so an anonymous caller cannot separate
                 # "unknown email" from "wrong password" by response time.
+                # Accepted residual (#1298): the wrong-password and lockout
+                # arms below also run a DB write transaction that these arms
+                # skip. That is one round-trip plus a commit (milliseconds),
+                # beneath the argon2id floor (``passwords._hasher`` uses
+                # argon2-cffi's RFC 9106 low-memory profile: t=3, m=64 MiB,
+                # p=4). Equalizing it would mean writing rows for unknown
+                # emails, an anonymous write amplifier.
                 dummy_verify_password()
                 raise InvalidCredentialsError()
 

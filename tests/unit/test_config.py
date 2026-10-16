@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -38,6 +39,7 @@ from jentic_one.shared.config import (
     _csv_to_list,
     _deep_merge,
     _env_overrides,
+    _oneshot_cache_key,
     bind_origin,
     broker_links_root_on_broker,
     check_public_url_consistency,
@@ -1098,6 +1100,77 @@ def test_oneshot_cache_is_keyed_on_source_identity_not_path(
     finally:
         if read_b >= 0:
             os.close(read_b)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
+    sample_config_dict: dict[str, Any],
+):
+    """Pins #1499: (device, inode) is not a stable identity — macOS reports
+    pipes with st_dev 0 and hands a freed pipe's inode to the next pipe. An
+    entry cached for an earlier source on the same device, inode, and path
+    (but a different ctime) must never be served for the new source."""
+    sample_config_dict["databases"]["registry"]["name"] = "fresh"
+    doc = yaml.dump(sample_config_dict)
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc.encode())
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        dev, ino, ctime_ns, _ = _oneshot_cache_key(os.fstat(read_fd), pipe_path)
+        _ONESHOT_CONFIG_CACHE[(dev, ino, ctime_ns - 1, str(pipe_path))] = "stale: true"
+        loaded = load_config(pipe_path)
+        assert loaded.databases.registry.name == "fresh"
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
+    """Every pipe write bumps its ctime, so a supervisor still streaming the
+    document after the loaders opened the fd must not leave any of them keyed
+    on a pre-drain identity: a concurrent loader waiting on the drain, and a
+    repeat load after it, must both take the cached document instead of
+    hitting EOF on the drained pipe."""
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+
+    def stream() -> None:
+        # The first delay lets both loaders open and stat the fd before any
+        # data arrives; each delay outlasts a Linux timestamp tick, so every
+        # write moves the ctime.
+        for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
+            time.sleep(0.1)
+            os.write(write_fd, chunk)
+        os.close(write_fd)
+
+    pipe_path = Path(f"/dev/fd/{read_fd}")
+    loaded: list[AppConfig] = []
+    errors: list[BaseException] = []
+
+    def load() -> None:
+        try:
+            loaded.append(load_config(pipe_path))
+        except BaseException as exc:  # surfaced via the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=stream)] + [threading.Thread(target=load) for _ in range(2)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        loaded.append(load_config(pipe_path))
+        assert {c.databases.registry.name for c in loaded} == {
+            sample_config_dict["databases"]["registry"]["name"]
+        }
+        assert len(loaded) == 3
+    finally:
+        for t in threads:
+            if t.is_alive():
+                t.join()
+        os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
 

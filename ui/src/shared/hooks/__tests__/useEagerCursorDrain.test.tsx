@@ -18,10 +18,19 @@ function source(over: Partial<EagerCursorDrainSource> = {}): EagerCursorDrainSou
 describe('useEagerCursorDrain', () => {
 	it('fetches the next page whenever one exists and no fetch is in flight', () => {
 		const s = source();
-		renderHook((props: EagerCursorDrainSource) => useEagerCursorDrain(props), {
-			initialProps: s,
-		});
-		expect(s.fetchNextPage).toHaveBeenCalledTimes(1);
+		const { rerender } = renderHook(
+			(props: EagerCursorDrainSource) => useEagerCursorDrain(props),
+			{ initialProps: s },
+		);
+		// The shim's `isFetchingNextPage` never flips, so StrictMode's effect
+		// replay sees the same idle snapshot and requests again (TanStack cancels
+		// and restarts the in-flight page); count the mount's calls as the base.
+		const onMount = vi.mocked(s.fetchNextPage).mock.calls.length;
+		expect(onMount).toBeGreaterThan(0);
+		expect(onMount).toBeLessThanOrEqual(2);
+		// A rerender with an unchanged snapshot is not a reason to fetch again.
+		rerender({ ...s });
+		expect(s.fetchNextPage).toHaveBeenCalledTimes(onMount);
 	});
 
 	it('does not fetch while a page fetch is already in flight, then resumes', () => {

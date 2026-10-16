@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
@@ -191,6 +191,34 @@ async def test_filtered_listing_paginates(
     )
     assert has_more is False
     assert {first[0].agent_id, second[0].agent_id} == {_SHAREE_AGENT, _SHAREE_AGENT_2}
+
+
+async def test_listing_carries_binding_suspended_reason(
+    integration_context: Context, bound_credential: str
+) -> None:
+    """A binding suspended with a reason reports it; an active binding and a
+    manually suspended one report ``None``."""
+    async with integration_context.admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.credential_id == bound_credential)
+            .where(AgentCredentialBinding.agent_id == _SHAREE_AGENT)
+            .values(suspended=True, suspended_reason="api_deleted")
+        )
+        await AgentCredentialBindingRepository.set_suspended(
+            session, agent_id=_OTHER_AGENT, credential_id=bound_credential, suspended=True
+        )
+
+    rows, _, _ = await CredentialService(integration_context).list_agents(
+        bound_credential, identity=_OWNER, limit=50
+    )
+    by_agent = {row.agent_id: row for row in rows}
+    assert by_agent[_SHAREE_AGENT].suspended is True
+    assert by_agent[_SHAREE_AGENT].suspended_reason == "api_deleted"
+    assert by_agent[_OTHER_AGENT].suspended is True
+    assert by_agent[_OTHER_AGENT].suspended_reason is None
+    assert by_agent[_OWNER_AGENT].suspended is False
+    assert by_agent[_OWNER_AGENT].suspended_reason is None
 
 
 async def test_caller_without_credential_visibility_gets_not_found(

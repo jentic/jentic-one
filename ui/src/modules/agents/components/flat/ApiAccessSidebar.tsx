@@ -34,15 +34,15 @@ import {
 	useOptionalCurrentUser,
 } from '@/shared/auth';
 import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
-import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import {
+	useConnectAfterCreate,
 	OperationImpactPreview,
 	type OpsApiReference,
-} from '@/shared/credentials/components/OperationImpactPreview';
-import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
-import { SharedWithYouBadge } from '@/shared/credentials/components/CredentialCard';
+	CredentialDeleteDialog,
+	SharedWithYouBadge,
+	EditCredentialSheet,
+} from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
-import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,

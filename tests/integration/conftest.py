@@ -21,17 +21,17 @@ from pathlib import Path
 
 import pytest
 from alembic import command
-from alembic.config import Config as AlembicConfig
-from pydantic import SecretStr
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
 
-from jentic_one.shared.config import AppConfig, DatabaseConfig
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.session import DatabaseSession, get_database_url
-
-_DB_NAMES: tuple[str, ...] = ("registry", "admin", "control")
-_TEST_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.postgres import (
+    DB_NAMES,
+    alembic_config_for,
+    encryption_config,
+    ensure_schema,
+    postgres_config,
+)
 
 
 def _test_backend() -> str:
@@ -40,54 +40,6 @@ def _test_backend() -> str:
     if backend not in ("postgres", "sqlite"):
         raise ValueError(f"JENTIC_TEST_BACKEND must be 'postgres' or 'sqlite', got {backend!r}")
     return backend
-
-
-def _pg_port() -> int:
-    """Fixture Postgres host port: ``JENTIC_PG_PORT``, as docker/local-setup publishes it."""
-    return int(os.environ.get("JENTIC_PG_PORT", "5432"))
-
-
-def _postgres_config() -> AppConfig:
-    """AppConfig pointing at the local Docker PostgreSQL instance (single DB, multiple schemas)."""
-    return AppConfig.model_validate(
-        {
-            "databases": {
-                "registry": {
-                    "host": "localhost",
-                    "port": _pg_port(),
-                    "name": "jentic",
-                    "user": "registry_user",
-                    "password": "registry_pass",
-                    "pool_max": 2,
-                    "schema_name": "registry",
-                },
-                "admin": {
-                    "host": "localhost",
-                    "port": _pg_port(),
-                    "name": "jentic",
-                    "user": "admin_user",
-                    "password": "admin_pass",
-                    "pool_max": 2,
-                    "schema_name": "admin",
-                },
-                "control": {
-                    "host": "localhost",
-                    "port": _pg_port(),
-                    "name": "jentic",
-                    "user": "control_user",
-                    "password": "control_pass",
-                    "pool_max": 2,
-                    "schema_name": "control",
-                },
-            },
-            "credentials": {
-                "encryption": {
-                    "active_id": "v1",
-                    "entries": [{"id": "v1", "material": _TEST_ENCRYPTION_KEY}],
-                },
-            },
-        }
-    )
 
 
 def _sqlite_config(base_dir: Path) -> AppConfig:
@@ -100,17 +52,12 @@ def _sqlite_config(base_dir: Path) -> AppConfig:
                     "path": str(base_dir / f"{name}.db"),
                     "schema_name": name,
                 }
-                for name in _DB_NAMES
+                for name in DB_NAMES
             },
             # Keep ingest-time search_text projection on, but disable query-time
             # search in the integration harness.
             "search": {"enabled": True, "search_enabled": False},
-            "credentials": {
-                "encryption": {
-                    "active_id": "v1",
-                    "entries": [{"id": "v1", "material": _TEST_ENCRYPTION_KEY}],
-                },
-            },
+            "credentials": encryption_config(),
         }
     )
 
@@ -122,43 +69,7 @@ def integration_config() -> Iterator[AppConfig]:
         with tempfile.TemporaryDirectory(prefix="jentic-itest-sqlite-") as tmp:
             yield _sqlite_config(Path(tmp))
     else:
-        yield _postgres_config()
-
-
-async def _ensure_schema(db_config: DatabaseConfig) -> None:
-    """Create the target schema if it doesn't already exist.
-
-    Alembic itself does not create schemas; the migration env assumes one
-    is already present. Tests using ephemeral Docker volumes need this on
-    first boot. Connects as the bootstrap superuser because CREATE SCHEMA
-    requires the CREATE privilege on the database.
-    """
-    superuser_config = db_config.model_copy(
-        update={"user": "postgres", "password": SecretStr("postgres")}
-    )
-    url = get_database_url(superuser_config)
-    engine = create_async_engine(url)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{db_config.schema_name}"'))
-    finally:
-        await engine.dispose()
-
-
-def _alembic_config_for(db_name: str, db_config: DatabaseConfig) -> AlembicConfig:
-    """Build an in-memory Alembic config bound to ``db_name``.
-
-    Uses the on-disk ``alembic.ini`` for script/version locations and points
-    Alembic at the integration database via ``sqlalchemy.url``. The migration
-    env reads the URL from app config too, but setting it here keeps the
-    Alembic config self-contained.
-    """
-    cfg = AlembicConfig("alembic.ini", ini_section=db_name)
-    cfg.set_section_option(
-        db_name, "sqlalchemy.url", get_database_url(db_config).render_as_string(hide_password=False)
-    )
-    cfg.set_section_option(db_name, "schema_name", db_config.schema_name)
-    return cfg
+        yield postgres_config()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -174,13 +85,13 @@ def _apply_migrations(integration_config: AppConfig) -> Iterator[None]:
     if is_postgres:
 
         async def _ensure_all_schemas() -> None:
-            for name in _DB_NAMES:
-                await _ensure_schema(getattr(integration_config.databases, name))
+            for name in DB_NAMES:
+                await ensure_schema(getattr(integration_config.databases, name))
 
         asyncio.run(_ensure_all_schemas())
 
-    for name in _DB_NAMES:
-        cfg = _alembic_config_for(name, getattr(integration_config.databases, name))
+    for name in DB_NAMES:
+        cfg = alembic_config_for(name, getattr(integration_config.databases, name))
         command.upgrade(cfg, "head")
     yield
 

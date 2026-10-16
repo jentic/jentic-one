@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.db.session import get_database_url
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 
 #: The revision just below the drop, and the drop itself.
 ADMIN_PRE_SA_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
@@ -194,7 +194,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
     code.
     """
     db_config = integration_config.databases.admin
-    cfg = _alembic_config_for("admin", db_config)
+    cfg = alembic_config_for("admin", db_config)
     heads = ScriptDirectory.from_config(cfg).get_heads()
     # Stamping skips downgrades, so every revision above the drop must be
     # reversible: walk those back with a real downgrade first, then snapshot-

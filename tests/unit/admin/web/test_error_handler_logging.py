@@ -8,7 +8,9 @@ import pytest
 import structlog.testing
 
 from jentic_one.admin.services.errors import (
+    AccountLockedError,
     AdminServiceError,
+    InvalidCredentialsError,
     InvalidInputError,
     UserNotFoundError,
 )
@@ -67,6 +69,27 @@ async def test_400_error_logs_warning() -> None:
 
 class _UnmappedServerError(AdminServiceError):
     """An error subclass that is not in the error map."""
+
+
+@pytest.mark.asyncio
+async def test_account_locked_response_matches_invalid_credentials() -> None:
+    """A locked account is answered byte-for-byte like a wrong password (no
+    account-existence oracle); the lockout is only visible in the server log."""
+    with structlog.testing.capture_logs() as logs:
+        locked = await service_error_handler(
+            _make_request("/auth/login"), AccountLockedError("usr_locked")
+        )
+    wrong = await service_error_handler(_make_request("/auth/login"), InvalidCredentialsError())
+
+    assert locked.status_code == wrong.status_code == 401
+    assert locked.media_type == wrong.media_type
+    assert bytes(locked.body) == bytes(wrong.body)
+    assert b"usr_locked" not in bytes(locked.body)
+
+    warn_logs = [log for log in logs if log["log_level"] == "warning"]
+    assert len(warn_logs) == 1
+    assert warn_logs[0]["type"] == "invalid_credentials"
+    assert warn_logs[0]["raw_detail"] == "Account 'usr_locked' is temporarily locked"
 
 
 @pytest.mark.asyncio

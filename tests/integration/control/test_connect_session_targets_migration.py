@@ -21,7 +21,7 @@ from sqlalchemy import inspect, text
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.session import DatabaseSession
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 
 pytestmark = pytest.mark.integration
 
@@ -46,7 +46,7 @@ _NEW_COLUMNS = {
 
 
 def _control_cfg(integration_config: AppConfig) -> AlembicConfig:
-    return _alembic_config_for("control", integration_config.databases.control)
+    return alembic_config_for("control", integration_config.databases.control)
 
 
 async def _delete_rows(control_db: DatabaseSession) -> None:

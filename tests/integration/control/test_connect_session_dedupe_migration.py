@@ -20,7 +20,7 @@ from sqlalchemy import text
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.session import DatabaseSession
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 
 pytestmark = pytest.mark.integration
 
@@ -44,7 +44,7 @@ async def restore_control_head(
 ) -> AsyncGenerator[None, None]:
     await _delete_rows(control_db)
     yield
-    cfg = _alembic_config_for("control", integration_config.databases.control)
+    cfg = alembic_config_for("control", integration_config.databases.control)
     await asyncio.to_thread(command.upgrade, cfg, "head")
     await _delete_rows(control_db)
 
@@ -83,7 +83,7 @@ async def test_dedupe_migration_handles_preexisting_duplicates(
     control_db: DatabaseSession,
     restore_control_head: None,
 ) -> None:
-    cfg = _alembic_config_for("control", integration_config.databases.control)
+    cfg = alembic_config_for("control", integration_config.databases.control)
     await asyncio.to_thread(command.downgrade, cfg, _PARENT_REV)
     await _seed(control_db, "cs_dd_old", "cred_dd_old", minute=0)
     await _seed(control_db, "cs_dd_mid", "cred_dd_mid", minute=5, state="polling")

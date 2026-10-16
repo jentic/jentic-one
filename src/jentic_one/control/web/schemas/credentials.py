@@ -924,7 +924,7 @@ class ProviderDiscoveryResponse(BaseModel):
 
 
 class CredentialAgentResponse(BaseModel):
-    """Agent directly bound to a credential (theme 5 phase 1)."""
+    """Agent directly bound to a credential."""
 
     agent_id: str = Field(description="ID of the bound agent.", examples=[ex.AGENT_ID])
     agent_name: str = Field(description="Name of the bound agent.", examples=["billing-assistant"])
@@ -939,6 +939,15 @@ class CredentialAgentResponse(BaseModel):
             "True when the binding is soft-suspended (reversible cut-off): the "
             "binding and its rules survive, but the agent cannot execute "
             "through this credential until resumed."
+        ),
+    )
+    suspended_reason: str | None = Field(
+        default=None,
+        examples=["api_deleted"],
+        description=(
+            "Why the binding is suspended: `api_deleted` when the API the "
+            "credential serves was deleted; null for an active binding or a "
+            "manual suspension. Cleared on resume."
         ),
     )
     rule_set_id: str | None = Field(

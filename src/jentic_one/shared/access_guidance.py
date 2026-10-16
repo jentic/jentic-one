@@ -1,12 +1,8 @@
-"""Canonical access-recovery guidance for the broker's missing-binding path.
+"""Connect-target lookups for the broker's missing-credential recovery directives.
 
 An API is only "served" once a credential covering it is provisioned; only
-then can an agent be bound to it. When nothing serves an API yet, the broker's
-missing-binding recovery directive must recommend provisioning a credential as
-the first step (see issue #683).
-
-The module also holds the reverse lookup that decides whether the provisioning
-step is agent-initiable (``jentic connect <vendor>`` / the
+then can an agent be bound to it. These reverse lookups decide whether that
+provisioning step is agent-initiable (``jentic connect <vendor>`` / the
 ``request_connection`` MCP tool) or operator-only: an API is connectable when a
 vendor-registry config entry or an active shared OAuth-app registration covers
 it.
@@ -26,24 +22,6 @@ from jentic_one.shared.models.api_identity import (
     credential_covers,
 )
 from jentic_one.shared.vendor_domain import vendor_from_api_id
-
-
-def no_credential_serves_api_reason(api: str) -> str:
-    """The canonical reason when no credential serves ``api`` yet.
-
-    ``api`` is a ``vendor[/name][@version]`` label. The recommended first
-    step — provision a credential — matches the broker's missing-binding
-    directives (see issue #683). Phrased as a statement of the condition plus
-    the recommended first step, matching the broker directive. For a registry
-    vendor the agent can start that step itself (``jentic connect <vendor>`` /
-    the ``request_connection`` MCP tool); approval stays human either way.
-    """
-    return (
-        f"No credential covers API {api}; provision a credential for it first "
-        "(the agent can start a connect session for a registry vendor, or an "
-        "operator connects it via POST /credentials), then approve the "
-        "credential binding"
-    )
 
 
 def connect_vendor_key(

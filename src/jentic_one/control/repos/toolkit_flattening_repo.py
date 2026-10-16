@@ -349,8 +349,6 @@ _LIST_CREDENTIAL_BINDING_PAIRS = text(
     "SELECT agent_id, credential_id, rule_set_id FROM agent_credential_bindings"
 )
 
-_COUNT_CREDENTIAL_BINDINGS = text("SELECT count(*) AS n FROM agent_credential_bindings")
-
 _LIST_AGENT_IDS = text("SELECT id FROM agents")
 
 _LIST_SERVICE_ACCOUNT_IDS = text("SELECT id FROM service_accounts")
@@ -428,11 +426,6 @@ class FlatteningAdminRepository:
             )
             for r in rows
         }
-
-    @staticmethod
-    async def count_direct_bindings(session: AsyncSession) -> int:
-        row = (await session.execute(_COUNT_CREDENTIAL_BINDINGS)).one()
-        return int(row.n)
 
     @staticmethod
     async def _service_accounts_present(session: AsyncSession) -> bool:

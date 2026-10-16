@@ -8,13 +8,13 @@ import {
 } from '@/modules/agents/api';
 import { toDisplayRules } from '@/modules/agents/components/detail/shared';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
-import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
 import {
+	type OpsApiReference,
 	MatchedRuleText,
 	RuleRequestTester,
 	VerdictChip,
 	verdictOutcome,
-} from '@/shared/credentials/components/RuleRequestTester';
+} from '@/shared/credentials/components';
 
 /**
  * Rule tester for one direct agent↔credential binding — the broker's own

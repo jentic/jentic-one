@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -15,6 +15,7 @@ from jentic_one.admin.core.schema.setup_sentinel import SetupSentinel
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos import UserSecretRepository
 from jentic_one.admin.services._support.tokens import decode_jwt, issue_jwt
 from jentic_one.shared.context import Context
 
@@ -54,6 +55,34 @@ def test_login_unknown_email(unauthed_client: TestClient) -> None:
     )
     assert resp.status_code == 401
     assert resp.json()["type"] == "invalid_credentials"
+
+
+async def test_login_locked_account_indistinguishable_from_wrong_password(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """A locked account — even with the correct password — gets the exact
+    response a wrong password gets, so login is not an account-existence oracle."""
+    wrong = unauthed_client.post(
+        "/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
+    )
+    unknown = unauthed_client.post(
+        "/auth/login", json={"email": "nobody@nowhere.com", "password": "wrong-password"}
+    )
+    async with web_context.admin_db.transaction() as session:
+        await UserSecretRepository.lock_until(
+            session, admin_user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        )
+    locked = unauthed_client.post(
+        "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    )
+
+    assert wrong.status_code == locked.status_code == unknown.status_code == 401
+    assert locked.headers["content-type"] == wrong.headers["content-type"]
+    assert locked.content == wrong.content == unknown.content
+    body = locked.json()
+    assert body["type"] == "invalid_credentials"
+    assert body["detail"] == "Invalid email or password"
+    assert admin_user_id not in locked.text
 
 
 def test_me_success(authed_client: TestClient) -> None:

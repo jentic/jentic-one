@@ -481,7 +481,7 @@ components:
           title: Description
         has_api_key:
           default: false
-          description: Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.
+          description: Whether the agent currently has an active API key.
           examples:
           - true
           title: Has Api Key
@@ -2929,6 +2929,7 @@ components:
           rule_set_id: prs_6968b3987c22b63e87e79f05
           status: active
           suspended: false
+          suspended_reason: api_deleted
         has_more: true
         next_cursor: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
       properties:
@@ -2960,7 +2961,7 @@ components:
       title: CredentialAgentListResponse
       type: object
     CredentialAgentResponse:
-      description: Agent directly bound to a credential (theme 5 phase 1).
+      description: Agent directly bound to a credential.
       examples:
       - agent_id: agnt_6968b3984d1c238dbe7e2e29
         agent_name: billing-assistant
@@ -2968,6 +2969,7 @@ components:
         rule_set_id: prs_6968b3987c22b63e87e79f05
         status: active
         suspended: false
+        suspended_reason: api_deleted
       properties:
         agent_id:
           description: ID of the bound agent.
@@ -3008,6 +3010,14 @@ components:
           - false
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.'
+          examples:
+          - api_deleted
+          title: Suspended Reason
       required:
       - agent_id
       - agent_name
@@ -21143,10 +21153,11 @@ paths:
       description: |-
         List agents directly bound to a credential with cursor-based pagination.
 
-        The reverse lookup for the credential-detail "Agents" view (theme 5
-        phase 1) — the direct-binding successor of the removed
-        ``GET /toolkits/{id}/agents``.
-        Suspended bindings are included with their flag set.
+        The reverse lookup for the credential-detail "Agents" view: every agent
+        whose direct binding points at this credential, filtered to the agents
+        the caller may see.
+        Suspended bindings are included with their flag set and, when known, the
+        reason (`api_deleted` when the credential's API was deleted).
       operationId: listCredentialAgents
       parameters:
       - description: ID of the credential.
@@ -28684,7 +28695,11 @@ paths:
       tags:
       - Users
     patch:
-      description: Update a user's profile fields.
+      description: |-
+        Update a user's profile fields.
+
+        Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
+        else only themselves. Any other user answers 404.
       operationId: updateUser
       parameters:
       - description: ID of the user.
@@ -28738,6 +28753,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id184
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id222
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The email is already in use
         '422':
           content:
             application/problem+json:

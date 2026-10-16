@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import get_database_url
+from tests.harness.postgres import alembic_config_for
 
-from .conftest import _alembic_config_for, _test_backend
+from .conftest import _test_backend
 
 pytestmark = [
     pytest.mark.integration,
@@ -48,11 +49,11 @@ def _fresh_schema_config(
     db_config = getattr(integration_config.databases, target).model_copy(
         update={"schema_name": schema, "user": "postgres", "password": SecretStr("postgres")}
     )
-    return _alembic_config_for(target, db_config)
+    return alembic_config_for(target, db_config)
 
 
 def _superuser_url(integration_config: AppConfig) -> URL | str:
-    """Bootstrap-superuser URL for the harness database (see conftest._ensure_schema)."""
+    """Bootstrap-superuser URL for the harness database (see ``ensure_schema``)."""
     db_config = integration_config.databases.registry.model_copy(
         update={"user": "postgres", "password": SecretStr("postgres")}
     )

@@ -274,10 +274,25 @@ class UserService:
     async def update(
         self, user_id: str, payload: UserUpdatePayload, *, identity: Identity
     ) -> UserView:
+        """Update a user's profile, scoped like :meth:`get`.
+
+        The target is resolved through the caller's ``User`` access filter, so
+        a user the caller cannot read answers not found (404) whatever the
+        payload. Every change then passes ``ensure_can_manage`` against the
+        caller's stored grants, and an email change additionally passes
+        ``ensure_can_change_email``. All checks run before any write or audit
+        entry, and the response is the scoped re-read.
+        """
+        access_filters = build_access_filters(identity, User)
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_id(session, user_id)
+            user = await UserRepository.get_by_id(session, user_id, filters=access_filters)
             if user is None:
                 raise UserNotFoundError(user_id)
+
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, identity.sub]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
 
             before = {
                 "email": user.email,
@@ -289,9 +304,6 @@ class UserService:
                 payload.email is not None and payload.email.lower() != user.email.lower()
             )
             if email_changed:
-                permission_sets = await UserPermissionGrantRepository.get_permission_sets(
-                    session, [user_id, identity.sub]
-                )
                 ensure_can_change_email(user_id, identity, permission_sets)
 
             if payload.email is not None:
@@ -340,7 +352,7 @@ class UserService:
                 1, {"action": AuditAction.UPDATE, "target_type": AuditTargetType.USER}
             )
 
-        return await self.get_by_id(user_id)
+        return await self.get(user_id, identity=identity)
 
     async def delete(self, user_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:

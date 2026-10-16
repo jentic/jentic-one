@@ -1,6 +1,7 @@
 """Integration tests for UserService guards on managing other users.
 
-Covers the org:admin requirement on changing another user's email, the
+Covers the scoping and manage ceiling on profile updates, the org:admin
+requirement on changing another user's email, the
 privilege ceiling on changing another user's account status or permissions,
 the last-active-``org:admin`` guard (including its row locking under
 concurrent removals on Postgres), and the removal of external IdP identity
@@ -116,8 +117,19 @@ async def no_other_active_admins(integration_context: Context) -> AsyncGenerator
             await session.execute(update(User).where(User.id.in_(deactivated)).values(active=True))
 
 
-def _identity(user_id: str) -> Identity:
-    return Identity(sub=user_id, email=f"{user_id}@test.local")
+def _identity(user_id: str, *permissions: str) -> Identity:
+    """An identity whose token claims ``permissions``; the guards read stored grants."""
+    return Identity(sub=user_id, email=f"{user_id}@test.local", permissions=list(permissions))
+
+
+async def _update_audit_count(ctx: Context, user_id: str) -> int:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(AuditEntry.id).where(
+                AuditEntry.target_id == user_id, AuditEntry.action == "update"
+            )
+        )
+        return len(result.scalars().all())
 
 
 async def _get_user(ctx: Context, user_id: str) -> User:
@@ -147,41 +159,108 @@ async def _add_link(ctx: Context, user_id: str, subject: str) -> None:
         )
 
 
-async def test_users_write_holder_cannot_change_admin_email(
+@pytest.mark.parametrize(
+    "payload",
+    [
+        UserUpdatePayload(first_name="Renamed"),
+        UserUpdatePayload(last_name="Renamed"),
+        # Same address, different case: not an email change.
+        UserUpdatePayload(email="GUARD-TARGET-PATCH@test.local"),
+        UserUpdatePayload(email="guard-target-patch-new@test.local"),
+        UserUpdatePayload(),
+    ],
+    ids=["first_name", "last_name", "email_same_case", "email_new", "empty"],
+)
+@pytest.mark.parametrize("target_permissions", [{"org:admin"}, {"users:read"}, set()])
+async def test_non_admin_cannot_update_another_user(
+    integration_context: Context,
+    make_user: MakeUser,
+    payload: UserUpdatePayload,
+    target_permissions: set[str],
+) -> None:
+    """Pins #1654: an update of another user is scoped like GET, whatever the payload.
+
+    The target is out of a non-admin caller's ``User`` scope, so the update
+    answers not found (no existence or profile disclosure) and writes neither
+    the row nor an audit entry — also when the caller outranks the target.
+    """
+    ctx = integration_context
+    target_id = await make_user("guard-target-patch@test.local", target_permissions)
+    manager_id = await make_user("guard-manager-patch@test.local", {"users:read", "users:write"})
+
+    with pytest.raises(UserNotFoundError):
+        await UserService(ctx).update(
+            target_id, payload, identity=_identity(manager_id, "users:read", "users:write")
+        )
+
+    user = await _get_user(ctx, target_id)
+    assert (user.email, user.first_name, user.last_name) == (
+        "guard-target-patch@test.local",
+        "Guard",
+        "Test",
+    )
+    assert await _update_audit_count(ctx, target_id) == 0
+
+
+async def test_stale_admin_claim_cannot_update_more_privileged_user(
     integration_context: Context, make_user: MakeUser
 ) -> None:
+    """The manage ceiling runs on every update, on the caller's stored grants.
+
+    A token still claiming ``org:admin`` puts the target in scope, but the
+    caller's stored grants no longer outrank it, so even a name-only change
+    is refused before any write.
+    """
     ctx = integration_context
-    admin_id = await make_user("guard-admin-email@test.local", {"org:admin"})
-    manager_id = await make_user("guard-manager-email@test.local", {"users:write"})
+    admin_id = await make_user("guard-admin-stale@test.local", {"org:admin"})
+    caller_id = await make_user("guard-stale-claim@test.local", {"users:write"})
 
     with pytest.raises(UserManagementForbiddenError):
         await UserService(ctx).update(
             admin_id,
-            UserUpdatePayload(email="guard-new-owner@test.local"),
-            identity=_identity(manager_id),
+            UserUpdatePayload(first_name="Renamed"),
+            identity=_identity(caller_id, "org:admin"),
         )
 
-    assert (await _get_user(ctx, admin_id)).email == "guard-admin-email@test.local"
+    assert (await _get_user(ctx, admin_id)).first_name == "Guard"
+    assert await _update_audit_count(ctx, admin_id) == 0
 
 
-async def test_users_write_holder_can_still_rename_admin(
+async def test_stale_admin_claim_cannot_change_another_user_email(
     integration_context: Context, make_user: MakeUser
 ) -> None:
-    """Profile-name edits stay available to users:write; only email/status are guarded."""
+    """Changing another user's email needs a stored org:admin grant, not just the claim."""
     ctx = integration_context
-    admin_id = await make_user("guard-admin-rename@test.local", {"org:admin"})
-    manager_id = await make_user("guard-manager-rename@test.local", {"users:write"})
+    target_id = await make_user("guard-target-stale-email@test.local", set())
+    caller_id = await make_user("guard-stale-email@test.local", {"users:write"})
+
+    with pytest.raises(UserManagementForbiddenError):
+        await UserService(ctx).update(
+            target_id,
+            UserUpdatePayload(email="guard-target-stale-email-new@test.local"),
+            identity=_identity(caller_id, "org:admin"),
+        )
+    assert (await _get_user(ctx, target_id)).email == "guard-target-stale-email@test.local"
+    assert await _update_audit_count(ctx, target_id) == 0
+
+
+async def test_org_admin_can_update_another_user(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    ctx = integration_context
+    target_id = await make_user("guard-target-admin-patch@test.local", {"org:admin"})
+    admin_id = await make_user("guard-admin-patches@test.local", {"org:admin"})
 
     view = await UserService(ctx).update(
-        admin_id,
-        UserUpdatePayload(
-            first_name="Renamed",
-            # Same address, different case: not an email change.
-            email="Guard-Admin-Rename@test.local",
-        ),
-        identity=_identity(manager_id),
+        target_id,
+        UserUpdatePayload(first_name="Renamed", email="guard-target-admin-patch-new@test.local"),
+        identity=_identity(admin_id, "org:admin"),
     )
+    assert view.id == target_id
     assert view.first_name == "Renamed"
+    assert view.email == "guard-target-admin-patch-new@test.local"
+    assert view.assigned == ["org:admin"]
+    assert await _update_audit_count(ctx, target_id) == 1
 
 
 @pytest.mark.parametrize("operation", ["disable", "enable", "delete", "reissue_invite"])
@@ -223,9 +302,6 @@ async def test_users_write_holder_can_manage_less_privileged_user(
     manager_id = await make_user("guard-manager-ok@test.local", {"users:write"})
     identity = _identity(manager_id)
 
-    view = await service.update(target_id, UserUpdatePayload(last_name="Ok"), identity=identity)
-    assert view.last_name == "Ok"
-
     await service.disable(target_id, identity=identity)
     assert (await _get_user(ctx, target_id)).active is False
     await service.enable(target_id, identity=identity)
@@ -234,39 +310,7 @@ async def test_users_write_holder_can_manage_less_privileged_user(
     assert (await _get_user(ctx, target_id)).active is False
 
 
-async def test_users_write_holder_cannot_change_permissionless_user_email(
-    integration_context: Context, make_user: MakeUser
-) -> None:
-    """Only org:admin may change another user's email, whatever the target holds."""
-    ctx = integration_context
-    target_id = await make_user("guard-target-noperm@test.local", set())
-    manager_id = await make_user("guard-manager-noperm@test.local", {"users:read", "users:write"})
-
-    with pytest.raises(UserManagementForbiddenError):
-        await UserService(ctx).update(
-            target_id,
-            UserUpdatePayload(email="guard-target-noperm-new@test.local"),
-            identity=_identity(manager_id),
-        )
-    assert (await _get_user(ctx, target_id)).email == "guard-target-noperm@test.local"
-
-
-async def test_org_admin_can_change_another_user_email(
-    integration_context: Context, make_user: MakeUser
-) -> None:
-    ctx = integration_context
-    target_id = await make_user("guard-target-admin-email@test.local", {"users:read"})
-    admin_id = await make_user("guard-admin-changes-email@test.local", {"org:admin"})
-
-    view = await UserService(ctx).update(
-        target_id,
-        UserUpdatePayload(email="guard-target-admin-email-new@test.local"),
-        identity=_identity(admin_id),
-    )
-    assert view.email == "guard-target-admin-email-new@test.local"
-
-
-async def test_users_write_holder_can_change_own_email(
+async def test_users_write_holder_can_update_self(
     integration_context: Context, make_user: MakeUser
 ) -> None:
     ctx = integration_context
@@ -274,10 +318,13 @@ async def test_users_write_holder_can_change_own_email(
 
     view = await UserService(ctx).update(
         manager_id,
-        UserUpdatePayload(email="guard-manager-self-email-new@test.local"),
-        identity=_identity(manager_id),
+        UserUpdatePayload(email="guard-manager-self-email-new@test.local", last_name="Self"),
+        identity=_identity(manager_id, "users:write"),
     )
+    assert view.id == manager_id
     assert view.email == "guard-manager-self-email-new@test.local"
+    assert view.last_name == "Self"
+    assert await _update_audit_count(ctx, manager_id) == 1
 
 
 async def test_email_change_removes_external_identity_links(
@@ -292,14 +339,14 @@ async def test_email_change_removes_external_identity_links(
     service = UserService(ctx)
     # A name-only update keeps the link.
     await service.update(
-        target_id, UserUpdatePayload(first_name="Still"), identity=_identity(admin_id)
+        target_id, UserUpdatePayload(first_name="Still"), identity=_identity(admin_id, "org:admin")
     )
     assert await _link_count(ctx, target_id) == 1
 
     await service.update(
         target_id,
         UserUpdatePayload(email="guard-linked-new@test.local"),
-        identity=_identity(admin_id),
+        identity=_identity(admin_id, "org:admin"),
     )
     assert await _link_count(ctx, target_id) == 0
 

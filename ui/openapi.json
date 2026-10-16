@@ -731,7 +731,7 @@
           },
           "has_api_key": {
             "default": false,
-            "description": "Whether the agent currently has an active API key; only populated by `GET /agents/{agent_id}`, and false in other responses.",
+            "description": "Whether the agent currently has an active API key.",
             "examples": [
               true
             ],
@@ -4644,7 +4644,8 @@
                 "bound_at": "2026-01-15T09:30:00Z",
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "status": "active",
-                "suspended": false
+                "suspended": false,
+                "suspended_reason": "api_deleted"
               }
             ],
             "has_more": true,
@@ -4662,7 +4663,8 @@
                   "bound_at": "2026-01-15T09:30:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "status": "active",
-                  "suspended": false
+                  "suspended": false,
+                  "suspended_reason": "api_deleted"
                 }
               ]
             ],
@@ -4704,7 +4706,7 @@
         "type": "object"
       },
       "CredentialAgentResponse": {
-        "description": "Agent directly bound to a credential (theme 5 phase 1).",
+        "description": "Agent directly bound to a credential.",
         "examples": [
           {
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
@@ -4712,7 +4714,8 @@
             "bound_at": "2026-01-15T09:30:00Z",
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "status": "active",
-            "suspended": false
+            "suspended": false,
+            "suspended_reason": "api_deleted"
           }
         ],
         "properties": {
@@ -4771,6 +4774,21 @@
             ],
             "title": "Suspended",
             "type": "boolean"
+          },
+          "suspended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the binding is suspended: `api_deleted` when the API the credential serves was deleted; null for an active binding or a manual suspension. Cleared on resume.",
+            "examples": [
+              "api_deleted"
+            ],
+            "title": "Suspended Reason"
           }
         },
         "required": [
@@ -36390,7 +36408,7 @@
     "/credentials/{credential_id}/agents": {
       "description": "`GET`: List agents bound to credential.",
       "get": {
-        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view (theme 5\nphase 1) — the direct-binding successor of the removed\n``GET /toolkits/{id}/agents``.\nSuspended bindings are included with their flag set.",
+        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
         "operationId": "listCredentialAgents",
         "parameters": [
           {
@@ -36479,7 +36497,8 @@
                       "bound_at": "2026-01-15T09:30:00Z",
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "status": "active",
-                      "suspended": false
+                      "suspended": false,
+                      "suspended_reason": "api_deleted"
                     }
                   ],
                   "has_more": true,
@@ -51011,7 +51030,7 @@
         ]
       },
       "patch": {
-        "description": "Update a user's profile fields.",
+        "description": "Update a user's profile fields.\n\nScoped like `GET /users/{user_id}`: org admins can update any user; anyone\nelse only themselves. Any other user answers 404.",
         "operationId": "updateUser",
         "parameters": [
           {
@@ -51138,6 +51157,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The email is already in use"
           },
           "422": {
             "content": {

@@ -21,6 +21,16 @@ export {
 } from '@/modules/monitor/api/hooks';
 export type { LiveStreamStatus } from '@/modules/monitor/api/hooks';
 
+// Usage-window plumbing for `useUsageStats` / `UsageCharts` call sites, so
+// every screen shares one clock step, window shape, and top-N (one cache key).
+export {
+	USAGE_TOP_LIMIT,
+	USAGE_WINDOW_STEP_MS,
+	useCoarseNowSec,
+	useUsageWindow,
+	usageWindowBounds,
+} from '@/modules/monitor/api/usageWindow';
+
 export { MonitorApiError, isMonitorAccessDenied } from '@/modules/monitor/api/client';
 export type { ListAuditParams } from '@/modules/monitor/api/client';
 

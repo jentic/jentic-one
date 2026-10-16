@@ -29,8 +29,7 @@ import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
 import { WaitingForYouSection } from '@/modules/agents/components/flat/WaitingForYouSection';
-import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
-import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+import { CreateCredentialFlow, PostConnectBindMore } from '@/shared/credentials/components';
 
 /** The connect session the approve wizard is open on. */
 interface ApprovalSession {

@@ -43,17 +43,17 @@ import {
 	useDeleteCredential,
 	type Credential,
 } from '@/shared/credentials/api';
-import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
-import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
-import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
-import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
+	useConnectAfterCreate,
+	CredentialsList,
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
-} from '@/shared/credentials/components/CreateCredentialFlow';
-import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
-import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
-import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+	CredentialDeleteDialog,
+	EditCredentialSheet,
+	PostConnectBindMore,
+} from '@/shared/credentials/components';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 
 type CredentialTypeFilter = 'all' | CredentialType;
 

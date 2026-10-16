@@ -38,7 +38,7 @@ import {
 	useReportRightDock,
 } from '@/shared/ui';
 import { shellScroller, titleFromApiId } from '@/shared/lib';
-import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
+import { ImportSpecDialog } from '@/shared/credentials/components';
 import { useAllCredentials } from '@/shared/credentials/api';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { CatalogLedger } from '@/modules/discover/components/CatalogLedger';

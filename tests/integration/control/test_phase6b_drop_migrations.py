@@ -26,7 +26,7 @@ from sqlalchemy import inspect, text
 from jentic_one.control.repos.toolkit_flattening_repo import legacy_state_digest
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
@@ -48,11 +48,11 @@ _CONTROL_LEGACY_TABLES = (
 
 
 def _control_cfg(integration_config: AppConfig) -> AlembicConfig:
-    return _alembic_config_for("control", integration_config.databases.control)
+    return alembic_config_for("control", integration_config.databases.control)
 
 
 def _admin_cfg(integration_config: AppConfig) -> AlembicConfig:
-    return _alembic_config_for("admin", integration_config.databases.admin)
+    return alembic_config_for("admin", integration_config.databases.admin)
 
 
 async def _table_names(db: DatabaseSession) -> set[str]:
@@ -329,7 +329,7 @@ def _superuser_admin_cfg(integration_config: AppConfig) -> AlembicConfig:
     db = integration_config.databases.admin.model_copy(
         update={"user": "postgres", "password": SecretStr("postgres")}
     )
-    return _alembic_config_for("admin", db)
+    return alembic_config_for("admin", db)
 
 
 async def test_admin_drop_uses_the_control_ack_when_readable(
