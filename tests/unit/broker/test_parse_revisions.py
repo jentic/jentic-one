@@ -55,15 +55,50 @@ def test_colon_in_version_segment_is_preserved() -> None:
 
 
 @pytest.mark.parametrize(
+    "revision_id",
+    [
+        "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",
+        "3F2B8C1E-7D4A-4E9B-A6C5-1D2E3F4A5B6C",
+    ],
+)
+def test_revision_id_uuid_normalises_to_its_rev_label(revision_id: str) -> None:
+    # Pins #1720: the ``revision_id`` every public response returns is a valid
+    # pin as-is, and it reaches the resolver as the same ``rev_<hex>`` label.
+    result = parse_revisions(f"stripe:payments:v1={revision_id}")
+    assert result == {("stripe", "payments", "v1"): "rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c"}
+
+
+def test_uuid_and_label_pins_mix_in_one_header() -> None:
+    header = (
+        "stripe:payments:v1=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c, "
+        "acme:foo:v2=rev_8a1d4c2e5b6f4a7e9c3d2e1f0a9b8c7d"
+    )
+    assert parse_revisions(header) == {
+        ("stripe", "payments", "v1"): "rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c",
+        ("acme", "foo", "v2"): "rev_8a1d4c2e5b6f4a7e9c3d2e1f0a9b8c7d",
+    }
+
+
+def test_malformed_value_detail_names_the_expected_form() -> None:
+    with pytest.raises(InvalidRevisionPinError) as excinfo:
+        parse_revisions("stripe:payments:v1=abc")
+    assert "vendor:name:version=<revision_id>" in str(excinfo.value.detail)
+
+
+@pytest.mark.parametrize(
     "bad",
     [
         "garbage",
         "stripe:payments:v1",  # missing =rev_…
-        "stripe:payments:v1=abc",  # missing rev_ prefix
+        "stripe:payments:v1=abc",  # neither a rev_ label nor a UUID
         "stripe:payments=rev_abc",  # too few colons (no version segment)
         "STRIPE:payments:v1=rev_abc",  # uppercase vendor disallowed by regex
         "stripe:payments:v1=rev_",  # empty rev label
         "stripe:payments:v1=rev_abc!",  # non-alnum in rev label
+        "stripe:payments:v1=3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c",  # bare hex, no rev_
+        "stripe:payments:v1=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6",  # UUID one digit short
+        "stripe:payments:v1={3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c}",  # braced UUID
+        "stripe:payments:v1=rev_3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",  # rev_ + hyphens
     ],
 )
 def test_malformed_value_raises_invalid_revision_pin(bad: str) -> None:

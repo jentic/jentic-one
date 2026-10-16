@@ -491,7 +491,7 @@ type JenticCredentialId = string
 // JenticCredentialName Examples: Stripe prod key
 type JenticCredentialName = string
 
-// JenticRevision Examples: ["stripe:payments:2023-10-16=rev_01HMY1Q0AB"], ["stripe:payments:2023-10-16=rev_01HMY1Q0AB","shopify:admin:2024-01=rev_01HMY7B3QN"]
+// JenticRevision Examples: ["stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"], ["stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c","shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"]
 type JenticRevision = []string
 
 // Prefer Examples: wait=30, respond-async
@@ -643,7 +643,14 @@ type ExecuteDeleteParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -705,7 +712,14 @@ type ExecuteGetParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -767,7 +781,14 @@ type ExecuteHeadParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -829,7 +850,14 @@ type ExecuteOptionsParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -891,7 +919,14 @@ type ExecutePatchParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -953,7 +988,14 @@ type ExecutePostParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
@@ -1015,7 +1057,14 @@ type ExecutePutParams struct {
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
