@@ -2,6 +2,8 @@ package agentops
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -212,11 +214,12 @@ func TestBrokerErrorActionableBranches(t *testing.T) {
 		},
 		{
 			// #1722: an internal host outside allowed_internal_domains is an
-			// operator config fix, never a request-contract fix.
+			// operator policy decision, never a request-contract fix, and the
+			// hint must never coach the caller into getting the list widened.
 			"egress allowlist gap", 400,
 			`{"type":"private_name_not_in_allowed_domains","title":"not covered"}`,
-			[]string{"operator", "broker.egress.allowed_internal_domains", "do not retry"},
-			[]string{"apis inspect", "creds list", "jentic search"},
+			[]string{"operator", "broker.egress.allowed_internal_domains", "do not retry", "do not ask for the allowlist to be widened"},
+			[]string{"apis inspect", "creds list", "jentic search", "add a suffix", "then retry"},
 		},
 	}
 	for _, tc := range cases {
@@ -236,5 +239,18 @@ func TestBrokerErrorActionableBranches(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBrokerEgressAllowlistHintMatchesSharedText pins the Go hint to the bytes
+// the Python MCP twin (src/jentic_one/mcp/execute.py) is also tested against,
+// so the two lanes can't drift (#1722).
+func TestBrokerEgressAllowlistHintMatchesSharedText(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "broker_egress_allowlist_hint.txt"))
+	if err != nil {
+		t.Fatalf("read shared hint: %v", err)
+	}
+	if want := strings.TrimSuffix(string(raw), "\n"); BrokerEgressAllowlistHint() != want {
+		t.Fatalf("hint drifted from testdata:\n got %q\nwant %q", BrokerEgressAllowlistHint(), want)
 	}
 }

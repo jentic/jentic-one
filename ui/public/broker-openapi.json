@@ -166,18 +166,18 @@
                 "summary": "Internal host name in an allowed subnet but not in allowed_internal_domains.",
                 "value": {
                   "agent_directive": {
-                    "human_readable_instruction": "The broker's egress policy does not allow 'billing.svc.cluster.local': it resolves to an allowlisted private subnet, but no entry in broker.egress.allowed_internal_domains covers it. Ask your operator to add a suffix covering this host to broker.egress.allowed_internal_domains (env JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS), then retry. This is not agent-recoverable.",
+                    "human_readable_instruction": "The broker's egress policy refused this upstream host: it resolves into an allowed private subnet, but no entry in broker.egress.allowed_internal_domains covers it. Only an operator can review that policy, and the broker has logged the refusal (upstream_egress_refused) for them. Do not retry and do not ask for the allowlist to be widened: an operator adds a suffix only for an internal service they run, never for a public domain. This is not agent-recoverable.",
                     "parameters": {
                       "config_key": "broker.egress.allowed_internal_domains",
-                      "env_var": "JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS",
-                      "host": "billing.svc.cluster.local"
+                      "env_var": "JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS"
                     },
                     "strategy": "prompt_human"
                   },
-                  "detail": "Upstream host 'billing.svc.cluster.local' resolves to an allowlisted private subnet but is not covered by broker.egress.allowed_internal_domains",
+                  "detail": "Upstream host 'billing.svc.cluster.local' resolves into an allowed private subnet but is not covered by broker.egress.allowed_internal_domains",
                   "error_origin": "broker",
+                  "instance": "/billing.svc.cluster.local/v1/invoices",
                   "status": 400,
-                  "title": "Upstream host 'billing.svc.cluster.local' resolves to an allowlisted private subnet but is not covered by broker.egress.allowed_internal_domains",
+                  "title": "Upstream host 'billing.svc.cluster.local' resolves into an allowed private subnet but is not covered by broker.egress.allowed_internal_domains",
                   "type": "private_name_not_in_allowed_domains"
                 }
               }
@@ -187,7 +187,7 @@
             }
           }
         },
-        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n\nAn upstream URL the egress policy refuses is\n`invalid_upstream_url`. A host name that resolves into\n`broker.egress.allowed_private_subnets` but is not covered by\n`broker.egress.allowed_internal_domains` is\n`private_name_not_in_allowed_domains`, with a `prompt_human`\n`agent_directive` naming the config key the operator sets. Neither\nbody carries the resolved address.\n"
+        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n\nAn upstream URL the egress policy refuses is\n`invalid_upstream_url`. A host name that resolves into\n`broker.egress.allowed_private_subnets` but is not covered by\n`broker.egress.allowed_internal_domains` is\n`private_name_not_in_allowed_domains` when the caller is authorized\nfor the registered operation (otherwise `invalid_upstream_url`), with\na `prompt_human` `agent_directive` naming the config key the operator\nreviews. Neither body carries the resolved address, and the broker\nlogs every refusal as `upstream_egress_refused`.\n"
       },
       "Conflict": {
         "content": {
