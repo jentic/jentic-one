@@ -58,6 +58,7 @@ ENV.check_fresh(
     callers=[CALLER],
     admin=True,
     run_s=max(_RUN_S, _SOAK_S if os.environ.get("PERF_SHAPE") == "soak" else 0.0),
+    shorten="lower PERF_RUN_S (or PERF_SOAK_S for the soak shape)",
 )
 LOCUST_WORKERS = max(1, int(os.environ.get("PERF_LOCUST_WORKERS", "1")))
 VENDOR = os.environ.get("PERF_VENDOR", "perf-noauth")

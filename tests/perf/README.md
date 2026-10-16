@@ -72,7 +72,8 @@ make perf-help         # every target, incl. the agent probes below
   The HS256 `jwt` caller lives 24 h. Each tool refuses to start if a token it
   uses would expire before the run (plus 5 min) can finish — re-run
   `make perf-provision`, or, if the run is longer than the token's whole
-  lifetime, split it with `--only` or lower `--repeat`.
+  lifetime, shorten the run (the error names that tool's knobs, e.g.
+  `--only` / `--repeat` for the overhead matrix).
 * Results record the host checkout's SHA (and `git_dirty`), the id/build time
   of the app image under test (rebuild with `make perf-build` after changes),
   and every service's image reference.

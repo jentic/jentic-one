@@ -270,7 +270,7 @@ def capture(
     # pauses on the broker.
     warm_s, load_s = 5, 5 + duration + 5
     # Sidecar start (pip install) + the load window.
-    env.check_fresh(callers=[caller], run_s=load_s + 120)
+    env.check_fresh(callers=[caller], run_s=load_s + 120, shorten="lower --duration")
     result: dict[str, Any] = {}
     errors: list[BaseException] = []
 
