@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -36,6 +37,12 @@ _LOCKOUT_REASON = (
     "AWS Marketplace subscription is not active for this deployment; "
     "renew the subscription to restore service"
 )
+
+# Per-worker spread of contract license probes under ``server.workers > 1``
+# (see ``_probe_jitter_window_s``): one second per worker, capped so a large
+# worker count does not hold up readiness.
+_PROBE_JITTER_S_PER_WORKER = 1.0
+_PROBE_JITTER_MAX_S = 10.0
 
 
 def install_entitlement_gate(app: FastAPI, ctx: Context) -> None:
@@ -63,9 +70,13 @@ async def entitlement_lifespan(app: FastAPI, ctx: Context) -> AsyncIterator[None
         )
         app.state.entitlement_checker = checker
 
+    jitter_window_s = _probe_jitter_window_s(ctx)
+    await _jitter(jitter_window_s)
     _apply(gate, await checker.current_verdict())
     refresh_task = asyncio.create_task(
-        _refresh_loop(checker, gate, ctx.config.entitlement.refresh_interval_seconds),
+        _refresh_loop(
+            checker, gate, ctx.config.entitlement.refresh_interval_seconds, jitter_window_s
+        ),
         name="entitlement-refresh",
     )
     try:
@@ -89,8 +100,31 @@ def _apply(gate: EntitlementGate, verdict: LicenseVerdict) -> None:
         gate.lock(_LOCKOUT_REASON)
 
 
+def _probe_jitter_window_s(ctx: Context) -> float:
+    """Seconds over which to spread this worker's license probes (0: no spread).
+
+    A contract checkout holds a seat for its round-trip, and a contended seat
+    answers like a missing license. ``server.workers`` processes boot together
+    and would probe in lockstep, enough to exhaust the client's single
+    contention retry on a low-seat contract and lock a worker out for a full
+    refresh interval. A random per-worker offset de-phases the probes.
+    """
+    workers = ctx.config.server.workers
+    if workers <= 1 or ctx.config.entitlement.pricing_model != "contract":
+        return 0.0
+    return min(workers * _PROBE_JITTER_S_PER_WORKER, _PROBE_JITTER_MAX_S)
+
+
+async def _jitter(window_s: float) -> None:
+    if window_s > 0:
+        await asyncio.sleep(random.uniform(0.0, window_s))
+
+
 async def _refresh_loop(
-    checker: EntitlementChecker, gate: EntitlementGate, interval_seconds: int
+    checker: EntitlementChecker,
+    gate: EntitlementGate,
+    interval_seconds: int,
+    jitter_window_s: float = 0.0,
 ) -> None:
     """Re-check on the refresh cadence; flips lockout and recovery alike.
 
@@ -99,4 +133,5 @@ async def _refresh_loop(
     """
     while True:
         await asyncio.sleep(interval_seconds)
+        await _jitter(jitter_window_s)
         _apply(gate, await checker.current_verdict())

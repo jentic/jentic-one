@@ -8,6 +8,7 @@ refresher flips lockout and recovery, and teardown cancels cleanly.
 from __future__ import annotations
 
 import asyncio
+import random
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -139,3 +140,55 @@ async def _wait_for(predicate: Any, timeout: float = 2.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.001)
+
+
+def _with_workers(ctx: Context, workers: int) -> Context:
+    # model_copy skips validation: the multi-worker config rules (redis, explicit
+    # secrets) are not what these tests are about.
+    config = ctx.config
+    server = config.server.model_copy(update={"workers": workers})
+    return cast(Context, SimpleNamespace(config=config.model_copy(update={"server": server})))
+
+
+@pytest.mark.parametrize(
+    ("workers", "pricing_model", "expected_window_s"),
+    [
+        (1, "contract", None),
+        (4, "usage", None),
+        (4, "contract", 4.0),
+        (32, "contract", 10.0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_contract_probes_are_spread_across_workers(
+    sample_config_dict: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    workers: int,
+    pricing_model: str,
+    expected_window_s: float | None,
+) -> None:
+    """Workers booting together must not probe CheckoutLicense in lockstep.
+
+    A contended contract seat answers like a missing license, so lockstep
+    probes from several workers can lock a worker out for a refresh interval.
+    """
+    ctx = _with_workers(_ctx(sample_config_dict, pricing_model=pricing_model), workers)
+    windows: list[tuple[float, float]] = []
+
+    def _uniform(low: float, high: float) -> float:
+        windows.append((low, high))
+        return 0.0
+
+    monkeypatch.setattr(random, "uniform", _uniform)
+    checker = _StubChecker(LicenseVerdict.ENTITLED)
+    app = _installed_app(checker, ctx)
+
+    async with entitlement_lifespan(app, ctx):
+        assert checker.calls >= 1
+        if expected_window_s is None:
+            await asyncio.sleep(0.01)  # let the refresher tick a few times
+            assert windows == []
+        else:
+            # Before the startup probe, then on every refresh.
+            await _wait_for(lambda: len(windows) >= 2)
+            assert set(windows) == {(0.0, expected_window_s)}
