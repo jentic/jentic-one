@@ -209,13 +209,16 @@ Always filter or group by `mode`: buffered overhead is time the client waits
 for, while streaming persistence runs after the client already has the body.
 To see which stage dominates, use the per-request `Server-Timing` stages.
 
-`overhead_ms` is recorded only for an execution that reached the upstream and
-whose record was persisted. Transport failures (connect refused, timeouts, an
-open circuit), a stream that fails to open, a failed record write, and paths
-that never call the upstream (async `202`, approval holds, idempotent
-replays, broker-raised errors) record nothing. Time spent outside the broker's
-middleware stack (the admission gate, the ASGI server) is not included;
-`http.server.duration` covers the whole request.
+`overhead_ms` is recorded only for an execution that got the upstream response
+headers and whose record was persisted. A failure before the upstream response
+headers (connect refused, a header timeout, an open circuit, a stream that
+fails to open), a failed record write, and paths that never call the upstream
+(async `202`, approval holds, idempotent replays, broker-raised errors) record
+nothing. A streaming call that fails after the headers (a mid-body reset, the
+transfer deadline) still records its FAILED execution, so it records a
+`mode="streaming"` sample: its pre-header time plus the persistence. Time spent
+outside the broker's middleware stack (the admission gate, the ASGI server) is
+not included; `http.server.duration` covers the whole request.
 
 ### Per-request stage timing (`Server-Timing`)
 

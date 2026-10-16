@@ -19,10 +19,13 @@ Server-Timing middleware receives the request, just inside admission control.
 
 Both are wall-clock, not CPU: awaits on the admin and control databases, the
 idempotency store, and the client's request-body upload all count. Only an
-execution that reached the upstream and was persisted records a sample; a
-transport failure, a stream that never opened, a failed persist, and paths
-that never call the upstream (async ``202``, approval hold, idempotent replay)
-record nothing.
+execution that got the upstream response headers and was persisted records a
+sample. A failure before those headers (connect refused, header timeout, open
+circuit, a stream that never opened), a failed persist, and paths that never
+call the upstream (async ``202``, approval hold, idempotent replay) record
+nothing. A streaming call that fails after the headers (mid-body reset,
+transfer deadline) persists a FAILED record and so still records its
+pre-header time plus that persistence.
 """
 
 from __future__ import annotations
