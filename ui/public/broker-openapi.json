@@ -161,6 +161,25 @@
                   "title": "upstream URL resolves to a blocked address range",
                   "type": "invalid_upstream_url"
                 }
+              },
+              "private_name_not_in_allowed_domains": {
+                "summary": "Internal host name in an allowed subnet but not in allowed_internal_domains.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "The broker's egress policy does not allow 'billing.svc.cluster.local': it resolves to an allowlisted private subnet, but no entry in broker.egress.allowed_internal_domains covers it. Ask your operator to add a suffix covering this host to broker.egress.allowed_internal_domains (env JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS), then retry. This is not agent-recoverable.",
+                    "parameters": {
+                      "config_key": "broker.egress.allowed_internal_domains",
+                      "env_var": "JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS",
+                      "host": "billing.svc.cluster.local"
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "Upstream host 'billing.svc.cluster.local' resolves to an allowlisted private subnet but is not covered by broker.egress.allowed_internal_domains",
+                  "error_origin": "broker",
+                  "status": 400,
+                  "title": "Upstream host 'billing.svc.cluster.local' resolves to an allowlisted private subnet but is not covered by broker.egress.allowed_internal_domains",
+                  "type": "private_name_not_in_allowed_domains"
+                }
               }
             },
             "schema": {
@@ -168,7 +187,7 @@
             }
           }
         },
-        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n"
+        "description": "Request rejected before reaching the upstream — malformed JSON,\nmissing required field, or schema-validation failure on the\nbroker side. Body is RFC 9457 `application/problem+json` using\nthe shared `ProblemDetails` schema.\n\nAn upstream URL the egress policy refuses is\n`invalid_upstream_url`. A host name that resolves into\n`broker.egress.allowed_private_subnets` but is not covered by\n`broker.egress.allowed_internal_domains` is\n`private_name_not_in_allowed_domains`, with a `prompt_human`\n`agent_directive` naming the config key the operator sets. Neither\nbody carries the resolved address.\n"
       },
       "Conflict": {
         "content": {

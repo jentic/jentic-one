@@ -17,12 +17,20 @@ multicast, and reserved ranges — is blocked unless an allowlist exempts it.
 :func:`validate_upstream_url` resolves with the blocking system resolver;
 :func:`validate_upstream_url_async` is the event-loop-safe twin and shares its
 resolver answers with the pinning transport (``shared/dns_cache``).
+
+Refusals of a target *address* raise :class:`EgressPolicyError` (a ``ValueError``,
+so ``except ValueError`` callers keep refusing them). A DNS name that resolves
+into ``allowed_private_subnets`` but matches no ``allowed_internal_domains``
+suffix raises the :class:`PrivateNameNotAllowedError` subclass, whose message
+names the allowlist that lacks the entry. Neither message carries the resolved
+address.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -32,6 +40,28 @@ if TYPE_CHECKING:
     from jentic_one.shared.config import EgressConfig
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+_BLOCKED_RANGE_MESSAGE = "upstream URL resolves to a blocked address range"
+
+
+class EgressPolicyError(ValueError):
+    """An upstream target address refused by the egress policy."""
+
+
+class PrivateNameNotAllowedError(EgressPolicyError):
+    """A DNS name inside ``allowed_private_subnets`` that no ``allowed_internal_domains`` covers.
+
+    The subnet check passed, so adding a suffix covering ``hostname`` to
+    ``allowed_internal_domains`` is the one change that makes the name reachable.
+    """
+
+    def __init__(self, hostname: str) -> None:
+        self.hostname = hostname
+        super().__init__(
+            f"upstream host '{hostname}' resolves into allowed_private_subnets but matches "
+            "no allowed_internal_domains suffix"
+        )
+
 
 # Explicitly-listed ranges. Kept alongside the ``is_global`` test in
 # :func:`_is_blocked_address` so the policy never depends solely on the
@@ -125,7 +155,7 @@ async def validate_upstream_url_async(raw_url: str, egress: EgressConfig | None 
             addrs = await resolve_host(hostname)
         except socket.gaierror:
             return url
-        _check_resolved(hostname, addrs, egress)
+        assert_resolved_allowed(hostname, addrs, egress)
     return url
 
 
@@ -222,11 +252,18 @@ def _is_blocked_address(addr: _IpAddress) -> bool:
 def assert_ip_allowed(
     addr: _IpAddress, egress: EgressConfig | None, *, hostname: str | None
 ) -> None:
-    """Raise ValueError if *addr* is blocked and not exempted by the egress policy.
+    """Raise :class:`EgressPolicyError` if *addr* is blocked and not exempted.
 
     The reusable core of the egress check, shared by URL validation and the
     connection-time DNS-pinning guard so the rebind check uses the exact
     same block rules, metadata hard-deny, and allowlist exemptions.
+
+    A blocked address is exempted only when it falls inside an
+    ``allowed_private_subnets`` CIDR. If the target is a DNS name (``hostname``
+    set), the name must *also* match an ``allowed_internal_domains`` suffix — an
+    IP literal has no name to match, so the subnet exemption alone applies. A
+    name that passes the subnet check but not the suffix check raises
+    :class:`PrivateNameNotAllowedError`; every other refusal raises the base class.
 
     An IPv6 address embedding an IPv4 address is classified (and matched
     against ``allowed_private_subnets``) by the embedded IPv4. The cloud-metadata
@@ -238,39 +275,54 @@ def assert_ip_allowed(
 
     if addr in _METADATA_IPS or target in _METADATA_IPS:
         # Hard deny — never exemptable.
-        raise ValueError("upstream URL resolves to a blocked address range")
+        raise EgressPolicyError(_BLOCKED_RANGE_MESSAGE)
 
     if not _is_blocked_address(target):
         return
-    if _is_exempted(target, hostname, egress):
+    if not _in_allowed_subnet(target, egress):
+        raise EgressPolicyError(_BLOCKED_RANGE_MESSAGE)
+    if hostname is None or _matches_internal_domain(hostname, egress):
         return
-    raise ValueError("upstream URL resolves to a blocked address range")
+    raise PrivateNameNotAllowedError(hostname)
+
+
+def assert_resolved_allowed(
+    hostname: str, addrs: Iterable[_IpAddress], egress: EgressConfig | None
+) -> None:
+    """Validate every resolved address of *hostname*; one refused address refuses the name.
+
+    A refusal :class:`PrivateNameNotAllowedError` can fix (a missing domain
+    suffix) is raised only when no address is refused for any other reason —
+    otherwise adding the suffix would not make the name reachable, so the
+    generic refusal wins whatever the record order.
+    """
+    domain_gap: PrivateNameNotAllowedError | None = None
+    for addr in addrs:
+        try:
+            assert_ip_allowed(addr, egress, hostname=hostname)
+        except PrivateNameNotAllowedError as exc:
+            domain_gap = exc
+    if domain_gap is not None:
+        raise domain_gap
 
 
 def _check_ip(addr: _IpAddress, egress: EgressConfig | None, *, hostname: str | None) -> None:
     assert_ip_allowed(addr, egress, hostname=hostname)
 
 
-def _is_exempted(addr: _IpAddress, hostname: str | None, egress: EgressConfig | None) -> bool:
-    """Whether a private *addr* is opted-in via the egress allowlists.
-
-    A blocked address is exempted only when it falls inside an
-    ``allowed_private_subnets`` CIDR. If the target is a DNS name (``hostname``
-    set), the name must *also* match an ``allowed_internal_domains`` suffix — an
-    IP literal has no name to match, so the subnet exemption alone applies.
-    """
+def _in_allowed_subnet(addr: _IpAddress, egress: EgressConfig | None) -> bool:
+    """Whether *addr* falls inside an ``allowed_private_subnets`` CIDR."""
     if egress is None:
         return False
-
-    in_allowed_subnet = any(
+    return any(
         addr in ipaddress.ip_network(cidr, strict=False) for cidr in egress.allowed_private_subnets
     )
-    if not in_allowed_subnet:
+
+
+def _matches_internal_domain(hostname: str, egress: EgressConfig | None) -> bool:
+    """Whether *hostname* equals or sits under an ``allowed_internal_domains`` suffix."""
+    if egress is None:
         return False
-
-    if hostname is None:
-        return True
-
     lower_hostname = _normalise_hostname(hostname)
     for suffix in egress.allowed_internal_domains:
         bare = _normalise_hostname(suffix).lstrip(".")
@@ -293,12 +345,4 @@ def _resolve_and_check(hostname: str, egress: EgressConfig | None) -> None:
     except socket.gaierror:
         return
 
-    _check_resolved(hostname, addrs, egress)
-
-
-def _check_resolved(
-    hostname: str, addrs: tuple[_IpAddress, ...], egress: EgressConfig | None
-) -> None:
-    """Validate every resolved address of *hostname*; one blocked IP rejects the name."""
-    for addr in addrs:
-        _check_ip(addr, egress, hostname=hostname)
+    assert_resolved_allowed(hostname, addrs, egress)

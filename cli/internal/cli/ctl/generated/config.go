@@ -1092,8 +1092,11 @@ func (j *DirectOAuth2ProviderConfig) UnmarshalJSON(value []byte) error {
 // credential-stealing SSRF can never be allowlisted by accident.
 type EgressConfig struct {
 	// Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved private IP is
-	// permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML
-	// list or a comma-separated string.
+	// permitted. The resolved IP must still fall in an allowed subnet. A host name
+	// that resolves into an allowed subnet but matches no suffix is refused with a
+	// reason naming this list (on the broker, problem type
+	// ``private_name_not_in_allowed_domains``). Accepts a YAML list or a
+	// comma-separated string.
 	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
 
 	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).

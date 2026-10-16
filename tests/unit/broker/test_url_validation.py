@@ -8,7 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from jentic_one.shared.config import EgressConfig
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import (
+    EgressPolicyError,
+    PrivateNameNotAllowedError,
+    validate_upstream_url,
+)
 
 
 def test_valid_https_url() -> None:
@@ -147,15 +151,79 @@ def test_internal_domain_resolving_into_allowed_subnet_permitted() -> None:
         assert result == "http://billing.svc.cluster.local/api"
 
 
-def test_internal_domain_not_in_allowlist_blocked() -> None:
-    # Resolves into the allowed subnet, but the host suffix isn't allowlisted.
+def test_internal_domain_not_in_allowlist_raises_distinct_reason() -> None:
+    # Pins #1722: resolving into the allowed subnet with a host suffix that isn't
+    # allowlisted is refused with its own reason naming the missing allowlist,
+    # never the generic "blocked address range" (which reads as "subnet not allowed").
     egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
     fake_result = [(2, 1, 6, "", ("10.50.2.10", 0))]
     with (
         patch("jentic_one.shared.url_validation.socket.getaddrinfo", return_value=fake_result),
-        pytest.raises(ValueError, match="blocked address range"),
+        pytest.raises(PrivateNameNotAllowedError) as exc_info,
     ):
         validate_upstream_url("http://billing.svc.cluster.local/api", egress)
+    err = exc_info.value
+    # Still a ValueError + EgressPolicyError, so every existing caller keeps refusing it.
+    assert isinstance(err, EgressPolicyError)
+    assert isinstance(err, ValueError)
+    assert err.hostname == "billing.svc.cluster.local"
+    assert "allowed_internal_domains" in str(err)
+    assert "blocked address range" not in str(err)
+    # The resolved internal address is never disclosed in the message.
+    assert "10.50.2.10" not in str(err)
+
+
+def test_internal_domain_mismatch_with_other_domains_configured_raises_distinct_reason() -> None:
+    egress = EgressConfig(
+        allowed_private_subnets=["10.50.0.0/16"],
+        allowed_internal_domains=[".other.internal"],
+    )
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to("10.50.2.10"),
+        ),
+        pytest.raises(PrivateNameNotAllowedError),
+    ):
+        validate_upstream_url("http://billing.svc.cluster.local/api", egress)
+
+
+def test_mixed_answer_outside_allowed_subnet_keeps_generic_reason() -> None:
+    # One record is in the allowed subnet (domain missing) and one is outside it:
+    # adding the domain would not make the name reachable, so the generic block
+    # wins regardless of record order.
+    egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
+    for ips in (("10.50.2.10", "192.168.1.5"), ("192.168.1.5", "10.50.2.10")):
+        with (
+            patch(
+                "jentic_one.shared.url_validation.socket.getaddrinfo",
+                return_value=_resolving_to(*ips),
+            ),
+            pytest.raises(EgressPolicyError, match="blocked address range") as exc_info,
+        ):
+            validate_upstream_url("http://billing.svc.cluster.local/api", egress)
+        assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+def test_metadata_ip_by_name_in_allowed_subnet_keeps_generic_reason() -> None:
+    # The metadata hard-deny is never reported as a fixable allowlist gap.
+    egress = EgressConfig(allowed_private_subnets=["169.254.0.0/16"])
+    with (
+        patch(
+            "jentic_one.shared.url_validation.socket.getaddrinfo",
+            return_value=_resolving_to("169.254.169.254"),
+        ),
+        pytest.raises(EgressPolicyError, match="blocked address range") as exc_info,
+    ):
+        validate_upstream_url("http://imds.corp.internal/latest", egress)
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+def test_private_ip_outside_allowlist_raises_generic_policy_error() -> None:
+    egress = EgressConfig(allowed_private_subnets=["10.50.0.0/16"])
+    with pytest.raises(EgressPolicyError, match="blocked address range") as exc_info:
+        validate_upstream_url("http://10.60.0.1/api", egress)
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
 
 
 def test_allowed_domain_resolving_outside_allowed_subnet_blocked() -> None:
@@ -174,7 +242,8 @@ def test_allowed_domain_resolving_outside_allowed_subnet_blocked() -> None:
 
 
 def test_domain_suffix_match_requires_dot_boundary() -> None:
-    # "malinternal.corp" must NOT be matched by suffix "internal.corp".
+    # "malinternal.corp" must NOT be matched by suffix "internal.corp": it
+    # resolves into the allowed subnet, so it is refused as a domain gap.
     egress = EgressConfig(
         allowed_private_subnets=["10.50.0.0/16"],
         allowed_internal_domains=["internal.corp"],
@@ -182,7 +251,7 @@ def test_domain_suffix_match_requires_dot_boundary() -> None:
     fake_result = [(2, 1, 6, "", ("10.50.2.10", 0))]
     with (
         patch("jentic_one.shared.url_validation.socket.getaddrinfo", return_value=fake_result),
-        pytest.raises(ValueError, match="blocked address range"),
+        pytest.raises(PrivateNameNotAllowedError),
     ):
         validate_upstream_url("http://malinternal.corp/api", egress)
 
@@ -281,9 +350,17 @@ def _url_for(ip: str) -> str:
     return f"http://[{ip}]/x" if ":" in ip else f"http://{ip}/x"
 
 
-def _resolving_to(ip: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
-    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
-    return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+def _resolving_to(*ips: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    return [
+        (
+            socket.AF_INET6 if ":" in ip else socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            (ip, 0),
+        )
+        for ip in ips
+    ]
 
 
 @pytest.mark.parametrize("ip", _NON_PUBLIC_ADDRESSES)

@@ -1658,7 +1658,10 @@ class EgressConfig(BaseModel):
         description=(
             'Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved '
             "private IP is permitted. The resolved IP must still fall in an "
-            "allowed subnet. Accepts a YAML list or a comma-separated string."
+            "allowed subnet. A host name that resolves into an allowed subnet "
+            "but matches no suffix is refused with a reason naming this list "
+            "(on the broker, problem type ``private_name_not_in_allowed_domains``). "
+            "Accepts a YAML list or a comma-separated string."
         ),
     )
     dns_pinning_enabled: bool = Field(

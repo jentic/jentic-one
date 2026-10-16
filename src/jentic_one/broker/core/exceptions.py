@@ -24,6 +24,7 @@ from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
 from jentic_one.shared.permissions.matching import validate_path
+from jentic_one.shared.url_validation import PrivateNameNotAllowedError
 
 AgentStrategy = Literal[
     "wait",
@@ -116,7 +117,13 @@ class TooManyCandidatesError(BrokerError):
 
 
 class UpstreamUrlNotAllowedError(BrokerError):
-    """SSRF boundary: private-IP / metadata host / unformable upstream URL (400)."""
+    """SSRF boundary: private-IP / metadata host / unformable upstream URL (400).
+
+    Typed ``invalid_upstream_url``, or ``private_name_not_in_allowed_domains``
+    when a DNS name resolves into ``broker.egress.allowed_private_subnets`` but
+    matches no ``broker.egress.allowed_internal_domains`` suffix (see
+    :func:`upstream_url_not_allowed`).
+    """
 
 
 class UpgradeNotSupportedError(BrokerError):
@@ -341,6 +348,58 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
             "vendor/API you are already bound for."
         ),
     )
+
+
+#: The config key and env var a ``private_name_not_in_allowed_domains`` refusal
+#: points the operator at. Broker egress only: this taxonomy maps the broker's
+#: own outbound calls.
+_INTERNAL_DOMAINS_CONFIG_KEY = "broker.egress.allowed_internal_domains"
+_INTERNAL_DOMAINS_ENV_VAR = "JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS"
+
+
+def private_name_not_allowed_directive(hostname: str) -> AgentDirective:
+    """Directive for a ``private_name_not_in_allowed_domains`` 400 — an operator config change.
+
+    The host resolves into an allowlisted private subnet but no internal-domain
+    suffix covers it. Only an operator can widen the egress allowlist, so the
+    strategy is ``prompt_human``; the parameters name the host the caller sent
+    and the config key to set, never the resolved address.
+    """
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "host": hostname,
+            "config_key": _INTERNAL_DOMAINS_CONFIG_KEY,
+            "env_var": _INTERNAL_DOMAINS_ENV_VAR,
+        },
+        human_readable_instruction=(
+            f"The broker's egress policy does not allow '{hostname}': it resolves to an "
+            f"allowlisted private subnet, but no entry in {_INTERNAL_DOMAINS_CONFIG_KEY} "
+            "covers it. Ask your operator to add a suffix covering this host to "
+            f"{_INTERNAL_DOMAINS_CONFIG_KEY} (env {_INTERNAL_DOMAINS_ENV_VAR}), then retry. "
+            "This is not agent-recoverable."
+        ),
+    )
+
+
+def upstream_url_not_allowed(exc: ValueError) -> UpstreamUrlNotAllowedError:
+    """Map an upstream-URL refusal from the egress check to the broker's 400.
+
+    A :class:`~jentic_one.shared.url_validation.PrivateNameNotAllowedError` gets
+    its own ``private_name_not_in_allowed_domains`` type, a detail naming the
+    allowlist that lacks the entry, and :func:`private_name_not_allowed_directive`.
+    Every other refusal keeps ``invalid_upstream_url`` with the validator's message.
+    """
+    if isinstance(exc, PrivateNameNotAllowedError):
+        return UpstreamUrlNotAllowedError(
+            detail=(
+                f"Upstream host '{exc.hostname}' resolves to an allowlisted private subnet "
+                f"but is not covered by {_INTERNAL_DOMAINS_CONFIG_KEY}"
+            ),
+            type="private_name_not_in_allowed_domains",
+            directive=private_name_not_allowed_directive(exc.hostname),
+        )
+    return UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url")
 
 
 def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
