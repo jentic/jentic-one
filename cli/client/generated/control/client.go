@@ -10578,8 +10578,9 @@ type ClientInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11024,6 +11025,9 @@ type ClientInterface interface {
 	// StreamEvents Stream Events
 	//
 	// Stream events as Server-Sent Events.
+	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
 	//
 	// Corresponds with GET /events/stream (the `StreamEvents` operationId).
 	StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12170,7 +12174,11 @@ type ClientInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 	DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12190,7 +12198,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12202,7 +12211,8 @@ type ClientInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12213,6 +12223,8 @@ type ClientInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -12221,6 +12233,8 @@ type ClientInterface interface {
 	// SetUserPermissions Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12231,12 +12245,17 @@ type ClientInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 	DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EnableUser Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 	EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14157,8 +14176,9 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14993,6 +15013,9 @@ func (c *Client) ListEvents(ctx context.Context, params *ListEventsParams, reqEd
 // StreamEvents Stream Events
 //
 // Stream events as Server-Sent Events.
+//
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
 //
 // Corresponds with GET /events/stream (the `StreamEvents` operationId).
 func (c *Client) StreamEvents(ctx context.Context, params *StreamEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16969,7 +16992,11 @@ func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequ
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Corresponds with DELETE /users/{user_id} (the `DeleteUser` operationId).
 func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17009,7 +17036,8 @@ func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...Reque
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type.
 //
@@ -17031,7 +17059,8 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17052,6 +17081,8 @@ func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJ
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -17070,6 +17101,8 @@ func (c *Client) SetUserPermissionsWithBody(ctx context.Context, userId string, 
 // SetUserPermissions Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17090,6 +17123,8 @@ func (c *Client) SetUserPermissions(ctx context.Context, userId string, body Set
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
 func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDisableUserRequest(c.Server, userId)
@@ -17105,7 +17140,10 @@ func (c *Client) DisableUser(ctx context.Context, userId string, reqEditors ...R
 
 // EnableUser Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Corresponds with POST /users/{user_id}:enable (the `EnableUser` operationId).
 func (c *Client) EnableUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27014,8 +27052,9 @@ type ClientWithResponsesInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
-	// (non-JWT) credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
+	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
+	// credentials. Clients should then send the user back to login.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27502,6 +27541,9 @@ type ClientWithResponsesInterface interface {
 	// StreamEventsWithResponse Stream Events
 	//
 	// Stream events as Server-Sent Events.
+	//
+	// The stream ends once the caller's credential stops verifying (expired,
+	// revoked, or its user disabled or deleted); reconnecting then returns 401.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28724,7 +28766,11 @@ type ClientWithResponsesInterface interface {
 	// The row is retained — the account is anonymized (tombstone email) and
 	// deactivated so history and audit references stay resolvable — but the
 	// action is terminal: there is no re-enable arm. For the reversible kill
-	// switch use ``:disable`` / ``:enable`` instead.
+	// switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+	// their outstanding invites: redeeming one answers 409
+	// ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+	// Idempotent: deleting an already-deleted user answers 204 and changes
+	// nothing.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28748,7 +28794,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28760,7 +28807,8 @@ type ClientWithResponsesInterface interface {
 	// Update a user's profile fields.
 	//
 	// Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-	// else only themselves. Any other user answers 404.
+	// else only themselves. Any other user answers 404. A deleted user cannot be
+	// edited (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28771,6 +28819,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Set the assigned permissions for a user.
 	//
+	// A deleted user's permissions cannot be changed (409).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -28779,6 +28829,8 @@ type ClientWithResponsesInterface interface {
 	// SetUserPermissionsWithResponse Set User Permissions
 	//
 	// Set the assigned permissions for a user.
+	//
+	// A deleted user's permissions cannot be changed (409).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28789,6 +28841,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Disable a user account.
 	//
+	// A deleted user is already permanently inactive and cannot be disabled (409).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -28796,7 +28850,10 @@ type ClientWithResponsesInterface interface {
 
 	// EnableUserWithResponse Enable User
 	//
-	// Enable a user account.
+	// Enable a disabled user account.
+	//
+	// A deleted user cannot be re-enabled (409). Login sessions issued before the
+	// account was disabled stay revoked; the user signs in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -43134,6 +43191,10 @@ type EnableUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43157,6 +43218,16 @@ func (r EnableUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r EnableUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r EnableUserHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -43219,6 +43290,10 @@ type ReissueInviteHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -43247,6 +43322,16 @@ func (r ReissueInviteHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ReissueInviteHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ReissueInviteHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -45241,8 +45326,9 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “invalid_credentials“ for deactivated users, non-user tokens, or opaque
-// (non-JWT) credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
+// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
+// credentials. Clients should then send the user back to login.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45963,6 +46049,9 @@ func (c *ClientWithResponses) ListEventsWithResponse(ctx context.Context, params
 // StreamEventsWithResponse Stream Events
 //
 // Stream events as Server-Sent Events.
+//
+// The stream ends once the caller's credential stops verifying (expired,
+// revoked, or its user disabled or deleted); reconnecting then returns 401.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47683,7 +47772,11 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 // The row is retained — the account is anonymized (tombstone email) and
 // deactivated so history and audit references stay resolvable — but the
 // action is terminal: there is no re-enable arm. For the reversible kill
-// switch use “:disable“ / “:enable“ instead.
+// switch use “:disable“ / “:enable“ instead. Deleting a user also cancels
+// their outstanding invites: redeeming one answers 409
+// “invite_already_redeemed“, the same as an invite replaced by a reissue.
+// Idempotent: deleting an already-deleted user answers 204 and changes
+// nothing.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -47719,7 +47812,8 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId st
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47737,7 +47831,8 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 // Update a user's profile fields.
 //
 // Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-// else only themselves. Any other user answers 404.
+// else only themselves. Any other user answers 404. A deleted user cannot be
+// edited (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47754,6 +47849,8 @@ func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId
 //
 // Set the assigned permissions for a user.
 //
+// A deleted user's permissions cannot be changed (409).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /users/{user_id}/permissions (the `SetUserPermissions` operationId).
@@ -47768,6 +47865,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithBodyWithResponse(ctx context
 // SetUserPermissionsWithResponse Set User Permissions
 //
 // Set the assigned permissions for a user.
+//
+// A deleted user's permissions cannot be changed (409).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -47784,6 +47883,8 @@ func (c *ClientWithResponses) SetUserPermissionsWithResponse(ctx context.Context
 //
 // Disable a user account.
 //
+// A deleted user is already permanently inactive and cannot be disabled (409).
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /users/{user_id}:disable (the `DisableUser` operationId).
@@ -47797,7 +47898,10 @@ func (c *ClientWithResponses) DisableUserWithResponse(ctx context.Context, userI
 
 // EnableUserWithResponse Enable User
 //
-// Enable a user account.
+// Enable a disabled user account.
+//
+// A deleted user cannot be re-enabled (409). Login sessions issued before the
+// account was disabled stay revoked; the user signs in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -59925,6 +60029,20 @@ func ParseEnableUserHTTPResp(rsp *http.Response) (*EnableUserHTTPResp, error) {
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59999,6 +60117,20 @@ func ParseReissueInviteHTTPResp(rsp *http.Response) (*ReissueInviteHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

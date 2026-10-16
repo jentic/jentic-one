@@ -6,12 +6,50 @@ from collections.abc import Sequence
 
 import structlog
 
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM, read_user_status
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
+
+
+async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: object) -> None:
+    """Refuse a user token whose ``users`` row is missing, deleted, inactive, or a newer generation.
+
+    One primary-key read — the same per-verdict cost the opaque ``at_`` path
+    pays to re-check its actor row (#1136). Deliberately uncached: a login JWT
+    stays valid for ``jwt_ttl_seconds``, so the users row is the only thing
+    that can end it early, and a disable (or a delete, which also clears
+    ``active``) must take effect on the very next request.
+
+    ``generation`` is the token's ``sgen`` claim (absent → ``0``). The row's
+    generation moves on at disable, delete and password change/reset, so a
+    token minted before any of those stays refused even once the account is
+    active again; the bundle a password change returns carries the new value.
+    """
+    try:
+        status = await read_user_status(ctx.admin_db, user_id)
+    except DatabaseUnavailableError:
+        logger.warning("jwt_user_status_unavailable", sub=user_id)
+        raise
+    # Every refusal is the same uniform 401 as any other bad token; the reason
+    # is logged server-side so an operator can tell a deleted or forged
+    # subject from a disabled user or a revoked session.
+    if status is None:
+        logger.warning("jwt_user_inactive", sub=user_id, reason="missing")
+        raise InvalidTokenError("Token subject is not an active user")
+    if status.deleted:
+        logger.warning("jwt_user_inactive", sub=user_id, reason="deleted")
+        raise InvalidTokenError("Token subject is not an active user")
+    if not status.active:
+        logger.warning("jwt_user_inactive", sub=user_id, reason="inactive")
+        raise InvalidTokenError("Token subject is not an active user")
+    if generation != status.session_generation:
+        logger.warning("jwt_user_inactive", sub=user_id, reason="revoked")
+        raise InvalidTokenError("Token belongs to a revoked login session")
 
 
 def scopes_to_permissions(scopes: Sequence[object]) -> list[str]:
@@ -85,9 +123,19 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     be a USER (the most-privileged interpretation). Raises the same
     ``InvalidTokenError`` as a bad signature; the web layer maps it to 401.
 
+    User tokens re-check the ``users`` row on every verification (#1139): a
+    disabled, deleted or missing user, or a token from a revoked login session
+    (its ``sgen`` claim behind ``users.session_generation``), is refused with ``InvalidTokenError``
+    (uniform 401). Disabling a user therefore ends their outstanding login JWTs
+    on the next verification rather than at ``jwt_ttl_seconds``, and
+    re-enabling them does not bring those tokens back. A long-lived response
+    (the ``/events/stream`` SSE feed) re-verifies its credential while open. An
+    admin DB that cannot answer raises ``DatabaseUnavailableError`` (503), not
+    a 401 — the caller is not admitted either way.
+
     When the JWT already embeds ``permissions`` in its claims (e.g. login
-    JWTs), those are trusted directly — no DB lookup. Otherwise falls back
-    to the database-resolved permission path for backwards compatibility.
+    JWTs), those are trusted directly — no permission lookup. Otherwise falls
+    back to the database-resolved permission path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
     actor_type_claim = claims.get("actor_type")
@@ -108,6 +156,9 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
         raise InvalidTokenError("Token declares an unknown actor_type") from exc
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")
+
+    if actor_type == ActorType.USER:
+        await _ensure_user_accepts_token(ctx, str(sub), claims.get(SESSION_GENERATION_CLAIM, 0))
 
     embedded_permissions = claims.get("permissions")
     if embedded_permissions is not None and isinstance(embedded_permissions, list):

@@ -30,13 +30,17 @@ from contextlib import asynccontextmanager
 
 import pytest
 from alembic import command
+from sqlalchemy import delete
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import jentic_one.shared.db.session as _session_module
+from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos import UserRepository
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import InviteState
 from tests.harness.postgres import DB_NAMES, alembic_config_for, ensure_schema, postgres_config
 
 
@@ -44,6 +48,35 @@ from tests.harness.postgres import DB_NAMES, alembic_config_for, ensure_schema, 
 async def noop_lifespan(_app: object) -> AsyncGenerator[None]:
     """No-op lifespan for test apps — the web_context fixture manages DB lifecycle."""
     yield
+
+
+@asynccontextmanager
+async def seeded_jwt_user(ctx: Context, user_id: str) -> AsyncGenerator[str]:
+    """Seed an active ``users`` row for a test-minted login JWT's ``sub``; delete it after.
+
+    ``verify_token`` re-checks the user row on every request (#1139), so a
+    hand-minted user JWT only authenticates when its subject exists and is
+    active. The row is seeded with the exact id the test's claims carry; a row
+    a crashed earlier run left behind under that id is cleared first.
+    """
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(User).where(User.id == user_id))
+        await UserRepository.create(
+            session,
+            id=user_id,
+            email=f"{user_id}@jwt-subject.test",
+            first_name="Jwt",
+            last_name="Subject",
+            invite_state=InviteState.REDEEMED,
+            created_by="usr_test",
+        )
+        await session.commit()
+    try:
+        yield user_id
+    finally:
+        async with ctx.admin_db.session() as session:
+            await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()
 
 
 @pytest.fixture(scope="session")

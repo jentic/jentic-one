@@ -37,7 +37,7 @@ from jentic_one.registry.services.errors import (
     SpecFileMissingError,
     TooManyCandidatesError,
 )
-from jentic_one.shared.db.errors import DatabaseConsistencyError
+from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
 from jentic_one.shared.web.errors import make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -99,6 +99,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # generic client detail so it is logged as a recognised class instead of
     # escaping as an opaque traceback. See #642.
     DatabaseConsistencyError: (500, "internal_error"),
+    # The admin/registry DB cannot answer (e.g. the per-request users-row read
+    # behind a login JWT, #1139): infra, not a client fault — a retryable 503,
+    # matching the admin, auth and control surfaces.
+    DatabaseUnavailableError: (503, "database_unavailable"),
 }
 
 # Never surface raw SQLAlchemy internals (SQL, state, connection details) to the
@@ -106,6 +110,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # still logged server-side (see make_service_error_handler).
 _SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseConsistencyError: "An unexpected error occurred",
+    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
 }
 
 

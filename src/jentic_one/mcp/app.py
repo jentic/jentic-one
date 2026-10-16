@@ -86,6 +86,7 @@ from jentic_one.mcp.tools import CallEnv, dispatch_mcp_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.events.mcp_session import (
     SESSION_ID_HEADER,
     schedule_mcp_http_session_emit,
@@ -180,6 +181,26 @@ def _unauthorized(ctx: Context, request: Request, method: str) -> Response:
     if method == "HEAD":
         return Response(status_code=401, headers=headers)
     return JSONResponse(status_code=401, content={"detail": "Unauthorized"}, headers=headers)
+
+
+def _database_unavailable(method: str) -> Response:
+    """The 503 for a credential the admin DB could not check (HEAD: headers, no body).
+
+    Same Problem Details body as the REST surfaces' ``database_unavailable``;
+    the static detail never echoes the driver error.
+    """
+    if method == "HEAD":
+        return Response(status_code=503)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "type": "database_unavailable",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "The database is temporarily unavailable; please retry.",
+        },
+        media_type="application/problem+json",
+    )
 
 
 def _stream_refusal(method: str) -> Response:
@@ -572,7 +593,13 @@ class McpMount:
             if not pre_auth:
                 return _unauthorized(self.ctx, request, method)
         else:
-            identity = await self._resolve_identity(credential, request)
+            try:
+                identity = await self._resolve_identity(credential, request)
+            except DatabaseUnavailableError:
+                # The credential could not be checked (the admin DB is down):
+                # refuse with a retryable 503, not the 401 challenge — a
+                # challenge would send the client off to re-authenticate.
+                return _database_unavailable(method)
             if identity is None:
                 return _unauthorized(self.ctx, request, method)
             self._stash_call_state(scope, request, identity, credential)
@@ -635,13 +662,17 @@ class McpMount:
         (retired sak_ ones refused),
         ``at_`` access tokens including grant-channel bearers — resolves
         through exactly the gates the REST routes apply. Any failure is an
-        invalid credential (401 challenge), mirroring ``resolve_identity``.
+        invalid credential (401 challenge), mirroring ``resolve_identity`` —
+        except ``DatabaseUnavailableError``, which propagates so the gate can
+        answer 503: the credential was never judged, so it is not invalid.
         """
         verify_token = getattr(self.parent_app.state, "verify_token", None)
         if verify_token is None:  # pragma: no cover - installer requires auth wiring
             return None
         try:
             identity: Identity = await verify_token(credential, request)
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             return None
         return identity

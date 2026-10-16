@@ -32347,7 +32347,7 @@
     "/auth/refresh": {
       "description": "`POST`: Refresh session token.",
       "post": {
-        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``invalid_credentials`` for deactivated users, non-user tokens, or opaque\n(non-JWT) credentials. Clients should then send the user back to login.",
+        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``unauthorized`` from the auth gate for a disabled, deleted or unknown user,\nand 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)\ncredentials. Clients should then send the user back to login.",
         "operationId": "refreshSession",
         "responses": {
           "200": {
@@ -38788,7 +38788,7 @@
     "/events/stream": {
       "description": "`GET`: Stream Events.",
       "get": {
-        "description": "Stream events as Server-Sent Events.",
+        "description": "Stream events as Server-Sent Events.\n\nThe stream ends once the caller's credential stops verifying (expired,\nrevoked, or its user disabled or deleted); reconnecting then returns 401.",
         "operationId": "streamEvents",
         "parameters": [
           {
@@ -50642,7 +50642,7 @@
     },
     "/users/{user_id}": {
       "delete": {
-        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead.",
+        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels\ntheir outstanding invites: redeeming one answers 409\n``invite_already_redeemed``, the same as an invite replaced by a reissue.\nIdempotent: deleting an already-deleted user answers 204 and changes\nnothing.",
         "operationId": "deleteUser",
         "parameters": [
           {
@@ -51029,7 +51029,7 @@
         ]
       },
       "patch": {
-        "description": "Update a user's profile fields.\n\nScoped like `GET /users/{user_id}`: org admins can update any user; anyone\nelse only themselves. Any other user answers 404.",
+        "description": "Update a user's profile fields.\n\nScoped like `GET /users/{user_id}`: org admins can update any user; anyone\nelse only themselves. Any other user answers 404. A deleted user cannot be\nedited (409).",
         "operationId": "updateUser",
         "parameters": [
           {
@@ -51189,7 +51189,7 @@
                 }
               }
             },
-            "description": "The email is already in use"
+            "description": "The email is already in use, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51267,7 +51267,7 @@
     "/users/{user_id}/permissions": {
       "description": "`PUT`: Set User Permissions.",
       "put": {
-        "description": "Set the assigned permissions for a user.",
+        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409).",
         "operationId": "setUserPermissions",
         "parameters": [
           {
@@ -51428,7 +51428,7 @@
                 }
               }
             },
-            "description": "Would remove org:admin from the last active org:admin"
+            "description": "Would remove org:admin from the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51506,7 +51506,7 @@
     "/users/{user_id}:disable": {
       "description": "`POST`: Disable User.",
       "post": {
-        "description": "Disable a user account.",
+        "description": "Disable a user account.\n\nA deleted user is already permanently inactive and cannot be disabled (409).",
         "operationId": "disableUser",
         "parameters": [
           {
@@ -51617,7 +51617,7 @@
                 }
               }
             },
-            "description": "The user is the last active org:admin"
+            "description": "The user is the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51695,7 +51695,7 @@
     "/users/{user_id}:enable": {
       "description": "`POST`: Enable User.",
       "post": {
-        "description": "Enable a user account.",
+        "description": "Enable a disabled user account.\n\nA deleted user cannot be re-enabled (409). Login sessions issued before the\naccount was disabled stay revoked; the user signs in again.",
         "operationId": "enableUser",
         "parameters": [
           {
@@ -51773,6 +51773,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The user has been deleted"
           },
           "422": {
             "content": {
@@ -51939,6 +51973,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The user has already redeemed an invite, or has been deleted"
           },
           "422": {
             "content": {

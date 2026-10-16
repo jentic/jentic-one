@@ -12,6 +12,7 @@ from jentic_one.admin.core.permissions import (
 from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
 from jentic_one.admin.services._support.user_management import (
     ensure_can_manage,
+    ensure_not_deleted,
     ensure_not_last_active_admin,
 )
 from jentic_one.admin.services.errors import (
@@ -102,12 +103,16 @@ class PermissionService:
         await self.validate_grants(granted_by, permissions)
 
         async with self._ctx.admin_db.transaction() as session:
-            if await UserRepository.get_by_id(session, user_id) is None:
+            user = await UserRepository.get_by_id(session, user_id)
+            if user is None:
                 raise UserNotFoundError(user_id)
             permission_sets = await UserPermissionGrantRepository.get_permission_sets(
                 session, [user_id, granted_by]
             )
             ensure_can_manage(user_id, identity, permission_sets)
+            # Grants on a deleted row can never be exercised (delete is
+            # terminal), so editing them would only write misleading audit.
+            ensure_not_deleted(user, "change the permissions of")
             previous = sorted(permission_sets[user_id])
             if ORG_ADMIN in permission_sets[user_id] and ORG_ADMIN not in permissions:
                 await ensure_not_last_active_admin(session, user_id)

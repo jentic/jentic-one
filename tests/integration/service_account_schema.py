@@ -41,6 +41,8 @@ _SCOPE_MAP_HEAD = "6ae76df5ece5"  # pragma: allowlist secret
 _APPROVALS_HEAD = "3306fb9172f1"  # pragma: allowlist secret
 #: The credential-keyed repeated-failure index, stacked on the approvals table.
 _REPEATED_FAILURE_INDEX_HEAD = "c00de2f5d777"  # pragma: allowlist secret
+#: The users login-session columns, stacked on the repeated-failure index.
+_USER_SESSION_HEAD = "eb3688e956fc"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -209,6 +211,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_SCOPE_MAP_HEAD],
         [_APPROVALS_HEAD],
         [_REPEATED_FAILURE_INDEX_HEAD],
+        [_USER_SESSION_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)

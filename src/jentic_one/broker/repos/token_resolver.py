@@ -37,7 +37,8 @@ class InProcessTokenResolver:
         # disabled/archived agent's outstanding token must stop resolving as
         # active, bounded only by the broker's short verdict-cache TTL. NULL
         # (actor row missing) fails closed; the users table models "disabled"
-        # as active=false, normalised here to the same status string.
+        # as active=false and "deleted" as deleted_at set (refused even on a
+        # row that reads active), normalised here to the same status string.
         # oauth_client_active mirrors that guarantee for third-party clients
         # (kill-switch on deactivate must reach broker traffic, not just auth
         # surface). NULL indicates no issuing client, treated as active.
@@ -60,7 +61,8 @@ class InProcessTokenResolver:
             # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
-            "   (SELECT CASE WHEN u.active THEN 'active' ELSE 'disabled' END"
+            "   (SELECT CASE WHEN u.active AND u.deleted_at IS NULL"
+            "     THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
             " END AS actor_status,"
