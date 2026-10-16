@@ -277,12 +277,20 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// result, not a normal one (#1429). Re-sending the same call cannot succeed.
 	if coded := agentops.BrokerError(res); coded != nil {
 		nextTool := brokerErrorNextTool(coded)
+		extra := map[string]any{"retryable": false}
 		// The classify core phrases the recovery for the CLI (jentic search /
-		// creds list); re-flavor it for this lane's tools so the agent is pointed
-		// at a tool it can actually call, matching nextTool. Relayed candidates
-		// stay in details["candidates"].
-		coded.Actionable = brokerErrorToolHint(nextTool)
-		return s.softErrorExtra(cctx, coded, nextTool, map[string]any{"retryable": false}), nil
+		// creds list / --header); re-flavor it for this lane's tools so the agent
+		// is pointed at a tool it can actually call, matching nextTool. Relayed
+		// candidates stay in details["candidates"]. A draft-only 404's
+		// agent_directive rides as a top-level sibling, as on a denial.
+		if draft := agentops.DraftRecoveryOf(coded); draft != nil {
+			coded.Actionable = draft.ToolActionable()
+			extra["agent_directive"] = draft.Directive
+			delete(coded.Details, "agent_directive")
+		} else {
+			coded.Actionable = brokerErrorToolHint(nextTool)
+		}
+		return s.softErrorExtra(cctx, coded, nextTool, extra), nil
 	}
 
 	// A broker-origin 5xx/429 (circuit open, runner degraded, rate limited,
@@ -1253,16 +1261,22 @@ func brokerErrorToolHint(nextTool string) string {
 
 // brokerErrorNextTool points a broker resolve failure at the tool that can fix
 // it, keyed on agentops.BrokerErrorRecoveryFor (the same routing the CLI prose
-// uses): an unregistered operation needs search_apis, an unresolvable
-// credential header gets whoami (the same safe default the denial path uses),
-// and any other broker 4xx — a contract or payload error — points at
-// inspect_operation so the agent re-reads the contract instead of looping on an
-// identity check that cannot fix it. Never get_started: the identity already
-// resolved.
+// uses): a draft-only 404 resends through execute when the broker offered a
+// pin and otherwise stops for a human (get_started), an unregistered operation
+// needs search_apis, an unresolvable credential header gets whoami (the same
+// safe default the denial path uses), and any other broker 4xx — a contract or
+// payload error — points at inspect_operation so the agent re-reads the
+// contract instead of looping on an identity check that cannot fix it.
 func brokerErrorNextTool(coded *ux.CodedError) string {
 	status, _ := coded.Details["http_status"].(int)
 	pt, _ := coded.Details["problem_type"].(string)
-	switch agentops.BrokerErrorRecoveryFor(status, pt) {
+	draft := agentops.DraftRecoveryOf(coded)
+	switch agentops.BrokerErrorRecoveryFor(status, pt, draft != nil) {
+	case agentops.RecoverDraft:
+		if len(draft.PinHeaders) > 0 {
+			return "execute"
+		}
+		return "get_started"
 	case agentops.RecoverOperation:
 		return "search_apis"
 	case agentops.RecoverCredential:

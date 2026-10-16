@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import uuid as uuid_mod
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from http import HTTPStatus
@@ -256,15 +257,20 @@ _BROKER_CREDENTIAL_PROBLEM_TYPES = frozenset(
 )
 
 
-def _broker_error_next_tool(status: int, problem_type: str) -> str:
+def _broker_error_next_tool(status: int, problem_type: str, draft: DraftRecovery | None) -> str:
     """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``
     over ``agentops.BrokerErrorRecoveryFor``).
 
-    A 404 or ``operation_not_found`` needs search_apis; a known
-    credential-resolution type gets whoami; any other broker 4xx — a contract or
-    payload error — points at inspect_operation, never an identity-check loop
-    that cannot fix a malformed request.
+    A 404 that names a draft revision is not a discovery problem: the agent
+    resends through ``execute`` when the broker offered a pin, else it stops
+    for a human (``get_started``). Any other 404 or ``operation_not_found``
+    needs search_apis; a known credential-resolution type gets whoami; any
+    other broker 4xx — a contract or payload error — points at
+    inspect_operation, never an identity-check loop that cannot fix a
+    malformed request.
     """
+    if draft is not None:
+        return "execute" if draft.pin_headers else "get_started"
     if status == 404 or problem_type == "operation_not_found":
         return "search_apis"
     if problem_type in _BROKER_CREDENTIAL_PROBLEM_TYPES:
@@ -272,9 +278,11 @@ def _broker_error_next_tool(status: int, problem_type: str) -> str:
     return "inspect_operation"
 
 
-def _broker_error_actionable(next_tool: str) -> str:
+def _broker_error_actionable(next_tool: str, draft: DraftRecovery | None) -> str:
     """MCP-lane recovery prose for a broker resolve failure, keyed on next_tool
     (Go: ``brokerErrorToolHint``) so the two never disagree."""
+    if draft is not None:
+        return draft_recovery_actionable(draft)
     if next_tool == "search_apis":
         return (
             "The broker has no such operation registered. Call search_apis to find the right "
@@ -333,16 +341,77 @@ def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> T
     candidates = problem.get("candidates")
     if isinstance(candidates, list) and candidates:
         details["candidates"] = candidates
-    next_tool = _broker_error_next_tool(status, problem_type)
+    draft = parse_draft_recovery(problem)
+    extra: dict[str, Any] = {"retryable": False}
+    if draft is not None:
+        # The draft-only 404 (#1721): relay the broker's draft identity and its
+        # verbatim agent_directive (the pin header lives in its parameters), as
+        # classify_denial does for a denial's directive.
+        details["draft_revision"] = draft.draft_revision
+        extra["agent_directive"] = draft.directive
+    next_tool = _broker_error_next_tool(status, problem_type, draft)
     return ToolError(
         CODE_RESOLVE_FAILED,
         "the broker could not resolve this call, so it never reached the upstream API "
         f"(HTTP {status}): {reason}",
-        actionable=_broker_error_actionable(next_tool),
+        actionable=_broker_error_actionable(next_tool, draft),
         details=details,
         next_tool=next_tool,
-        extra={"retryable": False},
+        extra=extra,
     )
+
+
+@dataclass(frozen=True)
+class DraftRecovery:
+    """The draft-only 404's recovery (Go: ``agentops.DraftRecovery``).
+
+    ``draft_revision`` and ``directive`` are the broker's members verbatim;
+    ``pin_headers`` is the directive's ``parameters.headers`` when it offered a
+    ``modify_headers`` pin, else empty.
+    """
+
+    draft_revision: dict[str, Any]
+    directive: dict[str, Any]
+    pin_headers: dict[str, str]
+
+
+def parse_draft_recovery(problem: dict[str, Any]) -> DraftRecovery | None:
+    """The draft recovery of an ``operation_not_found`` body that names a draft, else None
+    (Go: ``agentops.parseDraftRecovery``)."""
+    draft = problem.get("draft_revision")
+    directive = problem.get("agent_directive")
+    if problem.get("type") != "operation_not_found" or not isinstance(draft, dict):
+        return None
+    if not isinstance(directive, dict):
+        directive = {}
+    pin_headers: dict[str, str] = {}
+    params = directive.get("parameters")
+    if directive.get("strategy") == "modify_headers" and isinstance(params, dict):
+        raw = params.get("headers")
+        if isinstance(raw, dict):
+            pin_headers = {k: v for k, v in raw.items() if isinstance(v, str) and v}
+    return DraftRecovery(draft_revision=draft, directive=directive, pin_headers=pin_headers)
+
+
+def draft_recovery_actionable(draft: DraftRecovery) -> str:
+    """Recovery prose for a draft-only 404 (Go: ``agentops.DraftActionable``), shared
+    word for word by the MCP and CLI lanes."""
+    lead = (
+        "Only an unpromoted draft revision serves this URL, so the operation is already "
+        "registered — do not search for another operation or re-import the spec."
+    )
+    if draft.pin_headers:
+        pins = ", ".join(f"{k}: {v}" for k, v in sorted(draft.pin_headers.items()))
+        return (
+            f"{lead} Resend this call once with the header from "
+            f"agent_directive.parameters.headers ({pins}) to call the draft."
+        )
+    command = ""
+    params = draft.directive.get("parameters")
+    if isinstance(params, dict) and isinstance(params.get("suggested_command"), str):
+        command = params["suggested_command"]
+    ask = f" (`{command}`)" if command else ""
+    return f"{lead} Ask an operator to promote it{ask}, then retry this call."
 
 
 #: Recovery classes for a broker-origin 5xx/429 (Go:

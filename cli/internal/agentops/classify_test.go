@@ -158,24 +158,94 @@ func TestBrokerErrorRecoveryForMatchesExactTypes(t *testing.T) {
 	cases := []struct {
 		status int
 		pt     string
+		draft  bool
 		want   BrokerErrorRecovery
 	}{
-		{404, "operation_not_found", RecoverOperation},
-		{404, "about:blank", RecoverOperation},
-		{400, "operation_not_found", RecoverOperation},
-		{400, "credential_id_not_found", RecoverCredential},
-		{400, "credential_name_not_found", RecoverCredential},
-		{400, "invalid_upstream_url", RecoverContract},
-		{422, "unknown_revision_pin", RecoverContract},
-		{422, "about:blank#validation", RecoverContract},
-		{428, "mutation_requires_idempotency_key", RecoverContract},
-		{400, "credential_header_malformed", RecoverContract},
-		{405, "operation_method_mismatch", RecoverContract},
+		{404, "operation_not_found", false, RecoverOperation},
+		{404, "operation_not_found", true, RecoverDraft},
+		{404, "about:blank", false, RecoverOperation},
+		{400, "operation_not_found", false, RecoverOperation},
+		{400, "credential_id_not_found", false, RecoverCredential},
+		{400, "credential_name_not_found", false, RecoverCredential},
+		{400, "invalid_upstream_url", false, RecoverContract},
+		{422, "unknown_revision_pin", false, RecoverContract},
+		{422, "about:blank#validation", false, RecoverContract},
+		{428, "mutation_requires_idempotency_key", false, RecoverContract},
+		{400, "credential_header_malformed", false, RecoverContract},
+		{405, "operation_method_mismatch", false, RecoverContract},
 	}
 	for _, tc := range cases {
-		if got := BrokerErrorRecoveryFor(tc.status, tc.pt); got != tc.want {
-			t.Errorf("BrokerErrorRecoveryFor(%d, %q) = %q, want %q", tc.status, tc.pt, got, tc.want)
+		if got := BrokerErrorRecoveryFor(tc.status, tc.pt, tc.draft); got != tc.want {
+			t.Errorf("BrokerErrorRecoveryFor(%d, %q, %v) = %q, want %q", tc.status, tc.pt, tc.draft, got, tc.want)
 		}
+	}
+}
+
+// draftNotFoundBody is the broker's draft-only 404 (#1721) in its real wire
+// shape: the generic type, the draft named in detail and draft_revision, and a
+// pin-or-promote agent_directive. pin is the offered Jentic-Revision value, or
+// "" for the prompt_human variant.
+func draftNotFoundBody(pin string) string {
+	directive := `{"strategy":"prompt_human","parameters":{"revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",` +
+		`"suggested_command":"jentic apis promote acme/widgets/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"},` +
+		`"human_readable_instruction":"Ask your operator to promote it."}`
+	if pin != "" {
+		directive = `{"strategy":"modify_headers","parameters":{"revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",` +
+			`"suggested_command":"jentic apis promote acme/widgets/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c",` +
+			`"headers":{"Jentic-Revision":"` + pin + `"}},"human_readable_instruction":"Resend with the pin."}`
+	}
+	return `{"type":"operation_not_found","title":"Operation not found — no live revision serves this URL; ` +
+		`it matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API 'acme/widgets/1.0.0', which is a draft",` +
+		`"status":404,"error_origin":"broker",` +
+		`"draft_revision":{"api":{"vendor":"acme","name":"widgets","version":"1.0.0"},` +
+		`"revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","state":"draft","promoted":false},` +
+		`"agent_directive":` + directive + `}`
+}
+
+// TestBrokerErrorDraftOnly404RelaysThePin pins #1721 on the CLI lane: a 404 that
+// names a draft relays draft_revision and the verbatim agent_directive, and its
+// recovery is the offered pin (as the --header flag that sends it) or a
+// promotion — never `jentic search`.
+func TestBrokerErrorDraftOnly404RelaysThePin(t *testing.T) {
+	pin := "acme:widgets:1.0.0=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+	got := BrokerError(brokerResult(404, "broker", draftNotFoundBody(pin)))
+	if got == nil || got.Code != ux.CodeResolveFailed {
+		t.Fatalf("want RESOLVE_FAILED, got %v", got)
+	}
+	draft, _ := got.Details["draft_revision"].(map[string]any)
+	if draft["revision_id"] != "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c" {
+		t.Errorf("details.draft_revision = %v, want the broker's member", got.Details["draft_revision"])
+	}
+	directive, _ := got.Details["agent_directive"].(map[string]any)
+	if directive["strategy"] != "modify_headers" {
+		t.Errorf("details.agent_directive = %v, want the broker's directive verbatim", got.Details["agent_directive"])
+	}
+	if !strings.Contains(got.Actionable, "--header 'Jentic-Revision="+pin+"'") {
+		t.Errorf("actionable should spell the pin as a --header flag, got %q", got.Actionable)
+	}
+	if strings.Contains(got.Actionable, "jentic search") {
+		t.Errorf("a draft-only 404 must not send the agent to search, got %q", got.Actionable)
+	}
+	rec := DraftRecoveryOf(got)
+	if rec == nil || rec.PinHeaders["Jentic-Revision"] != pin {
+		t.Fatalf("DraftRecoveryOf = %+v, want the pin header", rec)
+	}
+
+	promote := BrokerError(brokerResult(404, "broker", draftNotFoundBody("")))
+	if promote == nil {
+		t.Fatal("want a classified broker error")
+	}
+	if !strings.Contains(promote.Actionable, "Ask an operator to promote it (`jentic apis promote acme/widgets/1.0.0") {
+		t.Errorf("without a pin the step should ask for promotion, got %q", promote.Actionable)
+	}
+	if strings.Contains(promote.Actionable, "jentic search") || strings.Contains(promote.Actionable, "--header") {
+		t.Errorf("the promote step must not suggest search or a header, got %q", promote.Actionable)
+	}
+
+	// The generic 404 (no draft_revision) keeps the discovery recovery.
+	generic := BrokerError(brokerResult(404, "broker", `{"type":"operation_not_found","title":"no operation"}`))
+	if DraftRecoveryOf(generic) != nil || !strings.Contains(generic.Actionable, "jentic search") {
+		t.Errorf("a generic 404 must keep the search recovery, got %q", generic.Actionable)
 	}
 }
 
