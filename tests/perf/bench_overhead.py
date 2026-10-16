@@ -173,28 +173,30 @@ def stop_oha() -> None:
     subprocess.run(["docker", "rm", "-f", OHA_CONTAINER], capture_output=True, check=False)
 
 
-def oha(url: str, case: Case, rate: int, n: int, token: str | None) -> dict[str, Any]:
-    conns = max(4, min(64, rate // 2))
-    args = [
-        "docker",
-        "exec",
-        OHA_CONTAINER,
-        "oha",
-        "-n",
-        str(n),
-        "-c",
-        str(conns),
-        "-q",
-        str(rate),
-        "--latency-correction",
-        "--no-tui",
-        "--output-format",
-        "json",
-        "-m",
-        case.method,
-        "-t",
-        "35s",
-    ]
+def oha_args(
+    url: str,
+    case: Case,
+    token: str | None,
+    *,
+    n: int | None,
+    conns: int,
+    rate: int | None,
+    duration_s: float | None = None,
+) -> list[str]:
+    """Build a ``docker exec <oha>`` argv.
+
+    ``rate`` set => open loop (``-q`` + ``--latency-correction``); ``rate`` None
+    => closed loop (as fast as ``conns`` connections allow). ``duration_s`` set
+    => run for that long (``-z``, waiting for in-flight requests) instead of ``-n``.
+    """
+    args = ["docker", "exec", OHA_CONTAINER, "oha", "-c", str(conns)]
+    if duration_s is not None:
+        args += ["-z", f"{duration_s:g}s", "-w"]
+    else:
+        args += ["-n", str(n)]
+    if rate is not None:
+        args += ["-q", str(rate), "--latency-correction"]
+    args += ["--no-tui", "--output-format", "json", "-m", case.method, "-t", "35s"]
     if case.body is not None:
         args += ["-d", case.body, "-T", "application/json"]
     elif case.body_file is not None:
@@ -204,10 +206,20 @@ def oha(url: str, case: Case, rate: int, n: int, token: str | None) -> dict[str,
     for key, value in case.headers.items():
         args += ["-H", f"{key}: {value}"]
     args.append(url)
+    return args
+
+
+def run_oha(args: list[str]) -> dict[str, Any]:
     proc = subprocess.run(args, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"oha failed ({proc.returncode}): {proc.stderr[-500:]}")
     return dict(json.loads(proc.stdout))
+
+
+def oha(url: str, case: Case, rate: int, n: int, token: str | None) -> dict[str, Any]:
+    """Open-loop run at ``rate`` rps for ``n`` requests."""
+    conns = max(4, min(64, rate // 2))
+    return run_oha(oha_args(url, case, token, n=n, conns=conns, rate=rate))
 
 
 def summarise(raw: dict[str, Any], expect_status: int) -> dict[str, Any]:

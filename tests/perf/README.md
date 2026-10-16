@@ -20,6 +20,7 @@ make perf-up           # start the stack
 make perf-provision    # vendors, credentials, callers -> results/.perf-env.json
 make perf-overhead ARGS=--quick   # ~3 min: broker vs direct at 10 rps
 make perf-dbcost       # per-call DB cost, warm vs cold caches
+make perf-capacity     # ~7 min: throughput vs concurrency for 1/2/4 workers
 make perf-report       # results/report.html
 make perf-down         # stop + wipe volumes
 ```
@@ -29,6 +30,7 @@ make perf-down         # stop + wipe volumes
 | Tool | Question | Method |
 | --- | --- | --- |
 | `bench_overhead.py` (`make perf-overhead`) | How much latency does the broker add? | [oha](https://github.com/hatoo/oha), **open loop** (fixed `-q` rate, `--latency-correction`), same request direct vs via broker, per case. |
+| `bench_capacity.py` (`make perf-capacity`) | What's the max throughput per worker/CPU config, and what's the bottleneck? | oha **closed loop** (fixed concurrency, no rate cap), broker recreated per `workers x CPUs`, one `docker stats` CPU sample per step. |
 | `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N. |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | Where's the knee? What happens under faults, imports, mixed admin load? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. |
 | Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. |

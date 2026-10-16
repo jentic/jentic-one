@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-build perf-up perf-provision perf-overhead perf-dbcost perf-ui perf-load perf-obs perf-report perf-down help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-build perf-up perf-provision perf-overhead perf-dbcost perf-capacity perf-ui perf-load perf-obs perf-report perf-down help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -321,6 +321,9 @@ perf-overhead: ## Perf: oha open-loop A/B, direct vs via broker (ARGS="--quick" 
 
 perf-dbcost: ## Perf: per-call statements/transactions per DB plane (pg_stat_statements)
 	uv run python -m tests.perf.dbcost --all $(ARGS)
+
+perf-capacity: ## Perf: closed-loop throughput sweep, workers x CPUs x concurrency (ARGS="--configs 1x2,2x4")
+	uv run python -m tests.perf.bench_capacity $(ARGS)
 
 perf-ui: ## Perf: Locust web UI (master + worker) on http://127.0.0.1:8089
 	$(PERF_COMPOSE) --profile load up -d --scale locust-worker=$${PERF_WORKERS_LOCUST:-2} locust-master locust-worker

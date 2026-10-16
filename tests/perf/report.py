@@ -144,6 +144,43 @@ def dbcost_chart(run: dict[str, Any]) -> list[dict[str, Any]]:
     return charts
 
 
+def capacity_charts(run: dict[str, Any]) -> list[dict[str, Any]]:
+    by_cfg: dict[str, list[dict[str, Any]]] = {}
+    for row in run["rows"]:
+        by_cfg.setdefault(row["config"], []).append(row)
+    label = _label(run)
+    return [
+        {
+            "title": f"Capacity: throughput vs concurrency (workers x CPUs) - {label}",
+            "data": [
+                {
+                    "type": "scatter",
+                    "mode": "lines+markers",
+                    "name": cfg,
+                    "x": [r["concurrency"] for r in rows],
+                    "y": [r["rps"] for r in rows],
+                }
+                for cfg, rows in by_cfg.items()
+            ],
+            "layout": {"xaxis": {"title": "concurrency", "type": "log"}, "yaxis": {"title": "rps"}},
+        },
+        {
+            "title": "Capacity: p99 latency vs concurrency",
+            "data": [
+                {
+                    "type": "scatter",
+                    "mode": "lines+markers",
+                    "name": cfg,
+                    "x": [r["concurrency"] for r in rows],
+                    "y": [r["p99_ms"] for r in rows],
+                }
+                for cfg, rows in by_cfg.items()
+            ],
+            "layout": {"xaxis": {"title": "concurrency", "type": "log"}, "yaxis": {"title": "ms"}},
+        },
+    ]
+
+
 def locust_table() -> str:
     files = sorted(RESULTS_DIR.glob("*_stats.csv"), key=lambda p: p.stat().st_mtime)
     if not files:
@@ -206,6 +243,9 @@ def main(argv: list[str] | None = None) -> int:
     dbcost = load("dbcost")
     if dbcost:
         charts += dbcost_chart(dbcost[-1])
+    capacity = load("capacity")
+    if capacity:
+        charts += capacity_charts(capacity[-1])
     if not charts:
         print("no results yet — run make perf-overhead / perf-dbcost first", file=sys.stderr)
         return 1
