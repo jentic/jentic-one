@@ -28,6 +28,7 @@ from jentic_one.registry.ingest.pipeline.stage_registry import (
     register_pipeline_stage,
 )
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
+from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -317,6 +318,126 @@ async def test_ingest_tolerates_duplicate_and_over_long_operation_ids(
         ("/v1/long", ("too_long",)),
     }
     assert all(e["log_level"] == "warning" for e in coerced)
+
+
+def _duplicate_id_spec(paths: list[str], *, sha: str) -> IngestSpecification:
+    """A catalog spec whose ``paths`` (in this order) all declare ``Areas_Get``."""
+    return IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=ApiIdentifier(vendor="highways", name="webtris", version="1.0.0"),
+        sha=sha,
+        content={
+            "openapi": "3.1.0",
+            "info": {"title": "Highways", "version": "1.0.0"},
+            "servers": [{"url": "https://webtris.example.com/api"}],
+            "paths": {
+                path: {
+                    "get": {
+                        "operationId": "Areas_Get",
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+                for path in paths
+            },
+        },
+        source_type=ApiRevisionSourceType.INLINE,
+        source_url=None,
+        source_filename="openapi.json",
+        submitted_by="test-harness",
+        origin="catalog",
+    )
+
+
+async def _spec_ids_by_revision(
+    registry_db: DatabaseSession,
+) -> dict[uuid.UUID, tuple[str, dict[str, str | None]]]:
+    """``{revision_id: (state, {path: spec operationId})}`` for every revision."""
+    async with registry_db.session() as session:
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        ops = (await session.execute(select(Operation))).unique().scalars().all()
+    by_revision: dict[uuid.UUID, tuple[str, dict[str, str | None]]] = {
+        rev.id: (str(rev.state), {}) for rev in revisions
+    }
+    for op in ops:
+        by_revision[op.revision_id][1][op.path] = op.operation_id
+    return by_revision
+
+
+async def test_reimport_duplicate_operation_id_suffix_follows_spec_order(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Pins #1437 re-import behaviour: the ``_<n>`` suffix is assigned in spec
+    order on every import, so an upstream that reorders its duplicate paths
+    moves the suffix on the new revision, while the archived revision keeps
+    the ids it was imported with. The un-suffixed id always resolves to the
+    first holder on the live revision."""
+    ingestor = Ingestor(ingest_context)
+    await ingestor.ingest(
+        _duplicate_id_spec(["/v1/areas", "/v1.0/areas"], sha="order-a"), created_by="usr_test"
+    )
+    await ingestor.ingest(
+        _duplicate_id_spec(["/v1.0/areas", "/v1/areas"], sha="order-b"), created_by="usr_test"
+    )
+
+    by_revision = await _spec_ids_by_revision(registry_db)
+    states = {rev_id: state for rev_id, (state, _) in by_revision.items()}
+    assert sorted(states.values()) == ["archived", "imported"]
+    archived = next(ids for state, ids in by_revision.values() if state == "archived")
+    live_id = next(rev_id for rev_id, state in states.items() if state == "imported")
+    live = by_revision[live_id][1]
+
+    assert archived == {"/v1/areas": "Areas_Get", "/v1.0/areas": "Areas_Get_2"}
+    assert live == {"/v1.0/areas": "Areas_Get", "/v1/areas": "Areas_Get_2"}
+
+    # The spec-id inspect fallback only resolves on the live revision.
+    async with registry_db.session() as session:
+        first = await OperationRepository.get_by_id_for_inspect(session, "Areas_Get")
+        second = await OperationRepository.get_by_id_for_inspect(session, "Areas_Get_2")
+    assert first is not None and (first.revision_id, first.path) == (live_id, "/v1.0/areas")
+    assert second is not None and (second.revision_id, second.path) == (live_id, "/v1/areas")
+
+
+async def test_reimport_duplicate_operation_ids_stable_when_order_unchanged(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Pins #1437: a changed re-import that keeps the duplicate paths in the
+    same order assigns the same spec ids on the new revision."""
+    ingestor = Ingestor(ingest_context)
+    order = ["/v1/areas", "/v1.0/areas", "/v2/areas"]
+    await ingestor.ingest(_duplicate_id_spec(order, sha="same-a"), created_by="usr_test")
+    await ingestor.ingest(_duplicate_id_spec(order, sha="same-b"), created_by="usr_test")
+
+    by_revision = await _spec_ids_by_revision(registry_db)
+    expected = {"/v1/areas": "Areas_Get", "/v1.0/areas": "Areas_Get_2", "/v2/areas": "Areas_Get_3"}
+    assert len(by_revision) == 2
+    assert all(ids == expected for _, ids in by_revision.values())
+
+
+async def test_identical_reimport_with_duplicate_operation_ids_is_refused_before_extract(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Pins #1437: re-importing identical content over a live revision is
+    refused at revision creation, so operation extraction (and the id
+    coercion) never runs and the live revision is untouched."""
+    ingestor = Ingestor(ingest_context)
+    spec = _duplicate_id_spec(["/v1/areas", "/v1.0/areas"], sha="identical")
+    await ingestor.ingest(spec, created_by="usr_test")
+    before = await _spec_ids_by_revision(registry_db)
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(IngestPipelineError):
+        await ingestor.ingest(
+            _duplicate_id_spec(["/v1/areas", "/v1.0/areas"], sha="identical"),
+            created_by="usr_test",
+        )
+
+    assert await _spec_ids_by_revision(registry_db) == before
+    assert not [e for e in logs if e["event"] == "spec_operation_id_coerced"]
 
 
 async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
