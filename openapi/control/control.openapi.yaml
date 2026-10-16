@@ -28495,7 +28495,9 @@ paths:
         The row is retained — the account is anonymized (tombstone email) and
         deactivated so history and audit references stay resolvable — but the
         action is terminal: there is no re-enable arm. For the reversible kill
-        switch use ``:disable`` / ``:enable`` instead.
+        switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+        their outstanding invites. Idempotent: deleting an already-deleted user
+        answers 204 and changes nothing.
       operationId: deleteUser
       parameters:
       - description: ID of the user.
@@ -28789,7 +28791,10 @@ paths:
   /users/{user_id}/permissions:
     description: '`PUT`: Set User Permissions.'
     put:
-      description: Set the assigned permissions for a user.
+      description: |-
+        Set the assigned permissions for a user.
+
+        A deleted user's permissions cannot be changed (409).
       operationId: setUserPermissions
       parameters:
       - description: ID of the user.
@@ -28856,7 +28861,7 @@ paths:
               example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: Would remove org:admin from the last active org:admin
+          description: Would remove org:admin from the last active org:admin, or the user has been deleted
         '422':
           content:
             application/problem+json:
@@ -28895,7 +28900,10 @@ paths:
   /users/{user_id}:disable:
     description: '`POST`: Disable User.'
     post:
-      description: Disable a user account.
+      description: |-
+        Disable a user account.
+
+        A deleted user is already permanently inactive and cannot be disabled (409).
       operationId: disableUser
       parameters:
       - description: ID of the user.
@@ -28949,7 +28957,7 @@ paths:
               example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The user is the last active org:admin
+          description: The user is the last active org:admin, or the user has been deleted
         '422':
           content:
             application/problem+json:

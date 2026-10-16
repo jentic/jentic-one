@@ -185,7 +185,9 @@ async def delete_user(
     The row is retained — the account is anonymized (tombstone email) and
     deactivated so history and audit references stay resolvable — but the
     action is terminal: there is no re-enable arm. For the reversible kill
-    switch use ``:disable`` / ``:enable`` instead.
+    switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+    their outstanding invites. Idempotent: deleting an already-deleted user
+    answers 204 and changes nothing.
     """
     await user_svc.delete(user_id, identity=identity)
     return Response(status_code=204)
@@ -194,7 +196,7 @@ async def delete_user(
 @router.post(
     "/users/{user_id}:disable",
     status_code=204,
-    responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
+    responses=with_responses(not_found(), conflict(f"{_LAST_ADMIN}, or the user has been deleted")),
 )
 async def disable_user(
     user_id: Annotated[
@@ -203,7 +205,10 @@ async def disable_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
-    """Disable a user account."""
+    """Disable a user account.
+
+    A deleted user is already permanently inactive and cannot be disabled (409).
+    """
     await user_svc.disable(user_id, identity=identity)
     return Response(status_code=204)
 

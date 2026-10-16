@@ -50582,7 +50582,7 @@
     },
     "/users/{user_id}": {
       "delete": {
-        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead.",
+        "description": "Delete a user account (terminal-but-kept).\n\nThe row is retained — the account is anonymized (tombstone email) and\ndeactivated so history and audit references stay resolvable — but the\naction is terminal: there is no re-enable arm. For the reversible kill\nswitch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels\ntheir outstanding invites. Idempotent: deleting an already-deleted user\nanswers 204 and changes nothing.",
         "operationId": "deleteUser",
         "parameters": [
           {
@@ -51207,7 +51207,7 @@
     "/users/{user_id}/permissions": {
       "description": "`PUT`: Set User Permissions.",
       "put": {
-        "description": "Set the assigned permissions for a user.",
+        "description": "Set the assigned permissions for a user.\n\nA deleted user's permissions cannot be changed (409).",
         "operationId": "setUserPermissions",
         "parameters": [
           {
@@ -51368,7 +51368,7 @@
                 }
               }
             },
-            "description": "Would remove org:admin from the last active org:admin"
+            "description": "Would remove org:admin from the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {
@@ -51446,7 +51446,7 @@
     "/users/{user_id}:disable": {
       "description": "`POST`: Disable User.",
       "post": {
-        "description": "Disable a user account.",
+        "description": "Disable a user account.\n\nA deleted user is already permanently inactive and cannot be disabled (409).",
         "operationId": "disableUser",
         "parameters": [
           {
@@ -51557,7 +51557,7 @@
                 }
               }
             },
-            "description": "The user is the last active org:admin"
+            "description": "The user is the last active org:admin, or the user has been deleted"
           },
           "422": {
             "content": {

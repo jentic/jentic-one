@@ -129,16 +129,21 @@ class InviteService:
             if token.expires_at < datetime.now(UTC):
                 raise InviteTokenExpiredError(token.id)
 
+            user = await UserRepository.get_by_id(session, token.user_id)
+            if user is None:
+                raise UserNotFoundError(token.user_id)
+            if user.deleted_at is not None:
+                # Delete is terminal: no password or ENABLE audit on the
+                # retained row. Answer like an unknown token so the reply
+                # tells the token holder nothing about the account's state.
+                raise InviteTokenNotFoundError("unknown")
+
             await InviteTokenRepository.redeem(session, token.id)
 
             password_hash = hash_password(new_password)
             await UserSecretRepository.set_password_hash(
                 session, token.user_id, password_hash=password_hash, created_by=token.user_id
             )
-
-            user = await UserRepository.get_by_id(session, token.user_id)
-            if user is None:
-                raise UserNotFoundError(token.user_id)
 
             await UserRepository.update(
                 session,

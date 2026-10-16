@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
@@ -23,6 +23,13 @@ from jentic_one.admin.repos import (
     UserSecretRepository,
 )
 from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services.errors import (
+    ConflictError,
+    InviteTokenAlreadyRedeemedError,
+    InviteTokenNotFoundError,
+)
+from jentic_one.admin.services.invite_service import InviteService
+from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.users import UserCreatePayload, UserUpdatePayload
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.shared.auth.identity import Identity
@@ -220,5 +227,155 @@ async def test_enable_records_audit_entry(integration_context: Context, admin_us
     enable_entries = [e for e in entries if e.action == AuditAction.ENABLE.value]
     assert len(enable_entries) == 1
     assert enable_entries[0].actor_id == admin_user
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def _password_hash(ctx: Context, user_id: str) -> str | None:
+    async with ctx.admin_db.session() as session:
+        secret = (
+            await session.execute(select(UserSecret).where(UserSecret.user_id == user_id))
+        ).scalar_one()
+    return secret.password_hash
+
+
+async def test_delete_cancels_outstanding_invites(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Delete is terminal: the invite the user still holds stops working."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-del-invite@test.local", first_name="I", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    await service.delete(user_id, identity=org_admin)
+
+    with pytest.raises(InviteTokenAlreadyRedeemedError):
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+    assert user is not None and user.invite_state == InviteState.PENDING
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def test_redeem_refuses_a_deleted_user_with_a_live_token(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A still-live token on a deleted row (one deleted before invites were
+    cancelled on delete) answers like an unknown token and writes nothing."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-del-live@test.local", first_name="L", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    await service.delete(user_id, identity=org_admin)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken).where(InviteToken.user_id == user_id).values(redeemed_at=None)
+        )
+        await session.commit()
+
+    with pytest.raises(InviteTokenNotFoundError):
+        await InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+        tokens = (
+            (await session.execute(select(InviteToken).where(InviteToken.user_id == user_id)))
+            .scalars()
+            .all()
+        )
+    assert user is not None and user.invite_state == InviteState.PENDING
+    assert [t.redeemed_at for t in tokens] == [None]
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def test_delete_is_idempotent(integration_context: Context, admin_user: str) -> None:
+    """A second delete keeps the first ``deleted_at`` and writes no audit entry."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-del-twice@test.local", first_name="T", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    await service.delete(user_id, identity=org_admin)
+    async with ctx.admin_db.session() as session:
+        first = await UserRepository.get_by_id(session, user_id)
+    assert first is not None and first.deleted_at is not None
+    first_deleted_at, first_generation = first.deleted_at, first.session_generation
+
+    await service.delete(user_id, identity=org_admin)
+
+    async with ctx.admin_db.session() as session:
+        second = await UserRepository.get_by_id(session, user_id)
+    assert second is not None
+    assert second.deleted_at == first_deleted_at
+    assert second.session_generation == first_generation
+    entries = await _audit_entries_for(ctx, user_id)
+    assert len([e for e in entries if e.action == AuditAction.DELETE.value]) == 1
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def test_disable_and_permission_edit_refuse_a_deleted_user(
+    integration_context: Context, admin_user: str
+) -> None:
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(
+            email="audit-del-edit@test.local",
+            first_name="E",
+            last_name="D",
+            permissions=["users:read"],
+        ),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    await service.delete(user_id, identity=org_admin)
+
+    with pytest.raises(ConflictError, match="deleted user"):
+        await service.disable(user_id, identity=org_admin)
+    with pytest.raises(ConflictError, match="deleted user"):
+        await PermissionService(ctx).set_assigned(user_id, ["users:write"], identity=org_admin)
+
+    async with ctx.admin_db.session() as session:
+        grants = await UserPermissionGrantRepository.get_permission_sets(session, [user_id])
+    assert grants[user_id] == {"users:read"}
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.DISABLE.value]
+    async with ctx.admin_db.session() as session:
+        perm_entries = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.target_type == AuditTargetType.PERMISSION.value,
+                        AuditEntry.target_id == user_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [e.action for e in perm_entries] == []
 
     await _cleanup_user(ctx, user_id)

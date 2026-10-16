@@ -20,6 +20,7 @@ from jentic_one.admin.services._support.pagination import Page, decode_cursor, e
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
     ensure_can_manage,
+    ensure_not_deleted,
     ensure_not_last_active_admin,
 )
 from jentic_one.admin.services.errors import (
@@ -48,12 +49,6 @@ from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 def _tombstone_email(user_id: str) -> str:
     """The anonymized email a deleted user's retained row carries."""
     return f"deleted-{user_id}@local"
-
-
-def _ensure_not_deleted(user: User, action: str) -> None:
-    """Refuse ``action`` on a deleted user: delete is terminal (``deleted_at`` is set)."""
-    if user.deleted_at is not None:
-        raise ConflictError(f"Cannot {action} a deleted user")
 
 
 def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[str]) -> str:
@@ -308,7 +303,7 @@ class UserService:
             ensure_can_manage(user_id, identity, permission_sets)
             # A deleted row keeps its tombstone email: rewriting it would make
             # the retained row look like a live account again.
-            _ensure_not_deleted(user, "update")
+            ensure_not_deleted(user, "update")
 
             before = {
                 "email": user.email,
@@ -390,12 +385,27 @@ class UserService:
         return user
 
     async def delete(self, user_id: str, *, identity: Identity) -> None:
+        """Delete a user: tombstone the row and end everything it still holds.
+
+        Idempotent: a user already deleted keeps its original ``deleted_at``
+        and no second ``DELETE`` audit entry is written — including when two
+        deletes race, since ``mark_deleted`` only marks an unmarked row.
+        """
         async with self._ctx.admin_db.transaction() as session:
-            await self._load_manageable(session, user_id, identity)
+            user = await self._load_manageable(session, user_id, identity)
+            if user.deleted_at is not None:
+                return
             await ensure_not_last_active_admin(session, user_id)
-            await UserRepository.mark_deleted(session, user_id, email=_tombstone_email(user_id))
+            if not await UserRepository.mark_deleted(
+                session, user_id, email=_tombstone_email(user_id)
+            ):
+                return
             await UserRepository.revoke_login_sessions(session, user_id)
             await ExternalIdentityRepository.delete_for_user(session, user_id)
+            # An outstanding invite would otherwise still set a password on
+            # the tombstoned row; redeem refuses a deleted user as well.
+            for token in await InviteTokenRepository.get_active_for_user(session, user_id):
+                await InviteTokenRepository.redeem(session, token.id)
             await cancel_queued_executions_for_actor(
                 session,
                 actor_id=user_id,
@@ -418,7 +428,10 @@ class UserService:
 
     async def disable(self, user_id: str, *, identity: Identity) -> bool:
         async with self._ctx.admin_db.transaction() as session:
-            await self._load_manageable(session, user_id, identity)
+            user = await self._load_manageable(session, user_id, identity)
+            # Disabling a deleted row would audit a state change that cannot
+            # happen: delete already deactivated it for good.
+            ensure_not_deleted(user, "disable")
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
             # Ends every login JWT issued so far for good: re-enabling the
@@ -452,7 +465,7 @@ class UserService:
             user = await self._load_manageable(session, user_id, identity)
             # Delete is terminal: the tombstoned row is kept for history and
             # audit references, never brought back to an active account.
-            _ensure_not_deleted(user, "enable")
+            ensure_not_deleted(user, "enable")
             await UserRepository.enable(session, user_id)
             await AuditRepository.record(
                 session,
@@ -470,7 +483,7 @@ class UserService:
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:
             user = await self._load_manageable(session, user_id, identity)
-        _ensure_not_deleted(user, "reissue an invite for")
+        ensure_not_deleted(user, "reissue an invite for")
         if user.invite_state == InviteState.REDEEMED:
             raise ConflictError("Cannot reissue invite for a user who has already redeemed")
 
