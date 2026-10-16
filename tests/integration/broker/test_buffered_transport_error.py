@@ -2,9 +2,11 @@
 
 Drives the buffered execution service (``run_execution``) over a real socket
 against an upstream that drops the connection partway through the response
-body, and against a port nothing listens on, then renders the raised error
-through the broker's own problem+json handlers. The broker answers ``502 Bad
-Gateway`` and still persists the FAILED execution record to the real admin DB.
+body, against a port nothing listens on, and — through the production client
+stack (``build_client`` with DNS pinning) — against a host that does not
+resolve at connect time, then renders the raised error through the broker's own
+problem+json handlers. The broker answers ``502 Bad Gateway`` and still
+persists the FAILED execution record to the real admin DB.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import httpx
 import pytest
@@ -20,11 +22,14 @@ from fastapi import FastAPI, Response
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.broker.adapters.http_client import build_client
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.broker.web.errors import install_broker_error_handlers
+from jentic_one.shared import dns_cache
+from jentic_one.shared.config import EgressConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
@@ -65,6 +70,22 @@ def refused_upstream() -> str:
     return f"http://127.0.0.1:{port}/thing"
 
 
+@pytest.fixture()
+def unresolvable_upstream(monkeypatch: pytest.MonkeyPatch) -> str:
+    """An upstream name the pinning transport's resolver cannot resolve at connect time.
+
+    Only the egress resolver is swapped (not ``socket.getaddrinfo``), so the
+    database connections keep resolving normally.
+    """
+
+    def _nxdomain(_host: str) -> tuple[()]:
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    dns_cache.clear_resolution_cache()
+    monkeypatch.setattr(dns_cache, "resolve_host_blocking", _nxdomain)
+    return "http://upstream-vanished.example.com/thing"
+
+
 def _app(ctx: Context, upstream_client: httpx.AsyncClient, upstream_url: str) -> FastAPI:
     app = FastAPI()
     install_broker_error_handlers(app)
@@ -95,11 +116,13 @@ def _app(ctx: Context, upstream_client: httpx.AsyncClient, upstream_url: str) ->
 
 
 async def _execute_and_fetch_record(
-    ctx: Context, upstream_url: str
+    ctx: Context,
+    upstream_url: str,
+    upstream_client_factory: Callable[[], httpx.AsyncClient] = httpx.AsyncClient,
 ) -> tuple[httpx.Response, ExecutionRecord]:
     execution_id = mint_execution_id()
     try:
-        async with httpx.AsyncClient() as upstream_client:
+        async with upstream_client_factory() as upstream_client:
             app = _app(ctx, upstream_client, upstream_url)
             transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
             async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
@@ -146,6 +169,32 @@ async def test_refused_connection_answers_502_and_records_failure(
     assert body["status"] == 502
     assert body["type"] == "upstream_connect_failed"
     assert body["error_origin"] == "broker"
+
+    assert record.status == ExecutionStatus.FAILED
+    assert record.error == "The upstream connection could not be established."
+    assert record.http_status is None
+
+
+async def test_unresolvable_host_under_dns_pinning_answers_502_and_records_failure(
+    integration_context: Context, unresolvable_upstream: str
+) -> None:
+    egress = EgressConfig()
+    assert egress.dns_pinning_enabled
+
+    resp, record = await _execute_and_fetch_record(
+        integration_context,
+        unresolvable_upstream,
+        lambda: build_client(UpstreamClientConfig(), egress),
+    )
+
+    assert resp.status_code == 502
+    assert resp.headers["content-type"] == "application/problem+json"
+    assert resp.headers["jentic-error-origin"] == "broker"
+    body = json.loads(resp.content)
+    assert body["status"] == 502
+    assert body["type"] == "upstream_connect_failed"
+    assert body["error_origin"] == "broker"
+    assert "upstream-vanished" not in json.dumps(body)
 
     assert record.status == ExecutionStatus.FAILED
     assert record.error == "The upstream connection could not be established."

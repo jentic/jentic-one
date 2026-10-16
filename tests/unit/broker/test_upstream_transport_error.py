@@ -1,18 +1,21 @@
 """Upstream transport failures map to 502 Bad Gateway on both runner paths (#1706).
 
 A transport failure the broker hits while talking to the upstream (a dropped
-connection, a mid-body disconnect, a refused connect) is a gateway failure, so
-the broker answers ``502`` — not the ``500`` that reads as a broker bug. A
-connect or read *timeout* stays ``504``. Each case raises from the real
-``HttpRunner`` and renders through the broker's own problem+json handler, on the
-buffered (``run``) and streaming (``stream``) paths alike. The retry and circuit
-decorators keep treating these failures exactly as before.
+connection, a mid-body disconnect, a refused connect, a host the DNS-pinning
+transport cannot resolve) is a gateway failure, so the broker answers ``502`` —
+not the ``500`` that reads as a broker bug. A connect or read *timeout* is
+``504``. Each case raises from the real ``HttpRunner`` and renders through the
+broker's own problem+json handler, on the buffered (``run``) and streaming
+(``stream``) paths alike. The retry gate retries a post-send failure only for an
+idempotent call and a connect-phase failure for any method; the circuit breaker
+counts every transport failure.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+import socket
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any, cast
 
 import httpx
@@ -25,6 +28,8 @@ from jentic_one.broker.adapters.runners.retry import RetryRunner
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.web.errors import handle_broker_error
+from jentic_one.shared.dns_cache import clear_resolution_cache
+from jentic_one.shared.egress import DnsPinningTransport
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -124,7 +129,7 @@ async def test_buffered_connect_refused_is_502_and_pre_send() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_connect_timeout_stays_504() -> None:
+async def test_buffered_connect_timeout_is_504() -> None:
     exc = await _buffered_error(_raises(httpx.ConnectTimeout))
 
     assert status_for_broker_error(exc) == 504
@@ -133,7 +138,7 @@ async def test_buffered_connect_timeout_stays_504() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_read_timeout_stays_504() -> None:
+async def test_buffered_read_timeout_is_504() -> None:
     exc = await _buffered_error(_raises(httpx.ReadTimeout))
 
     assert status_for_broker_error(exc) == 504
@@ -142,7 +147,7 @@ async def test_buffered_read_timeout_stays_504() -> None:
 
 
 @pytest.mark.asyncio
-async def test_buffered_local_protocol_error_stays_500() -> None:
+async def test_buffered_local_protocol_error_is_500() -> None:
     """A malformed outbound request is the broker's own failure, not the upstream's."""
     exc = await _buffered_error(_raises(httpx.LocalProtocolError))
 
@@ -190,14 +195,95 @@ async def test_streaming_connect_timeout_matches_buffered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streaming_local_protocol_error_stays_500() -> None:
+async def test_streaming_local_protocol_error_is_500() -> None:
     exc = await _streaming_error(_raises(httpx.LocalProtocolError))
 
     assert status_for_broker_error(exc) == 500
     assert exc.type == "upstream_transport_error"
 
 
-# --- retry / circuit semantics are unchanged --------------------------------
+# --- connect-time DNS failure under the DNS-pinning transport ---------------
+
+
+class _NeverCalledTransport(httpx.AsyncBaseTransport):
+    """Inner transport the pinning transport must never reach for an unresolvable host."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1  # pragma: no cover - the pin fails before the inner transport
+        return httpx.Response(204)  # pragma: no cover
+
+
+@pytest.fixture()
+def _unresolvable(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every name fails to resolve, as when DNS changes between pre-flight and connect."""
+
+    def _nxdomain(*_a: object, **_k: object) -> list[Any]:
+        raise socket.gaierror(f"nxdomain {_MARKER}")
+
+    clear_resolution_cache()
+    monkeypatch.setattr(socket, "getaddrinfo", _nxdomain)
+    yield
+    clear_resolution_cache()
+
+
+def _pinned_client(inner: httpx.AsyncBaseTransport) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=DnsPinningTransport(inner, None))
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_unresolvable")
+async def test_buffered_unresolvable_host_is_502_connect_failed() -> None:
+    inner = _NeverCalledTransport()
+    async with _pinned_client(inner) as client:
+        with pytest.raises(BrokerError) as excinfo:
+            await HttpRunner(client).run(RunnerRequest(method="POST", url=_URL))
+    exc = excinfo.value
+
+    status, body, headers = await _rendered(exc)
+    assert status == 502
+    assert body["type"] == "upstream_connect_failed"
+    assert body["detail"] == "The upstream connection could not be established."
+    assert body["error_origin"] == "broker"
+    assert headers["jentic-error-origin"] == "broker"
+    # Neither the resolver message nor the host name reaches the caller.
+    assert _MARKER not in json.dumps(body)
+    assert "api.example.com" not in json.dumps(body)
+    # Nothing was sent, so a retry is safe for any method.
+    assert exc.pre_send is True
+    assert exc.__cause__ is None
+    assert inner.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_unresolvable")
+async def test_streaming_unresolvable_host_is_502_connect_failed() -> None:
+    async with _pinned_client(_NeverCalledTransport()) as client:
+        with pytest.raises(BrokerError) as excinfo:
+            async with HttpRunner(client).stream(RunnerRequest(method="POST", url=_URL)):
+                pass  # pragma: no cover - the stream never opens
+    exc = excinfo.value
+
+    assert status_for_broker_error(exc) == 502
+    assert exc.type == "upstream_connect_failed"
+    assert exc.pre_send is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_unresolvable")
+async def test_circuit_counts_unresolvable_host_as_failure() -> None:
+    async with _pinned_client(_NeverCalledTransport()) as client:
+        runner = CircuitBreakerRunner(HttpRunner(client), _breaker())
+        for _ in range(2):
+            with pytest.raises(BrokerError):
+                await runner.run(RunnerRequest(method="GET", url=_URL))
+        with pytest.raises(CircuitOpenError):
+            await runner.run(RunnerRequest(method="GET", url=_URL))
+
+
+# --- retry gate and circuit breaker by send phase ---------------------------
 
 
 class _CountingTransport(httpx.AsyncBaseTransport):
@@ -235,7 +321,7 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
         (httpx.ConnectError, "POST", 3),
     ],
 )
-async def test_retry_gate_unchanged(
+async def test_retry_gate_by_send_phase(
     exc_type: type[httpx.HTTPError], method: str, want_calls: int
 ) -> None:
     transport = _CountingTransport(exc_type)

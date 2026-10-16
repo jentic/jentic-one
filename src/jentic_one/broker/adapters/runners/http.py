@@ -11,8 +11,9 @@ hardcoding, no header dropping) and **streams the raw, still-compressed bytes**
 zip-bomb vector for a passthrough that has no reason to decode. Status mirroring
 + header filtering are the caller's concern. On a transport-level failure it
 raises a domain error — ``UpstreamTimeoutError`` (504) for a timeout,
-``UpstreamTransportError`` (502) when the upstream leg fails — so the central
-handler maps it; the runner never raises a web/HTTP exception.
+``UpstreamTransportError`` (502) when the upstream leg fails, including a host
+the DNS-pinning transport (``shared/egress``) cannot resolve at connect time —
+so the central handler maps it; the runner never raises a web/HTTP exception.
 """
 
 from __future__ import annotations
@@ -43,12 +44,19 @@ from jentic_one.broker.core.exceptions import (
     switch_toolkit_directive,
 )
 from jentic_one.shared.broker.protocols import RunnerCapabilities
+from jentic_one.shared.egress import UpstreamHostUnresolvedError
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer("broker.runner")
 
+#: A connection-phase failure from the client stack: an ``httpx`` error, or a
+#: host the DNS-pinning transport cannot resolve. The pinning transport raises
+#: the latter before httpx's own transport runs, so httpx never wraps it.
+_TransportFailure = httpx.HTTPError | UpstreamHostUnresolvedError
+_TRANSPORT_FAILURES = (httpx.HTTPError, UpstreamHostUnresolvedError)
 
-def _transport_error_detail(exc: httpx.HTTPError) -> str:
+
+def _transport_error_detail(exc: _TransportFailure) -> str:
     """Caller-facing detail for a transport failure: the exception class only.
 
     httpx/h11 exception messages can quote request material verbatim (e.g. an
@@ -58,7 +66,7 @@ def _transport_error_detail(exc: httpx.HTTPError) -> str:
     return f"Upstream transport error ({type(exc).__name__})"
 
 
-def _record_transport_error(span: Span, exc: httpx.HTTPError) -> None:
+def _record_transport_error(span: Span, exc: _TransportFailure) -> None:
     """Record a transport failure on the span without the exception message.
 
     ``span.record_exception`` would store ``str(exc)`` plus a traceback that
@@ -81,13 +89,14 @@ def _record_transport_error(span: Span, exc: httpx.HTTPError) -> None:
 _UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
 
 
-def _map_transport_error(exc: httpx.HTTPError) -> BrokerError:
-    """The domain error for an ``httpx`` failure on either runner path.
+def _map_transport_error(exc: _TransportFailure) -> BrokerError:
+    """The domain error for a transport failure on either runner path.
 
     - ``ConnectTimeout`` → :class:`UpstreamTimeoutError` (504),
       ``upstream_connect_failed``, ``pre_send``.
     - Any other timeout → :class:`UpstreamTimeoutError` (504), ``upstream_timeout``.
-    - ``ConnectError`` → :class:`UpstreamTransportError` (502),
+    - ``ConnectError``, or :class:`UpstreamHostUnresolvedError` from the
+      DNS-pinning transport → :class:`UpstreamTransportError` (502),
       ``upstream_connect_failed``, ``pre_send``.
     - Any other upstream-leg failure (:data:`_UPSTREAM_LEG_ERRORS`) →
       :class:`UpstreamTransportError` (502), ``upstream_transport_error``.
@@ -110,7 +119,7 @@ def _map_transport_error(exc: httpx.HTTPError) -> BrokerError:
             detail="The upstream did not respond within the deadline.",
             type="upstream_timeout",
         )
-    if isinstance(exc, httpx.ConnectError):
+    if isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
         return UpstreamTransportError(
             detail="The upstream connection could not be established.",
             type="upstream_connect_failed",
@@ -246,7 +255,7 @@ class HttpRunner(UpstreamRunner):
                     body = await self._read_capped(resp)
                 finally:
                     await resp.aclose()
-            except httpx.HTTPError as exc:
+            except _TRANSPORT_FAILURES as exc:
                 # One mapping for every transport failure (see
                 # ``_map_transport_error``); a connect-phase failure is
                 # ``pre_send`` so the retry decorator may retry it for any method.
@@ -331,7 +340,7 @@ class HttpRunner(UpstreamRunner):
                         content_type=resp.headers.get("content-type"),
                         aiter=self._cap_iter(resp.aiter_raw(), resp.status_code),
                     )
-            except httpx.HTTPError as exc:
+            except _TRANSPORT_FAILURES as exc:
                 # Same mapping as the buffered path. The edge drains the body
                 # outside this block (its exit stack), so what lands here is a
                 # failure opening the stream — before any response has started,
