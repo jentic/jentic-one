@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
@@ -16,7 +17,6 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.shared.context import Context
-from tests.web.registry.conftest import _build_app
 
 pytestmark = pytest.mark.integration
 
@@ -323,7 +323,7 @@ async def test_import_chunked_body_over_cap_413(
 
 
 async def test_import_streamed_body_cut_off_at_cap(
-    web_context: Context, monkeypatch: pytest.MonkeyPatch
+    web_context: Context, registry_app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Driven over raw ASGI with many ``more_body`` messages and no Content-Length,
     the 413 arrives as soon as the running total crosses the cap: the messages
@@ -362,7 +362,7 @@ async def test_import_streamed_body_cut_off_at_cap(
         "server": ("testserver", 80),
     }
     before = await _job_count(web_context)
-    await _build_app(web_context)(scope, receive, send)
+    await registry_app(scope, receive, send)
 
     start = next(m for m in sent if m["type"] == "http.response.start")
     assert start["status"] == 413

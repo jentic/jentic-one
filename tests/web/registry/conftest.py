@@ -67,6 +67,12 @@ def _make_token(ctx: Context) -> str:
 
 
 @pytest.fixture()
+def registry_app(web_context: Context) -> FastAPI:
+    """The real registry app (token auth, lifespan disabled), for raw-ASGI tests."""
+    return _build_app(web_context)
+
+
+@pytest.fixture()
 def authed_client(web_context: Context) -> Iterator[TestClient]:
     """TestClient with a valid Authorization header (live verifier, DB-resolved perms)."""
     app = _build_app(web_context)
