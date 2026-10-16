@@ -271,7 +271,10 @@ paths:
       returns `403`. Pinning an unknown or `archived` revision
       returns `422` — `archived` revisions are deliberately not
       pinnable from the hot path; resurrect them by re-promoting
-      instead. The chosen revisions are recorded on the resulting
+      instead. Pinning the same API to two different revisions in
+      one header returns `422 invalid_revision_pin`; repeating the
+      same revision (in either form) is allowed. The chosen
+      revisions are recorded on the resulting
       `ExecutionRecord` (`pinned_revisions` field on the control
       plane) so audit can answer "did this execution use a pinned
       revision?" without parsing headers.
@@ -727,7 +730,10 @@ components:
 
         Pinning a `draft` revision the caller doesn't have
         access to returns `403`. Pinning an unknown or
-        `archived` revision returns `422`. The chosen revisions
+        `archived` revision returns `422`. Pinning the same API
+        to two different revisions in one header returns
+        `422 invalid_revision_pin`; repeating the same revision
+        (in either form) is allowed. The chosen revisions
         are recorded on the resulting `ExecutionRecord`
         (`pinned_revisions` field on the control plane).
       example:
