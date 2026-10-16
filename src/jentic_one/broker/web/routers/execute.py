@@ -13,6 +13,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime
@@ -103,7 +104,7 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RuleVerdict,
 )
-from jentic_one.shared.config import UpstreamClientConfig
+from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
@@ -143,6 +144,15 @@ _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
     description="Failed attempts to persist a streaming execution record",
 )
+_streaming_persist_backlog = _meter.create_up_down_counter(
+    "broker.streaming_execution.persist_backlog",
+    description=(
+        "Streaming execution persists in this process, by state: waiting "
+        "(queued for a broker.streaming_persist_max_concurrency slot) or in_flight"
+    ),
+)
+_BACKLOG_WAITING = {"state": "waiting"}
+_BACKLOG_IN_FLIGHT = {"state": "in_flight"}
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -154,6 +164,40 @@ _unregistered_url_handled = _meter.create_counter(
 router = APIRouter()
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# Per-process streaming-persist gate, rebuilt only if the effective limit or the
+# running event loop changes (one Semaphore must not straddle loops).
+_persist_gate: tuple[int, asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+
+def _streaming_persist_semaphore(config: AppConfig) -> asyncio.Semaphore:
+    """The process-wide semaphore bounding concurrent streaming persists.
+
+    The limit is ``broker.streaming_persist_max_concurrency`` clamped to
+    ``databases.admin.pool_max - 1`` (minimum 1), so persists alone never hold
+    every admin connection.
+    """
+    global _persist_gate
+    limit = min(
+        config.broker.streaming_persist_max_concurrency,
+        max(1, config.databases.admin.pool_max - 1),
+    )
+    loop = asyncio.get_running_loop()
+    if _persist_gate is None or _persist_gate[0] != limit or _persist_gate[1] is not loop:
+        _persist_gate = (limit, loop, asyncio.Semaphore(limit))
+    return _persist_gate[2]
+
+
+def _log_persist_lost(
+    event: str, outcome: StreamingOutcome, ctx_req: ExecuteRequestContext
+) -> None:
+    _streaming_persist_failures.add(1)
+    logger.error(
+        event,
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        exc_info=True,
+    )
 
 
 async def _persist_streaming_outcome(
@@ -168,7 +212,11 @@ async def _persist_streaming_outcome(
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler.
+    handler. Concurrent calls in one process are bounded by
+    ``_streaming_persist_semaphore``: excess calls wait (never drop) for a slot
+    before opening the admin transaction. The wait has no timeout — it runs
+    after the response is sent, and a persist abandoned by cancellation (e.g.
+    shutdown) is logged and counted like a failed write.
     """
     status = (
         ExecutionStatus.FAILED
@@ -178,6 +226,16 @@ async def _persist_streaming_outcome(
     error_msg = outcome.error or (
         f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
     )
+    semaphore = _streaming_persist_semaphore(ctx.config)
+    _streaming_persist_backlog.add(1, _BACKLOG_WAITING)
+    try:
+        await semaphore.acquire()
+    except asyncio.CancelledError:
+        _log_persist_lost("streaming_execution_persist_abandoned", outcome, ctx_req)
+        raise
+    finally:
+        _streaming_persist_backlog.add(-1, _BACKLOG_WAITING)
+    _streaming_persist_backlog.add(1, _BACKLOG_IN_FLIGHT)
     try:
         async with ctx.admin_db.transaction() as session:
             await persist_streaming_execution(
@@ -194,13 +252,14 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
             )
+    except asyncio.CancelledError:
+        _log_persist_lost("streaming_execution_persist_abandoned", outcome, ctx_req)
+        raise
     except Exception:
-        _streaming_persist_failures.add(1)
-        logger.error(
-            "streaming_execution_persist_failed",
-            execution_id=outcome.execution_id,
-            exc_info=True,
-        )
+        _log_persist_lost("streaming_execution_persist_failed", outcome, ctx_req)
+    finally:
+        semaphore.release()
+        _streaming_persist_backlog.add(-1, _BACKLOG_IN_FLIGHT)
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:

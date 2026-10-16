@@ -1746,6 +1746,21 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    streaming_persist_max_concurrency: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Per-process cap on concurrent post-response persists of streaming "
+            "execution records (each holds one admin-DB connection). Excess "
+            "persists wait for a slot — none are dropped — and the waiting + "
+            "in-flight count is exported as "
+            "``broker.streaming_execution.persist_backlog``. The effective cap "
+            "is clamped to ``databases.admin.pool_max - 1`` (minimum 1) so a "
+            "burst never takes the whole admin pool; the default (half the "
+            "default admin pool of 10) leaves headroom for credential-access "
+            "audit writes and the buffered path."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

@@ -246,6 +246,15 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
 
+	// Per-process cap on concurrent post-response persists of streaming execution
+	// records (each holds one admin-DB connection). Excess persists wait for a slot —
+	// none are dropped — and the waiting + in-flight count is exported as
+	// ``broker.streaming_execution.persist_backlog``. The effective cap is clamped to
+	// ``databases.admin.pool_max - 1`` (minimum 1) so a burst never takes the whole
+	// admin pool; the default (half the default admin pool of 10) leaves headroom for
+	// credential-access audit writes and the buffered path.
+	StreamingPersistMaxConcurrency int `json:"streaming_persist_max_concurrency,omitempty,omitzero" yaml:"streaming_persist_max_concurrency,omitempty" mapstructure:"streaming_persist_max_concurrency,omitempty"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s,omitempty,omitzero" yaml:"toolkit_cache_ttl_s,omitempty" mapstructure:"toolkit_cache_ttl_s,omitempty"`
 
@@ -279,6 +288,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
+	}
+	if v, ok := raw["streaming_persist_max_concurrency"]; !ok || v == nil {
+		plain.StreamingPersistMaxConcurrency = 5
+	}
+	if 0 >= plain.StreamingPersistMaxConcurrency {
+		return fmt.Errorf("field %s: must be > %v", "streaming_persist_max_concurrency", 0)
 	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0

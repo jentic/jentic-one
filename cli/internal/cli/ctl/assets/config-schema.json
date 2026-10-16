@@ -208,6 +208,13 @@
           "title": "Rule Cache Ttl S",
           "type": "number"
         },
+        "streaming_persist_max_concurrency": {
+          "default": 5,
+          "description": "Per-process cap on concurrent post-response persists of streaming execution records (each holds one admin-DB connection). Excess persists wait for a slot — none are dropped — and the waiting + in-flight count is exported as ``broker.streaming_execution.persist_backlog``. The effective cap is clamped to ``databases.admin.pool_max - 1`` (minimum 1) so a burst never takes the whole admin pool; the default (half the default admin pool of 10) leaves headroom for credential-access audit writes and the buffered path.",
+          "exclusiveMinimum": 0,
+          "title": "Streaming Persist Max Concurrency",
+          "type": "integer"
+        },
         "toolkit_cache_ttl_s": {
           "default": 3.0,
           "title": "Toolkit Cache Ttl S",
