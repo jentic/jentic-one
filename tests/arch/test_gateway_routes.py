@@ -13,16 +13,23 @@ real composition root), walks its route table, and resolves each path against
 both gateway configs with nginx's location-selection rules. Every path must land
 on a backend that serves it, every proxied location must serve at least one
 path, and the two configs must carry the same location map.
+
+The images always ship the built SPA (``python-base.Dockerfile`` builds the UI
+into the wheel), so each backend is built with a stand-in bundle whether or not
+the checkout has a local ``ui/dist``: the gate checks the production route
+table and gives the same answer either way (#1688).
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -31,6 +38,7 @@ from starlette.routing import Route
 from jentic_one.__main__ import _build_app, _build_context
 from jentic_one.mcp.app import McpChallengePlaceholder
 from jentic_one.shared.config import load_config
+from jentic_one.shared.web import static
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -173,9 +181,27 @@ def _iter_route_paths(routes: Iterable[Any], prefix: str = "") -> Iterator[str]:
             yield prefix + path
 
 
-def _build_backend(apps: list[str]) -> FastAPI:
+def _build_backend(apps: list[str], spa_bundle: Path) -> FastAPI:
+    """Build a backend as its image runs it, with ``spa_bundle`` as the SPA.
+
+    Pinning the bundle keeps the route table independent of whether this
+    checkout has a built ``ui/dist`` (or a stale packaged ``jentic_one/static``).
+    """
     config = load_config(DEFAULT_CONFIG).model_copy(update={"apps": apps})
-    return _build_app(_build_context(config, apps), apps)
+    with patch.object(static, "_resolve_static_dir", return_value=spa_bundle):
+        return _build_app(_build_context(config, apps), apps)
+
+
+def _spa_paths(app: FastAPI) -> Iterator[str]:
+    """The SPA bundle's own paths, when the backend mounts it.
+
+    ``app.frontend()`` registers the bundle as low-priority routes outside
+    ``app.routes``, so the route walk never sees them; the mount answers its
+    bare prefix and everything below it.
+    """
+    if getattr(app.state, "spa_mounted", False):
+        yield static.SPA_MOUNT_PATH
+        yield f"{static.SPA_MOUNT_PATH}/x"
 
 
 @cache
@@ -183,12 +209,15 @@ def _served_paths() -> dict[str, frozenset[str]]:
     """Map each concrete request path to the gateway backends that serve it."""
     backends = set().union(*(gateway.backends for gateway in _gateways()))
     served: dict[str, set[str]] = {}
-    for backend in sorted(backends):
-        app = _build_backend(_backend_apps(backend))
-        for template in _iter_route_paths(app.routes):
-            # Any concrete value exercises the same location selection as the
-            # template; ``x`` keeps ``:verb`` suffixes and sub-paths intact.
-            served.setdefault(_PATH_PARAM_RE.sub("x", template), set()).add(backend)
+    with tempfile.TemporaryDirectory() as bundle_dir:
+        spa_bundle = Path(bundle_dir)
+        (spa_bundle / "index.html").write_text("<!doctype html><title>stand-in</title>\n")
+        for backend in sorted(backends):
+            app = _build_backend(_backend_apps(backend), spa_bundle)
+            for template in [*_iter_route_paths(app.routes), *_spa_paths(app)]:
+                # Any concrete value exercises the same location selection as
+                # the template; ``x`` keeps ``:verb`` suffixes and sub-paths intact.
+                served.setdefault(_PATH_PARAM_RE.sub("x", template), set()).add(backend)
     return {path: frozenset(owners) for path, owners in served.items()}
 
 
