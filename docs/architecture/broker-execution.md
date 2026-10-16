@@ -214,8 +214,8 @@ request is cancelled — records one `FAILED` row with no HTTP status, handed
 to the same registry alongside the error response (best-effort; the error
 response never waits on it). A circuit fast-fail also raises the
 rate-limited `UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path. A
-buffered call that ends in an exception the broker does not map (the caller
-gets a 500) also records one `FAILED` row with no HTTP status, handed to the
+buffered call that ends in an exception that is not a broker error and that
+no handler maps to its own status (the caller gets a 500) also records one `FAILED` row with no HTTP status, handed to the
 same registry and bounded by the same timeout, so the 500 never waits on it.
 Every failure with no upstream response stores the elapsed time as its
 `duration_ms`, on both paths.

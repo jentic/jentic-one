@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -23,6 +24,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import ProblemDetailException
+from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -78,6 +80,7 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    ServerErrorClassifier,
     UnmappedFailure,
     UnmappedFailureRecorder,
     default_broker,
@@ -161,6 +164,36 @@ router = APIRouter()
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
+def _off_request_admin_transaction(ctx: Context) -> AbstractAsyncContextManager[Any]:
+    """The admin transaction of a record write that runs after the response.
+
+    The one entry point for both off-request writes (a streaming execution's
+    record and a buffered call's unmapped-failure record), so a bound on how
+    many of them hold an admin connection at once applies to both.
+    """
+    return ctx.admin_db.transaction()
+
+
+def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
+    """Whether ``app`` answers an exception with a 500.
+
+    Looks the exception up in ``app``'s handlers the way Starlette does (most
+    specific class in its MRO first). No handler, or the catch-all
+    ``Exception`` handler, is a 500; a dedicated handler (problem details, a
+    Starlette ``HTTPException``, a 503 for an unavailable database) maps it to
+    its own status, so it is a 500 only when it carries ``status_code`` 500.
+    """
+    handlers = app.exception_handlers
+
+    def _is_server_error(exc: Exception) -> bool:
+        for cls in type(exc).__mro__:
+            if cls in handlers:
+                return cls is Exception or getattr(exc, "status_code", None) == 500
+        return True
+
+    return _is_server_error
+
+
 async def _persist_streaming_outcome(
     outcome: StreamingOutcome,
     ctx: Context,
@@ -190,7 +223,7 @@ async def _persist_streaming_outcome(
         f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
     )
     try:
-        async with ctx.admin_db.transaction() as session:
+        async with _off_request_admin_transaction(ctx) as session:
             await persist_streaming_execution(
                 session,
                 execution_id=outcome.execution_id,
@@ -242,7 +275,7 @@ async def _persist_unmapped_failure(
     registry, which logs it and counts it on ``app.background_tasks``
     (``kind=unmapped_failure_persist``).
     """
-    async with ctx.admin_db.transaction() as session:
+    async with _off_request_admin_transaction(ctx) as session:
         await persist_unmapped_failure(
             session,
             failure,
@@ -257,11 +290,26 @@ async def _persist_unmapped_failure(
 def _unmapped_failure_recorder(
     request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
 ) -> UnmappedFailureRecorder:
-    """The buffered path's recorder: schedule the record write and return."""
+    """The buffered path's recorder: schedule the record write and return.
+
+    Without a background-task registry (a bare test app; every app from
+    ``create_surface_app`` has one) the record is skipped with a warning, never
+    written inline: the router's admin transaction is still open while the
+    recorder runs, and on SQLite it holds the write lock, so an inline write
+    would wait out ``busy_timeout`` and delay the 500.
+    """
     background_tasks = get_background_tasks(request.app)
     timeout_s = ctx.config.broker.streaming_persist_timeout_s
 
     async def _record(failure: UnmappedFailure) -> None:
+        if background_tasks is None:
+            logger.warning(
+                "unmapped_failure_record_skipped",
+                execution_id=failure.execution_id,
+                trace_id=ctx_req.trace_id,
+                reason="no_background_task_registry",
+            )
+            return
         persist = _persist_unmapped_failure(
             failure,
             ctx,
@@ -270,14 +318,6 @@ def _unmapped_failure_recorder(
             identity.actor_type.value,
             origin=identity.origin.value,
         )
-        if background_tasks is None:
-            # An app built without a registry (a bare test app) writes inline,
-            # still bounded; a failure reaches ``run_execution``, which logs it
-            # and re-raises the original error. Every app from
-            # ``create_surface_app`` has a registry.
-            async with asyncio.timeout(timeout_s):
-                await persist
-            return
         background_tasks.spawn(
             persist,
             kind="unmapped_failure_persist",
@@ -806,6 +846,7 @@ async def _handle(
             signing=injection.signing,
             has_idempotency_key=bool(idem_key),
             on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
+            is_server_error=_server_error_classifier(request.app),
         )
 
     response = _assemble_response(outcome, ctx_req)

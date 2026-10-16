@@ -5,7 +5,11 @@
   <ExceptionClass>`` with its elapsed time, then re-raised unchanged; a
   recorder that raises never masks it.
 * The sync router's recorder only schedules the write on the app's
-  background-task registry, so the 500 never waits on the database.
+  background-task registry, so the 500 never waits on the database; without
+  a registry it skips the record rather than write inside the router's open
+  transaction.
+* Only an exception the app answers with a 500 is classified: one an app
+  handler maps to a 4xx or a 503 is re-raised untouched.
 * A ``BrokerError`` record stores the elapsed time as ``duration_ms``, as a
   stream that fails to open does.
 """
@@ -18,8 +22,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
+from fastapi import FastAPI
+from jentic.problem_details import ProblemDetailException
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.exceptions import UpstreamTimeoutError
@@ -30,11 +38,13 @@ from jentic_one.broker.services.execution.service import (
     default_broker,
     run_execution,
 )
+from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers import execute as execute_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType, ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web.background_tasks import install_background_tasks
+from jentic_one.shared.web.errors import unhandled_exception_handler
 
 _DELAY_S = 0.03
 
@@ -180,3 +190,96 @@ async def test_router_recorder_schedules_the_write_and_returns() -> None:
         await registry.drain(5)
 
     assert written == ["exec_buffered_unmapped"]
+
+
+def _identity() -> Identity:
+    return Identity(
+        sub="agt_abc123", actor_type=ActorType.AGENT, permissions=["execute"], active=True
+    )
+
+
+def _failure() -> UnmappedFailure:
+    return UnmappedFailure(
+        execution_id="exec_buffered_unmapped",
+        started_at=MagicMock(),
+        duration_ms=12,
+        error="server_error: _UnmappedError",
+    )
+
+
+@pytest.mark.asyncio
+async def test_router_recorder_without_a_registry_skips_the_write() -> None:
+    """No inline write inside the router's open (on SQLite, write-locked) transaction."""
+    request = Request({"type": "http", "app": Starlette()})
+    ctx = MagicMock()
+    ctx.config.broker.streaming_persist_timeout_s = 5.0
+    persist = AsyncMock()
+
+    recorder = execute_router._unmapped_failure_recorder(request, ctx, _ctx_req(), _identity())
+    with (
+        patch.object(execute_router, "_persist_unmapped_failure", persist),
+        structlog.testing.capture_logs() as logs,
+    ):
+        await recorder(_failure())
+
+    persist.assert_not_called()
+    ctx.admin_db.transaction.assert_not_called()
+    (skipped,) = [e for e in logs if e["event"] == "unmapped_failure_record_skipped"]
+    assert skipped["log_level"] == "warning"
+    assert skipped["execution_id"] == "exec_buffered_unmapped"
+    assert skipped["trace_id"] == "a" * 32
+
+
+class _UnavailableError(RuntimeError):
+    """Stands in for an exception an app handler answers with a 503."""
+
+
+async def _handle_unavailable(_request: Request, _exc: Exception) -> JSONResponse:
+    return JSONResponse({"status": 503}, status_code=503)
+
+
+def _broker_like_app() -> FastAPI:
+    app = FastAPI()
+    install_broker_error_handlers(app)
+    app.add_exception_handler(ProblemDetailException, AsyncMock())
+    app.add_exception_handler(_UnavailableError, _handle_unavailable)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    return app
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (_UnmappedError("boom"), True),
+        (ProblemDetailException(status_code=500, detail="boom"), True),
+        (ProblemDetailException(status_code=404, detail="missing"), False),
+        (StarletteHTTPException(status_code=409), False),
+        (_UnavailableError("db down"), False),
+    ],
+)
+def test_server_error_classifier_follows_the_apps_handlers(exc: Exception, expected: bool) -> None:
+    assert execute_router._server_error_classifier(_broker_like_app())(exc) is expected
+
+
+class _MappedRunner(UpstreamRunner):
+    async def run(self, request: RunnerRequest) -> RunnerResult:
+        raise ProblemDetailException(status_code=404, detail="missing")
+
+
+@pytest.mark.asyncio
+async def test_a_handler_mapped_exception_is_reraised_untouched() -> None:
+    recorder = AsyncMock()
+    with (
+        patch.object(service_module._executions_total, "add") as count,
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(ProblemDetailException),
+    ):
+        await _run(
+            _MappedRunner(),
+            on_unmapped_failure=recorder,
+            is_server_error=execute_router._server_error_classifier(_broker_like_app()),
+        )
+
+    recorder.assert_not_awaited()
+    count.assert_not_called()
+    assert not [e for e in logs if e["event"] == "execution_failed"]

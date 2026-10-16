@@ -90,6 +90,11 @@ class UnmappedFailure:
 #: and returns.
 UnmappedFailureRecorder = Callable[[UnmappedFailure], Awaitable[None]]
 
+#: Whether a non-``BrokerError`` exception reaches the caller as a 500. The sync
+#: router answers from its app's exception handlers, so an exception a handler
+#: maps to a 4xx or a 503 is never recorded as ``server_error``.
+ServerErrorClassifier = Callable[[Exception], bool]
+
 
 def _elapsed_ms(t0: float) -> int:
     return int((time.perf_counter() - t0) * 1000)
@@ -186,6 +191,7 @@ async def run_execution(
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
     on_unmapped_failure: UnmappedFailureRecorder | None = None,
+    is_server_error: ServerErrorClassifier | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -195,12 +201,15 @@ async def run_execution(
     wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
 
-    An exception the broker does not map (the caller gets a 500) is counted as
-    a FAILED execution and handed to ``on_unmapped_failure``, then re-raised
-    unchanged. The sync router's recorder writes the FAILED record off the
-    request, so the 500 never waits on the database; a recorder that raises is
-    logged and never masks the cause. Without a recorder no record is written:
-    the async worker reports the failure on the job result.
+    An exception that is not a ``BrokerError`` and that ``is_server_error``
+    says reaches the caller as a 500 (every such exception when it is
+    ``None``) is counted as a FAILED execution and handed to
+    ``on_unmapped_failure``, then re-raised unchanged. One the classifier
+    rejects (an app handler maps it to a 4xx or a 503) is re-raised untouched:
+    no count, no record. The sync router's recorder writes the FAILED record
+    off the request, so the 500 never waits on the database; a recorder that
+    raises is logged and never masks the cause. Without a recorder no record
+    is written: the async worker reports the failure on the job result.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
@@ -303,6 +312,8 @@ async def run_execution(
         await session.commit()  # arch-allow: manual-commit
         raise
     except Exception as exc:
+        if is_server_error is not None and not is_server_error(exc):
+            raise
         await _settle_unmapped_failure(
             exc,
             operation_id=operation_id,

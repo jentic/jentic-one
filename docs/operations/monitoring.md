@@ -140,7 +140,9 @@ cut-off — the only signal that happened),
 `app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
 (work handed off after a response — the streaming execution record, and the
 record of a buffered call that ended in an unmapped error —
-that hit its budget or was cut off by a shutdown drain),
+that hit its budget or was cut off by a shutdown drain), and `outcome`
+`failed` for `kind=unmapped_failure_persist` (that record's database errors
+are counted only there),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
