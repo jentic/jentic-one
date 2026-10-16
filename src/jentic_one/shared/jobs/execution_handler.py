@@ -16,12 +16,14 @@ injected ``ExecutionAuthorizer`` — the sync route's policy (actor still active
 and holding the execute scope, binding still present and not suspended,
 permission rules still allow),
 evaluated at run time rather than trusted from enqueue time. The identity
-credentials are then resolved for is built from a fresh read of the actor row
-through the injected ``ActorStatusReader``, taken after those authorization
-reads and immediately before injection and dispatch: an actor that is no
-longer active (or no longer exists) is denied there too. A denied job
-completes with a ``failed`` result carrying the problem body the sync route
-would have returned; no credential is injected and no upstream call is made.
+credentials are then resolved for is built from one fresh read of the actor's
+rows through the injected ``ActorStatusReader`` (liveness and the execute
+permission together), taken after those authorization reads and immediately
+before injection and dispatch: an actor that is no longer active (or no longer
+exists), or that has lost the execute permission, is denied there too. A
+denied job completes with a ``failed`` result carrying the problem body the
+sync route would have returned; no credential is injected and no upstream
+call is made.
 
 ``shared/jobs/`` must not import ``broker/`` (arch boundary): the
 ``ExecutionAuthorizer``, ``ActorStatusReader``, ``CredentialInjector`` and
@@ -33,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -40,6 +43,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.connectivity import involves_database_error, redact_sql
@@ -66,6 +70,7 @@ from jentic_one.shared.jobs.protocols import (
 )
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
+    insufficient_scope_problem,
     queued_execution_instance,
 )
 from jentic_one.shared.metrics import get_meter
@@ -131,6 +136,9 @@ _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
     ),
     "error_origin": "broker",
 }
+
+#: A pre-injection refusal: the log ``reason`` and the problem-body builder.
+_PreInjectionDenial = tuple[str, Callable[[str], dict[str, object]]]
 
 
 class ExecutionHandler:
@@ -274,20 +282,31 @@ class ExecutionHandler:
             allowed = verdict.allowed_credential_ids
             pinned_credential_id = verdict.credential_id
 
-        # The identity credentials resolve under comes from a live read of the
-        # actor row, taken after the authorization reads and right before any
-        # credential is decrypted or the upstream is called — so a disable that
+        # The identity credentials resolve under comes from one live read of
+        # the actor's rows (liveness + the execute permission), taken after the
+        # authorization reads and right before any credential is decrypted or
+        # the upstream is called — so a disable or permission revocation that
         # commits while the job is being re-authorized still stops it.
         identity: Identity | None = None
         if self._actor_status is not None:
-            identity = await self._live_identity(created_by, actor_type)
-            if identity is None or not identity.active:
+            identity, denial = await self._live_identity(created_by, actor_type)
+            if denial is not None:
+                reason, problem_for = denial
+                logger.info(
+                    "queued_execution_denied",
+                    reason=reason,
+                    stage="pre_injection",
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    actor_id=created_by,
+                    actor_type=actor_type,
+                )
                 return await self._deny(
                     db,
                     job_id=job_id,
                     execution_id=execution_id,
                     trace_id=trace_id,
-                    problem=inactive_actor_problem(queued_execution_instance(upstream_url)),
+                    problem=problem_for(queued_execution_instance(upstream_url)),
                     created_by=created_by,
                     actor_type=actor_type,
                     payload=payload,
@@ -446,33 +465,42 @@ class ExecutionHandler:
 
         return JobResultPayload(body=result_body, content_type=content_type)
 
-    async def _live_identity(self, created_by: str, actor_type: str) -> Identity | None:
-        """The enqueuing actor's identity, ``active`` read from its row now.
+    async def _live_identity(
+        self, created_by: str, actor_type: str
+    ) -> tuple[Identity | None, _PreInjectionDenial | None]:
+        """The enqueuing actor's identity, built from one live read of its rows.
+
+        Returns ``(identity, None)`` when the actor is active and still holds
+        the execute permission, else ``(None, (reason, problem builder))``. An
+        actor type that is no longer issued (a retired ``toolkit`` /
+        ``service_account`` job) is refused before any read.
 
         The worker holds no token for the actor, so it resolves the credential
         by the actor's id and type, mirroring the sync path's ``identity``
-        argument to ``CredentialInjector.inject``. ``None`` when no reader is
-        wired, or for an actor type that is no longer issued (a retired
-        ``toolkit`` / ``service_account`` job), which never runs.
-
-        ``permissions`` is intentionally empty: the credential injector only
-        uses ``sub`` + ``actor_type`` to resolve the credential row, and the
-        execute permission is re-checked by the ``ExecutionAuthorizer``.
+        argument to ``CredentialInjector.inject``. ``permissions`` is
+        intentionally empty: the injector only uses ``sub`` + ``actor_type``.
         """
         if self._actor_status is None:
-            return None
-        active = await self._actor_status.is_active(actor_id=created_by, actor_type=actor_type)
+            return None, None
         try:
             kind = ActorTypeEnum(actor_type)
         except ValueError:
-            return None
-        return Identity(
+            return None, ("actor_type_retired", inactive_actor_problem)
+        authority = await self._actor_status.authority(
+            actor_id=created_by, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
+        )
+        identity = Identity(
             sub=created_by,
             actor_type=kind,
             permissions=[],
             expires_at=None,
-            active=active,
+            active=authority.active,
         )
+        if not identity.active:
+            return None, ("actor_inactive", inactive_actor_problem)
+        if not authority.holds_permission:
+            return None, ("insufficient_scope", insufficient_scope_problem)
+        return identity, None
 
     async def _deny(
         self,

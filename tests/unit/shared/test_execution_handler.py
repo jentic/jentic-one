@@ -23,6 +23,7 @@ from sqlalchemy.exc import OperationalError
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
     ExecutionRecordNotPersistedError,
     InjectedAuth,
     QueuedExecutionRequest,
@@ -112,13 +113,13 @@ class _FakeAuthorizer:
 class _FakeActorStatus:
     """Stands in for the broker's live actor-status read (``ActorStatusReader``)."""
 
-    def __init__(self, *, active: bool = True) -> None:
-        self._active = active
-        self.calls: list[tuple[str, str]] = []
+    def __init__(self, *, active: bool = True, holds_permission: bool = True) -> None:
+        self._authority = ActorAuthority(active=active, holds_permission=holds_permission)
+        self.calls: list[tuple[str, str, str]] = []
 
-    async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
-        self.calls.append((actor_id, actor_type))
-        return self._active
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        self.calls.append((actor_id, actor_type, permission))
+        return self._authority
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
@@ -560,18 +561,45 @@ def test_handler_refuses_an_injector_without_an_actor_status_reader() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("actor_type", ["agent", "user", "service_account"])
-async def test_handler_denies_when_the_live_actor_read_is_inactive(actor_type: str) -> None:
-    """Pins #1138: an actor the live read reports inactive (disabled, archived or
-    missing — or a retired actor type) is denied with the sync edge's 401 even
-    after the authorizer allowed it; nothing is injected or dispatched."""
+@pytest.mark.parametrize(
+    ("actor_type", "authority", "reason", "problem_type", "status", "reads"),
+    [
+        # Disabled, archived, deleted or missing: the sync edge's 401.
+        ("agent", (False, True), "actor_inactive", "unauthorized", 401, 1),
+        ("user", (False, True), "actor_inactive", "unauthorized", 401, 1),
+        # Still active but the execute permission was revoked: the sync 403.
+        ("agent", (True, False), "insufficient_scope", "insufficient_scope", 403, 1),
+        ("user", (True, False), "insufficient_scope", "insufficient_scope", 403, 1),
+        # A retired actor type is refused before any read.
+        ("service_account", (True, True), "actor_type_retired", "unauthorized", 401, 0),
+    ],
+    ids=[
+        "agent_inactive",
+        "user_inactive",
+        "agent_revoked",
+        "user_revoked",
+        "retired_type",
+    ],
+)
+async def test_handler_denies_on_the_live_actor_read(
+    actor_type: str,
+    authority: tuple[bool, bool],
+    reason: str,
+    problem_type: str,
+    status: int,
+    reads: int,
+) -> None:
+    """Pins #1138: an actor the live pre-injection read refuses is denied with
+    the sync edge's problem even after the authorizer allowed it; nothing is
+    injected or dispatched, and the denial is logged with its reason."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(
         InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
     )
-    actor_status = _FakeActorStatus(active=False)
+    active, holds = authority
+    actor_status = _FakeActorStatus(active=active, holds_permission=holds)
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,
@@ -579,9 +607,12 @@ async def test_handler_denies_when_the_live_actor_read_is_inactive(actor_type: s
         actor_status=actor_status,
     )
 
-    with patch(
-        "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
-    ) as mock_emit:
+    with (
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+        structlog.testing.capture_logs() as logs,
+    ):
         result = await handler.execute(
             "job_gone",
             _FakeSession(),
@@ -590,15 +621,23 @@ async def test_handler_denies_when_the_live_actor_read_is_inactive(actor_type: s
             actor_type=actor_type,
         )
 
-    assert actor_status.calls == [("act_gone", actor_type)]
+    assert actor_status.calls == [("act_gone", actor_type, "capabilities:execute")] * reads
     assert executor.last_request is None
     assert injector.last_identity is None
     assert result.body["status"] == "failed"
-    assert result.body["http_status"] == 401
-    assert result.body["problem"]["type"] == "unauthorized"
+    assert result.body["http_status"] == status
+    assert result.body["problem"]["type"] == problem_type
     assert result.body["problem"]["instance"] == "/api.example.com/v1/things"
     assert mock_emit.await_args is not None
     assert mock_emit.await_args.kwargs["type"] == EventType.EXECUTION_FAILED
+    [denied] = [e for e in logs if e.get("stage") == "pre_injection"]
+    assert denied["event"] == "queued_execution_denied"
+    assert denied["reason"] == reason
+    assert denied["job_id"] == "job_gone"
+    assert denied["execution_id"] == "exec_123"
+    assert denied["actor_id"] == "act_gone"
+    assert denied["actor_type"] == actor_type
+    assert "Bearer tok" not in str(logs)
 
 
 @pytest.mark.asyncio
