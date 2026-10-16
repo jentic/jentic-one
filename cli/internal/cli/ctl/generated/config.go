@@ -713,11 +713,78 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 
 // Control surface configuration.
 //
+// “egress“ governs the control plane's outbound OAuth and credential calls.
+// Each “control.egress“ key left unset takes its value from the matching
+// “broker.egress“ key, so the defaults listed for it apply only when the
+// broker leaves that key unset too. “control.egress.dns_pinning_enabled“ is
+// not consulted: control-plane calls always pin DNS.
+//
 // Unknown subkeys are ignored, so a “control:“ section written for another
 // release keeps validating.
 type ControlSurfaceConfig struct {
 	// Agent connect-session settings.
 	Connect *ControlConnectConfig `json:"connect,omitempty,omitzero" yaml:"connect,omitempty" mapstructure:"connect,omitempty"`
+
+	// Outbound SSRF/egress policy for the control plane's OAuth and credential calls:
+	// OAuth2 credential and OAuth app registration URL checks, token exchange and
+	// refresh, device authorization, and the vendor identity probe. Each key left
+	// unset takes its value from `broker.egress`, so a subnet or domain allowlisted
+	// for the broker is honoured here without listing it twice; set a key (e.g.
+	// `allowed_private_subnets: []`) to override it for the control plane alone.
+	// `dns_pinning_enabled` is not consulted: these calls always pin DNS. The OAuth
+	// endpoints an approver enters for their own client on a connect session stay
+	// under the strict policy regardless.
+	Egress *ControlSurfaceConfigEgress `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
+}
+
+// Outbound SSRF/egress policy for the control plane's OAuth and credential calls:
+// OAuth2 credential and OAuth app registration URL checks, token exchange and
+// refresh, device authorization, and the vendor identity probe. Each key left
+// unset takes its value from `broker.egress`, so a subnet or domain allowlisted
+// for the broker is honoured here without listing it twice; set a key (e.g.
+// `allowed_private_subnets: []`) to override it for the control plane alone.
+// `dns_pinning_enabled` is not consulted: these calls always pin DNS. The OAuth
+// endpoints an approver enters for their own client on a connect session stay
+// under the strict policy regardless.
+type ControlSurfaceConfigEgress struct {
+	// Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved private IP is
+	// permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML
+	// list or a comma-separated string.
+	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).
+	// The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254,
+	// 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a
+	// listed range covers them. Accepts a YAML list or a comma-separated string.
+	AllowedPrivateSubnets []string `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
+
+	// Pin the outbound connection to the IP validated at connect time, closing the
+	// DNS-rebinding TOCTOU between pre-request validation and the runner's own
+	// resolution. Disable only to debug egress issues.
+	DnsPinningEnabled bool `json:"dns_pinning_enabled,omitempty,omitzero" yaml:"dns_pinning_enabled,omitempty" mapstructure:"dns_pinning_enabled,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ControlSurfaceConfigEgress) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	var controlSurfaceConfigEgress_0 ControlSurfaceConfigEgress_0
+	var errs []error
+	if err := controlSurfaceConfigEgress_0.UnmarshalJSON(value); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) == 1 {
+		return fmt.Errorf("all validators failed: %s", errors.Join(errs...))
+	}
+	type Plain ControlSurfaceConfigEgress
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	*j = ControlSurfaceConfigEgress(plain)
+	return nil
 }
 
 // Credentials subsystem configuration.
@@ -3021,17 +3088,9 @@ type VendorScopeConfig struct {
 	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
-type VendorScopeConfigClassification string
-
 const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
 const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
 const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
@@ -3078,6 +3137,16 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 	}
 	*j = VendorScopeConfig(plain)
 	return nil
+}
+
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+
+type VendorScopeConfigClassification string
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
 }
 
 // Background job-worker durability knobs.
@@ -3163,4 +3232,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+type ControlSurfaceConfigEgress_0 = EgressConfig

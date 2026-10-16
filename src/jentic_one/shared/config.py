@@ -1287,6 +1287,12 @@ class ControlConnectConfig(BaseModel):
 class ControlSurfaceConfig(BaseModel):
     """Control surface configuration.
 
+    ``egress`` governs the control plane's outbound OAuth and credential calls.
+    Each ``control.egress`` key left unset takes its value from the matching
+    ``broker.egress`` key, so the defaults listed for it apply only when the
+    broker leaves that key unset too. ``control.egress.dns_pinning_enabled`` is
+    not consulted: control-plane calls always pin DNS.
+
     Unknown subkeys are ignored, so a ``control:`` section written for another
     release keeps validating.
     """
@@ -1294,6 +1300,37 @@ class ControlSurfaceConfig(BaseModel):
     connect: ControlConnectConfig = Field(
         default_factory=ControlConnectConfig,
         description="Agent connect-session settings.",
+    )
+    egress: EgressConfig | None = Field(
+        default=None,
+        description=(
+            "Outbound SSRF/egress policy for the control plane's OAuth and "
+            "credential calls: OAuth2 credential and OAuth app registration "
+            "URL checks, token exchange and refresh, device authorization, and "
+            "the vendor identity probe. Each key left unset takes its value "
+            "from `broker.egress`, so a subnet or domain allowlisted for the "
+            "broker is honoured here without listing it twice; set a key "
+            "(e.g. `allowed_private_subnets: []`) to override it for the "
+            "control plane alone. `dns_pinning_enabled` is not consulted: "
+            "these calls always pin DNS. The OAuth endpoints an approver enters "
+            "for their own client on a connect session stay under the strict "
+            "policy regardless."
+        ),
+    )
+
+
+def resolved_control_egress(config: AppConfig) -> EgressConfig:
+    """The egress policy for control-plane outbound calls.
+
+    ``control.egress`` fields that were set (in YAML or via
+    ``JENTIC__CONTROL__EGRESS__*``) win; every other field falls back to
+    ``broker.egress``. With neither configured this is the strict default.
+    """
+    override = config.control.egress
+    if override is None:
+        return config.broker.egress
+    return config.broker.egress.model_copy(
+        update={name: getattr(override, name) for name in override.model_fields_set}
     )
 
 
