@@ -92,9 +92,13 @@ class InProcessRegistryResolver:
                 identity=identity,
             )
 
-    async def find_draft_match(self, *, method: str, url: str) -> DraftRevisionMatch | None:
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
         async with self._registry_db.session() as session:
-            return await RegistryService(session).find_draft_match(method=method, url=url)
+            return await RegistryService(session, ctx=self._ctx).find_draft_match(
+                method=method, url=url, identity=identity
+            )
 
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:

@@ -91,21 +91,11 @@ class URLLookupService:
         ``Jentic-Revision`` pin) searches exactly that revision, whatever its
         state; callers gate which revisions may be pinned.
         """
-        parsed = urlparse(url)
-        scheme = parsed.scheme or "https"
-        raw_host = parsed.hostname or ""
-        port = parsed.port
-        host_str = f"{raw_host}:{port}" if port else raw_host
-        host = normalise_host(host_str, scheme)
-        path = normalize_path(parsed.path or "/")
-        query_params = parse_qs(parsed.query)
-        segment_count = count_segments(path)
+        request = _parse_request(url, method)
+        query_params = parse_qs(urlparse(url).query)
+        host, path, segment_count = request.host, request.path, request.segment_count
 
-        methods_to_try = [method.upper()]
-        if method.upper() == "HEAD":
-            methods_to_try.append("GET")
-
-        for m in methods_to_try:
+        for m in request.methods:
             result = await self._try_resolve(
                 revision_id=revision_id,
                 method=m,
@@ -134,49 +124,60 @@ class URLLookupService:
 
         return None
 
-    async def find_draft_match(self, *, method: str, url: str) -> DraftUrlIndexCandidate | None:
-        """Find a ``draft`` revision whose URL index serves METHOD+URL, or ``None``.
+    async def find_draft_candidates(self, *, method: str, url: str) -> list[DraftUrlIndexCandidate]:
+        """The ``draft`` revisions whose URL index serves METHOD+URL, best first.
 
         Explains an unpinned miss: :meth:`resolve` only searches live
         revisions, so a URL that only a draft defines (an inline or URL import
-        that was never promoted) is unmatched there. Matching follows
-        :meth:`resolve` — normalised host and path, segment count, ``HEAD``
-        falling back to ``GET``, exact-host rows before regex-host rows — but
-        reads draft rows only, in one statement capped at ``MAX_CANDIDATES``
-        rows (newest draft first). It never raises: ties and oversized
-        candidate sets only make the answer best-effort.
+        that was never promoted) is unmatched there. Request parsing and row
+        acceptance are :meth:`resolve`'s own (normalised host and path, segment
+        count, ``HEAD`` falling back to ``GET``). Each revision is judged the
+        way a ``Jentic-Revision`` pin to it would be: its exact-host rows, or
+        its regex-host rows when it has no exact-host row for the method. One
+        candidate per revision is returned — revisions served by an exact-host
+        row first, newest draft first within each — so a caller can pick the
+        first one it may act on.
+
+        One statement reads at most ``MAX_CANDIDATES`` rows. When more match,
+        the set is truncated and its order no longer says which draft is
+        best, so the answer is the empty list rather than a guess. It never
+        raises the lookup errors (ambiguity, too many candidates).
         """
-        parsed = urlparse(url)
-        scheme = parsed.scheme or "https"
-        raw_host = parsed.hostname or ""
-        port = parsed.port
-        host = normalise_host(f"{raw_host}:{port}" if port else raw_host, scheme)
-        path = normalize_path(parsed.path or "/")
-
-        methods = [method.upper()]
-        if methods[0] == "HEAD":
-            methods.append("GET")
-
-        candidates = await UrlIndexRepository.lookup_draft_candidates(
+        request = _parse_request(url, method)
+        rows = await UrlIndexRepository.lookup_draft_candidates(
             self._session,
-            methods=methods,
-            host=host,
-            segment_count=count_segments(path),
-            limit=MAX_CANDIDATES,
+            methods=request.methods,
+            host=request.host,
+            segment_count=request.segment_count,
+            limit=MAX_CANDIDATES + 1,
         )
-        for m in methods:
-            of_method = [c for c in candidates if c.row.method == m]
-            pool = [c for c in of_method if c.row.host == host] or [
+        if len(rows) > MAX_CANDIDATES:
+            logger.debug("draft_match_candidates_truncated", limit=MAX_CANDIDATES)
+            return []
+
+        served: list[DraftUrlIndexCandidate] = []
+        seen: set[uuid.UUID] = set()
+        for m in request.methods:
+            of_method = [c for c in rows if c.row.method == m]
+            exact = [c for c in of_method if c.row.host == request.host]
+            with_exact_host = {c.row.revision_id for c in exact}
+            regex = [
                 c
                 for c in of_method
                 if c.row.host is None
+                and c.row.revision_id not in with_exact_host
                 and c.row.host_regex
-                and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
+                and re.fullmatch(c.row.host_regex, request.host, re.IGNORECASE)
             ]
-            for candidate in pool:
-                if _serves_path(candidate.row, host=host, path=path):
-                    return candidate
-        return None
+            for candidate in (*exact, *regex):
+                revision_id = candidate.row.revision_id
+                if revision_id in seen:
+                    continue
+                if _accept_row(candidate.row, host=request.host, path=request.path) is None:
+                    continue
+                seen.add(revision_id)
+                served.append(candidate)
+        return served
 
     async def _try_resolve(
         self,
@@ -319,17 +320,9 @@ class URLLookupService:
         matches: list[_RankedMatch] = []
         for candidate in candidates:
             row = candidate.row
-            match = re.fullmatch(row.path_regex, path)
-            if not match:
-                continue
-            host_groups: dict[str, str | None] = {}
-            if row.host_regex and host:
-                host_match = re.fullmatch(row.host_regex, host, re.IGNORECASE)
-                if host_match is not None:
-                    host_groups = host_match.groupdict()
             # Server-variable groups carry the request's concrete values; they
             # are split out so they never surface as operation path params.
-            resolved = resolve_server_variable_groups(host_groups, match.groupdict())
+            resolved = _accept_row(row, host=host, path=path)
             if resolved is None:
                 continue
             path_params = resolved.path_params
@@ -384,21 +377,49 @@ class URLLookupService:
         return best
 
 
-def _serves_path(row: OperationURLIndex, *, host: str, path: str) -> bool:
-    """True when an index row's path regex (and host groups) accept the request.
+@dataclass(frozen=True, slots=True)
+class _ParsedRequest:
+    host: str
+    path: str
+    segment_count: int
+    methods: list[str]
 
-    The same acceptance test :meth:`URLLookupService._match_and_rank` applies
-    per candidate, without the ranking.
+
+def _parse_request(url: str, method: str) -> _ParsedRequest:
+    """Normalise a request URL + method the way the URL index stores them.
+
+    ``methods`` is the method followed by its fallbacks: ``HEAD`` is served by
+    a ``GET`` operation when no ``HEAD`` one matches.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "https"
+    raw_host = parsed.hostname or ""
+    port = parsed.port
+    host = normalise_host(f"{raw_host}:{port}" if port else raw_host, scheme)
+    path = normalize_path(parsed.path or "/")
+    methods = [method.upper()]
+    if methods[0] == "HEAD":
+        methods.append("GET")
+    return _ParsedRequest(host=host, path=path, segment_count=count_segments(path), methods=methods)
+
+
+def _accept_row(row: OperationURLIndex, *, host: str, path: str) -> ServerVariableMatch | None:
+    """The row's path params and server variables when it serves ``path``, else ``None``.
+
+    The acceptance test for one candidate row: its path regex must match, and a
+    server variable must not resolve to different values in the host and the
+    path. Callers pick the candidate rows (exact host, or regex host matched
+    against ``host``) first.
     """
     match = re.fullmatch(row.path_regex, path)
     if match is None:
-        return False
+        return None
     host_groups: dict[str, str | None] = {}
     if row.host_regex and host:
         host_match = re.fullmatch(row.host_regex, host, re.IGNORECASE)
         if host_match is not None:
             host_groups = host_match.groupdict()
-    return resolve_server_variable_groups(host_groups, match.groupdict()) is not None
+    return resolve_server_variable_groups(host_groups, match.groupdict())
 
 
 def _match_rebuilt_servers(
