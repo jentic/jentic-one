@@ -25,7 +25,7 @@ from sqlalchemy import inspect, text
 
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.db.session import DatabaseSession
-from tests.integration.conftest import _alembic_config_for
+from tests.harness.postgres import alembic_config_for
 
 pytestmark = pytest.mark.integration
 
@@ -56,14 +56,14 @@ async def restore_heads(
     await _exec(admin_db, "DELETE FROM jobs WHERE id LIKE 'job_mrt_%'")
     yield
     for name in ("control", "admin"):
-        cfg = _alembic_config_for(name, getattr(integration_config.databases, name))
+        cfg = alembic_config_for(name, getattr(integration_config.databases, name))
         await asyncio.to_thread(command.upgrade, cfg, "head")
     await _cleanup_control(control_db)
     await _exec(admin_db, "DELETE FROM jobs WHERE id LIKE 'job_mrt_%'")
 
 
 def test_control_tree_has_one_head_with_the_ask_tier_on_top(integration_config: AppConfig) -> None:
-    cfg = _alembic_config_for("control", integration_config.databases.control)
+    cfg = alembic_config_for("control", integration_config.databases.control)
     script = ScriptDirectory.from_config(cfg)
     assert script.get_heads() == [_CONTROL_DATA]
     assert script.get_revision(_CONTROL_DATA).down_revision == _CONTROL_WIDEN
@@ -119,7 +119,7 @@ async def _seed_rules(control_db: DatabaseSession) -> None:
 async def test_control_round_trip_rewrites_ask_rules_to_deny(
     integration_config: AppConfig, control_db: DatabaseSession, restore_heads: None
 ) -> None:
-    cfg = _alembic_config_for("control", integration_config.databases.control)
+    cfg = alembic_config_for("control", integration_config.databases.control)
     for table in _RULE_TABLES:
         assert await _effect_length(control_db, table) == 16
     await _seed_rules(control_db)
@@ -160,7 +160,7 @@ async def _table_names(db: DatabaseSession) -> set[str]:
 async def test_admin_round_trip_cancels_held_jobs(
     integration_config: AppConfig, admin_db: DatabaseSession, restore_heads: None
 ) -> None:
-    cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    cfg = alembic_config_for("admin", integration_config.databases.admin)
     await _exec(
         admin_db,
         "INSERT INTO jobs (id, kind, status, actor_type, created_by)"
