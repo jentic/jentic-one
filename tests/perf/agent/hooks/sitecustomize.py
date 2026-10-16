@@ -56,8 +56,11 @@ DEFAULT_STAGES: dict[str, tuple[str, ...]] = {
     "jentic_one.broker.services.discovery": ("discover",),
     "jentic_one.broker.services.execution.authorization": ("authorize_execution",),
     "jentic_one.broker.services.credentials.resolver": ("CredentialResolver.resolve",),
-    "jentic_one.shared.url_validation": ("validate_upstream_url",),
-    "jentic_one.shared.egress": ("resolve_and_validate",),
+    "jentic_one.shared.url_validation": (
+        "validate_upstream_url",
+        "validate_upstream_url_async",
+    ),
+    "jentic_one.shared.egress": ("resolve_and_validate", "resolve_and_validate_async"),
     "jentic_one.broker.adapters.runners.http": ("HttpRunner.stream",),
     "jentic_one.broker.web.streaming": ("open_streaming_response",),
     "jentic_one.shared.executions.ingest": ("record_execution",),
