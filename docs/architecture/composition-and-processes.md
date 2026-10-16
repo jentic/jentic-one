@@ -154,20 +154,21 @@ What `server.workers > 1` refuses, and why:
 | `server.reload: true` | config validation | uvicorn's reloader supervises exactly one worker. |
 | `broker.resilience.backend.backend: memory` when the process runs the **auth** surface | config validation | The login CSRF nonce, the consent handle, the OAuth rate limits and the JWT-bearer `jti` replay record live on this backend. On `memory` each worker has its own copy, and the next request can reach any worker (keep-alive lasts 5 s, and a load balancer spreads requests anyway): a login or consent step answered by another worker fails, and a replayed assertion is accepted there. |
 | `broker.resilience.backend.backend: memory` when the process runs the **broker** surface with `broker.idempotency.enabled`, `broker.resilience.rate_limit.enabled` or `broker.resilience.circuit_breaker.enabled` (all on by default) | config validation | `Idempotency-Key` claims would not stop a retry that lands on another worker from running the upstream call again (a double POST), and rate-limit buckets and breaker counters would multiply by N. |
+| `broker.resilience.backend.backend: memory` when the process runs the **control** surface | config validation | The per-actor connect-flow rate limits (the `POST /integrations:connect` / `:confirm` bucket and the MCP `request_connection` tool's) live on this backend. On `memory` each worker has its own buckets, so an actor gets N times the limit and the cap no longer protects the platform's vendor quota. |
 | An unset `admin.auth.jwt_secret`, `admin.invite.pepper` or `credentials.connect.state_secret` that a surface of the process reads | config validation | Outside production an unset secret is generated per process, so each worker would mint its own: a session JWT, invite token or connect `state` signed by one worker would fail on the next. A broker reads none of the three, so it is not affected. |
 | A one-shot config source (`JENTIC_CONFIG_FILE` on a pipe or `/dev/fd`) | `_serve`, before workers start | The supervisor drained it; the workers cannot re-read it. |
 
-The fix for both shared-state rows is
+The fix for every shared-state row is
 `broker.resilience.backend.backend: redis` with
 `broker.resilience.backend.redis_url`
 (`JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND=redis`,
 `JENTIC__BROKER__RESILIENCE__BACKEND__REDIS_URL`), or `server.workers: 1`.
 **The published container images do not include the `[redis]` extra**, so on
 them `server.workers > 1` is available only to processes that run neither
-the auth surface nor a broker with those three features on: in practice the
-registry/admin/control surfaces, or a broker with idempotency, rate limiting
-and the circuit breaker all disabled. Build your own image with
-`jentic-one[redis]` to run more workers for auth or a default broker
+the auth nor the control surface nor a broker with those three features on:
+in practice the registry/admin surfaces, or a broker with idempotency, rate
+limiting and the circuit breaker all disabled. Build your own image with
+`jentic-one[redis]` to run more workers for auth, control or a default broker
 (shipping the extra in the published images is tracked in #1786).
 
 Each worker runs the full lifespan, so everything a process owns is
@@ -204,12 +205,10 @@ worker each, and these are its consequences:
   `server.workers: 4` admits 4× `max_in_flight` and opens up to
   4× `pool_max` connections to each database. Size PostgreSQL's
   `max_connections` (or a pooler) for it.
-- **Two control-surface limiters are per process on any backend.** The
-  connect-flow per-actor rate limit (route and MCP tool) and the MCP
-  config-registration throttle are held in process memory by design, so
-  each cap applies per worker and an actor can reach N× the limit (the
-  supervisor logs `control_limiters_per_worker`). Both are abuse caps, not
-  correctness guarantees.
+- **MCP config-registration events are deduped per process.** The
+  once-a-day `mcp.config_registered` event per (actor, runtime) is deduped
+  in process memory, so N workers can record it up to N times a day. It is
+  an adoption-funnel event, not a limit.
 - **Provider config changes reach one worker.** An admin write to a
   credential provider config rebuilds the provider registry only in the
   worker that served it (see `Context.refresh_providers`). In a process that
@@ -233,8 +232,9 @@ worker each, and these are its consequences:
   same as across replicas.
 - **What is shared.** Anything in the database: job claims, login lockout
   (`failed_login_count` / `locked_until`), tokens, sessions and audit.
-  With the redis backend, everything the auth and broker surfaces keep on
-  it, including the JWT-bearer `jti` replay record. MCP's `/mcp` endpoint
+  With the redis backend, everything the auth, broker and control surfaces
+  keep on it, including the JWT-bearer `jti` replay record and the connect
+  rate limits. MCP's `/mcp` endpoint
   is stateless, so it needs no session affinity.
 
 ## Lifespan ordering

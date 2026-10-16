@@ -1970,8 +1970,8 @@ class ServerConfig(BaseModel):
             "are per process, and each worker is a full interpreter (budget "
             "memory per worker). Values above 1 require PostgreSQL for every "
             "database, are incompatible with ``server.reload``, and require the "
-            "redis shared-state backend when the process runs the auth surface, "
-            "or the broker surface with idempotency, rate limiting or the "
+            "redis shared-state backend when the process runs the auth or control "
+            "surface, or the broker surface with idempotency, rate limiting or the "
             "circuit breaker enabled."
         ),
     )
@@ -2263,6 +2263,9 @@ class AppConfig(BaseModel):
         - broker: ``Idempotency-Key`` claims (a retry on another worker runs the
           upstream call again), the rate-limit buckets and the circuit-breaker
           counters (both multiply by the worker count).
+        - control: the per-actor connect-flow rate limits (the route's and the
+          MCP ``request_connection`` tool's), which multiply by the worker
+          count and so stop protecting the platform's vendor quota.
 
         These are correctness and security guarantees, not soft per-worker
         limits, so the config is refused rather than warned about.
@@ -2275,6 +2278,11 @@ class AppConfig(BaseModel):
             holders.append(
                 "the auth surface (login CSRF nonces, consent handles, OAuth rate "
                 "limits, JWT-bearer jti replay records)"
+            )
+        if "control" in self.apps:
+            holders.append(
+                "the control surface (connect-flow and MCP request_connection "
+                "per-actor rate limits)"
             )
         if "broker" in self.apps:
             resilience = self.broker.resilience

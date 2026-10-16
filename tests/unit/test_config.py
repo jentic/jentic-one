@@ -2222,15 +2222,40 @@ def test_server_workers_broker_memory_backend_with_shared_state_features_off_all
         assert load_config(config_file).server.workers == 2
 
 
-def test_server_workers_memory_backend_without_auth_or_broker_allowed(config_file: Path):
-    """registry/admin/control keep no request state on the shared-state backend."""
+def test_server_workers_control_on_memory_backend_rejected(config_file: Path):
+    """The connect-flow rate limits would multiply by the worker count."""
+    env = {**_SHARED_SECRETS_ENV, "JENTIC__APPS": "control", "JENTIC__SERVER__WORKERS": "2"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(
+            ConfigError,
+            match=r"(?s)the control surface.*request_connection.*backend: redis",
+        ),
+    ):
+        load_config(config_file)
+
+
+def test_server_workers_memory_backend_without_stateful_surfaces_allowed(config_file: Path):
+    """registry/admin keep no request state on the shared-state backend."""
     env = {
         **_SHARED_SECRETS_ENV,
-        "JENTIC__APPS": "registry,admin,control",
+        "JENTIC__APPS": "registry,admin",
         "JENTIC__SERVER__WORKERS": "2",
     }
     with patch.dict(os.environ, env, clear=False):
         assert load_config(config_file).server.workers == 2
+
+
+def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
+    env = {
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        memory = load_config(config_file).broker.resilience.backend.memory
+    assert memory.max_entries_per_namespace == 500
+    assert memory.max_bytes_per_namespace == 1_000_000
+    assert memory.budgets()["idem"].max_entries == 1_000_000
 
 
 def test_server_workers_one_on_memory_backend_allowed(config_file: Path):

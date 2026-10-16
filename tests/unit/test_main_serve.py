@@ -146,7 +146,7 @@ def test_serve_multi_worker_warns_about_prometheus_per_worker(
     assert "prometheus_metrics_per_worker" in _events(logs)
 
 
-def test_serve_multi_worker_combined_warns_about_control_limiters_and_provider_refresh(
+def test_serve_multi_worker_combined_warns_about_provider_refresh(
     serve_env: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("JENTIC__SERVER__WORKERS", "2")
@@ -155,7 +155,7 @@ def test_serve_multi_worker_combined_warns_about_control_limiters_and_provider_r
         cli._serve()
 
     events = _events(logs)
-    assert {"control_limiters_per_worker", "provider_config_refresh_per_worker"} <= events
+    assert "provider_config_refresh_per_worker" in events
     assert "prometheus_metrics_per_worker" not in events
 
 
@@ -174,7 +174,6 @@ def test_serve_multi_worker_broker_only_emits_no_per_worker_warnings(
     warnings = {entry["event"] for entry in logs if entry.get("log_level") == "warning"}
     assert not warnings & {
         "prometheus_metrics_per_worker",
-        "control_limiters_per_worker",
         "provider_config_refresh_per_worker",
     }
 

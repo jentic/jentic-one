@@ -474,13 +474,14 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 - **Worker processes** — a pod serves from one uvicorn process (one CPU
   core) by default; `server.workers` (`JENTIC__SERVER__WORKERS` through the
   subchart's `extraEnv`) runs more. On the published image this is limited:
-  the broker and the app's auth surface refuse `server.workers > 1` on the
-  `memory` backend (their idempotency, rate-limit, login and consent state
-  would split across workers), and that image cannot run the redis backend.
+  the broker and the app's auth and control surfaces refuse
+  `server.workers > 1` on the `memory` backend (their idempotency,
+  rate-limit, login and consent state would split across workers), and that
+  image cannot run the redis backend.
   So on the published image only a broker with
   `broker.idempotency.enabled`, `broker.resilience.rate_limit.enabled` and
   `broker.resilience.circuit_breaker.enabled` all `false`, or a standalone
-  registry/admin/control surface, can use more workers; anything else needs
+  registry/admin surface, can use more workers; anything else needs
   your own image with the `[redis]` extra and the redis backend configured.
   When you do raise it, raise the CPU limit **and the memory limit**
   roughly N× (each worker is a full interpreter; the broker's default

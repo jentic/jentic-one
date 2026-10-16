@@ -197,17 +197,6 @@ def _warn_per_worker_hazards(config: AppConfig) -> None:
                 "scale replicas."
             ),
         )
-    if "control" in apps:
-        logger.warning(
-            "control_limiters_per_worker",
-            workers=workers,
-            detail=(
-                "the control surface's connect-flow per-actor rate limit and MCP "
-                "config-registration throttle are held in process memory on every "
-                "shared-state backend, so each cap applies per worker and an actor "
-                "can reach the worker count times the limit."
-            ),
-        )
     if "admin" in apps and apps & PROVIDER_REGISTRY_SURFACES:
         logger.warning(
             "provider_config_refresh_per_worker",
