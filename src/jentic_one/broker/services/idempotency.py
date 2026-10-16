@@ -15,9 +15,11 @@ Two TTLs guard against a poison-pill (a pending claim must be short):
 - ``done_ttl_s`` — the **long** replay window the record is promoted to once
   :meth:`complete` stores the real response.
 
-A request that fails before it has a response to store gives its claim back
-with :meth:`release`, so the client's same-key retry re-claims ``FRESH`` at
-once instead of waiting out ``pending_ttl_s``. Every claim carries a random
+A request that fails before it can have reached the upstream gives its claim
+back with :meth:`release`, so the client's same-key retry re-claims ``FRESH`` at
+once instead of waiting out ``pending_ttl_s``. Whether a failed request releases,
+stores its failure for replay, or holds the claim is decided by the web layer's
+``ClaimLease`` (``broker/web/claim_lease.py``). Every claim carries a random
 token and the release is a compare-and-delete on the exact pending record, so a
 slow request whose claim already expired can never release a newer claim on the
 same key. The pending TTL stays the crash guard for a request that never gets
@@ -199,7 +201,7 @@ class SharedStateIdempotencyStore:
         await self._store.set(slot, json.dumps(record).encode(), ttl_s=self._done_ttl)
 
     async def release(self, claim: IdempotencyClaim) -> bool:
-        """Give back a pending claim whose request ends without a stored response.
+        """Give back a pending claim whose request failed before reaching the upstream.
 
         A compare-and-delete on the exact pending record: it is a no-op when the
         claim already expired and another request re-claimed the key, or when

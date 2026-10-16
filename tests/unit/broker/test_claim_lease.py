@@ -13,7 +13,11 @@ import asyncio
 
 import pytest
 
-from jentic_one.broker.core.exceptions import CircuitOpenError, UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import (
+    CircuitOpenError,
+    DeadlineExceededError,
+    UpstreamTimeoutError,
+)
 from jentic_one.broker.services.idempotency import (
     IdempotencyState,
     SharedStateIdempotencyStore,
@@ -135,11 +139,34 @@ async def test_failure_during_the_upstream_call_holds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settled_lease_does_nothing() -> None:
+@pytest.mark.parametrize("pre_send", [True, False], ids=["unsent", "cut_off_mid_send"])
+async def test_deadline_settles_by_whether_anything_was_sent(pre_send: bool) -> None:
+    """An unsent deadline frees the key; one that cut off a send is stored for replay."""
     store = _store(MemoryStateBackend())
     lease = await _held_lease(store)
+    lease.dispatching(lambda _outcome: pytest.fail("no upstream answer to render"))
+    error = DeadlineExceededError(detail="late", type="deadline_exceeded", pre_send=pre_send)
+    lease.upstream_failed(error)
+
+    await lease.abandon(error)
+
+    expected = IdempotencyState.FRESH if pre_send else IdempotencyState.REPLAY
+    assert await _state(store) is expected
+
+
+@pytest.mark.asyncio
+async def test_settled_lease_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After ``settle`` the caller owns the store write; ``abandon`` neither acts nor records."""
+    recorded: list[claim_lease.ClaimOutcome] = []
+    monkeypatch.setattr(
+        claim_lease, "_record", lambda outcome, _error_type: recorded.append(outcome)
+    )
+    store = _store(MemoryStateBackend())
+    lease = await _held_lease(store)
+    lease.dispatching(lambda _outcome: pytest.fail("a settled lease renders nothing"))
     lease.settle()
 
-    await lease.abandon(RuntimeError("after settle"))
+    await lease.abandon(RuntimeError("store write failed after settle"))
 
     assert await _state(store) is IdempotencyState.IN_PROGRESS
+    assert recorded == []

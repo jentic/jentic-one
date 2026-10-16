@@ -14,12 +14,14 @@ the transport level. The idempotency store is the real
 Pins the claim policy, keyed on whether the upstream may have acted:
 
 - nothing reached the upstream (connect failure, open circuit, a credential
-  error raised before the upstream call) ⇒ the claim is released and the
-  same-key retry runs again at once;
+  error raised before the upstream call, a deadline that ran out while the call
+  queued for a host permit) ⇒ the claim is released and the same-key retry runs
+  again at once;
 - the upstream may have acted and there is a response (read timeout, dropped
-  connection, oversized response, an upstream answer whose persistence failed,
-  a retry loop whose earlier attempt was sent) ⇒ it is stored and the same-key
-  retry replays it without a second upstream call;
+  connection, oversized response, a deadline that cut off the call, an upstream
+  answer whose persistence, lifecycle event or commit failed, a retry loop whose
+  earlier attempt was sent) ⇒ it is stored and the same-key retry replays it
+  without a second upstream call;
 - the upstream may have acted and there is no response (cancellation or an
   unexpected exception during the upstream call) ⇒ the claim is held until its
   pending TTL;
@@ -41,6 +43,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import Select, delete, select, update
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
@@ -75,7 +79,6 @@ from jentic_one.shared.broker.execution import (
     RunnerRequest,
     RunnerResult,
     StreamingResult,
-    StreamingUpstreamRunner,
 )
 from jentic_one.shared.config import RetryConfig
 from jentic_one.shared.context import Context
@@ -175,9 +178,13 @@ def _hang(_request: httpx.Request) -> httpx.Response:  # pragma: no cover - sent
 class _ExplodingRunner:
     """Raises a non-``BrokerError`` once from inside the envelope, then delegates."""
 
-    def __init__(self, inner: StreamingUpstreamRunner) -> None:
+    def __init__(self, inner: HttpRunner) -> None:
         self._inner = inner
         self.armed = False
+
+    @property
+    def http(self) -> HttpRunner:
+        return self._inner
 
     async def run(self, request: RunnerRequest) -> RunnerResult:
         if self.armed:
@@ -350,6 +357,7 @@ async def _harness(
     idempotency_backend: type[MemoryStateBackend] = MemoryStateBackend,
     retry: RetryConfig | None = None,
     deadline_s: float = 10.0,
+    max_per_host: int = 50,
 ) -> AsyncIterator[_Harness]:
     monkeypatch.setattr(ctx.config.broker.egress, "allowed_private_subnets", ["127.0.0.0/8"])
     monkeypatch.setattr(ctx.config.broker, "upstream_timeout_s", 5.0)
@@ -367,7 +375,9 @@ async def _harness(
     )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(upstream.handle)) as outbound:
-        exploding = _ExplodingRunner(HttpRunner(outbound, max_response_bytes=_MAX_RESPONSE_BYTES))
+        exploding = _ExplodingRunner(
+            HttpRunner(outbound, max_per_host=max_per_host, max_response_bytes=_MAX_RESPONSE_BYTES)
+        )
         # The app lifespan's composition: breaker over the transport, then the
         # capability-gated retry loop and the outermost deadline.
         composed = build_runner(
@@ -492,6 +502,23 @@ async def test_credential_error_before_dispatch_releases_claim(
     assert harness.upstream.calls == 1
 
 
+async def test_deadline_before_any_send_releases_claim(make_harness: HarnessFactory) -> None:
+    """The deadline ran out while the call queued for a host permit: the key is freed."""
+    harness = await make_harness(deadline_s=0.2, max_per_host=1)
+
+    # Another call to the same host holds the only permit for the whole request.
+    async with harness.runner.http._bulkhead.guard(_HOST):
+        first = await harness.post("key-queued")
+    assert first.status_code == 504, first.text
+    assert first.json()["type"] == "deadline_exceeded"
+    assert harness.upstream.calls == 0
+
+    retry = await harness.post("key-queued")
+    assert retry.status_code == 201, retry.text
+    assert "idempotent-replayed" not in retry.headers
+    assert harness.upstream.calls == 1
+
+
 # --- the upstream may have acted, with a response: store and replay ---------------
 
 
@@ -561,10 +588,8 @@ async def test_retry_loop_with_a_sent_attempt_is_replayed(make_harness: HarnessF
     assert harness.upstream.calls == 2
 
 
-async def test_persistence_failure_after_upstream_answer_replays_the_answer(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The upstream answered but the record could not be written: the retry replays the answer."""
+def _fail_persist(ctx: Context, upstream: _Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The execution record write fails after the upstream answered."""
     real_persist = execution_service._persist
 
     async def _persist_fails_on_success(*args: Any, **kwargs: Any) -> None:
@@ -574,11 +599,64 @@ async def test_persistence_failure_after_upstream_answer_replays_the_answer(
 
     monkeypatch.setattr(execution_service, "_persist", _persist_fails_on_success)
 
-    first = await harness.post("key-persist")
-    assert first.status_code == 500
+
+def _fail_lifecycle_emit(
+    ctx: Context, upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The execution lifecycle event write fails after the upstream answered."""
+    real_emit = execution_service._emit_execution_lifecycle
+
+    async def _emit_fails_on_success(*args: Any, **kwargs: Any) -> None:
+        if kwargs.get("status") is ExecutionStatus.COMPLETED:
+            raise DatabaseUnavailableError("admin database unavailable")
+        await real_emit(*args, **kwargs)
+
+    monkeypatch.setattr(execution_service, "_emit_execution_lifecycle", _emit_fails_on_success)
+
+
+def _fail_commit(ctx: Context, upstream: _Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The admin transaction's commit on exit fails after the upstream answered."""
+    real_transaction = ctx.admin_db.transaction
+
+    async def _commit_lost() -> None:
+        raise OperationalError("COMMIT", {}, ConnectionError("server closed the connection"))
+
+    @asynccontextmanager
+    async def _transaction(**kwargs: Any) -> AsyncIterator[AsyncSession]:
+        async with real_transaction(**kwargs) as session:
+            yield session
+            # The body finished cleanly; only a commit that lands after the
+            # upstream call fails, wherever the transaction was opened.
+            if upstream.calls > 0:
+                monkeypatch.setattr(session, "commit", _commit_lost)
+
+    monkeypatch.setattr(ctx.admin_db, "transaction", _transaction)
+
+
+@pytest.mark.parametrize(
+    "fail_after_answer",
+    [_fail_persist, _fail_lifecycle_emit, _fail_commit],
+    ids=["persist", "lifecycle_emit", "commit"],
+)
+async def test_failure_after_upstream_answer_replays_the_answer(
+    harness: _Harness,
+    integration_context: Context,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_after_answer: Callable[[Context, _Upstream, pytest.MonkeyPatch], None],
+) -> None:
+    """The upstream answered but recording it failed: the retry replays the answer.
+
+    Covers each write between the upstream answer and the response, up to the
+    admin transaction's commit, so the claim is never released (which would let
+    the retry re-send the call) or held.
+    """
+    fail_after_answer(integration_context, harness.upstream, monkeypatch)
+
+    first = await harness.post("key-after-answer")
+    assert first.status_code >= 500, first.text
     assert harness.upstream.calls == 1
 
-    retry = await harness.post("key-persist")
+    retry = await harness.post("key-after-answer")
     assert retry.status_code == 201, retry.text
     assert retry.headers.get("idempotent-replayed") == "true"
     assert retry.json() == {"charge": "ch_1"}
