@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -141,20 +142,48 @@ class RegistryResolverProtocol(Protocol):
 def require_registry_resolver(resolver: object) -> RegistryResolverProtocol:
     """Return ``resolver`` if it implements every :class:`RegistryResolverProtocol` method.
 
-    Called once when the resolver is injected, so a resolver missing a method
+    Called once when the resolver is injected, so a resolver missing a method,
+    or whose method is not async or cannot take the protocol's arguments,
     fails at startup with ``TypeError`` instead of on the first request that
     reaches it — callers of the best-effort methods (``find_draft_match``)
     then need not tell a wiring bug from a failed lookup.
     """
-    missing = [
-        name for name in _REGISTRY_RESOLVER_METHODS if not callable(getattr(resolver, name, None))
+    problems = [
+        problem
+        for name in _REGISTRY_RESOLVER_METHODS
+        if (problem := _protocol_method_problem(resolver, name)) is not None
     ]
-    if missing:
+    if problems:
         raise TypeError(
             f"{type(resolver).__name__} does not implement RegistryResolverProtocol: "
-            f"missing {', '.join(missing)}"
+            f"{'; '.join(problems)}"
         )
     return cast(RegistryResolverProtocol, resolver)
+
+
+def _protocol_method_problem(resolver: object, name: str) -> str | None:
+    """Why ``resolver.<name>`` cannot stand in for the protocol method, or ``None``."""
+    method = getattr(resolver, name, None)
+    if not callable(method):
+        return f"missing {name}"
+    declared = getattr(RegistryResolverProtocol, name)
+    if inspect.iscoroutinefunction(declared) and not inspect.iscoroutinefunction(method):
+        return f"{name} is not async"
+    try:
+        actual = inspect.signature(method)
+    except (TypeError, ValueError):  # no introspectable signature; trust the caller
+        return None
+    # Every call the protocol allows must bind: all its parameters given, and
+    # only its required ones given (so the implementation requires no more).
+    params = list(inspect.signature(declared).parameters.values())[1:]  # drop ``self``
+    for call in (params, [p for p in params if p.default is inspect.Parameter.empty]):
+        args = [p.name for p in call if p.kind is not inspect.Parameter.KEYWORD_ONLY]
+        kwargs = {p.name: p.name for p in call if p.kind is inspect.Parameter.KEYWORD_ONLY}
+        try:
+            actual.bind(*args, **kwargs)
+        except TypeError as exc:
+            return f"{name} cannot take the protocol's arguments ({exc})"
+    return None
 
 
 _REGISTRY_RESOLVER_METHODS = tuple(
