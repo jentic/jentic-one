@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
@@ -49,7 +50,9 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorStatus, JobKind, JobStatus, StoredCredentialType
+from jentic_one.shared.models.held_executions import HeldExecutionState
 from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration
@@ -611,3 +614,72 @@ async def test_concurrent_purges_delete_once(
         "delete",
         "revoke",
     ]
+
+
+async def _seed_hold(ctx: Context, agent_id: str, *, state: HeldExecutionState) -> tuple[str, str]:
+    """A held execution in ``state`` with its job (``held`` while pending); returns both ids."""
+    job_status = JobStatus.HELD if state == HeldExecutionState.PENDING else JobStatus.COMPLETED
+    async with ctx.admin_db.transaction() as session:
+        job = Job(kind=JobKind.EXECUTION, status=job_status, created_by=agent_id)
+        session.add(job)
+        await session.flush()
+        held = HeldExecution(
+            job_id=job.id,
+            agent_id=agent_id,
+            credential_id="cred_purge_hold",
+            api_vendor="stripe",
+            api_name="payments",
+            api_version="v1",
+            method="POST",
+            path="/v1/refunds",
+            request_fingerprint=generate_ksuid("fp").ljust(64, "0"),
+            state=state,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            created_by=agent_id,
+        )
+        session.add(held)
+        await session.flush()
+        return str(held.id), str(job.id)
+
+
+@pytest.mark.parametrize("operation", ["archive", "purge"])
+async def test_archive_and_purge_withdraw_pending_holds(
+    integration_context: Context, purge_env: _Fixture, operation: str
+) -> None:
+    """An archived agent's call never runs, so its pending holds leave the review
+    queue: withdrawn by the archiving actor, held job cancelled, audited. A decided
+    hold is history and stays as it is."""
+    ctx = integration_context
+    agent_id = await purge_env.agent()
+    pending_id, pending_job = await _seed_hold(ctx, agent_id, state=HeldExecutionState.PENDING)
+    decided_id, decided_job = await _seed_hold(ctx, agent_id, state=HeldExecutionState.APPROVED)
+    identity = _admin_identity(purge_env.admin_id)
+
+    await getattr(AgentService(ctx), operation)(agent_id, identity=identity)
+
+    async with ctx.admin_db.session() as session:
+        pending = await session.get(HeldExecution, pending_id)
+        decided = await session.get(HeldExecution, decided_id)
+        assert pending is not None and decided is not None
+        assert pending.state == HeldExecutionState.WITHDRAWN
+        assert pending.decided_by == purge_env.admin_id
+        assert decided.state == HeldExecutionState.APPROVED
+        jobs = {
+            j.id: j.status
+            for j in (
+                await session.execute(select(Job).where(Job.id.in_([pending_job, decided_job])))
+            ).scalars()
+        }
+        assert jobs == {pending_job: JobStatus.CANCELLED, decided_job: JobStatus.COMPLETED}
+        withdrawals = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.target_id == pending_id, AuditEntry.action == "withdraw"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [w.actor_id for w in withdrawals] == [purge_env.admin_id]

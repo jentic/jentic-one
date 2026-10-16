@@ -66,6 +66,7 @@ from jentic_one.shared.events import (
     emit_event_best_effort,
     summary_label,
 )
+from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
@@ -606,7 +607,8 @@ class AgentService:
         Shared by ``archive`` and the first step of ``purge``; each caller
         passes its own revocation cause so a purge never reads as an archive.
         Flush-only and not best-effort: a failed sweep rolls the caller's
-        transaction back.
+        transaction back. Pending held calls the agent filed are withdrawn
+        and their held jobs cancelled, since an archived agent's call never runs.
 
         The permission-grant wipe gets its own ``REVOKE`` audit entry on the
         agent, snapshotting the grants held at archive time; it is skipped
@@ -641,6 +643,22 @@ class AgentService:
                 cause=summary_cause,
             )
         await AgentCredentialBindingRepository.delete_for_agent(session, agent.id)
+        withdrawn = await withdraw_pending_for_agent(
+            session,
+            agent.id,
+            actor_id=identity.sub,
+            actor_type=identity.actor_type.value,
+            origin=identity.origin.value,
+            reason=f"held call withdrawn: agent {summary_cause}",
+        )
+        if withdrawn:
+            logger.info(
+                "held_executions_withdrawn",
+                agent_id=agent.id,
+                actor_id=identity.sub,
+                count=withdrawn,
+                cause=summary_cause,
+            )
         await revoke_active_grants_for_agent(
             session,
             agent.id,

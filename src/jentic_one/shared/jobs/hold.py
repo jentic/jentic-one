@@ -39,6 +39,7 @@ APPROVAL_PENDING = HeldExecutionState.PENDING
 APPROVAL_APPROVED = HeldExecutionState.APPROVED
 APPROVAL_DENIED = HeldExecutionState.DENIED
 APPROVAL_EXPIRED = HeldExecutionState.EXPIRED
+APPROVAL_WITHDRAWN = HeldExecutionState.WITHDRAWN
 
 #: Problem types a failed held job's result carries. All are 403
 #: permission-denied problems: the call never reached the upstream.
@@ -485,6 +486,80 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None
             },
         )
     return len(expired)
+
+
+async def withdraw_pending_for_agent(
+    session: AsyncSession,
+    agent_id: str,
+    *,
+    actor_id: str,
+    actor_type: str,
+    origin: str,
+    reason: str,
+) -> int:
+    """Withdraw every pending approval ``agent_id`` filed and cancel its held job.
+
+    The agent-archive sweep (archive, and the first step of a purge): an
+    archived agent's held calls can never run, so they leave reviewers'
+    queues instead of waiting to expire. Runs in the caller's transaction;
+    each approval, its job, its audit entry (attributed to the archiving
+    actor) and its ``execution.approval_withdrawn`` event settle together.
+    Returns the number withdrawn.
+    """
+    now = await db_now(session)
+    result = await session.execute(
+        update(HeldExecution)
+        .where(HeldExecution.agent_id == agent_id, HeldExecution.state == APPROVAL_PENDING)
+        .values(state=APPROVAL_WITHDRAWN, decided_at=now, decided_by=actor_id)
+        .returning(
+            HeldExecution.id,
+            HeldExecution.job_id,
+            HeldExecution.method,
+            HeldExecution.path,
+            HeldExecution.trace_id,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    withdrawn = list(result.all())
+    for approval_id, job_id, method, path, trace_id in withdrawn:
+        await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.HELD)
+            .values(status=JobStatus.CANCELLED, visible_at=None)
+        )
+        await AuditRepository.record(
+            session,
+            action=AuditAction.WITHDRAW,
+            target_type=AuditTargetType.HELD_EXECUTION,
+            target_id=approval_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            before={"state": APPROVAL_PENDING.value},
+            after={"state": APPROVAL_WITHDRAWN.value},
+            job_id=job_id,
+            trace_id=trace_id,
+            reason=reason,
+            origin=origin,
+        )
+        await emit_event_best_effort(
+            session,
+            type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
+            severity=EventSeverity.INFO,
+            summary=f"Execution approval {approval_id} withdrawn",
+            trace_id=trace_id,
+            job_id=job_id,
+            created_by=agent_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            data={
+                "held_execution_id": approval_id,
+                "agent_id": agent_id,
+                "method": method,
+                "path": path,
+            },
+        )
+    await session.flush()
+    return len(withdrawn)
 
 
 async def set_execution_id_for_job(session: AsyncSession, job_id: str, execution_id: str) -> None:
