@@ -111,6 +111,17 @@ control-plane URL. Re-register with both URLs.
 The database must live on a named volume, not a host bind mount — Docker
 Desktop's file sharing lacks the locking semantics SQLite needs.
 
+## Import fails: `relative server URL '…' has no base URL`
+
+The description's `servers` list holds only relative URLs (`/api/v3`), which
+are relative to wherever the document is served. They resolve when the API is
+imported from the description's own URL; an inline paste or upload, or a
+catalog entry, has no usable base. Import from the URL instead, or edit the
+description so its server URL is absolute (`https://api.example.com/api/v3`).
+APIs imported before relative servers were resolved keep host-relative
+operations that `execute` refuses with `RESOLVE_FAILED` ("has no upstream
+host"); re-import them the same way.
+
 ## `credential_undecryptable` (424) on execute
 
 The stored data is intact; the key is wrong. A credential row is decrypted

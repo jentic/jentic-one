@@ -65,6 +65,24 @@ class HostOwnedByOtherVendorIngestError(IngestStageError):
         super().__init__(f"Cannot import this spec as live: {detail}")
 
 
+class RelativeServerUrlError(IngestStageError):
+    """Raised when a server list declares only relative URLs and no base resolves them.
+
+    A relative server URL (``/api/v3``) is relative to the document's location,
+    so it resolves only for a spec imported from its own URL. Without that base
+    every operation it covers would have no upstream host, so the import is
+    refused. The message leads with the first offending URL: the job error
+    column keeps only the first 128 characters.
+    """
+
+    def __init__(self, urls: list[str]) -> None:
+        self.urls = urls
+        more = f" (+{len(urls) - 1} more)" if len(urls) > 1 else ""
+        super().__init__(
+            f"relative server URL {urls[0]!r}{more} has no base URL; use an absolute server URL"
+        )
+
+
 class MissingRequiredKeysError(IngestStageError):
     """Raised when required keys are missing from stage context."""
 

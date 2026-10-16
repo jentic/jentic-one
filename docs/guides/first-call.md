@@ -65,6 +65,17 @@ what you've imported. You can also register your own OpenAPI description for a
 private service — same custody, permissions, and audit trail. To correct an
 imported description without editing the original, use [Overlays](overlays.md).
 
+The broker routes every call by its upstream host, so each declared server
+URL must end up absolute. A relative one (`url: /api/v3`, as in the stock
+Petstore) resolves against the URL you import the description from —
+`https://petstore3.swagger.io/api/v3/openapi.json` gives
+`https://petstore3.swagger.io/api/v3`. A description pasted or uploaded inline
+has no such base: if a `servers` list holds only relative URLs, the import
+fails with `relative server URL '…' has no base URL`; relative entries next to
+absolute ones are dropped. Catalog imports never resolve against the catalog's
+mirror URL. A description that declares no `servers` at all imports as
+inspect-only — `execute` refuses its operations with `RESOLVE_FAILED`.
+
 ## 4. Store a credential *(authenticated APIs only)*
 
 httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
