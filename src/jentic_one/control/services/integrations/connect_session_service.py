@@ -44,7 +44,7 @@ from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
 from jentic_one.control.repos.connect_session_repo import LIVE_STATES, ConnectSessionRepository
-from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.effects_repo import AgentOwnerRow, EffectsRepository
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
@@ -739,15 +739,16 @@ def _require_state(row: ConnectSession, *, expected: str, action: str) -> None:
         raise InvalidStateTransitionError(row.id, row.state, action)
 
 
-def _forbid_self_confirm(row: ConnectSession, caller_actor_type: ActorType) -> None:
-    """Agent-initiated sessions must be confirmed by a human on the review page.
+def _forbid_agent_confirm(caller_actor_type: ActorType) -> None:
+    """Every session is confirmed by a human on the review page, never by an agent.
 
-    ``caller_actor_type`` comes from the caller's verified identity, not from
-    the payload.
+    This holds whoever started the session: a poll token reaching an agent
+    (its own ask, or one a user started for it) must never let the agent
+    approve its own access. ``caller_actor_type`` comes from the caller's
+    verified identity, not from the payload.
     """
-    initiator_is_agent = row.initiator_actor_id.startswith("agnt_")
-    if initiator_is_agent and caller_actor_type == ActorType.AGENT:
-        raise ConfirmationForbiddenError("agent-initiated sessions cannot be confirmed by an agent")
+    if caller_actor_type == ActorType.AGENT:
+        raise ConfirmationForbiddenError("connect sessions cannot be confirmed by an agent")
 
 
 def _poll_token_matches(row: ConnectSession, token: str | None) -> bool:
@@ -762,6 +763,11 @@ def _poll_token_matches(row: ConnectSession, token: str | None) -> bool:
 _UNUSABLE_AGENT_STATUSES: frozenset[str] = frozenset(
     {ActorStatus.ARCHIVED.value, ActorStatus.DISABLED.value, ActorStatus.REJECTED.value}
 )
+
+
+def _is_org_admin(identity: Identity) -> bool:
+    """``org:admin`` among the caller's effective permissions (implied grants count)."""
+    return ORG_ADMIN in compute_effective(set(identity.permissions))
 
 
 def _is_owner_approver(identity: Identity) -> bool:
@@ -860,22 +866,26 @@ class ConnectSessionService:
         """Create a pending session + upfront credential row.
 
         ``identity`` is the initiator. An agent caller may name only itself
-        (the router forces that); a user may name only an agent they own,
-        and ``org:admin`` any agent. Any other ``agent_id`` is refused as
-        :class:`AgentNotFoundError` before anything is counted or written,
-        so a session can never land in another owner's console or count
-        against their open-session caps. When ``agent_id`` is None no
+        (the router forces that); a user may name only an agent they own and
+        could approve for, and ``org:admin`` any agent. Any other
+        ``agent_id`` is refused before anything is counted or written (see
+        :meth:`_require_session_agent_allowed`), so a session can never land
+        in another owner's console or count against their open-session caps.
+        When ``agent_id`` is None no
         agent-credential binding is created at confirm time — the user is
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
 
-        A repeat ask from an agent that already has an open session for the
-        same request returns that session (same id and ``approval_url``)
-        with a fresh ``poll_token``; the old token stops working. An agent
+        A repeat ask from an agent that already has an open session it
+        started for the same request returns that session (same id and
+        ``approval_url``) with a fresh ``poll_token``; the old token stops
+        working. A session started by someone else — a user naming the
+        agent, or the agent when a user asks — is never reused: each
+        initiator keeps its own session, poll token and request. An agent
         whose ask for the same target a human rejected within the cooldown
         gets :class:`RecentlyRejectedError`.
         """
-        await self._require_session_agent_allowed(agent_id, identity)
+        agent = await self._require_session_agent_allowed(agent_id, identity)
         initiator_actor_id = identity.sub
         if api_target is not None:
             if not self._manual_flows_enabled:
@@ -884,7 +894,8 @@ class ConnectSessionService:
                 api_target,
                 auth_type=auth_type,
                 agent_id=agent_id,
-                initiator_actor_id=initiator_actor_id,
+                agent=agent,
+                identity=identity,
                 requested_scopes=requested_scopes or [],
                 preferred_flow=preferred_flow,
                 reason=reason,
@@ -935,7 +946,7 @@ class ConnectSessionService:
             reused = await self._reuse_open_session(_find_open)
             if reused is not None:
                 return reused
-        cap_scope = await self._check_open_session_caps(agent_id, initiator_actor_id)
+        cap_scope = await self._check_open_session_caps(agent_id, identity, agent)
 
         session_app = self._session_app_for(resolved)
 
@@ -1008,19 +1019,14 @@ class ConnectSessionService:
         # "who started this, when, for which vendor" from the audit log
         # rather than only from ephemeral scanner state. Best-effort so a
         # failed admin-DB write never rolls back the committed session.
-        # Actor type is inferred from the id prefix — the router already
-        # resolves it, but we deliberately don't thread ``Identity`` into
-        # this service method so agent callers stay decoupled from the
-        # confirm/binding surface.
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.CREATE,
             target_type=AuditTargetType.SESSION,
             target_id=row.id,
-            actor_type=actor_type_label_from_id(initiator_actor_id),
+            actor_type=identity.actor_type.value,
             actor_id=initiator_actor_id,
-            # Agents open connect sessions; humans only confirm them.
-            origin=Origin.AGENT.value,
+            origin=identity.origin.value,
             after={
                 "vendor": vendor_key,
                 "resolved_flow": flow.kind,
@@ -1028,7 +1034,7 @@ class ConnectSessionService:
                 "credential_id": row.credential_id,
             },
         )
-        await self._emit_session_created(row, vendor_display_name=entry.display_name)
+        await self._emit_session_created(row, vendor_display_name=entry.display_name, agent=agent)
         # Kick off the vendor's OpenAPI import as early as we can — the SPA
         # opens the connect dialog and immediately calls ``:connect``, so
         # firing here (rather than at ``:confirm``) gives the import
@@ -1050,7 +1056,8 @@ class ConnectSessionService:
         *,
         auth_type: str | None,
         agent_id: str | None,
-        initiator_actor_id: str,
+        agent: AgentOwnerRow | None,
+        identity: Identity,
         requested_scopes: list[str],
         preferred_flow: str | None,
         reason: str | None,
@@ -1067,7 +1074,13 @@ class ConnectSessionService:
         resolves its app like a vendor connect (pin → config entry → the one
         covering shared app); with none, the session waits in
         ``awaiting_app``.
+
+        Only an agent's own ask is deduplicated, against the open session it
+        started for the same API identity — like a vendor target. A user
+        naming the agent always gets a session of their own, so neither side
+        can rotate the other's poll token or swap the other's request.
         """
+        initiator_actor_id = identity.sub
         view = await self._lookup_api(target.vendor, target.name, target.version)
         if view is None:
             raise UnknownApiError(target.vendor, target.name, target.version)
@@ -1082,8 +1095,10 @@ class ConnectSessionService:
             api_version=view.version,
         )
 
+        agent_started = agent_id is not None and agent_id == initiator_actor_id
+
         async def _find_open(db: Any) -> ConnectSession | None:
-            assert agent_id is not None
+            assert agent_id is not None and agent_started
             return await ConnectSessionRepository.get_open_api_target(
                 db,
                 agent_id=agent_id,
@@ -1092,11 +1107,11 @@ class ConnectSessionService:
                 api_version=view.version,
             )
 
-        if agent_id is not None:
+        if agent_started:
             reused = await self._reuse_open_session(_find_open)
             if reused is not None:
                 return reused
-        cap_scope = await self._check_open_session_caps(agent_id, initiator_actor_id)
+        cap_scope = await self._check_open_session_caps(agent_id, identity, agent)
 
         manual = manual_handler_for_scheme(scheme.kind)
         oauth_source: tuple[str, ResolvedVendorSource] | None = None
@@ -1197,7 +1212,8 @@ class ConnectSessionService:
                     created_by=initiator_actor_id,
                 )
         except DatabaseIntegrityError:
-            if agent_id is None:
+            # A concurrent identical agent ask won the dedupe index.
+            if not agent_started:
                 raise
             reused = await self._reuse_open_session(_find_open)
             if reused is None:
@@ -1220,9 +1236,9 @@ class ConnectSessionService:
             action=AuditAction.CREATE,
             target_type=AuditTargetType.SESSION,
             target_id=row.id,
-            actor_type=actor_type_label_from_id(initiator_actor_id),
+            actor_type=identity.actor_type.value,
             actor_id=initiator_actor_id,
-            origin=Origin.AGENT.value,
+            origin=identity.origin.value,
             after={
                 "target_kind": TARGET_KIND_API,
                 "vendor": view.vendor,
@@ -1234,7 +1250,9 @@ class ConnectSessionService:
                 "credential_id": row.credential_id,
             },
         )
-        await self._emit_session_created(row, vendor_display_name=f"{view.vendor}/{view.name}")
+        await self._emit_session_created(
+            row, vendor_display_name=f"{view.vendor}/{view.name}", agent=agent
+        )
         return CreatedSession(
             session_id=row.id,
             approval_url=self._approval_url_for(row.id),
@@ -1317,12 +1335,13 @@ class ConnectSessionService:
         raise RecentlyRejectedError(retry_after)
 
     async def _check_open_session_caps(
-        self, agent_id: str | None, initiator_actor_id: str
+        self, agent_id: str | None, identity: Identity, agent: AgentOwnerRow | None
     ) -> _CapScope | None:
         """Refuse a new session past the per-agent or per-owner open-session cap.
 
         Enforced while ``manual_flows_enabled`` is on. The owner is the
-        agent's owner, or the initiating user when no agent is named; an
+        agent's owner (``agent`` is the row :meth:`_require_session_agent_allowed`
+        already read), or the initiating user when no agent is named; an
         owner's count covers their own sessions and their agents'. This is
         the early refusal; :meth:`_enforce_open_session_caps` repeats the
         count under a lock inside the creating transaction, so concurrent
@@ -1332,14 +1351,13 @@ class ConnectSessionService:
         if not self._manual_flows_enabled:
             return None
         owner_id: str | None = None
+        if agent_id is not None:
+            owner_id = agent.owner_id if agent is not None else None
+        elif identity.actor_type == ActorType.USER:
+            owner_id = identity.sub
         owned: list[str] = []
-        async with self._ctx.admin_db.session() as admin_session:
-            if agent_id is not None:
-                agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
-                owner_id = agent.owner_id if agent is not None else None
-            elif actor_type_label_from_id(initiator_actor_id) == ActorType.USER.value:
-                owner_id = initiator_actor_id
-            if owner_id is not None:
+        if owner_id is not None:
+            async with self._ctx.admin_db.session() as admin_session:
                 owned = await PrerequisiteRepository.list_agent_ids_owned_by(
                     admin_session, owner_id=owner_id
                 )
@@ -1390,25 +1408,26 @@ class ConnectSessionService:
         return _session_app_from_flow(resolved.flow)
 
     async def _emit_session_created(
-        self, row: ConnectSession, *, vendor_display_name: str | None
+        self,
+        row: ConnectSession,
+        *,
+        vendor_display_name: str | None,
+        agent: AgentOwnerRow | None,
     ) -> None:
         """Emit the informational ``connect_session.created`` rail event (best-effort).
 
-        Only for agent-initiated sessions with a target agent — the signal is
-        "your agent is waiting for you"; a human connecting in the SPA is
-        already looking at the result. ``created_by`` is the agent, so the
-        owner-scoped event read shows the row to the agent's owner (and
-        ``org:admin``). The open session carries the live state, so the event
-        never asks for action. The summary and data name only the agent, the
-        vendor and the session — never the poll token.
+        Only for sessions an agent started for itself — the signal is "your
+        agent is waiting for you"; a human connecting in the SPA is already
+        looking at the result. ``agent`` is the row read when the session was
+        allowed, so its name needs no second lookup. ``created_by`` is the
+        agent, so the owner-scoped event read shows the row to the agent's
+        owner (and ``org:admin``). The open session carries the live state,
+        so the event never asks for action. The summary and data name only
+        the agent, the vendor and the session — never the poll token.
         """
-        if row.agent_id is None:
-            return
-        if actor_type_label_from_id(row.initiator_actor_id) != ActorType.AGENT.value:
+        if row.agent_id is None or row.initiator_actor_id != row.agent_id:
             return
         try:
-            async with self._ctx.admin_db.session() as admin_session:
-                agent = await EffectsRepository.get_agent_owner(admin_session, row.agent_id)
             agent_name = agent.name if agent is not None else None
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -1605,13 +1624,13 @@ class ConnectSessionService:
         """Whether ``identity`` may confirm the session as it stands (no side effects)."""
         if row.state not in ("created", AWAITING_APP):
             return False
-        if identity.actor_type == ActorType.AGENT and row.initiator_actor_id.startswith("agnt_"):
+        if identity.actor_type == ActorType.AGENT:
             return False
         if row.agent_id is None:
             return True
         if agent is None or agent.status in _UNUSABLE_AGENT_STATUSES:
             return False
-        if ORG_ADMIN in identity.permissions:
+        if _is_org_admin(identity):
             return True
         return (
             agent.owner_id is not None
@@ -1936,7 +1955,7 @@ class ConnectSessionService:
             credential.oauth_app_registration_id if credential is not None else None
         )
 
-        _forbid_self_confirm(row, identity.actor_type)
+        _forbid_agent_confirm(identity.actor_type)
         if row.state in ("created", AWAITING_APP):
             _require_confirm_kind(row, CONFIRM_KIND_OAUTH)
         # Friendly pre-check for the common stale-page case; the CAS below
@@ -2149,7 +2168,7 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
-        _forbid_self_confirm(row, identity.actor_type)
+        _forbid_agent_confirm(identity.actor_type)
         if row.state not in ("created", AWAITING_APP):
             raise InvalidStateTransitionError(row.id, row.state, "confirm")
 
@@ -2618,32 +2637,49 @@ class ConnectSessionService:
 
     async def _require_session_agent_allowed(
         self, agent_id: str | None, identity: Identity
-    ) -> None:
+    ) -> AgentOwnerRow | None:
         """The agent a new session names must be one the caller may act for.
 
-        An agent may name only itself. A user may name an agent they own;
-        ``org:admin`` may name any existing agent. A missing agent and one
-        owned by someone else raise the same :class:`AgentNotFoundError`, so
-        the route is not an agent-ownership oracle. Naming an archived,
-        disabled or rejected agent is refused up front, since its session
+        Returns the agent's row (``None`` when no agent is named, or when an
+        agent caller has no admin-DB row) so the caps and the rail event need
+        no second admin-DB read.
+
+        An agent may name only itself. It is not checked for status here:
+        its access token and API key resolve only while it is active, so an
+        archived, disabled or rejected agent never gets this far.
+
+        A user may name an agent they own; ``org:admin`` (effective, so an
+        implied grant counts) may name any existing agent. A missing agent
+        and one owned by someone else — or by nobody — raise the same
+        :class:`AgentNotFoundError`, so the route is not an agent-ownership
+        oracle. Only after ownership is settled are the remaining refusals
+        reached, so neither leaks anything about another owner's agent: an
+        owner who could never approve for the agent (``credentials:write``
+        and ``agents:write``, the confirm gate) gets
+        :class:`ConfirmationForbiddenError`, and an archived, disabled or
+        rejected agent :class:`AgentInactiveError`, since such a session
         could never be confirmed.
         """
         if agent_id is None:
-            return
-        if identity.actor_type != ActorType.USER:
-            if agent_id != identity.sub:
-                raise AgentNotFoundError(agent_id)
-            return
+            return None
+        if identity.actor_type != ActorType.USER and agent_id != identity.sub:
+            raise AgentNotFoundError(agent_id)
         async with self._ctx.admin_db.session() as admin_session:
             agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
+        if identity.actor_type != ActorType.USER:
+            return agent
         if agent is None:
             raise AgentNotFoundError(agent_id)
-        if ORG_ADMIN not in identity.permissions and (
-            agent.owner_id is None or agent.owner_id != identity.sub
-        ):
-            raise AgentNotFoundError(agent_id)
+        if not _is_org_admin(identity):
+            if agent.owner_id is None or agent.owner_id != identity.sub:
+                raise AgentNotFoundError(agent_id)
+            if not _is_owner_approver(identity):
+                raise ConfirmationForbiddenError(
+                    "starting a session for an agent requires credentials:write and agents:write"
+                )
         if agent.status in _UNUSABLE_AGENT_STATUSES:
             raise AgentInactiveError(agent_id, agent.status)
+        return agent
 
     async def _require_agent_binding_allowed(self, agent_id: str, identity: Identity) -> None:
         """The target agent must exist, be governable by the caller, and be usable.
@@ -2661,7 +2697,7 @@ class ConnectSessionService:
             agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
         if agent is None:
             raise AgentNotFoundError(agent_id)
-        if ORG_ADMIN not in identity.permissions:
+        if not _is_org_admin(identity):
             # An ownerless agent (nullable ``owner_id``) has no owner to
             # match — only ``org:admin`` may bind in its name. Fail closed.
             if agent.owner_id is None or identity.sub != agent.owner_id:
@@ -2706,7 +2742,7 @@ class ConnectSessionService:
         """``org:admin``, or the human owning ``agent_id`` with both write permissions."""
         if identity.actor_type != ActorType.USER or not identity.sub:
             return False
-        if ORG_ADMIN in identity.permissions:
+        if _is_org_admin(identity):
             return True
         if agent_id is None or not _is_owner_approver(identity):
             return False
@@ -2720,11 +2756,7 @@ class ConnectSessionService:
         Only humans own agents; ``org:admin`` is unrestricted already, so both
         skip the admin-DB lookup.
         """
-        if (
-            ORG_ADMIN in identity.permissions
-            or identity.actor_type != ActorType.USER
-            or not identity.sub
-        ):
+        if _is_org_admin(identity) or identity.actor_type != ActorType.USER or not identity.sub:
             return []
         async with self._ctx.admin_db.session() as admin_session:
             return await PrerequisiteRepository.list_agent_ids_owned_by(

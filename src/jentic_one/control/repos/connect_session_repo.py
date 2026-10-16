@@ -229,11 +229,16 @@ class ConnectSessionRepository:
         api_name: str,
         api_version: str,
     ) -> ConnectSession | None:
-        """The agent's open session for an API identity (the dedupe index's key)."""
+        """The open session the agent started for itself for an API identity.
+
+        The dedupe index's key: a session a user started naming the agent is
+        never returned, so an agent's repeat ask cannot pick it up.
+        """
         stmt = select(ConnectSession).where(
             ConnectSession.target_kind == TARGET_KIND_API,
             ConnectSession.state.in_(LIVE_STATES),
             ConnectSession.agent_id == agent_id,
+            ConnectSession.initiator_actor_id == agent_id,
             ConnectSession.vendor == vendor,
             ConnectSession.api_name == api_name,
             ConnectSession.api_version == api_version,

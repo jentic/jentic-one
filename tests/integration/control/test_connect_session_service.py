@@ -1976,6 +1976,7 @@ async def _seed_api_session(
     agent_id: str | None = _AGENT_ID,
     api_version: str = "1.0.0",
     poll_token: str = "api-poll-token",
+    initiator_actor_id: str = _AGENT_ID,
 ) -> str:
     """Write an ``api``-target session and its pending credential directly.
 
@@ -1999,7 +2000,7 @@ async def _seed_api_session(
             target_kind="api",
             vendor="example-com",
             agent_id=agent_id,
-            initiator_actor_id=_AGENT_ID,
+            initiator_actor_id=initiator_actor_id,
             state=state,
             resolved_flow=resolved_flow,
             poll_token_hash=hash_secret(f"{poll_token}-{api_version}-{state}"),
@@ -2253,6 +2254,10 @@ async def test_open_api_target_dedupe_index(
     await _seed_api_session(ctx, state="connected", poll_token="third")
     await _seed_api_session(ctx, agent_id=None, poll_token="fourth")
     await _seed_api_session(ctx, agent_id=None, poll_token="fifth")
+    # Only the agent's own asks are deduped: sessions a user starts naming the
+    # agent sit beside the agent's open one, and beside each other.
+    await _seed_api_session(ctx, initiator_actor_id=_USER_ID, poll_token="sixth")
+    await _seed_api_session(ctx, initiator_actor_id=_USER_ID, poll_token="seventh")
 
 
 async def test_repeat_agent_vendor_ask_reuses_the_open_session(

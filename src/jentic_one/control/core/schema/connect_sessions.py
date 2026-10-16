@@ -21,11 +21,14 @@ from jentic_one.shared.db.types import json_variant
 TARGET_KIND_VENDOR = "vendor"
 TARGET_KIND_API = "api"
 
-# One open session per agent and API identity. Mirrors the repository's live
-# states; kept as a literal so the index predicate is plain, portable SQL.
+# One open agent-started session per agent and API identity. Only a session
+# the agent started for itself (``initiator_actor_id = agent_id``) is deduped
+# — a user naming the agent always gets a session of their own, like a vendor
+# target. Mirrors the repository's live states; kept as a literal so the index
+# predicate is plain, portable SQL.
 _OPEN_API_TARGET_PREDICATE = (
     "target_kind = 'api' AND state IN ('created', 'awaiting_app', 'polling') "
-    "AND agent_id IS NOT NULL"
+    "AND agent_id IS NOT NULL AND initiator_actor_id = agent_id"
 )
 
 # One open agent-started session per agent, vendor key and OAuth request

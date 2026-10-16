@@ -201,15 +201,16 @@ class IntegrationsConnectRequest(BaseModel):
             "several active registrations offer the flow."
         ),
     )
-    # Optional for user callers (must be an agent they own; any agent for
-    # org:admin); refused for agent callers.
+    # Optional for user callers (an active agent they own and may approve
+    # for; any agent for org:admin); refused for agent callers.
     agent_id: str | None = Field(
         default=None,
         examples=[ex.AGENT_ID],
         description=(
-            "ID of the agent to bind the credential to on confirm; it must be an agent the "
-            "caller owns (any agent for `org:admin`). Agent callers must omit it, and when "
-            "omitted by a user the credential connects unbound."
+            "ID of the agent to bind the credential to on confirm; it must be an active agent "
+            "the caller owns and may approve for (`agents:write`), or any agent for "
+            "`org:admin`. Agent callers must omit it, and when omitted by a user the credential "
+            "connects unbound."
         ),
     )
     # Cap mirrors the sister ``/credentials`` endpoints — a scope list

@@ -199,9 +199,8 @@ class ServiceAccountMigrationOutcome:
     #: widens to the owner's resources; (c) ``sak_`` keys no longer
     #: authenticate (0.41): callers need a ``jak_`` key for the successor,
     #: and as an agent ``POST /oauth/mint`` is gone (404),
-    #: ``/integrations:connect`` refuses ``agent_id`` in the body, and an
-    #: agent-initiated connect session cannot be confirmed by the agent itself
-    #: (``_forbid_self_confirm``).
+    #: ``/integrations:connect`` refuses ``agent_id`` in the body, and no
+    #: connect session can be confirmed by an agent (``_forbid_agent_confirm``).
     owner_visibility_note: str | None = None
     reason: str | None = None
     #: The scope names copied onto the successor.
