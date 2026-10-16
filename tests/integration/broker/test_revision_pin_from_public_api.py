@@ -13,8 +13,9 @@ ASGI with the real registry resolver and binding deriver. They assert:
 - the ``revision_id`` from ``GET .../revisions/{revision_id}`` and from the import
   job result pins the same way;
 - the ``rev_<hex>`` label still pins (backward compatibility);
-- a pinned revision wins over the live one for a URL both serve — over HTTP
-  through ``_handle`` — and the pin resolves to exactly the listed revision;
+- a pinned revision wins over the live one — over HTTP through ``_handle``, a
+  URL only the live revision serves is matched unpinned and is 404 once pinned
+  to a draft that drops it — and the pin resolves to exactly the listed revision;
 - a ``revision_id`` pin the caller may not use (another API's revision, a random
   id, an archived revision, another user's draft) is refused with the problem
   type its ``rev_`` equivalent gets, and the detail echoes the id as sent.
@@ -68,6 +69,7 @@ VERSION = "1.0.0"
 HOST = "93.184.215.14"
 WIDGETS_PATH = f"/{HOST}/v1/widgets"
 GADGETS_PATH = f"/{HOST}/v1/gadgets"
+GIZMOS_PATH = f"/{HOST}/v1/gizmos"
 WRITER = "usr_public_pin_writer"
 OTHER_WRITER = "usr_public_pin_other_writer"
 REVISIONS_URL = f"/apis/{VENDOR}/{NAME}/{VERSION}/revisions"
@@ -259,7 +261,7 @@ async def test_rev_hex_label_still_pins(env: Context) -> None:
 
 
 async def test_listed_revision_id_pins_over_the_live_revision(env: Context) -> None:
-    live = await _promote(env, await _import(env, ["/v1/widgets"]))
+    live = await _promote(env, await _import(env, ["/v1/widgets", "/v1/gizmos"]))
     await _import(env, ["/v1/widgets", "/v1/gadgets"])
     (draft_id,) = await _listed_revision_ids(env, state="draft")
     assert draft_id != live
@@ -267,12 +269,17 @@ async def test_listed_revision_id_pins_over_the_live_revision(env: Context) -> N
     async with _broker(env) as broker:
         unpinned = await broker.get(GADGETS_PATH)
         pinned = await broker.get(GADGETS_PATH, headers=_pin(draft_id))
-        # The live revision serves this URL too, so the broker discovers it
-        # unpinned first and then re-resolves through the pin (``resolve_pin_for_api``).
-        pinned_over_live = await broker.get(WIDGETS_PATH, headers=_pin(draft_id))
+        live_only_unpinned = await broker.get(GIZMOS_PATH)
+        # Only the live revision serves this URL, so the broker discovers it
+        # unpinned, re-resolves it against the pinned draft through
+        # ``resolve_pin_for_api``, and finds no operation there.
+        live_only_pinned = await broker.get(GIZMOS_PATH, headers=_pin(draft_id))
     assert unpinned.status_code == 404, unpinned.text
     _assert_matched(pinned)
-    _assert_matched(pinned_over_live)
+    _assert_matched(live_only_unpinned)
+    assert live_only_pinned.status_code == 404, live_only_pinned.text
+    assert live_only_pinned.json()["type"] == "operation_not_found"
+    assert live_only_pinned.json()["detail"] == "Operation not found in the pinned revision."
 
     # The pin resolves to exactly the listed draft, and a URL both revisions
     # serve answers from the draft when pinned and from the live one unpinned.
