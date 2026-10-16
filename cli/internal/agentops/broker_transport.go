@@ -18,10 +18,11 @@ import (
 type BrokerTransportRecovery string
 
 const (
-	// RecoverWait means the broker refused the call before dispatching it to
-	// the upstream (circuit open, runner degraded, admission shed, rate limit,
-	// transient credential refresh): re-sending the same call after a wait is
-	// safe for any method, because the upstream never saw it.
+	// RecoverWait means the broker failed the call before the upstream could
+	// act on it (circuit open, runner degraded, admission shed, resolution
+	// overloaded, rate limit, transient credential refresh, connect failure):
+	// re-sending the same call after a wait is safe for any method, because
+	// the upstream never saw it.
 	RecoverWait BrokerTransportRecovery = "wait"
 	// RecoverTimeout means the broker ran out of time on the call. The request
 	// may already have reached the upstream, so a retry is only safe when the
@@ -36,34 +37,49 @@ const (
 	RecoverUnknown BrokerTransportRecovery = "unknown"
 )
 
-// brokerTransientProblemTypes are the wire types the broker emits when it
-// refuses a call before dispatching it upstream, and that a later identical
-// call can succeed on. Matched exactly against the broker's own identifiers:
+// brokerTransientProblemTypes are the wire types the broker emits when it fails
+// a call before the upstream could act on it, and that a later identical call
+// can succeed on. Matched exactly against the broker's own identifiers:
 // circuit_open (CircuitOpenError, 503 + Retry-After), runner_unavailable
 // (RunnerUnavailableError, 503), server_at_capacity (the admission middleware's
-// 503 + Retry-After), refresh_transient_error (CredentialRefreshTransientError,
-// 502) and rate_limit_exceeded (RateLimitExceededError, 429 + Retry-After).
+// 503 + Retry-After), too_many_candidates (TooManyCandidatesError, 503:
+// operation resolution overloaded, before dispatch), refresh_transient_error
+// (CredentialRefreshTransientError, 502: the token refresh failed before
+// dispatch), upstream_connect_failed (UpstreamTimeoutError raised in the connect
+// phase, 504: no request bytes were sent) and rate_limit_exceeded
+// (RateLimitExceededError, 429 + Retry-After).
 var brokerTransientProblemTypes = map[string]bool{
 	"circuit_open":            true,
 	"runner_unavailable":      true,
 	"server_at_capacity":      true,
+	"too_many_candidates":     true,
 	"refresh_transient_error": true,
+	"upstream_connect_failed": true,
 	"rate_limit_exceeded":     true,
+}
+
+// brokerTimeoutProblemTypes are the wire types for a call the broker ran out of
+// time on after sending it: upstream_timeout (UpstreamTimeoutError, 504: one
+// attempt's read timed out) and deadline_exceeded (DeadlineExceededError, 504:
+// the overall deadline).
+var brokerTimeoutProblemTypes = map[string]bool{
+	"upstream_timeout":  true,
+	"deadline_exceeded": true,
 }
 
 // BrokerTransportRecoveryFor routes a broker-origin 5xx/429 by status and exact
 // problem type. Any 429 is a wait (the status itself means "slow down, then
-// retry"). deadline_exceeded (DeadlineExceededError) and an untyped 504
-// (UpstreamTimeoutError carries no type of its own) are timeouts.
+// retry"). The timeout types may have reached the upstream.
 // runner_scheme_unsupported (RunnerSchemeUnsupportedError, 501) needs a
-// different operation. Everything else, including an untyped 502
-// (UpstreamResponseTooLargeError carries no type of its own), is unknown.
+// different operation. Everything else is unknown, including
+// upstream_response_too_large (UpstreamResponseTooLargeError, 502: the upstream
+// answered, so the call ran) and upstream_transport_error (the connection failed
+// mid-request).
 func BrokerTransportRecoveryFor(status int, problemType string) BrokerTransportRecovery {
 	switch {
 	case status == http.StatusTooManyRequests || brokerTransientProblemTypes[problemType]:
 		return RecoverWait
-	case problemType == "deadline_exceeded",
-		status == http.StatusGatewayTimeout && (problemType == "" || problemType == "about:blank"):
+	case brokerTimeoutProblemTypes[problemType]:
 		return RecoverTimeout
 	case problemType == "runner_scheme_unsupported":
 		return RecoverScheme
@@ -87,14 +103,19 @@ func BrokerTransportRetryable(rec BrokerTransportRecovery, retrySafe bool) bool 
 }
 
 // RetrySafe reports whether re-sending a call cannot double-execute it: a
-// GET/HEAD, or a call carrying an Idempotency-Key the broker de-duplicates on.
+// GET/HEAD (case-insensitive), or a call carrying a non-blank Idempotency-Key
+// the broker de-duplicates on. Pass the key that rides the wire (the built
+// request's header), so a key supplied via a custom header counts too. The MCP
+// mount's twin is jentic_one.mcp.execute.retry_safe.
 func RetrySafe(method, idempotencyKey string) bool {
-	return idempotencyKey != "" || method == http.MethodGet || method == http.MethodHead
+	return strings.TrimSpace(idempotencyKey) != "" ||
+		strings.EqualFold(method, http.MethodGet) || strings.EqualFold(method, http.MethodHead)
 }
 
-// BrokerTransportError classifies a 5xx or 429 the broker itself emitted (its
-// circuit breaker is open, a runner is degraded, it shed the call, it timed
-// out, it cannot carry the scheme). It is a TRANSPORT_ERROR (exit 1), not an
+// BrokerTransportError classifies a 5xx or 429 the broker itself generated (its
+// circuit breaker is open, a runner is degraded, it shed the call, a token
+// refresh failed, it timed out or hit its deadline, it aborted an oversized
+// response, it cannot carry the scheme). It is a TRANSPORT_ERROR (exit 1), not an
 // upstream response that exits 0 (#1531). Details carry http_status, origin,
 // problem_type, the retryable hint and, when the broker sent Retry-After,
 // retry_after_s.
@@ -102,9 +123,9 @@ func RetrySafe(method, idempotencyKey string) bool {
 // Like BrokerError it requires Jentic-Error-Origin to say "broker" explicitly.
 // The header decides, never the body: a vendor 5xx the broker mirrored is
 // stamped "upstream" and is the caller's data, and a missing header keeps the
-// same pass-through reading. The broker stamps "upstream" on its own timeout,
-// deadline, response-size and refresh failures too (the time or bytes were the
-// vendor's), so those keep passing through as well.
+// same pass-through reading. Every error the broker generates itself is stamped
+// "broker", including its timeout, deadline, response-size and refresh failures
+// (#1675).
 func BrokerTransportError(r *ExecuteResult, retrySafe bool) *ux.CodedError {
 	if r == nil || (r.Status < 500 && r.Status != http.StatusTooManyRequests) ||
 		errorOrigin(r) != errorOriginBroker {

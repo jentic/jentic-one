@@ -253,13 +253,15 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	if err != nil {
 		return s.softError(cctx, err), nil
 	}
+	// Retrying is provably safe when the call cannot double-execute: a GET/HEAD,
+	// or a mutating call the broker de-duplicates on its Idempotency-Key. Both
+	// failure paths read the key off the built request, so one passed via
+	// `headers` counts the same as `idempotency_key`.
+	retrySafe := agentops.RetrySafe(op.Method, breq.Header.Get("Idempotency-Key"))
 	res, err := agentops.DoWith(hc, breq)
 	if err != nil {
-		// Retrying is provably safe when the call cannot double-execute: a
-		// GET/HEAD, or a mutating call the broker de-duplicates on its
-		// Idempotency-Key. Anything else defers to the pre-send/mid-flight
+		// Anything not provably retry-safe defers to the pre-send/mid-flight
 		// classification inside executeTransportError.
-		retrySafe := agentops.RetrySafe(op.Method, execReq.IdempotencyKey)
 		return s.executeTransportError(cctx, err, retrySafe), nil
 	}
 	s.logger.Info(toolName, "target", target, "method", op.Method, "status", res.Status, "execution_id", res.ExecutionID)
@@ -287,7 +289,6 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// scheme unsupported) is a soft TRANSPORT_ERROR, not a normal result
 	// (#1531). The retryable hint is earned from the problem type, and the
 	// broker's Retry-After rides along when it sent one.
-	retrySafe := agentops.RetrySafe(op.Method, breq.Header.Get("Idempotency-Key"))
 	if coded := agentops.BrokerTransportError(res, retrySafe); coded != nil {
 		return s.executeBrokerTransportError(cctx, coded), nil
 	}

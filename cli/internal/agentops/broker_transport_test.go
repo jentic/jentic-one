@@ -55,14 +55,31 @@ func TestBrokerTransportError(t *testing.T) {
 			want: true, wantRetryable: true, wantRec: RecoverWait,
 		},
 		{
-			name: "upstream timeout (UpstreamTimeoutError, untyped 504) on an unsafe call",
-			res:  brokerTransportResult(504, "broker", "", `{"type":"about:blank","title":"The upstream did not respond within the deadline.","status":504}`),
+			name: "upstream timeout (UpstreamTimeoutError) on an unsafe call",
+			res: brokerTransportResult(504, "broker", "",
+				`{"type":"upstream_timeout","title":"The upstream did not respond within the deadline.","status":504,"error_origin":"broker"}`),
 			want: true, wantRetryable: false, wantRec: RecoverTimeout,
 		},
 		{
 			name: "upstream timeout on a retry-safe call", retrySafe: true,
-			res:  brokerTransportResult(504, "broker", "", `{"type":"about:blank","title":"The upstream did not respond within the deadline.","status":504}`),
+			res:  brokerTransportResult(504, "broker", "", `{"type":"upstream_timeout","title":"The upstream did not respond within the deadline.","status":504}`),
 			want: true, wantRetryable: true, wantRec: RecoverTimeout,
+		},
+		{
+			name: "connect failure (UpstreamTimeoutError, pre-send) is retryable on an unsafe call",
+			res: brokerTransportResult(504, "broker", "",
+				`{"type":"upstream_connect_failed","title":"The upstream connection could not be established in time.","status":504}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait,
+		},
+		{
+			name: "too many candidates (TooManyCandidatesError) fails before dispatch",
+			res:  brokerTransportResult(503, "broker", "", `{"type":"too_many_candidates","title":"Discovery matched too many candidates.","status":503}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait,
+		},
+		{
+			name: "an untyped broker 504 is unknown, never a guessed timeout", retrySafe: true,
+			res:  brokerTransportResult(504, "broker", "", `{"type":"about:blank","title":"Gateway Timeout","status":504}`),
+			want: true, wantRetryable: false, wantRec: RecoverUnknown,
 		},
 		{
 			name: "deadline exceeded (DeadlineExceededError) on a retry-safe call", retrySafe: true,
@@ -76,14 +93,20 @@ func TestBrokerTransportError(t *testing.T) {
 			want: true, wantRetryable: false, wantRec: RecoverScheme,
 		},
 		{
-			name: "response too large (UpstreamResponseTooLargeError, untyped 502) is never retryable", retrySafe: true,
+			name: "response too large (UpstreamResponseTooLargeError) is never retryable", retrySafe: true,
 			res: brokerTransportResult(502, "broker", "",
-				`{"type":"about:blank","title":"The upstream response exceeded the 1048576-byte response-size cap.","status":502,"max_response_bytes":1048576}`),
+				`{"type":"upstream_response_too_large","title":"The upstream response exceeded the 1048576-byte response-size cap.","status":502,"max_response_bytes":1048576}`),
 			want: true, wantRetryable: false, wantRec: RecoverUnknown,
 		},
 		{
 			name: "unknown broker 5xx type defaults to not retryable", retrySafe: true,
 			res:  brokerTransportResult(500, "broker", "", `{"type":"streaming_unsupported","title":"The wrapped runner does not support streaming.","status":500}`),
+			want: true, wantRetryable: false, wantRec: RecoverUnknown,
+		},
+		{
+			name: "mid-request transport failure (upstream_transport_error) is never retryable", retrySafe: true,
+			res: brokerTransportResult(500, "broker", "",
+				`{"type":"upstream_transport_error","title":"Upstream transport error (RemoteProtocolError)","status":500}`),
 			want: true, wantRetryable: false, wantRec: RecoverUnknown,
 		},
 		{
@@ -125,24 +148,15 @@ func TestBrokerTransportError(t *testing.T) {
 			name: "missing origin keeps pass-through",
 			res:  brokerTransportResult(502, "", "", `{"type":"circuit_open"}`),
 		},
-		// The broker stamps "upstream" on its own timeout, deadline, refresh and
-		// response-size failures (broker/adapters/runners, credentials/orchestrator),
-		// so in their real wire shape they keep passing through too.
+		// A vendor 504/502 the broker mirrored stays the caller's data even when
+		// its body happens to carry one of the broker's own type identifiers.
 		{
-			name: "upstream-stamped UpstreamTimeoutError passes through",
-			res:  brokerTransportResult(504, "upstream", "", `{"type":"about:blank","title":"The upstream did not respond within the deadline.","status":504,"error_origin":"upstream"}`),
+			name: "mirrored vendor 504 with a timeout-shaped body passes through",
+			res:  brokerTransportResult(504, "upstream", "", `{"type":"upstream_timeout","status":504}`),
 		},
 		{
-			name: "upstream-stamped DeadlineExceededError passes through",
-			res:  brokerTransportResult(504, "upstream", "", `{"type":"deadline_exceeded","status":504,"error_origin":"upstream"}`),
-		},
-		{
-			name: "upstream-stamped CredentialRefreshTransientError passes through",
-			res:  brokerTransportResult(502, "upstream", "", `{"type":"refresh_transient_error","status":502,"error_origin":"upstream"}`),
-		},
-		{
-			name: "upstream-stamped UpstreamResponseTooLargeError passes through",
-			res:  brokerTransportResult(502, "upstream", "", `{"type":"about:blank","status":502,"error_origin":"upstream"}`),
+			name: "mirrored vendor 502 with a refresh-shaped body passes through",
+			res:  brokerTransportResult(502, "upstream", "", `{"type":"refresh_transient_error","status":502}`),
 		},
 		{
 			name: "broker 4xx stays on the resolve-failure path",
@@ -259,10 +273,51 @@ func TestRetrySafe(t *testing.T) {
 		{http.MethodPost, "", false},
 		{http.MethodPost, "idem-1", true},
 		{http.MethodDelete, "", false},
+		// Parity with jentic_one.mcp.execute.retry_safe (test_retry_safe).
+		{"get", "", true},
+		{"head", "", true},
+		{http.MethodPost, "   ", false},
+		{http.MethodPost, "\tidem-1\n", true},
+		{http.MethodPut, "\t", false},
 	}
 	for _, tc := range cases {
 		if got := RetrySafe(tc.method, tc.key); got != tc.want {
 			t.Errorf("RetrySafe(%s, %q) = %v, want %v", tc.method, tc.key, got, tc.want)
+		}
+	}
+}
+
+// TestBrokerTransportRecoveryForParity is the shared routing table: the MCP
+// mount's twin (test_broker_transport_recovery_parity in
+// tests/unit/mcp/test_broker_transport_error.py) asserts the same rows, so the
+// two lanes classify every broker problem type identically.
+func TestBrokerTransportRecoveryForParity(t *testing.T) {
+	cases := []struct {
+		status      int
+		problemType string
+		want        BrokerTransportRecovery
+	}{
+		{503, "circuit_open", RecoverWait},
+		{503, "runner_unavailable", RecoverWait},
+		{503, "server_at_capacity", RecoverWait},
+		{503, "too_many_candidates", RecoverWait},
+		{502, "refresh_transient_error", RecoverWait},
+		{504, "upstream_connect_failed", RecoverWait},
+		{429, "rate_limit_exceeded", RecoverWait},
+		{429, "", RecoverWait},
+		{504, "upstream_timeout", RecoverTimeout},
+		{504, "deadline_exceeded", RecoverTimeout},
+		{501, "runner_scheme_unsupported", RecoverScheme},
+		{502, "upstream_response_too_large", RecoverUnknown},
+		{500, "upstream_transport_error", RecoverUnknown},
+		{504, "about:blank", RecoverUnknown},
+		{504, "", RecoverUnknown},
+		{503, "about:blank", RecoverUnknown},
+		{500, "streaming_unsupported", RecoverUnknown},
+	}
+	for _, tc := range cases {
+		if got := BrokerTransportRecoveryFor(tc.status, tc.problemType); got != tc.want {
+			t.Errorf("BrokerTransportRecoveryFor(%d, %q) = %q, want %q", tc.status, tc.problemType, got, tc.want)
 		}
 	}
 }

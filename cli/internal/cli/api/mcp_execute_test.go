@@ -524,6 +524,25 @@ func TestMCPExecute_MidflightFailureWithIdempotencyKeyIsRetryable(t *testing.T) 
 	}
 }
 
+// TestMCPExecute_MidflightFailureWithHeaderIdempotencyKeyIsRetryable: an
+// Idempotency-Key passed via `headers` rides the wire just like
+// `idempotency_key`, so the network-failure path honours it too (parity with
+// the 5xx path and with the Python mount).
+func TestMCPExecute_MidflightFailureWithHeaderIdempotencyKeyIsRetryable(t *testing.T) {
+	broker := midflightBroker(t)
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"POST:/v1/pets","body":{"name":"Bob"},"headers":{"Idempotency-Key":"key-1"}}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeTransportError || payload["retryable"] != true {
+		t.Errorf("payload = {error_code: %v, retryable: %v}, want a retryable TRANSPORT_ERROR (header-keyed POST is de-duplicated)",
+			payload["error_code"], payload["retryable"])
+	}
+}
+
 // TestMCPExecuteRead_MidflightFailureIsRetryable: a GET cannot mutate, so a
 // mid-flight failure on the read variant keeps the retryable hint.
 func TestMCPExecuteRead_MidflightFailureIsRetryable(t *testing.T) {
@@ -1278,9 +1297,15 @@ func TestMCPExecute_BrokerTransportErrorIsError(t *testing.T) {
 	}{
 		{"circuit open", "circuit_open", "12", "POST:/v1/pets", "", "get_started", 503, true},
 		{"runner unavailable", "runner_unavailable", "", "POST:/v1/pets", "", "get_started", 503, true},
+		{"too many candidates", "too_many_candidates", "", "POST:/v1/pets", "", "get_started", 503, true},
 		{"refresh transient", "refresh_transient_error", "", "POST:/v1/pets", "", "get_started", 502, true},
+		{"connect failed on an unkeyed POST", "upstream_connect_failed", "", "POST:/v1/pets", "", "get_started", 504, true},
 		{"timeout on an unkeyed POST", "deadline_exceeded", "", "POST:/v1/pets", "", "get_started", 504, false},
 		{"timeout on a keyed POST", "deadline_exceeded", "", "POST:/v1/pets", `,"idempotency_key":"idem-1"`, "get_started", 504, true},
+		{"timeout on a POST keyed via headers", "deadline_exceeded", "", "POST:/v1/pets", `,"headers":{"Idempotency-Key":"idem-1"}`, "get_started", 504, true},
+		{"timeout on a POST with a blank key", "deadline_exceeded", "", "POST:/v1/pets", `,"idempotency_key":"   "`, "get_started", 504, false},
+		{"upstream timeout on a read", "upstream_timeout", "", "GET:/v1/pets", "", "get_started", 504, true},
+		{"response too large", "upstream_response_too_large", "", "GET:/v1/pets", "", "get_started", 502, false},
 		{"scheme unsupported", "runner_scheme_unsupported", "", "POST:/v1/pets", "", "search_apis", 501, false},
 		{"unknown type", "streaming_unsupported", "", "POST:/v1/pets", "", "get_started", 500, false},
 		{"rate limited", "rate_limit_exceeded", "60", "GET:/v1/pets", "", "get_started", 429, true},

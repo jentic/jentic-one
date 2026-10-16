@@ -1,0 +1,20 @@
+exit: 1
+--- stdout ---
+{
+  "body": {
+    "detail": "The upstream did not respond within the deadline.",
+    "error_origin": "broker",
+    "status": 504,
+    "title": "The upstream did not respond within the deadline.",
+    "type": "upstream_timeout"
+  },
+  "headers": {
+    "Content-Length": "185",
+    "Content-Type": "application/problem+json",
+    "Jentic-Error-Origin": "broker"
+  },
+  "schema_version": "1",
+  "status": 504
+}
+--- stderr ---
+{"actionable_step":"Wait briefly and re-run the same `jentic execute` (it is a read or carries an Idempotency-Key, so a retry cannot double-execute it).","details":{"http_status":504,"origin":"broker","problem_type":"upstream_timeout","retryable":true},"error":"the broker could not complete this call (HTTP 504): The upstream did not respond within the deadline.","error_code":"TRANSPORT_ERROR","schema_version":"1"}

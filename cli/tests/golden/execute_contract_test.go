@@ -203,6 +203,16 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"type":"circuit_open","title":"Upstream circuit open; the broker is fast-failing to let it recover.","status":503,"detail":"Upstream circuit open; the broker is fast-failing to let it recover.","error_origin":"broker"}`))
 	}
+	// A broker-origin 504 (UpstreamTimeoutError) in the exact shape the broker
+	// renders it since #1675: stamped broker and typed upstream_timeout, so a
+	// read is a retryable TRANSPORT_ERROR (exit 1) instead of an exit-0 result.
+	brokerUpstreamTimeout504 := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(`{"type":"upstream_timeout","title":"The upstream did not respond within the deadline.","status":504,"detail":"The upstream did not respond within the deadline.","error_origin":"broker"}`))
+	}
 	// The same status mirrored from the vendor (origin UPSTREAM): the caller's
 	// data, exit 0 — the header decides, not the status.
 	brokerUpstream503 := func(w http.ResponseWriter, _ *http.Request) {
@@ -268,6 +278,11 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			name:   "execute_broker_transport_circuit_open_json",
 			target: "GET:/v1/pets",
 			broker: brokerCircuitOpen503,
+		},
+		{
+			name:   "execute_broker_transport_upstream_timeout_json",
+			target: "GET:/v1/pets",
+			broker: brokerUpstreamTimeout504,
 		},
 		{
 			name:   "execute_upstream_5xx_passthrough_json",
