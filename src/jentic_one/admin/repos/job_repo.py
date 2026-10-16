@@ -181,3 +181,35 @@ class JobRepository:
         result = await session.execute(stmt)
         await session.flush()
         return int(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def cancel_queued_executions_for_actor(session: AsyncSession, actor_id: str) -> list[str]:
+        """Cancel the actor's *queued* execution jobs; returns the cancelled ids, sorted.
+
+        The disable/archive sweep (#1674). Narrower than
+        :meth:`cancel_active_for_actor`: only ``kind = execution`` and
+        ``status = queued`` rows created by ``actor_id`` match. A running
+        execution is left alone, as cancelling it would discard a result whose
+        upstream call has already happened; the worker's execution-time actor
+        check refuses it instead. Import and other job kinds are untouched.
+
+        A queued row includes one requeued after a failed attempt (it carries a
+        future ``visible_at``), so ``visible_at`` is cleared on cancel, as on
+        every other terminal transition. The single conditional ``UPDATE``
+        races safely with the worker's claim: a row the worker has already
+        flipped to ``running`` no longer matches the ``status`` predicate.
+        """
+        stmt = (
+            update(Job)
+            .where(
+                Job.created_by == actor_id,
+                Job.kind == JobKind.EXECUTION.value,
+                Job.status == JobStatus.QUEUED.value,
+            )
+            .values(status=JobStatus.CANCELLED.value, visible_at=None)
+            .returning(Job.id)
+        )
+        result = await session.execute(stmt)
+        job_ids = sorted(str(job_id) for job_id in result.scalars().all())
+        await session.flush()
+        return job_ids

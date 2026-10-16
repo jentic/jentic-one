@@ -15,6 +15,7 @@ from jentic_one.admin.repos import (
     UserSecretRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
@@ -359,6 +360,13 @@ class UserService:
                 active=False,
             )
             await ExternalIdentityRepository.delete_for_user(session, user_id)
+            await cancel_queued_executions_for_actor(
+                session,
+                actor_id=user_id,
+                target_type=AuditTargetType.USER,
+                cause="was deleted",
+                identity=identity,
+            )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DELETE,
@@ -382,6 +390,16 @@ class UserService:
             ensure_can_manage(user_id, identity, permission_sets)
             await ensure_not_last_active_admin(session, user_id)
             await UserRepository.disable(session, user_id)
+            # A queued execution job runs with its creator's authority, so
+            # one left queued would run for a user who can no longer act
+            # (#1674). Re-enabling does not requeue it.
+            await cancel_queued_executions_for_actor(
+                session,
+                actor_id=user_id,
+                target_type=AuditTargetType.USER,
+                cause="was disabled",
+                identity=identity,
+            )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DISABLE,

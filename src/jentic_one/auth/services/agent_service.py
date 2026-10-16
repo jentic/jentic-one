@@ -23,6 +23,7 @@ from jentic_one.admin.repos import (
     RefreshTokenRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
 from jentic_one.auth.repos import (
     AgentControlPurgeRepository,
     BindingRuleRepository,
@@ -430,6 +431,16 @@ class AgentService:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DISABLE, identity=identity)
             await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
+            # Queued execution jobs, unlike grants, are not dormant state: they
+            # would run under the agent's authority the moment a worker claims
+            # them. Cancel them with the status change (#1674).
+            await cancel_queued_executions_for_actor(
+                session,
+                actor_id=agent_id,
+                target_type=AuditTargetType.AGENT,
+                cause="was disabled",
+                identity=identity,
+            )
             await record_audit(
                 session,
                 action=AuditAction.DISABLE,
@@ -494,8 +505,8 @@ class AgentService:
 
         1. An agent that is not yet archived is archived first, in its own
            committed transaction: the status flip, permission grants,
-           credential bindings and OAuth consent grants are swept, and an
-           ``ARCHIVE`` audit entry is written. Its authority is gone before
+           credential bindings, OAuth consent grants and queued execution
+           jobs are swept, and an ``ARCHIVE`` audit entry is written. Its authority is gone before
            any cleanup runs, so a failure in a later step leaves it archived
            (inert), and a retry carries the purge through.
         2. One control-DB transaction tears down the agent's connect sessions
@@ -613,7 +624,9 @@ class AgentService:
 
         The permission-grant wipe gets its own ``REVOKE`` audit entry on the
         agent, snapshotting the grants held at archive time; it is skipped
-        when the agent holds none.
+        when the agent holds none. The agent's queued execution jobs are
+        cancelled too (an ``UPDATE`` audit entry when there are any); running
+        jobs are left to the worker's execution-time actor check.
         """
         await AgentRepository.archive(session, agent.id)
         held = [
@@ -653,6 +666,13 @@ class AgentService:
             summary_cause=summary_cause,
             log_event=log_event,
             agent_name=agent.name,
+        )
+        await cancel_queued_executions_for_actor(
+            session,
+            actor_id=agent.id,
+            target_type=AuditTargetType.AGENT,
+            cause=summary_cause,
+            identity=identity,
         )
 
     def _can_bind_credential(self, identity: Identity, created_by: str | None) -> bool:

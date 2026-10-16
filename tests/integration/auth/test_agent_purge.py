@@ -457,14 +457,28 @@ async def test_purge_removes_authority_and_sessions_and_keeps_history(
             ),
         )
         assert grant_revokes == 1
-    archive, purge, revoke = await _agent_audits(ctx, target)
-    assert (archive.action, purge.action, revoke.action) == ("archive", "delete", "revoke")
+    archive, purge, revoke, cancel = await _agent_audits(ctx, target)
+    assert (archive.action, purge.action, revoke.action, cancel.action) == (
+        "archive",
+        "delete",
+        "revoke",
+        "update",
+    )
     assert {archive.reason, purge.reason} == {_PURGE_REASON}
-    assert {archive.actor_id, purge.actor_id, revoke.actor_id} == {purge_env.admin_id}
+    assert {archive.actor_id, purge.actor_id, revoke.actor_id, cancel.actor_id} == {
+        purge_env.admin_id
+    }
     # The inline archive step audits the permission-grant wipe.
     assert revoke.before == {"permissions": ["apis:read"]}
     assert revoke.after == {"permissions": []}
     assert revoke.reason == "permissions revoked: agent was deleted"
+    # It also cancels the queued execution job (#1674); the running one is
+    # left for step 3's sweep.
+    assert cancel.reason == "queued execution jobs cancelled: agent was deleted"
+    assert cancel.after == {
+        "cancelled_queued_execution_jobs": 1,
+        "job_ids": [seeded.jobs[JobStatus.QUEUED]],
+    }
     assert purge.before == {
         "name": "purge-target",
         "owner_id": purge_env.owner_id,
@@ -549,8 +563,14 @@ async def test_failed_control_sweep_leaves_agent_archived_and_retry_finishes(
         agent = await AgentRepository.get_by_id(session, agent_id)
         assert agent is not None and agent.status == ActorStatus.ARCHIVED
     left = await _swept(ctx, agent_id, seeded)
-    assert left["rules"] == 1 and left["sessions"] == 2 and left["active_jobs"] == 2
-    assert [a.action for a in await _agent_audits(ctx, agent_id)] == ["archive", "revoke"]
+    # Step 1's archive cancels the queued execution job (#1674); the running
+    # one waits for step 3.
+    assert left["rules"] == 1 and left["sessions"] == 2 and left["active_jobs"] == 1
+    assert [a.action for a in await _agent_audits(ctx, agent_id)] == [
+        "archive",
+        "revoke",
+        "update",
+    ]
 
     await AgentService(ctx).purge(agent_id, identity=_admin_identity(purge_env.admin_id))
 
@@ -559,6 +579,7 @@ async def test_failed_control_sweep_leaves_agent_archived_and_retry_finishes(
         "archive",
         "delete",
         "revoke",
+        "update",
     ]
 
 
@@ -610,4 +631,5 @@ async def test_concurrent_purges_delete_once(
         "archive",
         "delete",
         "revoke",
+        "update",
     ]
