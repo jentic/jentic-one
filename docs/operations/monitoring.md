@@ -140,3 +140,39 @@ its record was silently dropped — the only signal that happened),
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
+
+### Per-request stage timing (`Server-Timing`)
+
+To see where one broker request spends its time without a profiler, set
+`broker.server_timing: true` (`JENTIC__BROKER__SERVER_TIMING=true`). Execute
+responses to authenticated callers then carry a W3C
+[`Server-Timing`](https://www.w3.org/TR/server-timing/) header — durations in
+milliseconds, fixed stage names only (never URLs, ids or secrets):
+
+```text
+Server-Timing: auth;dur=1.4, discover;dur=0.9, rules;dur=2.1, cred;dur=3.0, upstream;dur=84.2, persist;dur=4.7, total;dur=97.6
+```
+
+| Stage | Covers |
+| ----- | ------ |
+| `auth` | Token validation, the execute-permission check and the rate limit |
+| `discover` | Operation discovery, including `Jentic-Revision` pin resolution |
+| `rules` | Credential-binding derivation and permission-rule evaluation |
+| `cred` | Credential resolution and injection |
+| `upstream` | The upstream call (buffered: the whole exchange, retries included; streaming: until the upstream response headers arrive) |
+| `persist` | The execution record and lifecycle events (buffered path only), including the `FAILED` record written when the upstream call fails (timeout, connect error, open circuit) |
+| `total` | Request entry to response headers |
+
+On the streaming fast path the headers are sent before the body, and the
+execution record is written after it, so `persist` is absent there. If the
+upstream sent its own `Server-Timing`, it is passed through unchanged and the
+broker's entries follow as a second header field. Async (`202`) and held
+responses carry only the stages that ran before them (`auth`, `discover`,
+`rules`, `total`). Requests rejected before the caller is fully admitted — a
+`401`, a `403` for a missing execute permission, a rate-limit `429`, a
+load-shed `503` — carry no broker timing at all.
+
+The flag is **off by default** and should stay off on deployments exposed to
+callers you don't trust with it: per-stage latencies help fingerprint the
+deployment and can serve as a timing side channel (e.g. telling a cache hit
+from a database read).

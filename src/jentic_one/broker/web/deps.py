@@ -20,6 +20,7 @@ from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.exceptions import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.api_key_resolver import (
@@ -184,11 +185,16 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
     pure pass-through of ``require_execute_permission``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
+
+    The opt-in ``auth`` Server-Timing stage is recorded only when every check
+    passes, so a rejected caller gets no timing data.
     """
+    timing = stage_start()
     resolved = await require_execute_permission(request)
 
     limiter: RateLimiter | None = getattr(request.app.state, "broker_rate_limiter", None)
     if limiter is None:
+        stage_end(ServerTimingStage.AUTH, timing)
         return resolved
 
     outcome = await limiter.acquire(resolved.sub)
@@ -201,6 +207,7 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
             type="rate_limit_exceeded",
             headers=headers,
         )
+    stage_end(ServerTimingStage.AUTH, timing)
     return resolved
 
 

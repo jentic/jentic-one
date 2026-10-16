@@ -64,6 +64,7 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedLinks,
     HeldExecutionAcceptedResponse,
 )
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.discovery import (
@@ -527,6 +528,7 @@ async def _handle(
     # lookup — never an uncaught 500 mid-discovery.
     pins = parse_revisions(_revision_header(request))
 
+    discover_timing = stage_start()
     resolved = await discover(resolver, method=method, url=upstream_url)
     pinned_revisions: dict[str, str] | None = None
     if resolved is None and pins:
@@ -575,6 +577,8 @@ async def _handle(
                 )
             }
 
+    stage_end(ServerTimingStage.DISCOVER, discover_timing)
+
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
     )
@@ -586,6 +590,7 @@ async def _handle(
     # Direct agent→credential bindings (theme-5): every caller kind rides this
     # path — retired toolkit keys resolve as successor agents. The legacy
     # toolkit-derivation path was deleted in Phase 6b.
+    rules_timing = stage_start()
     authorization = await authorize_execution(
         ctx=ctx,
         identity=identity,
@@ -604,6 +609,7 @@ async def _handle(
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
+    stage_end(ServerTimingStage.RULES, rules_timing)
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
     if selected_credential is not None:
@@ -729,6 +735,7 @@ async def _execute_buffered(
     connection (or, on SQLite, the database write lock).
     """
     credential_name = request.headers.get("jentic-credential-name")
+    cred_timing = stage_start()
     injection = await _resolve_credentials(
         ctx_req,
         ctx,
@@ -749,6 +756,7 @@ async def _execute_buffered(
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
+    stage_end(ServerTimingStage.CRED, cred_timing)
 
     broker = _resolve_broker(request, runner)
     return await run_execution(
@@ -791,6 +799,7 @@ async def _handle_streaming(
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
+    cred_timing = stage_start()
     injection = await _resolve_credentials(
         ctx_req,
         ctx,
@@ -811,6 +820,7 @@ async def _handle_streaming(
         except ValueError as exc:
             raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
     forwarded = forward_headers(request.headers, auth_headers)
+    stage_end(ServerTimingStage.CRED, cred_timing)
 
     execution_id = mint_execution_id()
     started_at = datetime.now(UTC)
@@ -836,7 +846,11 @@ async def _handle_streaming(
         )
 
     broker = _resolve_broker(request, runner)
-    return await broker.execute_streaming(
+    # Returns once the upstream response headers are in; the body (and its
+    # persistence) follow after this response's headers are sent, so the
+    # streaming ``upstream`` stage is the header wait and ``persist`` is absent.
+    upstream_timing = stage_start()
+    response = await broker.execute_streaming(
         runner,
         runner_request,
         ctx_req,
@@ -844,6 +858,8 @@ async def _handle_streaming(
         transfer_deadline_s=upstream_cfg.transfer_deadline_s,
         background_callback=_persist_callback,
     )
+    stage_end(ServerTimingStage.UPSTREAM, upstream_timing)
+    return response
 
 
 def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:

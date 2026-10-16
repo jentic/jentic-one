@@ -21,6 +21,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunne
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
     BrokerExecutionPipeline,
@@ -199,10 +200,16 @@ async def run_execution(
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
             with jentic_tracestate(tracestate_member):
-                outcome = await broker.execute(runner_request, exec_context)
+                upstream_timing = stage_start()
+                try:
+                    outcome = await broker.execute(runner_request, exec_context)
+                finally:
+                    stage_end(ServerTimingStage.UPSTREAM, upstream_timing)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         # Committed before the re-raise that maps the BrokerError to HTTP.
+        # ``persist`` is timed here too, so a failed call's header reports it.
+        persist_timing = stage_start()
         async with admin_db.transaction() as session:
             await _persist(
                 ctx_req,
@@ -247,6 +254,7 @@ async def run_execution(
                         )
                     except Exception:
                         logger.warning("emit_circuit_event_failed", host=host)
+        stage_end(ServerTimingStage.PERSIST, persist_timing)
         raise
 
     result = outcome.result
@@ -266,6 +274,7 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
+    persist_timing = stage_start()
     async with admin_db.transaction() as session:
         await _persist(
             ctx_req,
@@ -310,6 +319,7 @@ async def run_execution(
             error_tags=error_tags,
             origin=origin,
         )
+    stage_end(ServerTimingStage.PERSIST, persist_timing)
 
     return outcome
 
