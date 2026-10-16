@@ -36,8 +36,8 @@ async def _extra_status() -> dict[str, str]:
 def prometheus_broker_client(sample_config_dict: dict[str, Any]) -> Iterator[TestClient]:
     """A standalone broker app built with the Prometheus exporter enabled.
 
-    Restores whatever global MeterProvider was installed beforehand so other
-    modules that pin their own in-memory provider at import time keep it.
+    Restores whatever global MeterProvider was installed beforehand so the
+    fixture leaves the process-wide metrics state as it found it.
     """
     previous_provider = metrics._internal._METER_PROVIDER
     reset_metrics()

@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opentelemetry import metrics, trace
-from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 from structlog.contextvars import get_contextvars
 
+from jentic_one.registry.ingest import observability
 from jentic_one.registry.ingest.exc import IngestPipelineError, IngestStageError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
@@ -25,19 +22,6 @@ from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.pipeline.pipeline import Pipeline, PipelineFactory
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.services.import_service import ImportHandler
-from jentic_one.shared.metrics import reset_metrics
-from jentic_one.shared.tracing import reset_tracing
-
-_span_exporter = InMemorySpanExporter()
-_metric_reader = InMemoryMetricReader()
-_tracer_provider = TracerProvider()
-_tracer_provider.add_span_processor(SimpleSpanProcessor(_span_exporter))
-_meter_provider = MeterProvider(metric_readers=[_metric_reader])
-
-reset_tracing()
-reset_metrics()
-trace.set_tracer_provider(_tracer_provider)
-metrics.set_meter_provider(_meter_provider)
 
 
 class PassingStage(BasePipelineStage):
@@ -55,10 +39,18 @@ class FailingStage(BasePipelineStage):
         raise ValueError("boom")
 
 
-@pytest.fixture(autouse=True)
-def _clear_spans() -> Generator[None, None, None]:
-    _span_exporter.clear()
-    yield
+@pytest.fixture()
+def span_exporter(
+    otel_span_exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> InMemorySpanExporter:
+    """Route the ingest tracer to this test's in-memory provider.
+
+    ``observability.tracer`` is a module-level ``ProxyTracer`` that caches the
+    first provider it resolves against; clearing that cache makes it resolve
+    against the provider ``otel_span_exporter`` just installed.
+    """
+    monkeypatch.setattr(observability.tracer, "_real_tracer", None)
+    return otel_span_exporter
 
 
 def _make_spec() -> IngestSpecification:
@@ -94,7 +86,9 @@ def _get_metrics(reader: InMemoryMetricReader) -> dict[str, Any]:
     return result
 
 
-async def test_happy_path_spans() -> None:
+async def test_happy_path_spans(
+    span_exporter: InMemorySpanExporter, otel_metric_reader: InMemoryMetricReader
+) -> None:
     """Successful ingest produces the expected span tree and metrics."""
     ctx_mock = _make_ctx_mock()
 
@@ -107,7 +101,7 @@ async def test_happy_path_spans() -> None:
 
     assert result.operation_count == 2
 
-    spans = _span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()
     span_names = [s.name for s in spans]
     assert "ingest.stage pass_stage" in span_names
     assert "ingest.pipeline" in span_names
@@ -133,7 +127,7 @@ async def test_happy_path_spans() -> None:
     assert pipeline_span.parent.span_id == ingest_span.context.span_id  # type: ignore[union-attr]
     assert stage_span.parent.span_id == pipeline_span.context.span_id  # type: ignore[union-attr]
 
-    metrics_data = _get_metrics(_metric_reader)
+    metrics_data = _get_metrics(otel_metric_reader)
     assert "ingest.total" in metrics_data
     assert "ingest.duration_ms" in metrics_data
     assert "ingest.operation_count" in metrics_data
@@ -141,7 +135,9 @@ async def test_happy_path_spans() -> None:
     assert "ingest.stage.duration_ms" in metrics_data
 
 
-async def test_stage_failure_spans() -> None:
+async def test_stage_failure_spans(
+    span_exporter: InMemorySpanExporter, otel_metric_reader: InMemoryMetricReader
+) -> None:
     """A failing stage produces error spans and error metrics."""
     spec = _make_spec()
     ctx = PipelineContext(session=None, specification=spec, created_by="usr_test")
@@ -150,7 +146,7 @@ async def test_stage_failure_spans() -> None:
     with pytest.raises(IngestStageError):
         await stage.run(ctx)
 
-    spans = _span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()
     span_names = [s.name for s in spans]
     assert "ingest.stage fail_stage" in span_names
 
@@ -158,11 +154,13 @@ async def test_stage_failure_spans() -> None:
     assert stage_span.status.status_code == StatusCode.ERROR
     assert len(stage_span.events) > 0
 
-    metrics_data = _get_metrics(_metric_reader)
+    metrics_data = _get_metrics(otel_metric_reader)
     assert "ingest.stage.total" in metrics_data
 
 
-async def test_ingest_failure_spans() -> None:
+async def test_ingest_failure_spans(
+    span_exporter: InMemorySpanExporter, otel_metric_reader: InMemoryMetricReader
+) -> None:
     """A failing ingest produces error spans at all levels."""
     ctx_mock = _make_ctx_mock()
 
@@ -174,7 +172,7 @@ async def test_ingest_failure_spans() -> None:
         with pytest.raises(IngestPipelineError):
             await ingestor.ingest(spec, created_by="usr_test")
 
-    spans = _span_exporter.get_finished_spans()
+    spans = span_exporter.get_finished_spans()
     span_names = [s.name for s in spans]
 
     assert "ingest.stage fail_stage" in span_names
@@ -188,18 +186,18 @@ async def test_ingest_failure_spans() -> None:
     ingest_span = next(s for s in spans if s.name == "ingest.ingest")
     assert ingest_span.status.status_code == StatusCode.ERROR
 
-    metrics_data = _get_metrics(_metric_reader)
+    metrics_data = _get_metrics(otel_metric_reader)
     assert "ingest.total" in metrics_data
 
 
-async def test_pipeline_stage_metrics_attributes() -> None:
+async def test_pipeline_stage_metrics_attributes(otel_metric_reader: InMemoryMetricReader) -> None:
     """Stage metrics record the correct stage name and status attributes."""
     spec = _make_spec()
     ctx = PipelineContext(session=None, specification=spec, created_by="usr_test")
     stage = PassingStage()
     await stage.run(ctx)
 
-    metrics_data = _get_metrics(_metric_reader)
+    metrics_data = _get_metrics(otel_metric_reader)
     stage_total = metrics_data["ingest.stage.total"]
     data_points = list(stage_total.data.data_points)
     assert any(
