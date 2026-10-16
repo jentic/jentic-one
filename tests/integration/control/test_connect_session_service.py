@@ -35,6 +35,7 @@ from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
+from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -47,6 +48,9 @@ from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.repos.connect_session_revision_repo import (
+    ConnectSessionRevisionRepository,
+)
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.credentials.state import StateReplayedError
@@ -73,6 +77,7 @@ from jentic_one.control.services.integrations.flow_handlers.base import StatusRe
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
+from jentic_one.control.services.integrations.revisions import revision_digest
 from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
@@ -127,6 +132,7 @@ async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[No
     """Reset every table this test file writes to, before and after."""
     tables = (
         ConnectSessionOutcome,
+        ConnectSessionRevision,
         ConnectSession,
         OAuthToken,
         OAuthClientCredential,
@@ -346,6 +352,50 @@ async def test_create_session_persists_requested_permission_rules(
     # both key off this to gate execution.
     assert credential.state == "pending"
     assert credential.catalog_api_id == "testdev.example/api.testdev.example"
+
+
+async def test_create_session_writes_revision_one_as_the_current_revision(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    requested: list[dict[str, object]] = [
+        {"effect": "allow", "methods": ["GET"], "path": "/repos", "match_mode": "prefix"},
+    ]
+
+    created = await svc.create_session(
+        vendor_key="testdev",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["repo", "read:user"],
+        requested_permission_rules=requested,
+        reason="Needs to read repos",
+    )
+
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        revisions = await ConnectSessionRevisionRepository.list_for_session(
+            session, created.session_id
+        )
+    assert row is not None
+    assert row.intent == "create"
+    assert row.baseline is None
+    assert [r.number for r in revisions] == [1]
+    first = revisions[0]
+    assert row.current_revision_id == first.id
+    assert first.id.startswith("csr_")
+    assert first.created_by == _USER_ID
+    assert first.proposal == {
+        "permission_rules": requested,
+        "scopes": ["repo", "read:user"],
+        "reason": "Needs to read repos",
+    }
+    assert first.result == {"rules": requested, "scopes": ["read:user", "repo"]}
+    assert first.digest == revision_digest(
+        baseline=None, result=first.result, reason="Needs to read repos"
+    )
 
 
 # ---------------------------------------------------------------------------

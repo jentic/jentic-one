@@ -44,6 +44,9 @@ from jentic_one.control.repos.connect_session_outcome_repo import (
     ConnectSessionOutcomeRepository,
 )
 from jentic_one.control.repos.connect_session_repo import LIVE_STATES, ConnectSessionRepository
+from jentic_one.control.repos.connect_session_revision_repo import (
+    ConnectSessionRevisionRepository,
+)
 from jentic_one.control.repos.effects_repo import AgentOwnerRow, EffectsRepository
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
@@ -119,6 +122,7 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     manual_handler_for_scheme,
 )
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
+from jentic_one.control.services.integrations.revisions import create_revision
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
     ResolvedScope,
@@ -995,6 +999,7 @@ class ConnectSessionService:
                     reason=reason,
                     created_by=initiator_actor_id,
                 )
+                await self._record_first_revision(session, row)
         except DatabaseIntegrityError:
             # A concurrent identical ask won the dedupe index: hand out its session.
             if dedupe_key is None:
@@ -1211,6 +1216,7 @@ class ConnectSessionService:
                     reason=reason,
                     created_by=initiator_actor_id,
                 )
+                await self._record_first_revision(session, row)
         except DatabaseIntegrityError:
             # A concurrent identical agent ask won the dedupe index.
             if not agent_started:
@@ -1259,6 +1265,24 @@ class ConnectSessionService:
             poll_token=poll_token,
             resolved_flow=resolved_flow,
         )
+
+    @staticmethod
+    async def _record_first_revision(session: Any, row: ConnectSession) -> None:
+        """Write revision 1 of a new create session: its full ask."""
+        payload = create_revision(
+            permission_rules=row.requested_permission_rules or [],
+            scopes=row.requested_scopes or [],
+            reason=row.reason,
+        )
+        revision = await ConnectSessionRevisionRepository.append(
+            session,
+            session_id=row.id,
+            proposal=payload.proposal,
+            result=payload.result,
+            digest=payload.digest,
+            created_by=row.initiator_actor_id,
+        )
+        row.current_revision_id = revision.id
 
     async def _lookup_api(self, vendor: str, name: str, version: str) -> ApiSecurityView | None:
         """The API's live revision through the registry seam (identity canonicalised)."""

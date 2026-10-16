@@ -21,6 +21,11 @@ from jentic_one.shared.db.types import json_variant
 TARGET_KIND_VENDOR = "vendor"
 TARGET_KIND_API = "api"
 
+#: What a session does on confirm. ``create`` connects a new credential;
+#: ``edit`` changes an existing binding and never creates or deletes one.
+INTENT_CREATE = "create"
+INTENT_EDIT = "edit"
+
 # One open agent-started session per agent and API identity. Only a session
 # the agent started for itself (``initiator_actor_id = agent_id``) is deduped
 # — a user naming the agent always gets a session of their own, like a vendor
@@ -38,6 +43,11 @@ _OPEN_API_TARGET_PREDICATE = (
 _OPEN_VENDOR_TARGET_PREDICATE = (
     "target_kind = 'vendor' AND state IN ('created', 'awaiting_app', 'polling') "
     "AND agent_id IS NOT NULL AND dedupe_key IS NOT NULL"
+)
+
+# One open edit per binding. Mirrors the repository's live states.
+_OPEN_EDIT_PREDICATE = (
+    "intent = 'edit' AND state IN ('created', 'awaiting_app', 'polling') AND agent_id IS NOT NULL"
 )
 
 
@@ -73,6 +83,14 @@ class ConnectSession(AuditableMixin, ControlBase):
             postgresql_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
             sqlite_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
         ),
+        Index(
+            "ix_connect_sessions_open_edit",
+            "agent_id",
+            "credential_id",
+            unique=True,
+            postgresql_where=text(_OPEN_EDIT_PREDICATE),
+            sqlite_where=text(_OPEN_EDIT_PREDICATE),
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -81,7 +99,13 @@ class ConnectSession(AuditableMixin, ControlBase):
         default=lambda: generate_ksuid("cs"),
         server_default=func.generate_ksuid("cs"),
     )
-    # Target credential (state=pending until the flow completes).
+    # ``create`` or ``edit`` (see ``INTENT_*``). The server default keeps
+    # every row written without the column a create.
+    intent: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=INTENT_CREATE, server_default=INTENT_CREATE
+    )
+    # Target credential. A create's is pending until the flow completes; an
+    # edit's is the live credential the binding already uses.
     credential_id: Mapped[str] = mapped_column(
         String(30),
         ForeignKey("credentials.id", ondelete="CASCADE"),
@@ -155,6 +179,14 @@ class ConnectSession(AuditableMixin, ControlBase):
     requested_permission_rules: Mapped[list[dict[str, object]]] = mapped_column(
         json_variant(), nullable=False, default=list, server_default="[]"
     )
+    # Edit sessions: the binding as it was when the session opened (rules
+    # with their ids, rule set, ``suspended``, granted scopes). Every
+    # revision of the edit resolves against it. NULL for create sessions.
+    baseline: Mapped[dict[str, object] | None] = mapped_column(json_variant(), nullable=True)
+    # The live revision (``connect_session_revisions.id``). FK-less: the two
+    # tables would otherwise reference each other. NULL only on rows written
+    # before revisions existed.
+    current_revision_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Identity echo result (e.g. "@octocat"); set on `connected`.
     connected_as: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Terminal failure code (see `error-taxonomy` — machine-readable slug).
