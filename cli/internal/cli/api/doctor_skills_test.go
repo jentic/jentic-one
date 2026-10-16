@@ -17,22 +17,31 @@ import (
 // installed.
 
 func TestSummarizeSkillFreshness(t *testing.T) {
-	st := func(skill string, f skillgen.Freshness, installed string) skillgen.InstallState {
-		return skillgen.InstallState{Skill: skill, Installed: true, Freshness: f, InstalledVersion: installed, AvailableVersion: "6"}
+	st := func(skill string, f skillgen.Freshness, installed string, ops ...skillgen.Operator) skillgen.InstalledSkill {
+		if len(ops) == 0 {
+			ops = []skillgen.Operator{skillgen.OpClaude}
+		}
+		return skillgen.InstalledSkill{
+			InstallState: skillgen.InstallState{Skill: skill, Installed: true, Freshness: f, InstalledVersion: installed, AvailableVersion: "6"},
+			Operators:    ops,
+		}
 	}
 	cases := []struct {
 		name       string
-		states     []skillgen.InstallState
+		states     []skillgen.InstalledSkill
 		wantStatus agentCheckStatus
 		wantDetail []string
 	}{
-		{"all current", []skillgen.InstallState{st("jentic", skillgen.FreshnessCurrent, "6")}, agentPass, []string{"1 installed skill(s) up to date"}},
-		{"stale", []skillgen.InstallState{
+		{"all current", []skillgen.InstalledSkill{st("jentic", skillgen.FreshnessCurrent, "6")}, agentPass, []string{"1 installed skill(s) up to date"}},
+		{"stale", []skillgen.InstalledSkill{
 			st("jentic", skillgen.FreshnessStale, "1"),
 			st("import-new-api", skillgen.FreshnessCurrent, "6"),
-		}, agentWarn, []string{"1 of 2", "jentic v1→v6"}},
-		{"newer is not stale", []skillgen.InstallState{st("jentic", skillgen.FreshnessNewer, "7")}, agentPass, []string{"up to date"}},
-		{"unknown counted, not failed", []skillgen.InstallState{
+		}, agentWarn, []string{"1 of 2", "jentic v1→v6 (claude)"}},
+		{"shared artifact counted once, all operators named", []skillgen.InstalledSkill{
+			st("jentic", skillgen.FreshnessStale, "1", skillgen.OpCodex, skillgen.OpGeneric),
+		}, agentWarn, []string{"1 of 1", "jentic v1→v6 (codex, generic)"}},
+		{"newer is not stale", []skillgen.InstalledSkill{st("jentic", skillgen.FreshnessNewer, "7")}, agentPass, []string{"up to date"}},
+		{"unknown counted, not failed", []skillgen.InstalledSkill{
 			st("jentic", skillgen.FreshnessUnknown, ""),
 			st("import-new-api", skillgen.FreshnessCurrent, "6"),
 		}, agentPass, []string{"2 installed skill(s) up to date", "1 with unknown version"}},
@@ -58,6 +67,12 @@ func TestSummarizeSkillFreshness(t *testing.T) {
 // returns the Skills/freshness row, if any.
 func skillsCheck(t *testing.T, version string) (status, detail string, found bool) {
 	t.Helper()
+	return skillsCheckFor(t, "claude", version)
+}
+
+// skillsCheckFor is skillsCheck installing through the given operator.
+func skillsCheckFor(t *testing.T, operator, version string) (status, detail string, found bool) {
+	t.Helper()
 	home, cwd := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	env := skillgen.DetectEnv{Home: home, Cwd: cwd}
@@ -67,7 +82,7 @@ func skillsCheck(t *testing.T, version string) (status, detail string, found boo
 			t.Fatal(err)
 		}
 		c.Version = version
-		ad, _ := skillgen.DefaultRegistry().Resolve("claude")
+		ad, _ := skillgen.DefaultRegistry().Resolve(operator)
 		if _, err := skillgen.Apply(ad, c, env, skillgen.ApplyOptions{}); err != nil {
 			t.Fatal(err)
 		}
@@ -111,6 +126,12 @@ func TestDoctorSkillsCheck(t *testing.T) {
 		status, _, ok := skillsCheck(t, skillgen.BundledVersion("jentic"))
 		if !ok || status != "pass" {
 			t.Errorf("current install row = (%v, %q), want pass", ok, status)
+		}
+	})
+	t.Run("shared AGENTS.md counted once with both operators", func(t *testing.T) {
+		status, detail, ok := skillsCheckFor(t, "generic", "1")
+		if !ok || status != "warn" || !strings.Contains(detail, "1 of 1") || !strings.Contains(detail, "(codex, generic)") {
+			t.Errorf("shared stale block row = (%v, %q, %q), want warn, 1 of 1, (codex, generic)", ok, status, detail)
 		}
 	})
 	t.Run("nothing installed adds no row", func(t *testing.T) {

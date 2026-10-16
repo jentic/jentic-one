@@ -29,15 +29,17 @@ func (d *agentDoctor) checkSkills() {
 	d.add(section, "freshness", status, detail, hint)
 }
 
-// summarizeSkillFreshness folds installed skill states into the doctor row's
-// status, detail, and hint.
-func summarizeSkillFreshness(states []skillgen.InstallState) (agentCheckStatus, string, string) {
+// summarizeSkillFreshness folds installed skill artifacts into the doctor
+// row's status, detail, and hint. Each artifact counts once, however many
+// operators share it, and a stale entry names the operators that load it.
+func summarizeSkillFreshness(states []skillgen.InstalledSkill) (agentCheckStatus, string, string) {
 	var stale []string
 	var unknown int
 	for _, st := range states {
 		switch st.Freshness {
 		case skillgen.FreshnessStale:
-			stale = append(stale, fmt.Sprintf("%s v%s→v%s", st.Skill, st.InstalledVersion, st.AvailableVersion))
+			stale = append(stale, fmt.Sprintf("%s v%s→v%s (%s)",
+				st.Skill, st.InstalledVersion, st.AvailableVersion, joinOperators(st.Operators)))
 		case skillgen.FreshnessUnknown:
 			unknown++
 		}
@@ -49,8 +51,17 @@ func summarizeSkillFreshness(states []skillgen.InstallState) (agentCheckStatus, 
 	if len(stale) > 0 {
 		return agentWarn,
 			fmt.Sprintf("%d of %d installed skill(s) older than the bundled copy: %s%s",
-				len(stale), len(states), strings.Join(stale, ", "), suffix),
+				len(stale), len(states), strings.Join(stale, "; "), suffix),
 			"refresh with `jentic skill update` (see `jentic skill list` for paths)"
 	}
 	return agentPass, fmt.Sprintf("%d installed skill(s) up to date%s", len(states), suffix), ""
+}
+
+// joinOperators renders an artifact's operators as "codex, generic".
+func joinOperators(ops []skillgen.Operator) string {
+	names := make([]string, len(ops))
+	for i, op := range ops {
+		names[i] = string(op)
+	}
+	return strings.Join(names, ", ")
 }

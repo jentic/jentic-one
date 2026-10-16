@@ -88,22 +88,41 @@ func InstallStatesForSkills(a Adapter, names []string, env DetectEnv) []InstallS
 	return out
 }
 
+// InstalledSkill is one installed skill artifact plus every operator that
+// loads it. Shared targets (codex and generic both read the project
+// AGENTS.md) yield one InstalledSkill attributed to all of them.
+type InstalledSkill struct {
+	InstallState
+	Operators []Operator // registry order
+}
+
+// ArtifactKey identifies one on-disk skill install: a skill name at a resolved
+// path. Operators that share a target produce the same key, so callers use it
+// to count or act on a shared artifact once.
+func ArtifactKey(skill, path string) string {
+	return skill + "\x00" + path
+}
+
 // InstalledStates probes every adapter in reg for every bundled skill and
-// returns only the installed states, one per distinct (skill, path): codex and
-// generic share the project AGENTS.md, so a shared artifact is reported once.
-// Order follows the registry, then BundledNames, then scope.
-func InstalledStates(reg *Registry, env DetectEnv) []InstallState {
+// returns only the installed artifacts, one per distinct (skill, path) and
+// attributed to every operator that shares it. Order follows the registry
+// (first operator to reach the artifact), then BundledNames, then scope.
+func InstalledStates(reg *Registry, env DetectEnv) []InstalledSkill {
 	names := BundledNames()
-	seen := map[string]bool{}
-	var out []InstallState
+	index := map[string]int{}
+	var out []InstalledSkill
 	for _, a := range reg.Adapters() {
 		for _, st := range InstallStatesForSkills(a, names, env) {
-			key := st.Skill + "\x00" + st.Path
-			if !st.Installed || seen[key] {
+			if !st.Installed {
 				continue
 			}
-			seen[key] = true
-			out = append(out, st)
+			key := ArtifactKey(st.Skill, st.Path)
+			if i, ok := index[key]; ok {
+				out[i].Operators = append(out[i].Operators, a.Operator())
+				continue
+			}
+			index[key] = len(out)
+			out = append(out, InstalledSkill{InstallState: st, Operators: []Operator{a.Operator()}})
 		}
 	}
 	return out

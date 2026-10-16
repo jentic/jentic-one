@@ -249,6 +249,11 @@ func TestInstalledStatesDedupesSharedTargets(t *testing.T) {
 	}
 	states := InstalledStates(reg, env)
 	if len(states) != 1 || states[0].Path != filepath.Join(env.Cwd, "AGENTS.md") {
-		t.Errorf("InstalledStates = %+v, want the single shared AGENTS.md block", states)
+		t.Fatalf("InstalledStates = %+v, want the single shared AGENTS.md block", states)
+	}
+	// Attributed to every operator that loads it, in registry order —
+	// regardless of which one wrote it.
+	if got := states[0].Operators; len(got) != 2 || got[0] != OpCodex || got[1] != OpGeneric {
+		t.Errorf("shared block operators = %v, want [codex generic]", got)
 	}
 }

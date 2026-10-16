@@ -295,7 +295,7 @@ func selectSkills(want []string) ([]string, error) {
 // operators and scopes (deduplicated by artifact), with its recorded and
 // bundled versions. It is a read-only probe for status surfaces such as
 // `jentic doctor`; it never writes.
-func (a *Cmd) InstalledSkills() ([]skillgen.InstallState, error) {
+func (a *Cmd) InstalledSkills() ([]skillgen.InstalledSkill, error) {
 	env, err := a.detectEnv()
 	if err != nil {
 		return nil, err
