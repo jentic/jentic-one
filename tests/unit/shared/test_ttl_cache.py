@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
 
 import pytest
 
@@ -250,6 +252,71 @@ async def test_failure_ttl_remembers_the_error_until_it_expires() -> None:
     clock.now += 1
     assert await cache.get_or_load("a", flaky) == "ok"
     assert calls == 2
+
+
+class _Body:
+    """A weak-referenceable stand-in for a large buffered upstream body."""
+
+    def __init__(self) -> None:
+        self.data = b"x" * (1024 * 1024)
+
+
+@pytest.mark.asyncio
+async def test_remembered_failure_does_not_retain_loader_locals() -> None:
+    """A remembered failure must not pin the loader's frames: its body buffer is
+    collected while the failure is still cached, and a hit raises a fresh,
+    unchained instance of the same type and message."""
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=4, ttl_seconds=60, failure_ttl_seconds=30, clock=_Clock()
+    )
+    body_ref: weakref.ref[_Body] | None = None
+
+    async def failing() -> str:
+        nonlocal body_ref
+        body = _Body()
+        body_ref = weakref.ref(body)
+        try:
+            raise ValueError("bad json")
+        except ValueError as exc:
+            raise RuntimeError("upstream unusable") from exc
+
+    try:
+        await cache.get_or_load("a", failing)
+    except RuntimeError as first:
+        assert isinstance(first.__cause__, ValueError)
+    # Let the loop run the load task's done-callbacks, which still hold it.
+    await asyncio.sleep(0)
+    gc.collect()
+    assert body_ref is not None
+    assert body_ref() is None
+
+    with pytest.raises(RuntimeError, match="upstream unusable") as hit:
+        await cache.get_or_load("a", failing)
+    assert hit.value.__cause__ is None
+    assert hit.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_remembered_failure_drops_non_scalar_args() -> None:
+    """Non-scalar exception args (e.g. a body) are reduced to the message; a type
+    that cannot be rebuilt from its args still fails, as ``RuntimeError``."""
+
+    class _RichError(Exception):
+        def __init__(self, payload: bytes, status: int) -> None:
+            super().__init__(payload, status)
+
+    cache: AsyncTTLCache[str, str] = AsyncTTLCache(
+        max_entries=4, ttl_seconds=60, failure_ttl_seconds=30, clock=_Clock()
+    )
+
+    async def failing() -> str:
+        raise _RichError(b"body", 502)
+
+    with pytest.raises(_RichError):
+        await cache.get_or_load("a", failing)
+    with pytest.raises(RuntimeError) as hit:
+        await cache.get_or_load("a", failing)
+    assert hit.value.args == (str(_RichError(b"body", 502)),)
 
 
 @pytest.mark.asyncio
