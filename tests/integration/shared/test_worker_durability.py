@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import structlog.testing
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.jobs import Job
@@ -255,11 +256,13 @@ async def test_failure_never_overwrites_a_completed_job(
     )
     claimed = await _get(admin_db, job_id)
 
-    await worker._handle_failure(claimed, "interrupted: database connection lost")
+    with structlog.testing.capture_logs() as logs:
+        await worker._handle_failure(claimed, "interrupted: database connection lost")
 
     job = await _get(admin_db, job_id)
     assert job.status == JobStatus.COMPLETED
     assert job.error is None
+    _assert_only_skip_logged(logs)
 
 
 @pytest.mark.parametrize("attempts", [1, 3], ids=["requeue", "dead_letter"])
@@ -274,9 +277,65 @@ async def test_failure_leaves_a_job_reclaimed_by_another_claim(
     stale = await _get(admin_db, job_id)
     stale.attempts = attempts
 
-    await worker._handle_failure(stale, "handler boom")
+    with structlog.testing.capture_logs() as logs:
+        await worker._handle_failure(stale, "handler boom")
 
     job = await _get(admin_db, job_id)
     assert job.status == JobStatus.RUNNING
     assert job.attempts == attempts + 1
     assert job.error is None
+    _assert_only_skip_logged(logs)
+
+
+class _ApprovedWorker(WorkerLoop):
+    """Treats every execution as approved, so a failure takes the no-retry path."""
+
+    async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
+        return True
+
+
+async def test_approved_failure_skipped_for_a_lost_claim_logs_no_failure(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """An approved job reclaimed elsewhere is untouched and not reported as failed."""
+    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=2)
+    worker = _ApprovedWorker(admin_db, _registry(_OkHandler()), worker_config=WorkerConfig())
+    stale = await _get(admin_db, job_id)
+    stale.attempts = 1
+
+    with structlog.testing.capture_logs() as logs:
+        await worker._handle_failure(stale, "handler boom")
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.RUNNING
+    _assert_only_skip_logged(logs)
+
+
+async def test_dead_letter_under_the_claim_logs_job_dead_lettered(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """When the transition applies, the dead-letter is still reported at error level."""
+    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=3)
+    worker = WorkerLoop(
+        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
+    )
+    claimed = await _get(admin_db, job_id)
+
+    with structlog.testing.capture_logs() as logs:
+        await worker._handle_failure(claimed, "handler boom")
+
+    assert (await _get(admin_db, job_id)).status == JobStatus.DEAD_LETTER
+    [entry] = [e for e in logs if e["event"] == "job_dead_lettered"]
+    assert entry["log_level"] == "error"
+    assert not [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
+
+
+def _assert_only_skip_logged(logs: list[Any]) -> None:
+    """A skipped transition logs one info-level skip line and no failure outcome."""
+    events = {e["event"]: e for e in logs}
+    for outcome in ("job_dead_lettered", "approved_job_failed_no_retry", "job_requeued"):
+        assert outcome not in events
+    skips = [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
+    assert len(skips) == 1
+    assert skips[0]["log_level"] == "info"
+    assert all(e["log_level"] != "error" for e in logs)

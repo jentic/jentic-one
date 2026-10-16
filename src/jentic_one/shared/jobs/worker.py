@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import delete, or_, select, update
+from sqlalchemy.exc import StatementError
 from sqlalchemy.sql import func
 
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -53,6 +54,29 @@ _ERROR_MAX_LEN = 128
 # Persisted on the job (and its event) when an attempt is cut short by a lost
 # database connection; the details are logged server-side only.
 _DB_CONNECTION_LOST_ERROR = "interrupted: database connection lost"
+# Bounds the exception-chain walk in _carries_sql.
+_MAX_CHAIN_DEPTH = 8
+
+
+def _carries_sql(exc: BaseException) -> bool:
+    """True when a traceback of ``exc`` would render SQL or bound parameters.
+
+    Follows ``__cause__`` and ``__context__``, the links a rendered traceback
+    prints. SQLAlchemy's ``StatementError`` (every ``DBAPIError``) appends the
+    statement and parameters to its message, and domain database errors built
+    from that message carry them too.
+    """
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending and len(seen) < _MAX_CHAIN_DEPTH:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, StatementError) or "[SQL:" in str(current):
+            return True
+        pending.extend(link for link in (current.__cause__, current.__context__) if link)
+    return False
 
 
 def _backoff_s(attempts: int, cfg: WorkerConfig) -> float:
@@ -119,7 +143,9 @@ class WorkerLoop:
         expected condition — e.g. after a laptop's Docker VM sleeps — so it is
         logged as a single warning per outage (traceback at debug only), retried
         with capped, jittered exponential backoff, and reported once at info
-        when a tick succeeds again. Any other error keeps the full traceback.
+        when a tick succeeds again. Any other error keeps the full traceback,
+        unless rendering it would print SQL (see :func:`_carries_sql`): then only
+        type names and the SQL-free detail are logged.
         """
         self._running = True
         logger.info("worker_loop_started")
@@ -134,7 +160,15 @@ class WorkerLoop:
                 except Exception as exc:
                     cause = connection_loss_cause(exc)
                     if cause is None:
-                        logger.exception("worker_loop_tick_error")
+                        if _carries_sql(exc):
+                            logger.error(
+                                "worker_loop_tick_error",
+                                error_type=type(exc).__name__,
+                                cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                                error=redact_sql(str(exc))[:_ERROR_MAX_LEN],
+                            )
+                        else:
+                            logger.exception("worker_loop_tick_error")
                         processed = False
                         # The database answered (or the failure is unrelated),
                         # so the outage is over; a later drop warns afresh.
@@ -220,13 +254,18 @@ class WorkerLoop:
                 # COMPLETED). Requeueing would run the job again, so the row is
                 # left as is: if the commit did not land it stays RUNNING and
                 # the visibility-timeout reclaim picks it up.
-                cause = exc.__cause__
+                leaf = connection_loss_cause(exc)
+                logged_cause = leaf or exc.__cause__ or exc
                 logger.warning(
                     "job_commit_outcome_unknown",
                     job_id=job.id,
                     attempts=job.attempts,
-                    error_type=type(cause or exc).__name__,
-                    error=exc.detail[:_ERROR_MAX_LEN],
+                    error_type=type(logged_cause).__name__,
+                    error=(
+                        describe_connection_loss(leaf)
+                        if leaf is not None
+                        else redact_sql(exc.detail)[:_ERROR_MAX_LEN]
+                    ),
                 )
             except Exception as exc:
                 cause = connection_loss_cause(exc)
@@ -242,8 +281,21 @@ class WorkerLoop:
                     )
                     error = _DB_CONNECTION_LOST_ERROR
                 else:
-                    logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
                     error = redact_sql(str(exc)) or type(exc).__name__
+                    if _carries_sql(exc):
+                        # A traceback would render the chained statement and
+                        # its bound parameters, so only type names and the
+                        # SQL-free detail are logged.
+                        logger.error(
+                            "job_failed",
+                            job_id=job.id,
+                            attempts=job.attempts,
+                            error_type=type(exc).__name__,
+                            cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                            error=error[:_ERROR_MAX_LEN],
+                        )
+                    else:
+                        logger.exception("job_failed", job_id=job.id, attempts=job.attempts)
                 # Same retry contract as any failed attempt: requeue with
                 # backoff, dead-letter past the budget. If the database is
                 # still unreachable this raises a connection-loss error to
@@ -431,26 +483,26 @@ class WorkerLoop:
             async with self._db.session() as check_session:
                 is_approved = await self._is_approved_execution(check_session, job.id)
             if is_approved:
-                await self._terminal_job(
+                if await self._terminal_job(
                     job.id,
                     JobStatus.FAILED,
                     error,
                     event_summary_prefix="Execution failed",
                     claim_attempts=job.attempts,
-                )
-                logger.info("approved_job_failed_no_retry", job_id=job.id)
+                ):
+                    logger.info("approved_job_failed_no_retry", job_id=job.id)
                 return
 
         attempts = int(job.attempts or 0)
         if attempts >= self._config.max_attempts:
-            await self._terminal_job(
+            if await self._terminal_job(
                 job.id,
                 JobStatus.DEAD_LETTER,
                 error,
                 event_summary_prefix="Job dead-lettered",
                 claim_attempts=job.attempts,
-            )
-            logger.error("job_dead_lettered", job_id=job.id, attempts=attempts)
+            ):
+                logger.error("job_dead_lettered", job_id=job.id, attempts=attempts)
             return
 
         delay_s = _backoff_s(attempts, self._config)
@@ -488,27 +540,30 @@ class WorkerLoop:
         *,
         event_summary_prefix: str,
         claim_attempts: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Move a job to a terminal status, clear its claim, and emit an event.
 
         With ``claim_attempts`` the transition applies only while the row is
         still ``RUNNING`` under that claim (see :meth:`_handle_failure`); the
         row is locked for the check so a concurrent reclaim cannot interleave.
+
+        Returns True when the transition was applied, False when the job is
+        gone or the claim check skipped it.
         """
         async with self._db.transaction() as session:
             if claim_attempts is None:
                 job = await session.get(Job, job_id)
             else:
                 job = await session.get(Job, job_id, with_for_update=True)
-                if job is not None and (
+                if job is None or (
                     job.status != JobStatus.RUNNING or job.attempts != claim_attempts
                 ):
                     logger.info(
                         "job_terminal_skipped_claim_lost", job_id=job_id, status=str(status)
                     )
-                    return
+                    return False
             if job is None:
-                return
+                return False
             job.status = status
             job.error = error[:_ERROR_MAX_LEN] if error else None
             job.visible_at = None
@@ -531,6 +586,7 @@ class WorkerLoop:
                 )
             except Exception:
                 logger.warning("emit_event_failed", job_id=job_id)
+        return True
 
     async def _sweep_expired(self) -> None:
         """Periodically expire lapsed approvals, remove expired job results, and
