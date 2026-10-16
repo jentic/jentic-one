@@ -246,6 +246,14 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
 
+	// Emit a W3C ``Server-Timing`` header on execute responses with per-stage
+	// durations (auth, discover, rules, cred, upstream, persist, total) for
+	// authenticated callers. Off by default: timing data aids side-channel probing
+	// and fingerprinting, so enable it only where callers are trusted with it (e.g.
+	// while diagnosing latency). Streaming responses carry only the stages known
+	// before the headers are sent (no ``persist``).
+	ServerTiming bool `json:"server_timing,omitempty,omitzero" yaml:"server_timing,omitempty" mapstructure:"server_timing,omitempty"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s,omitempty,omitzero" yaml:"toolkit_cache_ttl_s,omitempty" mapstructure:"toolkit_cache_ttl_s,omitempty"`
 
@@ -279,6 +287,9 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
+	}
+	if v, ok := raw["server_timing"]; !ok || v == nil {
+		plain.ServerTiming = false
 	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0

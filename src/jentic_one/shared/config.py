@@ -1988,6 +1988,18 @@ class BrokerConfig(BaseModel):
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
+    server_timing: bool = Field(
+        default=False,
+        description=(
+            "Emit a W3C ``Server-Timing`` header on execute responses with "
+            "per-stage durations (auth, discover, rules, cred, upstream, "
+            "persist, total) for authenticated callers. Off by default: "
+            "timing data aids side-channel probing and fingerprinting, so "
+            "enable it only where callers are trusted with it (e.g. while "
+            "diagnosing latency). Streaming responses carry only the stages "
+            "known before the headers are sent (no ``persist``)."
+        ),
+    )
 
     _normalize_public_urls = field_validator("jobs_api_base_url")(_normalize_optional_base_url)
 

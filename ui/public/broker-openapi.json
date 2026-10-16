@@ -28,6 +28,15 @@
           "type": "string"
         }
       },
+      "ServerTiming": {
+        "description": "W3C Server-Timing. When the upstream sends its own\n`Server-Timing`, it is forwarded verbatim. When the deployment\nenables `broker.server_timing` (off by default), the Broker\nappends a second field with per-stage durations in milliseconds\nfor authenticated callers: `auth`, `discover`, `rules`, `cred`,\n`upstream`, `persist`, `total` — fixed names, no identifiers. On\na streamed response the headers precede the body, so `upstream`\nis the wait for the upstream headers and `persist` is absent;\nasync and held responses carry only the stages that ran.\n",
+        "schema": {
+          "examples": [
+            "auth;dur=1.4, discover;dur=0.9, rules;dur=2.1, cred;dur=3.0, upstream;dur=84.2, persist;dur=4.7, total;dur=97.6"
+          ],
+          "type": "string"
+        }
+      },
       "Traceparent": {
         "description": "W3C Trace Context — `00-{trace-id}-{parent-id}-01`. The\n`parent-id` is the broker span; downstream services use this to\nlink their own spans into the same distributed trace. Version\n`00` is current; flags `01` = sampled.\n",
         "schema": {
@@ -424,6 +433,9 @@
               "type": "string"
             }
           },
+          "Server-Timing": {
+            "$ref": "#/components/headers/ServerTiming"
+          },
           "traceparent": {
             "$ref": "#/components/headers/Traceparent"
           },
@@ -511,6 +523,9 @@
               ],
               "type": "string"
             }
+          },
+          "Server-Timing": {
+            "$ref": "#/components/headers/ServerTiming"
           },
           "traceparent": {
             "$ref": "#/components/headers/Traceparent"

@@ -208,6 +208,12 @@
           "title": "Rule Cache Ttl S",
           "type": "number"
         },
+        "server_timing": {
+          "default": false,
+          "description": "Emit a W3C ``Server-Timing`` header on execute responses with per-stage durations (auth, discover, rules, cred, upstream, persist, total) for authenticated callers. Off by default: timing data aids side-channel probing and fingerprinting, so enable it only where callers are trusted with it (e.g. while diagnosing latency). Streaming responses carry only the stages known before the headers are sent (no ``persist``).",
+          "title": "Server Timing",
+          "type": "boolean"
+        },
         "toolkit_cache_ttl_s": {
           "default": 3.0,
           "title": "Toolkit Cache Ttl S",

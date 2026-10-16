@@ -649,6 +649,21 @@ components:
         type: string
         examples:
           - Stripe prod key
+    ServerTiming:
+      description: |
+        W3C Server-Timing. When the upstream sends its own
+        `Server-Timing`, it is forwarded verbatim. When the deployment
+        enables `broker.server_timing` (off by default), the Broker
+        appends a second field with per-stage durations in milliseconds
+        for authenticated callers: `auth`, `discover`, `rules`, `cred`,
+        `upstream`, `persist`, `total` — fixed names, no identifiers. On
+        a streamed response the headers precede the body, so `upstream`
+        is the wait for the upstream headers and `persist` is absent;
+        async and held responses carry only the stages that ran.
+      schema:
+        type: string
+        examples:
+          - auth;dur=1.4, discover;dur=0.9, rules;dur=2.1, cred;dur=3.0, upstream;dur=84.2, persist;dur=4.7, total;dur=97.6
   parameters:
     UpstreamUrl:
       name: upstream_url
@@ -1175,6 +1190,8 @@ components:
           $ref: "#/components/headers/JenticCredentialId"
         Jentic-Credential-Name:
           $ref: "#/components/headers/JenticCredentialName"
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         "*/*":
           schema:
@@ -1236,6 +1253,8 @@ components:
             type: string
             examples:
               - getTrack
+        Server-Timing:
+          $ref: "#/components/headers/ServerTiming"
       content:
         application/json:
           schema:
