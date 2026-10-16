@@ -631,7 +631,7 @@
             }
           }
         },
-        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send. Should be\nrare; report with the\n`traceparent` header for triage. Body is RFC 9457\n`application/problem+json`.\n"
+        "description": "Unexpected broker-side failure — a bug, a panic, or an outbound\nrequest the broker itself built and could not send. Should be\nrare; report with the `traceparent` header for triage. Body is\nRFC 9457 `application/problem+json`.\n"
       },
       "ServiceUnavailable": {
         "content": {
