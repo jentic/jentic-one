@@ -371,23 +371,33 @@ class UrlIndexRepository:
         methods: list[str],
         host: str,
         segment_count: int,
+        submitted_by: str,
+        include_origin_drafts: bool,
         limit: int,
     ) -> list[DraftUrlIndexCandidate]:
         """Find ``draft``-revision entries for ``host`` (or a regex host) in one statement.
 
         The exact-host and regex-host candidates the unpinned lookup reads in
         two statements are read together here (``host = :host OR host IS
-        NULL``), for every method in ``methods``. Rows come back exact-host
-        first, then newest draft first, and at most ``limit`` rows are
-        returned — the cap bounds the result, not the rows read: the statement
-        reads every index row of any revision for the host, method and segment
-        count, as the live lookup does, and filters ``state = 'draft'`` on the
-        joined revision. A caller that must tell a complete result from a
-        truncated one passes ``limit`` one above the size it accepts. Both
-        ``host`` arms are prefixes of
+        NULL``), for every method in ``methods``. Only drafts the caller may
+        be told about are returned: those ``submitted_by`` it, plus, when
+        ``include_origin_drafts``, every draft with an ``origin`` (held for
+        server-host review). The filter runs in the statement, so other
+        principals' rows never count toward ``limit``.
+
+        Rows come back exact-host first, then newest draft first, and at most
+        ``limit`` rows are returned — the cap bounds the result, not the rows
+        read: the statement reads every index row of any revision for the
+        host, method and segment count, as the live lookup does, and filters
+        state and visibility on the joined revision. A caller that must tell
+        a complete result from a truncated one passes ``limit`` one above the
+        size it accepts. Both ``host`` arms are prefixes of
         ``ix_operation_url_index_method_host_revision``; the revision and API
         joins are primary-key lookups.
         """
+        visible = ApiRevision.submitted_by == submitted_by
+        if include_origin_drafts:
+            visible = or_(visible, ApiRevision.origin.isnot(None))
         stmt = (
             select(
                 OperationURLIndex,
@@ -402,6 +412,7 @@ class UrlIndexRepository:
             .join(Api, Api.id == ApiRevision.api_id)
             .where(
                 ApiRevision.state == ApiRevisionState.DRAFT.value,
+                visible,
                 OperationURLIndex.method.in_(methods),
                 or_(
                     OperationURLIndex.host == host,
