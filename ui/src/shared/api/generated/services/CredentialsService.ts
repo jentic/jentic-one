@@ -8,6 +8,7 @@ import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
+import type { BindingAccessResponse } from '../models/BindingAccessResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
@@ -274,7 +275,12 @@ export class CredentialsService {
     /**
      * List binding permission rules
      * List the ordered PBAC rules for a direct `(agent, credential)` binding.
-     * @returns PermissionRuleListResponse Successful Response
+     *
+     * Also returns the rest of what the binding grants: the shared rule set it
+     * points at (whose rules apply instead of `data`), the credential's granted
+     * OAuth scopes, and whether the binding is suspended. The bound agent can
+     * read its own binding.
+     * @returns BindingAccessResponse Successful Response
      * @throws ApiError
      */
     public static listAgentCredentialPermissions({
@@ -289,7 +295,7 @@ export class CredentialsService {
          * ID of the agent bound to the credential.
          */
         agentId: string,
-    }): CancelablePromise<PermissionRuleListResponse> {
+    }): CancelablePromise<BindingAccessResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/credentials/{credential_id}/agents/{agent_id}/permissions',

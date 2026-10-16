@@ -6194,6 +6194,414 @@
         "title": "DeviceAuthorizationRegistrationCreateRequest",
         "type": "object"
       },
+      "EditConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Approve an edit session's change with the final rules the reviewer chose.",
+        "examples": [
+          {
+            "kind": "edit",
+            "permission_rules": [
+              {
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ],
+            "resume": false,
+            "revision_id": "csr_6968b3983b8b91c75627bee6"
+          }
+        ],
+        "properties": {
+          "kind": {
+            "const": "edit",
+            "description": "Confirm variant; always `edit`.",
+            "examples": [
+              "edit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "description": "The final rule list to apply, in order (at most 100). Replaces the binding's own rules, or its shared rule set's rules while one is attached.",
+            "examples": [
+              [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          },
+          "resume": {
+            "default": false,
+            "description": "Switch the binding back on if it is suspended.",
+            "examples": [
+              false
+            ],
+            "title": "Resume",
+            "type": "boolean"
+          },
+          "revision_id": {
+            "description": "The revision the reviewer saw (`edit.revision.id`); a newer one is 409 revision_changed.",
+            "examples": [
+              "csr_6968b3983b8b91c75627bee6"
+            ],
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "revision_id",
+          "permission_rules"
+        ],
+        "title": "EditConfirmSessionRequest",
+        "type": "object"
+      },
+      "EditConnectionRequest": {
+        "additionalProperties": false,
+        "description": "Ask to change an existing credential binding; a human approves the change.",
+        "examples": [
+          {
+            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "reason": "Needs to send replies, not just read",
+            "rules": {
+              "add": [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ],
+              "remove": [
+                "apr_6968b3987c22b63e87e79f06"
+              ],
+              "set": [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The binding's agent. Required for humans; agent callers must omit it.",
+            "examples": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "title": "Agent Id"
+          },
+          "credential_id": {
+            "description": "The binding's credential; it must already be bound to the agent.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the change is needed, shown to the reviewer.",
+            "examples": [
+              "Needs to send replies, not just read"
+            ],
+            "title": "Reason"
+          },
+          "resume": {
+            "default": false,
+            "description": "Switch a suspended binding back on; a no-op if it is already active.",
+            "title": "Resume",
+            "type": "boolean"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditRulesRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The rule change. While the binding points at a shared rule set, it changes that set's rules.",
+            "examples": [
+              {
+                "add": [
+                  {
+                    "before": "apr_6968b3987c22b63e87e79f06",
+                    "rule": {
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  }
+                ],
+                "remove": [
+                  "apr_6968b3987c22b63e87e79f06"
+                ],
+                "set": [
+                  {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "title": "EditConnectionRequest",
+        "type": "object"
+      },
+      "EditRuleAdd": {
+        "additionalProperties": false,
+        "description": "One rule to add to the binding.",
+        "examples": [
+          {
+            "before": "apr_6968b3987c22b63e87e79f06",
+            "rule": {
+              "effect": "allow",
+              "match_mode": "prefix",
+              "methods": [
+                "GET"
+              ],
+              "operations": [
+                "listCharges"
+              ],
+              "path": "/v1/charges"
+            }
+          }
+        ],
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the rule to insert this one before (first match wins); appended when omitted.",
+            "examples": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "title": "Before"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/PermissionRuleSchema",
+            "description": "The rule to add.",
+            "examples": [
+              {
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "title": "EditRuleAdd",
+        "type": "object"
+      },
+      "EditRulesRequest": {
+        "additionalProperties": false,
+        "description": "A change to the binding's rules: `add`/`remove`, or the full list in `set`.",
+        "examples": [
+          {
+            "add": [
+              {
+                "before": "apr_6968b3987c22b63e87e79f06",
+                "rule": {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              }
+            ],
+            "remove": [
+              "apr_6968b3987c22b63e87e79f06"
+            ],
+            "set": [
+              {
+                "effect": "allow",
+                "match_mode": "prefix",
+                "methods": [
+                  "GET"
+                ],
+                "operations": [
+                  "listCharges"
+                ],
+                "path": "/v1/charges"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "add": {
+            "description": "Rules to add (at most 100).",
+            "examples": [
+              [
+                {
+                  "before": "apr_6968b3987c22b63e87e79f06",
+                  "rule": {
+                    "effect": "allow",
+                    "match_mode": "prefix",
+                    "methods": [
+                      "GET"
+                    ],
+                    "operations": [
+                      "listCharges"
+                    ],
+                    "path": "/v1/charges"
+                  }
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/EditRuleAdd"
+            },
+            "maxItems": 100,
+            "title": "Add",
+            "type": "array"
+          },
+          "remove": {
+            "description": "IDs of rules to remove (at most 100).",
+            "examples": [
+              [
+                "apr_6968b3987c22b63e87e79f06"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          },
+          "set": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PermissionRuleSchema"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The full rule list to replace the current one with, in order (at most 100). Not combined with add or remove.",
+            "examples": [
+              [
+                {
+                  "effect": "allow",
+                  "match_mode": "prefix",
+                  "methods": [
+                    "GET"
+                  ],
+                  "operations": [
+                    "listCharges"
+                  ],
+                  "path": "/v1/charges"
+                }
+              ]
+            ],
+            "title": "Set"
+          }
+        },
+        "title": "EditRulesRequest",
+        "type": "object"
+      },
       "EffectivePermission": {
         "description": "A single effective permission with provenance.",
         "examples": [
@@ -35037,7 +35445,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -35101,6 +35509,7 @@
                     "api_key": "#/components/schemas/ApiKeyConfirmSessionRequest",
                     "basic": "#/components/schemas/BasicConfirmSessionRequest",
                     "bearer": "#/components/schemas/BearerConfirmSessionRequest",
+                    "edit": "#/components/schemas/EditConfirmSessionRequest",
                     "existing_credential": "#/components/schemas/ExistingCredentialConfirmSessionRequest",
                     "oauth": "#/components/schemas/OAuthConfirmSessionRequest",
                     "own_oauth_client": "#/components/schemas/OwnOAuthClientConfirmSessionRequest",
@@ -35129,6 +35538,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/ReauthorizeConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EditConfirmSessionRequest"
                   }
                 ],
                 "title": "Body"
@@ -42220,6 +42632,245 @@
         ]
       },
       "summary": "Start an integration connect session"
+    },
+    "/integrations:edit-connection": {
+      "description": "`POST`: Ask to change a credential binding.",
+      "post": {
+        "description": "Open a connect session that edits an existing binding instead of creating one.\n\nThe change (rules to add, remove or replace, and resuming a suspended\nbinding) is resolved against the binding as it is now, and a human\napproves it on the review page; nothing changes until then. An agent\nedits its own binding and must omit `agent_id`; a human names the agent\nand must be its owner or an org admin. A change that is already in place\nis 422 `nothing_to_change`, a rule id the binding does not hold is 422\n`unknown_rule`, and a binding with an open edit is 409 `edit_open` with\nthat session's `session_id`.",
+        "operationId": "integrationsEditConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "credential_id": "cred_6968b39855d91a3561684b32",
+                "reason": "Needs to send replies, not just read",
+                "rules": {
+                  "add": [
+                    {
+                      "before": "apr_6968b3987c22b63e87e79f06",
+                      "rule": {
+                        "effect": "allow",
+                        "match_mode": "prefix",
+                        "methods": [
+                          "GET"
+                        ],
+                        "operations": [
+                          "listCharges"
+                        ],
+                        "path": "/v1/charges"
+                      }
+                    }
+                  ],
+                  "remove": [
+                    "apr_6968b3987c22b63e87e79f06"
+                  ],
+                  "set": [
+                    {
+                      "effect": "allow",
+                      "match_mode": "prefix",
+                      "methods": [
+                        "GET"
+                      ],
+                      "operations": [
+                        "listCharges"
+                      ],
+                      "path": "/v1/charges"
+                    }
+                  ]
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/EditConnectionRequest"
+              }
+            }
+          },
+          "description": "Ask to change an existing credential binding; a human approves the change.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No binding the caller may edit for this credential"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The binding already has an open edit; amend it"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit or open-session cap"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Ask to change a credential binding",
+        "tags": [
+          "Integrations"
+        ]
+      },
+      "summary": "Ask to change a credential binding"
     },
     "/jobs": {
       "description": "`GET`: List Jobs.",
