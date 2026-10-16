@@ -83,8 +83,9 @@ class ServerTimingStage(StrEnum):
     - ``jentic-persist`` — the request's admin-DB write: the execution record
       and lifecycle events (including the ``FAILED`` record of a
       transport-level upstream failure), the enqueued job of an async call, or
-      the hold of an approval-gated call. Absent on the streaming path, which
-      persists after the body has been sent.
+      the hold of an approval-gated call. Absent from the streaming path's
+      header: that write runs after the body has been sent (it is still
+      recorded, for ``broker.execution.overhead_ms``).
     - ``jentic-total`` — from the Server-Timing middleware receiving the
       request (inside admission control) to the response headers. What the
       stages above do not cover is routing, response assembly, and the

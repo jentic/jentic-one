@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -64,7 +65,12 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedLinks,
     HeldExecutionAcceptedResponse,
 )
-from jentic_one.broker.core.server_timing import ServerTimingStage, stage
+from jentic_one.broker.core.server_timing import (
+    ServerTimingStage,
+    StageTimer,
+    current_recorder,
+    stage,
+)
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.discovery import (
@@ -75,6 +81,10 @@ from jentic_one.broker.services.discovery import (
 from jentic_one.broker.services.execution.authorization import (
     ExecutionAuthorization,
     authorize_execution,
+)
+from jentic_one.broker.services.execution.overhead import (
+    record_overhead,
+    upstream_exclusive_elapsed_ms,
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
@@ -165,12 +175,13 @@ async def _persist_streaming_outcome(
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
-) -> None:
-    """Best-effort persistence of a streaming execution record.
+) -> bool:
+    """Best-effort persistence of a streaming execution record; ``True`` once committed.
 
     Extracted so unit tests can exercise the real logic without invoking the full
     handler. It runs after the streamed body has been sent, so its write is never
-    part of the response's ``Server-Timing`` field.
+    part of the response's ``Server-Timing`` field. A failure is logged and
+    counted, never raised: the response has already been sent.
     """
     status = (
         ExecutionStatus.FAILED
@@ -203,6 +214,8 @@ async def _persist_streaming_outcome(
             execution_id=outcome.execution_id,
             exc_info=True,
         )
+        return False
+    return True
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -718,6 +731,12 @@ async def _handle(
                 headers=dict(response.headers),
                 body=outcome.result.body,
             )
+    # The record has committed and the response is assembled: everything left
+    # is broker overhead. A raise above (transport failure, failed persist or
+    # idempotency write) skips the sample.
+    recorder = current_recorder()
+    if recorder is not None:
+        record_overhead(upstream_exclusive_elapsed_ms(recorder), ctx_req.operation_id, "buffered")
     return response
 
 
@@ -834,23 +853,42 @@ async def _handle_streaming(
         has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
+    recorder = current_recorder()
+    # Broker time before the upstream headers; set only once the stream has
+    # opened, so an outcome delivered for a stream that failed to open (no
+    # headers, nothing streamed) records no overhead — as on the buffered path.
+    pre_upstream_ms: float | None = None
+
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        await _persist_streaming_outcome(
-            outcome,
-            ctx,
-            ctx_req,
-            started_at,
-            identity.sub,
-            identity.actor_type.value,
-            origin=identity.origin.value,
-        )
+        persist = StageTimer(recorder, ServerTimingStage.PERSIST) if recorder is not None else None
+        # Timed into the request's recorder after the header has been sent, so
+        # ``jentic-persist`` never appears in this response's field.
+        async with persist or nullcontext():
+            persisted = await _persist_streaming_outcome(
+                outcome,
+                ctx,
+                ctx_req,
+                started_at,
+                identity.sub,
+                identity.actor_type.value,
+                origin=identity.origin.value,
+            )
+        if (
+            persisted
+            and pre_upstream_ms is not None
+            and persist is not None
+            and persist.duration_ms is not None
+        ):
+            overhead_ms = pre_upstream_ms + persist.duration_ms
+            record_overhead(overhead_ms, ctx_req.operation_id, "streaming")
 
     broker = _resolve_broker(request, runner)
     # Returns once the upstream response headers are in; the body (and its
     # persistence) follow after this response's headers are sent, so the
-    # streaming upstream stage is the header wait and persist is absent.
+    # streaming upstream stage is the header wait and the header carries no
+    # persist stage.
     with stage(ServerTimingStage.UPSTREAM):
-        return await broker.execute_streaming(
+        response = await broker.execute_streaming(
             runner,
             runner_request,
             ctx_req,
@@ -858,6 +896,9 @@ async def _handle_streaming(
             transfer_deadline_s=upstream_cfg.transfer_deadline_s,
             background_callback=_persist_callback,
         )
+    if recorder is not None:
+        pre_upstream_ms = upstream_exclusive_elapsed_ms(recorder)
+    return response
 
 
 def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:
