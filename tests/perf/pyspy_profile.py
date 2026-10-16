@@ -177,9 +177,10 @@ def main(argv: list[str] | None = None) -> int:
         result.update(summarise(run_oha(a), 200))
 
     print("starting py-spy sidecar (pip install py-spy) ...", flush=True)
-    start_pyspy(cid)
-    start_oha()
     try:
+        # Inside the try so a failed/interrupted start still removes both sidecars.
+        start_pyspy(cid)
+        start_oha()
         loader = threading.Thread(target=load, daemon=True)
         loader.start()
         time.sleep(warm_s)
