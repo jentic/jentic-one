@@ -1970,8 +1970,9 @@ class ServerConfig(BaseModel):
             "are per process, and each worker is a full interpreter (budget "
             "memory per worker). Values above 1 require PostgreSQL for every "
             "database, are incompatible with ``server.reload``, and require the "
-            "redis shared-state backend when the process runs the auth or broker "
-            "surface."
+            "redis shared-state backend when the process runs the auth surface, "
+            "or the broker surface with idempotency, rate limiting or the "
+            "circuit breaker enabled."
         ),
     )
     backend: Literal["local", "remote"] = "local"

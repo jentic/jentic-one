@@ -2294,7 +2294,8 @@ type ServerConfig struct {
 	// limits, caches and Prometheus metrics are per process, and each worker is a
 	// full interpreter (budget memory per worker). Values above 1 require PostgreSQL
 	// for every database, are incompatible with ``server.reload``, and require the
-	// redis shared-state backend when the process runs the auth or broker surface.
+	// redis shared-state backend when the process runs the auth surface, or the
+	// broker surface with idempotency, rate limiting or the circuit breaker enabled.
 	Workers int `json:"workers,omitempty,omitzero" yaml:"workers,omitempty" mapstructure:"workers,omitempty"`
 }
 

@@ -1522,7 +1522,7 @@
         },
         "workers": {
           "default": 1,
-          "description": "Number of uvicorn worker processes ``python -m jentic_one`` serves with (1-64). Each worker is a separate process that re-reads config from the config file and environment when it spawns and runs its own lifespan: DB pools, admission limits, caches and Prometheus metrics are per process, and each worker is a full interpreter (budget memory per worker). Values above 1 require PostgreSQL for every database, are incompatible with ``server.reload``, and require the redis shared-state backend when the process runs the auth or broker surface.",
+          "description": "Number of uvicorn worker processes ``python -m jentic_one`` serves with (1-64). Each worker is a separate process that re-reads config from the config file and environment when it spawns and runs its own lifespan: DB pools, admission limits, caches and Prometheus metrics are per process, and each worker is a full interpreter (budget memory per worker). Values above 1 require PostgreSQL for every database, are incompatible with ``server.reload``, and require the redis shared-state backend when the process runs the auth surface, or the broker surface with idempotency, rate limiting or the circuit breaker enabled.",
           "maximum": 64,
           "minimum": 1,
           "title": "Workers",
