@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 
 from jentic_one.admin.repos import AuditRepository
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
@@ -60,6 +62,7 @@ from jentic_one.shared.db.errors import DatabaseDataError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _ADMIN_IDENTITY = Identity(sub="admin_user", email="admin@test.com", permissions=["org:admin"])
 
@@ -1255,6 +1258,184 @@ async def test_update_token_url_on_invisible_credential_is_not_found(
             identity=caller,
         )
     validator.assert_not_called()
+
+
+_IS_SQLITE = os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite"
+_MOVED_TOKEN_URL = "https://login.other.example.org/token"
+_PATH_EDIT_TOKEN_URL = "https://auth.example.com/v2/token"
+_MOVE_SECRET = "ac-secret-for-other-origin"  # pragma: allowlist secret
+
+
+async def _raises(awaitable: Awaitable[object]) -> BaseException | None:
+    """Await *awaitable* and return the exception it raised (None if none)."""
+    try:
+        await awaitable
+    except Exception as exc:
+        return exc
+    return None
+
+
+async def _race_path_edit_behind_cross_origin_move(
+    svc: CredentialService,
+    control_db: DatabaseSession,
+    integration_context: Context,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    wait_until_parked: Callable[[], Awaitable[None]],
+) -> None:
+    """PATCH A moves token_url to another origin with a new client_secret and
+    holds the refresh lock; PATCH B, a same-origin path edit with no secret,
+    queues behind it. Once A commits, B must compare against A's URL, so it
+    is a cross-origin edit without client_secret and is refused: A's secret
+    stays paired with the origin it was entered for."""
+    created = await svc.create(_auth_code_create("Raced"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    await _connect(control_db, cid)
+
+    real_lock = OAuthTokenRepository.acquire_refresh_lock
+    real_get_updatable = CredentialService._get_updatable
+    move_locked = asyncio.Event()
+    release_move = asyncio.Event()
+    lock_calls = 0
+    # Per task: the order of its credential reads and its lock acquisition.
+    steps: dict[asyncio.Task[Any] | None, list[str]] = {}
+
+    async def lock_holding_the_first_caller(session: Any, credential_id: str) -> None:
+        nonlocal lock_calls
+        lock_calls += 1
+        caller = lock_calls
+        await real_lock(session, credential_id)
+        steps.setdefault(asyncio.current_task(), []).append("lock")
+        if caller == 1:
+            move_locked.set()
+            await release_move.wait()
+
+    async def recording_get_updatable(*args: Any) -> Credential:
+        steps.setdefault(asyncio.current_task(), []).append("read")
+        return await real_get_updatable(*args)
+
+    monkeypatch.setattr(
+        OAuthTokenRepository, "acquire_refresh_lock", staticmethod(lock_holding_the_first_caller)
+    )
+    monkeypatch.setattr(CredentialService, "_get_updatable", staticmethod(recording_get_updatable))
+    path_edit_validated = asyncio.Event()
+
+    async def validate(url: str) -> str:
+        result = await validate_upstream_url_async(url)
+        if url == _PATH_EDIT_TOKEN_URL:
+            path_edit_validated.set()
+        return result
+
+    monkeypatch.setattr(
+        "jentic_one.control.services.credentials.service.validate_upstream_url_async", validate
+    )
+
+    async with asyncio.timeout(30), asyncio.TaskGroup() as tg:
+        move = tg.create_task(
+            svc.update(
+                cid,
+                CredentialUpdate(
+                    type=CredentialType.OAUTH2,
+                    token_url=_MOVED_TOKEN_URL,
+                    client_secret=_MOVE_SECRET,
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+        )
+        await move_locked.wait()
+        path_edit = tg.create_task(
+            _raises(
+                svc.update(
+                    cid,
+                    CredentialUpdate(type=CredentialType.OAUTH2, token_url=_PATH_EDIT_TOKEN_URL),
+                    identity=_ADMIN_IDENTITY,
+                )
+            )
+        )
+        await path_edit_validated.wait()
+        await wait_until_parked()
+        release_move.set()
+
+    moved = move.result()
+    assert isinstance(moved.details, OAuth2Redacted)
+    assert moved.details.token_url == _MOVED_TOKEN_URL
+    assert moved.details.connected is False
+    refused = path_edit.result()
+    assert isinstance(refused, InvalidCredentialInputError)
+    assert "client_secret" in str(refused)
+    assert lock_calls == 2
+    # The read-only access check, then the lock, then the in-transaction
+    # read the origin comparison uses. On SQLite ``BEGIN IMMEDIATE`` already
+    # orders that read after the move's commit; this pins the order the
+    # Postgres advisory lock relies on.
+    assert steps[path_edit] == ["read", "lock", "read"]
+    assert steps[move] == ["read", "lock", "read"]
+    assert not await _has_token(control_db, cid)
+    async with control_db.session() as session:
+        row = await session.get(OAuthClientCredential, cid)
+        assert row is not None
+        assert row.token_url == _MOVED_TOKEN_URL
+        assert integration_context.encryption.decrypt(row.encrypted_client_secret) == _MOVE_SECRET
+
+
+@pytest.mark.skipif(not _IS_SQLITE, reason="SQLite variant; Postgres has its own below")
+async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_sqlite(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+    integration_context: Context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1425 on SQLite: the path edit's ``BEGIN IMMEDIATE`` waits for the
+    move's write transaction, so it reads the moved row whenever it starts
+    (the short pause only gives it time to queue). The recorded step order
+    still pins the lock as the transaction's first statement."""
+
+    async def queued() -> None:
+        await asyncio.sleep(0.1)
+
+    await _race_path_edit_behind_cross_origin_move(
+        svc, control_db, integration_context, monkeypatch, wait_until_parked=queued
+    )
+
+
+@pytest.mark.skipif(_IS_SQLITE, reason="advisory locks are Postgres-only")
+async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_postgres(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+    integration_context: Context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1425 on Postgres: the path edit is released only once it is
+    parked on the advisory lock the move holds. Its credential and client
+    rows must be read after that lock is granted; read before it, they would
+    still carry the old origin, the path edit would pass as same-origin
+    without a secret, and the move's secret would end up paired with the old
+    origin."""
+
+    async def parked_on_advisory_lock() -> None:
+        while True:
+            async with control_db.session() as session:
+                waiting = (
+                    await session.execute(
+                        text(
+                            "SELECT count(*) FROM pg_locks"
+                            " WHERE locktype = 'advisory' AND NOT granted"
+                        )
+                    )
+                ).scalar_one()
+            if waiting:
+                return
+            await asyncio.sleep(0.01)
+
+    await _race_path_edit_behind_cross_origin_move(
+        svc,
+        control_db,
+        integration_context,
+        monkeypatch,
+        wait_until_parked=parked_on_advisory_lock,
+    )
 
 
 async def test_update_oauth2_without_client_config_rejected(
