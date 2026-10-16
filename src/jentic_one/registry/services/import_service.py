@@ -94,7 +94,12 @@ def _promotion_fields(result: IngestResult) -> dict[str, Any]:
     api = f"{result.api_vendor}/{result.api_name}/{result.api_version}"
     promote_path = f"/apis/{api}/revisions/{result.revision_id}:promote"
     scope = (
-        "apis:write and credentials:write" if result.held_host_change is not None else "apis:write"
+        "apis:write and credentials:write"
+        if result.held_host_change is not None
+        else (
+            "apis:write (and credentials:write if it changes the server hosts of an API "
+            "with bound credentials)"
+        )
     )
     return {
         "promoted": False,
