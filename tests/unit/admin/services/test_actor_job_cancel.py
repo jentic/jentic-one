@@ -217,10 +217,11 @@ def user_deps() -> Iterator[dict[str, MagicMock]]:
         patch(f"{_USER_SVC}.ensure_not_last_active_admin", new_callable=AsyncMock),
         patch(f"{_USER_SVC}.cancel_queued_executions_for_actor", new_callable=AsyncMock) as cancel,
     ):
-        users.get_by_id = AsyncMock(return_value=MagicMock(id="usr_target"))
+        users.get_by_id = AsyncMock(return_value=MagicMock(id="usr_target", deleted_at=None))
         users.disable = AsyncMock()
         users.enable = AsyncMock()
         users.update = AsyncMock()
+        users.mark_deleted = AsyncMock()
         users.revoke_login_sessions = AsyncMock()
         grants.get_permission_sets = AsyncMock(return_value={})
         external.delete_for_user = AsyncMock()
