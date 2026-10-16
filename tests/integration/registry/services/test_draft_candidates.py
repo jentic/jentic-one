@@ -6,7 +6,9 @@ capped statement. These pin its precedence and its overflow rule:
 - a revision served by an exact-host row ranks before one served only by a
   regex-host row, even when the regex-host draft is newer;
 - more matching rows than the cap yields no candidates (the generic 404),
-  never a truncated, possibly wrong, ranking.
+  never a truncated, possibly wrong, ranking;
+- only drafts the caller may be told about are read, so other principals'
+  drafts neither appear nor count toward the cap.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ pytestmark = pytest.mark.integration
 
 VENDOR = "draft-candidates"
 URL = "https://api.draft-candidates.example/v1/widgets"
+SUBMITTER = "agnt_draft_candidates"
 
 
 def _source(name: str, server_url: str) -> dict[str, Any]:
@@ -55,7 +58,7 @@ def _source(name: str, server_url: str) -> dict[str, Any]:
         "vendor": VENDOR,
         "api_name": name,
         "version": "1.0.0",
-        "submitted_by": "agnt_draft_candidates",
+        "submitted_by": SUBMITTER,
     }
 
 
@@ -96,10 +99,25 @@ async def env(integration_context: Context) -> AsyncGenerator[Context, None]:
     await _wipe(integration_context)
 
 
-async def _candidates(ctx: Context) -> list[uuid.UUID]:
+async def _candidates(
+    ctx: Context, *, submitted_by: str = SUBMITTER, include_origin_drafts: bool = False
+) -> list[uuid.UUID]:
     async with ctx.registry_db.session() as session:
-        found = await URLLookupService(session).find_draft_candidates(method="GET", url=URL)
+        found = await URLLookupService(session).find_draft_candidates(
+            method="GET",
+            url=URL,
+            submitted_by=submitted_by,
+            include_origin_drafts=include_origin_drafts,
+        )
     return [candidate.row.revision_id for candidate in found]
+
+
+async def _set_revision(ctx: Context, revision_id: uuid.UUID, **values: Any) -> None:
+    async with ctx.registry_db.session() as session:
+        await session.execute(
+            update(ApiRevision).where(ApiRevision.id == revision_id).values(**values)
+        )
+        await session.commit()
 
 
 async def test_exact_host_draft_ranks_before_a_newer_regex_host_draft(env: Context) -> None:
@@ -128,3 +146,27 @@ async def test_more_rows_than_the_cap_yield_no_candidates(
     monkeypatch.setattr(url_lookup, "MAX_CANDIDATES", 1)
 
     assert await _candidates(env) == []
+
+
+async def test_other_principals_drafts_do_not_count_toward_the_cap(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = await _import_draft(env, _source("own", "https://api.draft-candidates.example"))
+    others = await _import_draft(env, _source("others", "https://api.draft-candidates.example"))
+    await _set_revision(env, others, submitted_by="agnt_someone_else")
+
+    monkeypatch.setattr(url_lookup, "MAX_CANDIDATES", 1)
+
+    # Two matching drafts exceed the cap of 1, but only the submitter's own is
+    # read, so its hint survives and the other draft's size reveals nothing.
+    assert await _candidates(env) == [own]
+    assert await _candidates(env, submitted_by="agnt_someone_else") == [others]
+    assert await _candidates(env, submitted_by="agnt_stranger") == []
+
+
+async def test_drafts_held_for_host_review_are_read_only_for_operators(env: Context) -> None:
+    held = await _import_draft(env, _source("held", "https://api.draft-candidates.example"))
+    await _set_revision(env, held, submitted_by="agnt_someone_else", origin="url_import")
+
+    assert await _candidates(env) == []
+    assert await _candidates(env, include_origin_drafts=True) == [held]

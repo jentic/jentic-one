@@ -87,14 +87,21 @@ class RegistryService:
         """Name the best ``draft`` revision serving METHOD+URL that the caller may know of.
 
         Candidates come best first from
-        :meth:`URLLookupService.find_draft_candidates`. Each is classified with
+        :meth:`URLLookupService.find_draft_candidates`, which reads only the
+        caller's own drafts and — for a caller with ``credentials:write`` —
+        drafts held for server-host review, so other principals' drafts
+        neither appear nor count toward its cap. Each is classified with
         :meth:`draft_pin_outcome` — the rule :meth:`resolve_revision_pin`
-        applies — and the first one the caller submitted, or whose pin would
-        resolve for it, is returned with that outcome. Any other principal's
-        draft is passed over, so its existence is never disclosed.
+        applies, and the authority on what is disclosed — and the first one
+        the caller submitted, or whose pin would resolve for it, is returned
+        with that outcome. Any other principal's draft is passed over, so its
+        existence is never disclosed.
         """
         candidates = await URLLookupService(self._session).find_draft_candidates(
-            method=method, url=url
+            method=method,
+            url=url,
+            submitted_by=identity.sub,
+            include_origin_drafts=may_approve_host_change(identity.permissions),
         )
         for candidate in candidates:
             outcome = await self.draft_pin_outcome(

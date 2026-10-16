@@ -124,7 +124,9 @@ class URLLookupService:
 
         return None
 
-    async def find_draft_candidates(self, *, method: str, url: str) -> list[DraftUrlIndexCandidate]:
+    async def find_draft_candidates(
+        self, *, method: str, url: str, submitted_by: str, include_origin_drafts: bool
+    ) -> list[DraftUrlIndexCandidate]:
         """The ``draft`` revisions whose URL index serves METHOD+URL, best first.
 
         Explains an unpinned miss: :meth:`resolve` only searches live
@@ -138,11 +140,15 @@ class URLLookupService:
         row first, newest draft first within each — so a caller can pick the
         first one it may act on.
 
-        One statement returns at most ``MAX_CANDIDATES`` rows (the cap bounds
-        the result, not the rows the database reads). When more match, the
-        set is truncated and its order no longer says which draft is best,
-        so the answer is the empty list rather than a guess. It never raises
-        the lookup errors (ambiguity, too many candidates).
+        Only drafts ``submitted_by`` the caller are read, plus every draft
+        with an ``origin`` when ``include_origin_drafts`` — a superset of
+        those the caller may be told about, so drafts it may not see neither
+        appear nor count toward the cap. One statement returns at most
+        ``MAX_CANDIDATES`` rows (the cap bounds the result, not the rows the
+        database reads). When more match, the set is truncated and its order
+        no longer says which draft is best, so the answer is the empty list
+        rather than a guess. It never raises the lookup errors (ambiguity,
+        too many candidates).
         """
         request = _parse_request(url, method)
         rows = await UrlIndexRepository.lookup_draft_candidates(
@@ -150,6 +156,8 @@ class URLLookupService:
             methods=request.methods,
             host=request.host,
             segment_count=request.segment_count,
+            submitted_by=submitted_by,
+            include_origin_drafts=include_origin_drafts,
             limit=MAX_CANDIDATES + 1,
         )
         if len(rows) > MAX_CANDIDATES:
