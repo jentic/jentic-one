@@ -25,7 +25,7 @@ from tests.harness.postgres import alembic_config_for
 
 pytestmark = pytest.mark.integration
 
-_PARENT_REV = "cc3d4e5f6a7b"  # pragma: allowlist secret
+_PARENT_REV = "70ff607085b4"  # pragma: allowlist secret
 _AGENT = "agnt_mig_narrow"
 _SESSIONS = ("cs_mig_agent", "cs_mig_user", "cs_mig_agent_dup")
 _CREDENTIALS = ("cred_mig_agent", "cred_mig_user", "cred_mig_agent_dup")

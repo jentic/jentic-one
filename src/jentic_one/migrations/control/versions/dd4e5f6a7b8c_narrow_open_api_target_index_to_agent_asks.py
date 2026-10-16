@@ -15,7 +15,7 @@ and the rest are removed with their pending credentials — the same way the
 targets migration's downgrade removes live API sessions.
 
 Revision ID: dd4e5f6a7b8c
-Revises: cc3d4e5f6a7b
+Revises: 70ff607085b4
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "dd4e5f6a7b8c"  # pragma: allowlist secret
-down_revision: str | None = "cc3d4e5f6a7b"  # pragma: allowlist secret
+down_revision: str | None = "70ff607085b4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -62,10 +62,16 @@ async def restore_heads(
     await _exec(admin_db, "DELETE FROM jobs WHERE id LIKE 'job_mrt_%'")
 
 
-def test_control_tree_has_one_head_with_the_ask_tier_on_top(integration_config: AppConfig) -> None:
+def test_control_tree_has_one_head_with_the_ask_tier_in_its_lineage(
+    integration_config: AppConfig,
+) -> None:
     cfg = alembic_config_for("control", integration_config.databases.control)
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == [_CONTROL_DATA]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    # Later control migrations may stack on top; the ask tier must stay in the head's lineage.
+    lineage = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert _CONTROL_DATA in lineage
     assert script.get_revision(_CONTROL_DATA).down_revision == _CONTROL_WIDEN
     assert script.get_revision(_CONTROL_WIDEN).down_revision == _CONTROL_PARENT
 
