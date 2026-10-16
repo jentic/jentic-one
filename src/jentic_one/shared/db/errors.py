@@ -22,8 +22,9 @@ class DatabaseCommitOutcomeUnknownError(DatabaseUnavailableError):
 
     The server may already have applied the commit, so the outcome is unknown.
     ``run_in_transaction`` never re-runs the unit of work for this error, since
-    a replay could apply it twice. Web handlers resolve it through the MRO to
-    the same 503 as its parent.
+    a replay could apply it twice. Web handlers answer it with the same 503 as
+    its parent, but with a detail that asks the client to check whether the
+    write was applied before retrying.
     """
 
 

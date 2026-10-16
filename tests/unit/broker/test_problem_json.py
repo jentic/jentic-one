@@ -47,6 +47,7 @@ from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,
     DatabaseUnavailableError,
 )
+from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
 
 
 def _body(resp: Any) -> dict[str, Any]:
@@ -519,3 +520,21 @@ def test_database_unavailable_log_has_no_traceback_or_sql() -> None:
     rendered = repr(entry)
     assert "SELECT" not in rendered
     assert "hunter2" not in rendered
+
+
+def test_commit_outcome_unknown_asks_the_client_to_check_before_retrying() -> None:
+    """A write that may have landed gets the shared check-before-retrying detail."""
+    app = FastAPI()
+    install_broker_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise DatabaseCommitOutcomeUnknownError("connection is closed")
+
+    resp = TestClient(app).get("/boom")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["type"] == "database_unavailable"
+    assert body["detail"] == DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
+    assert "agent_directive" not in body

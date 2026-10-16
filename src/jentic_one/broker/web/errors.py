@@ -28,8 +28,12 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import problem_body, status_for_broker_error
-from jentic_one.shared.db.errors import DatabaseUnavailableError
-from jentic_one.shared.web.errors import log_database_unavailable, sanitize_validation_errors
+from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
+from jentic_one.shared.web.errors import (
+    DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
+    log_database_unavailable,
+    sanitize_validation_errors,
+)
 
 _PROBLEM_JSON = "application/problem+json"
 
@@ -109,12 +113,19 @@ async def handle_database_unavailable(
     chained SQLAlchemy cause renders the statement and its bound parameters.
     No retry directive is attached: the failure can land after the upstream
     call was dispatched (e.g. persisting its record), so blindly re-sending a
-    non-idempotent call could execute it twice.
+    non-idempotent call could execute it twice. A connection lost at commit
+    gets the shared outcome-unknown detail, which asks the client to check
+    whether the write was applied before retrying.
     """
     log_database_unavailable(logger, "broker_database_unavailable", exc, path=request.url.path)
+    detail = (
+        DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
+        if isinstance(exc, DatabaseCommitOutcomeUnknownError)
+        else "The broker's database is temporarily unavailable"
+    )
     return problem_response(
         503,
-        "The broker's database is temporarily unavailable",
+        detail,
         type="database_unavailable",
         instance=request.url.path,
     )

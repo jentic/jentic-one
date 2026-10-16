@@ -38,7 +38,7 @@ from jentic_one.registry.services.errors import (
     TooManyCandidatesError,
 )
 from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
-from jentic_one.shared.web.errors import make_service_error_handler
+from jentic_one.shared.web.errors import DB_UNAVAILABLE_SAFE_DETAILS, make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ApiNotFoundError: (404, "api_not_found"),
@@ -109,7 +109,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # server-side (see make_service_error_handler).
 _SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseConsistencyError: "An unexpected error occurred",
-    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+    **DB_UNAVAILABLE_SAFE_DETAILS,
 }
 
 

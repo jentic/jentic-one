@@ -182,3 +182,18 @@ async def test_database_unavailable_logs_warning_without_traceback_or_sql() -> N
     rendered = repr(entry)
     assert "SELECT" not in rendered
     assert "hunter2" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_safe_detail_prefers_the_most_specific_class() -> None:
+    """A subclass's safe detail wins over its parent's, without its own map entry."""
+    handler = make_service_error_handler(
+        {_NotFoundError: (404, "not_found")},
+        safe_details={_NotFoundError: "parent detail", _SubNotFoundError: "sub detail"},
+    )
+
+    sub = await handler(_make_request(), _SubNotFoundError("raw"))
+    parent = await handler(_make_request(), _NotFoundError("raw"))
+
+    assert json.loads(bytes(sub.body))["detail"] == "sub detail"
+    assert json.loads(bytes(parent.body))["detail"] == "parent detail"
