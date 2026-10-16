@@ -335,9 +335,11 @@ async def test_connect_site_pin_refuses_rebind_outside_allowlist(
 async def test_connect_site_applies_allowlist_off_the_event_loop(
     call: Callable[..., Awaitable[Any]], error: type[Exception]
 ) -> None:
-    # The allowlist is honoured on the async validation path: every lookup for
+    # The allowlist is honoured on the async validation path: the lookup for
     # the allowlisted internal host runs in a worker thread and the request is
-    # still sent.
+    # still sent. Within the cache TTL the pre-flight check and the connect-time
+    # pin share one answer (pre-flight miss, pin hit), so a rebind cannot land
+    # between them.
     loop_thread = threading.get_ident()
     lookup_threads: list[int] = []
     sent: list[httpx.Request] = []
@@ -358,5 +360,5 @@ async def test_connect_site_applies_allowlist_off_the_event_loop(
     ):
         await call(_INTERNAL_URL, _ALLOWLIST)
     assert len(sent) == 1
-    assert lookup_threads
+    assert len(lookup_threads) == 1
     assert loop_thread not in lookup_threads
