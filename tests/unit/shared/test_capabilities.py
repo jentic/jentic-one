@@ -201,6 +201,21 @@ def test_capabilities_urls_are_absolute_when_base_url_known(
     assert doc.urls.authorize == f"{base}/authorize"
 
 
+def test_capabilities_base_url_falls_back_to_server_public_base_url(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """With no ``auth.canonical_base_url``, the shared ``server.public_base_url``
+    roots the document — the same resolution the OAuth discovery documents use,
+    so the capability document can never disagree with them."""
+    cfg = dict(sample_config_dict)
+    cfg["auth"] = {k: v for k, v in cfg.get("auth", {}).items() if k != "canonical_base_url"}
+    cfg["server"] = {**cfg.get("server", {}), "public_base_url": "https://jentic.acme.example"}
+    ctx = Context(AppConfig.model_validate(cfg))
+    doc = resolve_capabilities(ctx, _ALL_APPS)
+    assert doc.instance.canonical_base_url == "https://jentic.acme.example"
+    assert doc.urls.authorize == "https://jentic.acme.example/authorize"
+
+
 def test_capabilities_mcp_metadata_urls_follow_the_oauth_gate(
     sample_config_dict: dict[str, Any],
 ) -> None:
@@ -292,13 +307,14 @@ def test_capabilities_broker_url_strips_userinfo(sample_config_dict: dict[str, A
 def test_capabilities_instance_slice_strips_userinfo(
     sample_config_dict: dict[str, Any],
 ) -> None:
-    cfg = dict(sample_config_dict)
-    cfg["auth"] = {
-        **cfg.get("auth", {}),
+    """Config load rejects userinfo in ``auth.canonical_base_url``; echo-time
+    stripping stays as defense-in-depth, so bypass validation to reach it."""
+    config = AppConfig.model_validate(sample_config_dict)
+    auth = config.auth.model_copy(
         # pragma: allowlist nextline secret
-        "canonical_base_url": "https://user:secret@jentic.acme.example",
-    }
-    ctx = Context(AppConfig.model_validate(cfg))
+        update={"canonical_base_url": "https://user:secret@jentic.acme.example"}
+    )
+    ctx = Context(config.model_copy(update={"auth": auth}))
     doc = resolve_capabilities(ctx, _ALL_APPS)
     assert doc.instance.canonical_base_url == "https://jentic.acme.example"
 

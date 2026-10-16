@@ -58,6 +58,9 @@ func (AuditListResponse) RequiredFields() []string { return []string{"data", "ha
 func (AuditResponse) RequiredFields() []string {
 	return []string{"action", "actor_type", "id", "occurred_at", "target_id", "target_type"}
 }
+func (AuthMethodsResponse) RequiredFields() []string {
+	return []string{"agent_dcr", "idp", "local_login", "oauth_client_dcr", "service_accounts"}
+}
 func (AuthorizationCodeRegistrationCreateRequest) RequiredFields() []string {
 	return []string{"api_vendor", "authorize_url", "catalog_api_id", "client_id", "client_secret", "display_name", "flow_kind", "name", "token_url"}
 }
@@ -75,6 +78,16 @@ func (BearerTokenCreateRequest) RequiredFields() []string {
 	return []string{"api", "name", "token", "type"}
 }
 func (BearerTokenUpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (CapabilitiesAuthResponse) RequiredFields() []string { return []string{"methods"} }
+func (CapabilitiesInstanceResponse) RequiredFields() []string {
+	return []string{"backend", "canonical_base_url"}
+}
+func (CapabilitiesResponse) RequiredFields() []string {
+	return []string{"auth", "capabilities_version", "features", "instance", "surfaces", "urls"}
+}
+func (CapabilitiesUrlsResponse) RequiredFields() []string {
+	return []string{"agent_registration", "authorization_server_metadata", "authorization_server_metadata_mcp", "authorize", "broker", "oauth_client_registration", "protected_resource_metadata", "token"}
+}
 func (CatalogEntryLinksResponse) RequiredFields() []string {
 	return []string{"import", "operations", "self"}
 }
@@ -121,10 +134,11 @@ func (DenyRequest) RequiredFields() []string                { return []string{"r
 func (DeviceAuthorizationRegistrationCreateRequest) RequiredFields() []string {
 	return []string{"api_vendor", "authorization_endpoint", "catalog_api_id", "client_id", "display_name", "flow_kind", "name", "token_endpoint"}
 }
-func (EffectivePermission) RequiredFields() []string { return []string{"name"} }
-func (ErrorItem) RequiredFields() []string           { return []string{"detail"} }
-func (EventLinks) RequiredFields() []string          { return []string{"self"} }
-func (EventListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
+func (EffectivePermission) RequiredFields() []string   { return []string{"name"} }
+func (EnabledMethodResponse) RequiredFields() []string { return []string{"enabled"} }
+func (ErrorItem) RequiredFields() []string             { return []string{"detail"} }
+func (EventLinks) RequiredFields() []string            { return []string{"self"} }
+func (EventListResponse) RequiredFields() []string     { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
 	return []string{"_links", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
 }
@@ -152,6 +166,7 @@ func (HeldExecutionResponse) RequiredFields() []string {
 	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "method", "path", "review_url", "state"}
 }
 func (HeldRequestResponse) RequiredFields() []string { return []string{"method", "url"} }
+func (IdpMethodResponse) RequiredFields() []string   { return []string{"enabled", "provider"} }
 func (InstanceIdentityResponse) RequiredFields() []string {
 	return []string{"backend", "canonical_base_url", "host"}
 }
@@ -218,6 +233,7 @@ func (OAuthGrantListResponse) RequiredFields() []string { return []string{"data"
 func (OAuthGrantResponse) RequiredFields() []string {
 	return []string{"agent_id", "can_revoke", "client_name", "client_origin", "created_at", "id", "last_used_at", "oauth_client_id", "revoked_at", "scopes", "status", "user_id"}
 }
+func (OauthClientDcrMethodResponse) RequiredFields() []string { return []string{"approval", "enabled"} }
 func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }

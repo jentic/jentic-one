@@ -43,6 +43,7 @@ export { ApprovalDecision } from './models/ApprovalDecision';
 export type { AuditListResponse } from './models/AuditListResponse';
 export type { AuditResponse } from './models/AuditResponse';
 export { AuditTargetType } from './models/AuditTargetType';
+export type { AuthMethodsResponse } from './models/AuthMethodsResponse';
 export type { AuthorizationCodeRegistrationCreateRequest } from './models/AuthorizationCodeRegistrationCreateRequest';
 export type { BasicAuthCreateRequest } from './models/BasicAuthCreateRequest';
 export type { BasicAuthUpdateRequest } from './models/BasicAuthUpdateRequest';
@@ -51,6 +52,10 @@ export type { BearerConfirmSessionRequest } from './models/BearerConfirmSessionR
 export type { BearerTokenCreateRequest } from './models/BearerTokenCreateRequest';
 export type { BearerTokenUpdateRequest } from './models/BearerTokenUpdateRequest';
 export type { Body_consentAgentCreate } from './models/Body_consentAgentCreate';
+export type { CapabilitiesAuthResponse } from './models/CapabilitiesAuthResponse';
+export { CapabilitiesInstanceResponse } from './models/CapabilitiesInstanceResponse';
+export type { CapabilitiesResponse } from './models/CapabilitiesResponse';
+export type { CapabilitiesUrlsResponse } from './models/CapabilitiesUrlsResponse';
 export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksResponse';
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
@@ -80,6 +85,7 @@ export type { DecideHeldExecutionRequest } from './models/DecideHeldExecutionReq
 export type { DenyRequest } from './models/DenyRequest';
 export type { DeviceAuthorizationRegistrationCreateRequest } from './models/DeviceAuthorizationRegistrationCreateRequest';
 export type { EffectivePermission } from './models/EffectivePermission';
+export type { EnabledMethodResponse } from './models/EnabledMethodResponse';
 export type { ErrorItem } from './models/ErrorItem';
 export type { EventLinks } from './models/EventLinks';
 export type { EventListResponse } from './models/EventListResponse';
@@ -99,6 +105,7 @@ export type { HeldExecutionListResponse } from './models/HeldExecutionListRespon
 export type { HeldExecutionResponse } from './models/HeldExecutionResponse';
 export { HeldExecutionState } from './models/HeldExecutionState';
 export type { HeldRequestResponse } from './models/HeldRequestResponse';
+export type { IdpMethodResponse } from './models/IdpMethodResponse';
 export { InstanceIdentityResponse } from './models/InstanceIdentityResponse';
 export type { IntegrationsConnectRequest } from './models/IntegrationsConnectRequest';
 export type { IntrospectResponse } from './models/IntrospectResponse';
@@ -134,6 +141,7 @@ export { OAuthApprovalDecisionRequest } from './models/OAuthApprovalDecisionRequ
 export { OAuthApprovalStatusResponse } from './models/OAuthApprovalStatusResponse';
 export { OAuthClientCreateRequest } from './models/OAuthClientCreateRequest';
 export type { OAuthClientCreateResponse } from './models/OAuthClientCreateResponse';
+export { OauthClientDcrMethodResponse } from './models/OauthClientDcrMethodResponse';
 export type { OAuthClientDenyRequest } from './models/OAuthClientDenyRequest';
 export type { OAuthClientListResponse } from './models/OAuthClientListResponse';
 export type { OAuthClientRegistrationRequest } from './models/OAuthClientRegistrationRequest';

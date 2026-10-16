@@ -176,7 +176,7 @@ def _advertised_broker_url(config_broker_url: str, backend: str) -> str | None:
     parts = urlsplit(config_broker_url)
     if backend == "remote" and _is_loopback_host(parts.hostname):
         return None
-    sanitized, _host = _sanitized_url_parts(config_broker_url)
+    sanitized, _host = sanitized_url_parts(config_broker_url)
     return sanitized
 
 

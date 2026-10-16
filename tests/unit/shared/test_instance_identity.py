@@ -22,8 +22,8 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.instance_identity import (
     InstanceIdentityResponse,
-    _sanitized_url_parts,
     resolve_instance_identity,
+    sanitized_url_parts,
 )
 
 
@@ -192,7 +192,7 @@ def test_config_rejects_userinfo_in_canonical_base_url(sample_config_dict: dict[
 def test_resolve_instance_identity_strips_userinfo_defense_in_depth() -> None:
     """Echo-time stripping remains as defense-in-depth for any value that
     reaches the resolver with userinfo (e.g. a non-config code path)."""
-    url, host = _sanitized_url_parts("https://user:secret@jentic.acme.example:8443/base")
+    url, host = sanitized_url_parts("https://user:secret@jentic.acme.example:8443/base")
     assert url == "https://jentic.acme.example:8443/base"
     assert host == "jentic.acme.example:8443"
     assert "secret" not in url

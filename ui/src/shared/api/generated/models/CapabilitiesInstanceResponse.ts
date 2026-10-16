@@ -11,7 +11,7 @@ export type CapabilitiesInstanceResponse = {
      */
     backend: CapabilitiesInstanceResponse.backend;
     /**
-     * The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+     * The instance's configured public base URL (auth.canonical_base_url, else server.public_base_url), with any userinfo stripped; '' if unset.
      */
     canonical_base_url: string;
 };

@@ -36,9 +36,12 @@ import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.instance_identity import sanitized_url_parts
+from jentic_one.shared.web.links import deployment_base_url
 
 CAPABILITIES_PATH = "/capabilities"
 
@@ -154,11 +157,14 @@ class CapabilitiesInstanceResponse(BaseModel):
 
     backend: Literal["local", "remote"] = Field(
         description="Operator-declared backend locality (server.backend); a hint, "
-        "not an authorization signal."
+        "not an authorization signal.",
+        examples=["remote"],
     )
     canonical_base_url: str = Field(
-        description="The instance's own canonical base URL (auth.canonical_base_url), "
-        "with any userinfo stripped; '' if unset."
+        description="The instance's configured public base URL (auth.canonical_base_url, "
+        "else server.public_base_url), "
+        "with any userinfo stripped; '' if unset.",
+        examples=[ex.BASE_URL],
     )
 
 
@@ -166,7 +172,8 @@ class CapabilitiesUrlsResponse(BaseModel):
     """Where to reach the deployment's public endpoints.
 
     Endpoint fields are absolute URLs whenever a base URL is known
-    (``auth.canonical_base_url``, else the origin the request arrived on);
+    (``auth.canonical_base_url``, else ``server.public_base_url``, else the
+    origin the request arrived on);
     metadata paths degrade to root-relative paths only when neither is
     resolvable. ``null`` means the corresponding surface or gate is not
     available on the process answering this request.
@@ -181,14 +188,16 @@ class CapabilitiesUrlsResponse(BaseModel):
             "deployment's internal control-plane→broker hop URL "
             "(server.mcp.broker_url) is topology-private and never published. "
             "Null when unset or invalid."
-        )
+        ),
+        examples=["https://broker.jentic.example.com"],
     )
     authorization_server_metadata: str | None = Field(
         description=(
             "RFC 8414 authorization-server metadata document for the platform "
             "issuer (its registration_endpoint is the agent DCR door /register); "
             "null when the auth surface is not mounted on this process."
-        )
+        ),
+        examples=[f"{ex.BASE_URL}/.well-known/oauth-authorization-server"],
     )
     authorization_server_metadata_mcp: str | None = Field(
         description=(
@@ -196,62 +205,70 @@ class CapabilitiesUrlsResponse(BaseModel):
             "registration_endpoint is the OAuth-client DCR door /oauth-clients "
             "(see auth.methods.oauth_client_dcr). Null when the auth surface is not "
             "mounted on this process or server.mcp.oauth is disabled."
-        )
+        ),
+        examples=[f"{ex.BASE_URL}/.well-known/oauth-authorization-server/mcp"],
     )
     protected_resource_metadata: str | None = Field(
         description=(
             "RFC 9728 protected-resource metadata document for the MCP surface; "
             "null when the auth surface is not mounted on this process or "
             "server.mcp.oauth is disabled."
-        )
+        ),
+        examples=[f"{ex.BASE_URL}/.well-known/oauth-protected-resource"],
     )
     authorize: str | None = Field(
         description="OAuth authorization endpoint (interactive sign-in entry point "
         "for idp and local_login); null when the auth surface is not mounted on "
-        "this process."
+        "this process.",
+        examples=[f"{ex.BASE_URL}/authorize"],
     )
     token: str | None = Field(
         description="OAuth token endpoint (authorization_code, refresh_token, and "
         "the service-account jwt-bearer grant); null when the auth surface is not "
-        "mounted on this process."
+        "mounted on this process.",
+        examples=[f"{ex.BASE_URL}/token"],
     )
     agent_registration: str | None = Field(
         description="Agent dynamic-registration endpoint (RFC 7591, see "
         "auth.methods.agent_dcr); null when the auth surface is not mounted on "
-        "this process."
+        "this process.",
+        examples=[f"{ex.BASE_URL}/register"],
     )
     oauth_client_registration: str | None = Field(
         description="OAuth-client dynamic-registration endpoint (see "
         "auth.methods.oauth_client_dcr); null when the auth surface is not mounted "
-        "on this process."
+        "on this process.",
+        examples=[f"{ex.BASE_URL}/oauth-clients"],
     )
 
 
 class IdpMethodResponse(BaseModel):
     """External-IdP login (the ``GET /auth/idp`` hint, restated)."""
 
-    enabled: bool
+    enabled: bool = Field(description="Whether this sign-in method is offered.", examples=[True])
     provider: str | None = Field(
-        description="Provider name when enabled (e.g. 'google'); null when disabled."
+        description="Provider name when enabled (e.g. 'google'); null when disabled.",
+        examples=["google"],
     )
 
 
 class EnabledMethodResponse(BaseModel):
     """A simple on/off login capability."""
 
-    enabled: bool
+    enabled: bool = Field(description="Whether this sign-in method is offered.", examples=[True])
 
 
 class OauthClientDcrMethodResponse(BaseModel):
     """Anonymous OAuth-client dynamic registration (``POST /oauth-clients``)."""
 
-    enabled: bool
+    enabled: bool = Field(description="Whether this sign-in method is offered.", examples=[True])
     approval: Literal["auto", "manual"] = Field(
         description=(
             "Registration admission posture (server.mcp.oauth.auto_approve_clients): "
             "'auto' activates registrations immediately; 'manual' parks them pending "
             "operator approval. Only meaningful when enabled."
-        )
+        ),
+        examples=["manual"],
     )
 
 
@@ -304,7 +321,8 @@ class CapabilitiesResponse(BaseModel):
         description="The control-plane surfaces served by the process answering "
         "this request (sorted), e.g. ['admin', 'auth', 'control', 'registry']. "
         "On a split deployment each tier reports only its own surfaces — a "
-        "capability absent here may be served by a sibling tier."
+        "capability absent here may be served by a sibling tier.",
+        examples=[["admin", "auth", "control", "registry"]],
     )
     urls: CapabilitiesUrlsResponse
     auth: CapabilitiesAuthResponse
@@ -313,12 +331,14 @@ class CapabilitiesResponse(BaseModel):
         "and 'governed_hosts' (true iff the registry surface — which serves "
         "GET /governed-hosts — is mounted on this process); downstream packages "
         "may contribute additional boolean flags (additive — never overriding "
-        "built-ins)."
+        "built-ins).",
+        examples=[{"mcp": True, "governed_hosts": True}],
     )
     capabilities_version: int = Field(
         description="Shape version of this document, bumped only when a field is "
         "removed, renamed, or retyped. New keys appear without a bump — ignore "
-        "unknown keys; hard-fail only on a version you do not understand."
+        "unknown keys; hard-fail only on a version you do not understand.",
+        examples=[1],
     )
 
 
@@ -420,15 +440,16 @@ def resolve_capabilities(
     """Build the capability document from the live ``Context`` (config-only, no DB).
 
     ``base_url`` roots the ``urls`` endpoints; when ``None`` it defaults to the
-    sanitized ``auth.canonical_base_url`` (metadata paths stay root-relative if
-    that is unset — the route handler substitutes the request origin instead).
+    sanitized configured base URL (``auth.canonical_base_url``, else
+    ``server.public_base_url``); metadata paths stay root-relative if neither
+    is set, and the route handler substitutes the request origin instead.
     """
     surfaces = sorted(set(enabled_apps))
     auth_mounted = "auth" in surfaces
     idp = ctx.config.auth.idp
     mcp_oauth = ctx.config.server.mcp.oauth
 
-    canonical_base_url = ctx.config.auth.canonical_base_url or ""
+    canonical_base_url = effective_auth_base_url(ctx.config)
     if canonical_base_url:
         canonical_base_url, _host = sanitized_url_parts(canonical_base_url)
     if base_url is None:
@@ -553,7 +574,7 @@ def get_capabilities_router(ctx: Context, enabled_apps: Iterable[str]) -> APIRou
         fetches this before sign-in, and a fleet restart should revalidate, not
         re-download.
         """
-        base_url = snapshot.instance.canonical_base_url or str(request.base_url).rstrip("/")
+        base_url = snapshot.instance.canonical_base_url or deployment_base_url(ctx.config, request)
         doc = snapshot.model_copy(update={"urls": _resolve_urls(ctx, auth_mounted, base_url)})
         body = doc.model_dump_json().encode()
         etag = f'"{hashlib.sha256(body).hexdigest()[:32]}"'

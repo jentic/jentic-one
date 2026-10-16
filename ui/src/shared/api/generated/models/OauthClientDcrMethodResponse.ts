@@ -10,6 +10,9 @@ export type OauthClientDcrMethodResponse = {
      * Registration admission posture (server.mcp.oauth.auto_approve_clients): 'auto' activates registrations immediately; 'manual' parks them pending operator approval. Only meaningful when enabled.
      */
     approval: OauthClientDcrMethodResponse.approval;
+    /**
+     * Whether this sign-in method is offered.
+     */
     enabled: boolean;
 };
 export namespace OauthClientDcrMethodResponse {

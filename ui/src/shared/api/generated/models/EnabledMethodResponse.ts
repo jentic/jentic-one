@@ -6,6 +6,9 @@
  * A simple on/off login capability.
  */
 export type EnabledMethodResponse = {
+    /**
+     * Whether this sign-in method is offered.
+     */
     enabled: boolean;
 };
 

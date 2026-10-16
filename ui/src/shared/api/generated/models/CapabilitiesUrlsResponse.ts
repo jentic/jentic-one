@@ -6,7 +6,8 @@
  * Where to reach the deployment's public endpoints.
  *
  * Endpoint fields are absolute URLs whenever a base URL is known
- * (``auth.canonical_base_url``, else the origin the request arrived on);
+ * (``auth.canonical_base_url``, else ``server.public_base_url``, else the
+ * origin the request arrived on);
  * metadata paths degrade to root-relative paths only when neither is
  * resolvable. ``null`` means the corresponding surface or gate is not
  * available on the process answering this request.

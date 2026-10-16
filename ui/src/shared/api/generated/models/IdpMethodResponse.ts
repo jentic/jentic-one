@@ -6,6 +6,9 @@
  * External-IdP login (the ``GET /auth/idp`` hint, restated).
  */
 export type IdpMethodResponse = {
+    /**
+     * Whether this sign-in method is offered.
+     */
     enabled: boolean;
     /**
      * Provider name when enabled (e.g. 'google'); null when disabled.
