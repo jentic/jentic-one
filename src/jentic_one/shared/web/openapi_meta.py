@@ -183,8 +183,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
   `traceparent`, `tracestate`) keep their RFC names.
 - **Append-only audit.** Admin / Audit records are never mutated
-  after the fact; retention is enforced via purge policy, not
-  edit.
+  after the fact. They are kept until the operator removes them;
+  there is no automatic retention window to configure yet.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
   from it. To walk the executions you can see under one logical request, use
