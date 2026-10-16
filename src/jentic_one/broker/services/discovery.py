@@ -11,17 +11,31 @@ from __future__ import annotations
 
 import uuid
 
+import structlog
+
 from jentic_one.broker.core.exceptions import (
     InvalidRevisionPinError,
+    OperationNotFoundError,
     UnauthorizedRevisionPinError,
+    draft_revision_directive,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import APIS_READ, CREDENTIALS_WRITE
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.broker.protocols import (
+    DraftRevisionMatch,
     RegistryResolverProtocol,
     ResolveResult,
     RevisionPinOutcome,
 )
+from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import APIReference
+
+logger = structlog.get_logger(__name__)
+
+#: ``detail`` of the unregistered-URL 404 when nothing (not even a draft the
+#: caller may see) serves the URL.
+UNREGISTERED_URL_DETAIL = "Operation not found — unregistered upstream URL."
 
 
 async def discover(
@@ -142,3 +156,93 @@ async def discover_via_pins(
             raise _host_change_held(f"{vendor}:{name}:{version}={rev_label}")
         return resolved, result.revision_id
     return None
+
+
+async def unregistered_operation_error(
+    resolver: RegistryResolverProtocol,
+    *,
+    method: str,
+    url: str,
+    identity: Identity,
+) -> OperationNotFoundError:
+    """The ``operation_not_found`` 404 for a METHOD+URL no live revision serves.
+
+    Runs only once discovery has missed, so a matched call never pays for it.
+    When the caller may read the registry's revisions (``apis:read`` — the
+    permission ``GET /apis/{vendor}/{name}/{version}/revisions`` requires, which
+    lists drafts too), one bounded registry statement looks for a ``draft``
+    revision that serves the URL. A hit keeps the status and problem ``type``
+    — client recovery keys on them — and names the draft in ``detail``, the
+    ``draft_revision`` extension member and an ``agent_directive``. Without
+    ``apis:read`` nothing is looked up and the generic 404 is returned. The
+    lookup is best-effort: if it fails, the generic 404 is returned.
+    """
+    generic = OperationNotFoundError(detail=UNREGISTERED_URL_DETAIL, type="operation_not_found")
+    if not has_effective_permission(identity.permissions, APIS_READ):
+        logger.debug("draft_match_lookup_skipped", reason="caller_lacks_apis_read")
+        return generic
+    try:
+        match = await resolver.find_draft_match(method=method, url=url)
+    except Exception:
+        logger.warning("draft_match_lookup_failed", method=method, exc_info=True)
+        return generic
+    if match is None:
+        return generic
+    logger.debug(
+        "operation_not_found_draft_match",
+        vendor=match.api.vendor,
+        name=match.api.name,
+        version=match.api.version,
+        revision_id=str(match.revision_id),
+    )
+    return _draft_match_error(match, identity=identity)
+
+
+def _draft_match_error(match: DraftRevisionMatch, *, identity: Identity) -> OperationNotFoundError:
+    vendor, name, version = match.api.vendor, match.api.name, match.api.version
+    revision_id = str(match.revision_id)
+    promote_path = f"/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote"
+    pin_header = (
+        f"{vendor}:{name}:{version}=rev_{match.revision_id.hex}"
+        if _may_pin(match, identity=identity)
+        else None
+    )
+    return OperationNotFoundError(
+        detail=(
+            f"Operation not found — no live revision serves this URL; it matches revision "
+            f"{revision_id} of API '{vendor}/{name}/{version}', which is a draft and has "
+            "not been promoted"
+        ),
+        type="operation_not_found",
+        extra={
+            "draft_revision": {
+                "api": {"vendor": vendor, "name": name, "version": version},
+                "revision_id": revision_id,
+                "state": ApiRevisionState.DRAFT.value,
+                "promoted": False,
+                "promote_path": promote_path,
+            }
+        },
+        directive=draft_revision_directive(
+            vendor=vendor,
+            name=name,
+            version=version,
+            revision_id=revision_id,
+            promote_path=promote_path,
+            pin_header=pin_header,
+        ),
+    )
+
+
+def _may_pin(match: DraftRevisionMatch, *, identity: Identity) -> bool:
+    """Whether a ``Jentic-Revision`` pin to the draft would be accepted for the caller.
+
+    Mirrors the registry's pin rule (``RegistryService.resolve_revision_pin``):
+    a draft held for server-host review (it carries an ``origin``) is pinnable
+    only with ``credentials:write``; any other draft only by its submitter. A
+    submitter's draft whose hosts still need an operator answers its own 403
+    (``host_change_requires_operator``) when pinned.
+    """
+    if match.origin is not None:
+        return has_effective_permission(identity.permissions, CREDENTIALS_WRITE)
+    return match.submitted_by is not None and match.submitted_by == identity.sub
