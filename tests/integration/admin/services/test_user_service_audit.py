@@ -1,12 +1,15 @@
 """Integration tests verifying audit entries are recorded for user lifecycle ops.
 
-Exercises UserService against a real PostgreSQL database (no mocking) and
-asserts that the expected audit_entries rows are written for create, update,
-delete, disable, and enable.
+Exercises UserService against a real database (no mocking) and asserts that
+the expected audit_entries rows are written for create, update, delete,
+disable, and enable — including, on Postgres, when a delete races a redeem,
+an enable or a second delete.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -18,6 +21,8 @@ from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGr
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
+    AuditRepository,
+    InviteTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
@@ -27,6 +32,7 @@ from jentic_one.admin.services.errors import (
     ConflictError,
     InviteTokenAlreadyRedeemedError,
     InviteTokenNotFoundError,
+    UserDeletedError,
 )
 from jentic_one.admin.services.invite_service import InviteService
 from jentic_one.admin.services.permission_service import PermissionService
@@ -38,6 +44,8 @@ from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 pytestmark = pytest.mark.integration
+
+_SQLITE = os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite"
 
 
 async def _audit_entries_for(ctx: Context, target_id: str) -> list[AuditEntry]:
@@ -269,8 +277,8 @@ async def test_delete_cancels_outstanding_invites(
 async def test_redeem_refuses_a_deleted_user_with_a_live_token(
     integration_context: Context, admin_user: str
 ) -> None:
-    """A still-live token on a deleted row (one deleted before invites were
-    cancelled on delete) answers like an unknown token and writes nothing."""
+    """A deleted row whose invite token is still unredeemed answers like an
+    unknown token and writes nothing."""
     ctx = integration_context
     service = UserService(ctx)
     org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
@@ -377,5 +385,129 @@ async def test_disable_and_permission_edit_refuse_a_deleted_user(
             .all()
         )
     assert [e.action for e in perm_entries] == []
+
+    await _cleanup_user(ctx, user_id)
+
+
+async def _user_row(ctx: Context, user_id: str) -> User:
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+    assert user is not None
+    return user
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_redeem_waits_for_a_concurrent_delete_and_refuses(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A redeem that read the token before a delete committed waits on the user
+    row lock, then sees ``deleted_at`` and writes nothing.
+
+    The open transaction holds what delete holds at that point: the tombstoned
+    user row, then the cancelled invite token.
+    """
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-race-redeem@test.local", first_name="R", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    async with ctx.admin_db.transaction() as session:
+        assert await UserRepository.mark_deleted(session, user_id, email=f"deleted-{user_id}@local")
+        for token in await InviteTokenRepository.get_active_for_user(session, user_id):
+            await InviteTokenRepository.redeem(session, token.id)
+        task = asyncio.create_task(
+            InviteService(ctx).redeem(created.invite_token, "a-long-enough-password")
+        )
+        await asyncio.sleep(0.5)
+        assert not task.done(), "redeem should wait on the deleted user's row lock"
+
+    with pytest.raises(InviteTokenNotFoundError):
+        await task
+    user = await _user_row(ctx, user_id)
+    assert user.invite_state == InviteState.PENDING
+    assert await _password_hash(ctx, user_id) is None
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_enable_waits_for_a_concurrent_delete_and_refuses(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Enabling a disabled user while a delete is in flight waits on the row
+    lock, then matches no live row: 409, and the row stays deleted and inactive."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-race-enable@test.local", first_name="E", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    await service.disable(user_id, identity=org_admin)
+
+    async with ctx.admin_db.transaction() as session:
+        assert await UserRepository.mark_deleted(session, user_id, email=f"deleted-{user_id}@local")
+        task = asyncio.create_task(service.enable(user_id, identity=org_admin))
+        await asyncio.sleep(0.5)
+        assert not task.done(), "enable should wait on the deleted user's row lock"
+
+    with pytest.raises(UserDeletedError):
+        await task
+    user = await _user_row(ctx, user_id)
+    assert user.deleted_at is not None
+    assert user.active is False
+    entries = await _audit_entries_for(ctx, user_id)
+    assert not [e for e in entries if e.action == AuditAction.ENABLE.value]
+
+    await _cleanup_user(ctx, user_id)
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_concurrent_deletes_write_one_audit_entry(
+    integration_context: Context, admin_user: str
+) -> None:
+    """A second delete that starts before the first commits waits on the row
+    lock, then marks nothing: the first ``deleted_at`` and a single ``DELETE``
+    audit entry remain."""
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="audit-race-delete@test.local", first_name="D", last_name="D"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+
+    async with ctx.admin_db.transaction() as session:
+        assert await UserRepository.mark_deleted(session, user_id, email=f"deleted-{user_id}@local")
+        first = await UserRepository.get_by_id(session, user_id)
+        assert first is not None and first.deleted_at is not None
+        first_deleted_at = first.deleted_at
+        await UserRepository.revoke_login_sessions(session, user_id)
+        await AuditRepository.record(
+            session,
+            action=AuditAction.DELETE,
+            target_type=AuditTargetType.USER,
+            target_id=user_id,
+            actor_type=org_admin.actor_type,
+            actor_id=org_admin.sub,
+        )
+        task = asyncio.create_task(service.delete(user_id, identity=org_admin))
+        await asyncio.sleep(0.5)
+        assert not task.done(), "the second delete should wait on the row lock"
+
+    await task
+    user = await _user_row(ctx, user_id)
+    assert user.deleted_at == first_deleted_at
+    assert user.session_generation == 1
+    entries = await _audit_entries_for(ctx, user_id)
+    assert len([e for e in entries if e.action == AuditAction.DELETE.value]) == 1
 
     await _cleanup_user(ctx, user_id)

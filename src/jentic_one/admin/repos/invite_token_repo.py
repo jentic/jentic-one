@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
-from jentic_one.admin.services.errors import InviteTokenNotFoundError
 
 
 class InviteTokenRepository:
@@ -42,13 +41,23 @@ class InviteTokenRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def redeem(session: AsyncSession, token_id: str) -> InviteToken:
-        token = await session.get(InviteToken, token_id)
-        if token is None:
-            raise InviteTokenNotFoundError(token_id)
-        token.redeemed_at = datetime.now(UTC)
-        await session.flush()
-        return token
+    async def redeem(session: AsyncSession, token_id: str) -> bool:
+        """Mark the token redeemed; returns whether this call marked it.
+
+        Conditional on ``redeemed_at IS NULL``: a token already redeemed (or
+        cancelled by a reissue or a user delete) keeps its first timestamp,
+        and of two concurrent redeems the one that waits on the other's row
+        lock re-checks the condition and matches nothing. A missing token
+        also returns ``False``.
+        """
+        stmt = (
+            update(InviteToken)
+            .where(InviteToken.id == token_id, InviteToken.redeemed_at.is_(None))
+            .values(redeemed_at=datetime.now(UTC))
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await session.execute(stmt)
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def get_active_for_user(session: AsyncSession, user_id: str) -> list[InviteToken]:

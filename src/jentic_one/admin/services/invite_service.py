@@ -129,7 +129,11 @@ class InviteService:
             if token.expires_at < datetime.now(UTC):
                 raise InviteTokenExpiredError(token.id)
 
-            user = await UserRepository.get_by_id(session, token.user_id)
+            # The user row is locked before the token is written, the same
+            # order delete takes them (users, then invite_tokens), so a
+            # concurrent delete either commits first and is seen here, or
+            # waits until this redeem commits.
+            user = await UserRepository.get_by_id_for_update(session, token.user_id)
             if user is None:
                 raise UserNotFoundError(token.user_id)
             if user.deleted_at is not None:
@@ -138,7 +142,9 @@ class InviteService:
                 # tells the token holder nothing about the account's state.
                 raise InviteTokenNotFoundError("unknown")
 
-            await InviteTokenRepository.redeem(session, token.id)
+            if not await InviteTokenRepository.redeem(session, token.id):
+                # Redeemed, reissued or cancelled since the read above.
+                raise InviteTokenAlreadyRedeemedError(token.id)
 
             password_hash = hash_password(new_password)
             await UserSecretRepository.set_password_hash(

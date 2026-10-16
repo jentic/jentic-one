@@ -23,11 +23,11 @@ from jentic_one.admin.services._support.passwords import (
 from jentic_one.admin.services._support.tokens import InvalidTokenError, decode_jwt, issue_jwt
 from jentic_one.admin.services.errors import (
     AccountLockedError,
-    ConflictError,
     InvalidCredentialsError,
     InvalidInputError,
     SessionExpiredError,
     SetupAlreadyCompleteError,
+    UserDeletedError,
     UserEmailNotFoundError,
 )
 from jentic_one.admin.services.metrics import login_counter
@@ -476,13 +476,18 @@ class AuthService:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_email(session, email)
+            found = await UserRepository.get_by_email(session, email)
+            if found is None:
+                raise UserEmailNotFoundError(email)
+            # Locked so a concurrent delete either commits first (and is
+            # refused below) or waits until the reset commits.
+            user = await UserRepository.get_by_id_for_update(session, found.id)
             if user is None:
                 raise UserEmailNotFoundError(email)
             if user.deleted_at is not None:
                 # Delete is terminal: a reset would hand the retained row a
                 # fresh credential.
-                raise ConflictError("Cannot reset the password of a deleted user")
+                raise UserDeletedError("reset the password of")
 
             await UserSecretRepository.set_password_hash(
                 session,
