@@ -36,6 +36,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     ProvisionResult,
     RefreshResult,
 )
+from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.egress import build_strict_pinned_transport
 from jentic_one.shared.models.credentials import CredentialType
@@ -97,8 +98,14 @@ class OAuth2Provider(ABC):
         token: OAuthTokenView,
     ) -> RefreshResult: ...
 
-    async def _post_token(self, token_url: str, payload: dict[str, str]) -> dict[str, str]:
+    async def _post_token(
+        self, token_url: str, payload: dict[str, str], *, egress: EgressConfig | None
+    ) -> dict[str, str]:
         """POST ``payload`` to ``token_url`` and parse the JSON response.
+
+        ``egress`` is the control-plane egress policy
+        (:func:`~jentic_one.shared.config.resolved_control_egress`); both the
+        pre-flight URL check and the connect-time DNS pin apply it.
 
         Maps the two structured failure modes both concrete flows care
         about: an ``invalid_grant`` body (revoked/expired refresh token)
@@ -110,15 +117,16 @@ class OAuth2Provider(ABC):
         # Defense-in-depth SSRF guard: ``token_url`` comes from the DB
         # (``oauth_client_credentials`` row created at credential-create time,
         # user-supplied). A tampered / misconfigured row must not be able to
-        # aim this call at a private / metadata target.
+        # aim this call at a private / metadata target unless the operator
+        # allowlisted it.
         try:
-            safe_url = validate_upstream_url(token_url)
+            safe_url = validate_upstream_url(token_url, egress)
         except ValueError as exc:
             raise TokenExchangeError(0, f"unsafe upstream URL: {exc}") from exc
 
         try:
             async with httpx.AsyncClient(
-                timeout=30.0, transport=build_strict_pinned_transport()
+                timeout=30.0, transport=build_strict_pinned_transport(egress)
             ) as client:
                 response = await client.post(
                     safe_url,

@@ -132,6 +132,13 @@ Two layers keep the proxy from being used against the network it runs in:
 Validation runs again after server-variable substitution, in both the sync
 and async callers, so an injected variable cannot smuggle in a new host.
 
+The control plane's own OAuth calls (credential and OAuth app `token_url` /
+`authorize_url` checks, token exchange and refresh, device authorization, the
+identity probe) use the same two layers under `control.egress`. Each key left
+unset there is taken from `broker.egress`, so an in-network token endpoint
+allowlisted for the broker is reachable from the control plane too; set a
+`control.egress` key to give the control plane a different value.
+
 ## Credential injection
 
 `CredentialService` ([`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)) is the

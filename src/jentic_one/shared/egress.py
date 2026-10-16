@@ -156,12 +156,14 @@ def build_pinned_transport(egress: EgressConfig | None) -> httpx.AsyncBaseTransp
     return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)
 
 
-def build_strict_pinned_transport() -> httpx.AsyncBaseTransport:
-    """Build a DNS-pinning transport under the strict default egress policy.
+def build_strict_pinned_transport(egress: EgressConfig | None = None) -> httpx.AsyncBaseTransport:
+    """Build a DNS-pinning transport that always pins, whatever the policy says.
 
-    For outbound calls that have no operator-configurable egress policy (the
-    control plane's OAuth token / device-authorization / identity-probe calls):
-    every private, loopback, and non-global target is refused at connect time,
-    and a host that does not resolve fails closed.
+    For the control plane's OAuth token / device-authorization / identity-probe
+    calls. Every connection is resolved, validated against *egress*, and pinned —
+    ``dns_pinning_enabled`` is not consulted. With no *egress* (the strict
+    default) every private, loopback, and non-global target is refused at
+    connect time; an allowlist exempts only what it names. A host that does not
+    resolve fails closed.
     """
-    return DnsPinningTransport(httpx.AsyncHTTPTransport(), None)
+    return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)

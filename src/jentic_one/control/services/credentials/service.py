@@ -84,7 +84,7 @@ from jentic_one.control.services.credentials.typed_secrets import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
-from jentic_one.shared.config import DirectOAuth2ProviderConfig
+from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models import ActorType
@@ -289,16 +289,19 @@ class CredentialService:
                 )
 
             elif payload.type == CredentialType.OAUTH2:
+                egress = resolved_control_egress(self._ctx.config)
                 validated_token_url: str | None = None
                 if payload.token_url:
                     try:
-                        validated_token_url = validate_upstream_url(payload.token_url)
+                        validated_token_url = validate_upstream_url(payload.token_url, egress)
                     except ValueError as exc:
                         raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
                 validated_authorize_url: str | None = None
                 if payload.authorize_url:
                     try:
-                        validated_authorize_url = validate_upstream_url(payload.authorize_url)
+                        validated_authorize_url = validate_upstream_url(
+                            payload.authorize_url, egress
+                        )
                     except ValueError as exc:
                         raise InvalidCredentialInputError(f"Invalid authorize_url: {exc}") from exc
                 grant = payload.grant_type or "client_credentials"
@@ -1252,7 +1255,9 @@ class CredentialService:
                 validated_token_url: str | None = None
                 if payload.token_url:
                     try:
-                        validated_token_url = validate_upstream_url(payload.token_url)
+                        validated_token_url = validate_upstream_url(
+                            payload.token_url, resolved_control_egress(self._ctx.config)
+                        )
                     except ValueError as exc:
                         raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
                 encrypted_secret = encryption.encrypt(payload.client_secret)

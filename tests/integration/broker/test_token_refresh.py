@@ -30,7 +30,7 @@ from jentic_one.control.services.credentials.providers.direct_oauth2 import (
     InvalidGrantError,
 )
 from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
-from jentic_one.shared.config import DirectOAuth2ProviderConfig
+from jentic_one.shared.config import DirectOAuth2ProviderConfig, EgressConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import StoredCredentialType
@@ -60,7 +60,9 @@ class _RotatingVendor(DirectOAuth2Provider):
         self.sent_refresh_tokens: list[str] = []
         self._generation = 0
 
-    async def _post_token(self, token_url: str, payload: dict[str, str]) -> dict[str, str]:
+    async def _post_token(
+        self, token_url: str, payload: dict[str, str], *, egress: EgressConfig | None
+    ) -> dict[str, str]:
         sent = payload["refresh_token"]
         self.sent_refresh_tokens.append(sent)
         # Widen the race window so concurrent callers queue on the lock.

@@ -142,7 +142,7 @@ from jentic_one.shared.catalog import (
     CatalogAutoImportProtocol,
     SecuritySchemesLookupProtocol,
 )
-from jentic_one.shared.config import connect_approval_url
+from jentic_one.shared.config import connect_approval_url, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -2536,6 +2536,8 @@ class ConnectSessionService:
             for url in (variant.authorize_url, variant.token_url)
         ):
             raise OwnClientInvalidError("authorize_url and token_url must be https URLs")
+        # Strict policy on purpose: the approver's client secret never goes to a
+        # private address, whatever ``broker.egress`` / ``control.egress`` allow.
         try:
             authorize_url = validate_upstream_url(variant.authorize_url)
             token_url = validate_upstream_url(variant.token_url)
@@ -3097,6 +3099,7 @@ class ConnectSessionService:
                 echo = await identity_echo.echo_identity(
                     probe=entry.identity_probe,
                     access_token=tokens.access_token,
+                    egress=resolved_control_egress(self._ctx.config),
                 )
                 connected_as = echo.display
             except identity_echo.IdentityEchoError as exc:

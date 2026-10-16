@@ -32,11 +32,13 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
 )
 from jentic_one.control.services.oauth_app_registrations.schemas import (
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationView,
 )
 from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import AppConfig, ControlSurfaceConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -408,6 +410,51 @@ async def test_create_authorization_code_rejects_unsafe_urls(
             identity=_ADMIN,
             **urls,
         )
+
+
+@pytest.mark.usefixtures("clean_registrations")
+@pytest.mark.parametrize(
+    ("token_url", "accepted"),
+    [
+        ("https://10.50.0.7/token", True),
+        ("https://10.60.0.7/token", False),
+        # Cloud metadata stays a hard deny even inside an allowlisted range.
+        ("https://169.254.169.254/token", False),
+    ],
+)
+async def test_create_authorization_code_honours_control_egress_allowlist(
+    integration_config: AppConfig, token_url: str, accepted: bool
+) -> None:
+    """An in-network token endpoint allowlisted under ``control.egress`` is accepted (#1704)."""
+    config = integration_config.model_copy(
+        update={
+            "control": ControlSurfaceConfig.model_validate(
+                {"egress": {"allowed_private_subnets": ["10.50.0.0/16", "169.254.0.0/16"]}}
+            )
+        }
+    )
+    async with Context(config) as ctx:
+        svc = OAuthAppRegistrationService(ctx)
+
+        async def _create() -> OAuthAppRegistrationView:
+            return await svc.create_authorization_code(
+                name="In-network AC",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id="cid",
+                client_secret=_TEST_SECRET_PLAINTEXT,
+                authorize_url="https://ex/a",
+                token_url=token_url,
+                default_scopes=None,
+                identity=_ADMIN,
+            )
+
+        if accepted:
+            assert (await _create()).token_url == token_url
+        else:
+            with pytest.raises(InvalidOAuthAppRegistrationInputError, match="token_url"):
+                await _create()
 
 
 @pytest.mark.usefixtures("clean_registrations")

@@ -413,11 +413,23 @@
       "type": "object"
     },
     "ControlSurfaceConfig": {
-      "description": "Control surface configuration.\n\nUnknown subkeys are ignored, so a ``control:`` section written for another\nrelease keeps validating.",
+      "description": "Control surface configuration.\n\n``egress`` governs the control plane's outbound OAuth and credential calls.\nEach ``control.egress`` key left unset takes its value from the matching\n``broker.egress`` key, so the defaults listed for it apply only when the\nbroker leaves that key unset too. ``control.egress.dns_pinning_enabled`` is\nnot consulted: control-plane calls always pin DNS.\n\nUnknown subkeys are ignored, so a ``control:`` section written for another\nrelease keeps validating.",
       "properties": {
         "connect": {
           "$ref": "#/$defs/ControlConnectConfig",
           "description": "Agent connect-session settings."
+        },
+        "egress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EgressConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Outbound SSRF/egress policy for the control plane's OAuth and credential calls: OAuth2 credential and OAuth app registration URL checks, token exchange and refresh, device authorization, and the vendor identity probe. Each key left unset takes its value from `broker.egress`, so a subnet or domain allowlisted for the broker is honoured here without listing it twice; set a key (e.g. `allowed_private_subnets: []`) to override it for the control plane alone. `dns_pinning_enabled` is not consulted: these calls always pin DNS. The OAuth endpoints an approver enters for their own client on a connect session stay under the strict policy regardless."
         }
       },
       "title": "ControlSurfaceConfig",

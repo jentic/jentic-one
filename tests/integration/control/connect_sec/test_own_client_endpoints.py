@@ -180,7 +180,7 @@ async def test_approver_endpoints_are_the_ones_used(env: Context) -> None:
 async def test_broker_egress_allowlist_does_not_open_the_approvers_endpoints(
     env: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Control-side OAuth endpoints use the strict policy, matching the token exchange.
+    """The approver-entered OAuth endpoints use the strict policy.
 
     The broker's allowlist covers where agents' API calls may go; it never lets
     the approver's client secret be posted to a private address.
