@@ -330,17 +330,157 @@ async def test_resolve_host_caches_hit_without_a_thread_hop(
 ) -> None:
     resolver = _Resolver("93.184.216.34")
     monkeypatch.setattr(socket, "getaddrinfo", resolver)
-    to_thread_calls = 0
-    real_to_thread = asyncio.to_thread
+    loop = asyncio.get_running_loop()
+    executor_calls = 0
+    real_run_in_executor = loop.run_in_executor
 
-    async def _counting_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
-        nonlocal to_thread_calls
-        to_thread_calls += 1
-        return await real_to_thread(func, *args, **kwargs)
+    def _counting_run_in_executor(executor: Any, func: Any, *args: Any) -> Any:
+        nonlocal executor_calls
+        executor_calls += 1
+        return real_run_in_executor(executor, func, *args)
 
-    monkeypatch.setattr(asyncio, "to_thread", _counting_to_thread)
+    monkeypatch.setattr(loop, "run_in_executor", _counting_run_in_executor)
     first = await resolve_host("api.example.com")
     second = await resolve_host("api.example.com")
     assert first == second == (_ip("93.184.216.34"),)
-    assert to_thread_calls == 1
+    assert executor_calls == 1
     assert len(resolver.hosts) == 1
+
+
+# --- single-flight on a miss -----------------------------------------------------
+
+
+class _GatedResolver:
+    """A ``getaddrinfo`` stand-in that blocks until released, then answers or fails."""
+
+    def __init__(self, *ips: str, error: Exception | None = None) -> None:
+        self.ips = ips
+        self.error = error
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, host: str, *_a: Any, **_k: Any) -> list[tuple[Any, ...]]:
+        self.calls += 1
+        self.entered.set()
+        assert self.release.wait(timeout=5), "resolver was never released"
+        if self.error is not None:
+            raise self.error
+        return _answers(*self.ips)
+
+
+async def _wait_until_entered(resolver: _GatedResolver) -> None:
+    assert await asyncio.to_thread(resolver.entered.wait, 5)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_misses_share_one_blocking_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N callers missing on the same host (any case) cost one resolver run."""
+    resolver = _GatedResolver("93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+    async with asyncio.TaskGroup() as tg:
+        tasks = [
+            tg.create_task(resolve_host("API.example.com" if i % 2 else "api.example.com"))
+            for i in range(20)
+        ]
+        await _wait_until_entered(resolver)
+        await asyncio.sleep(0)
+        resolver.release.set()
+
+    assert resolver.calls == 1
+    assert {task.result() for task in tasks} == {(_ip("93.184.216.34"),)}
+    # The shared answer is cached: the next call is a hit.
+    assert await resolve_host("api.example.com") == (_ip("93.184.216.34"),)
+    assert resolver.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_shared_lookup_failure_reaches_every_waiter_and_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = _GatedResolver(error=socket.gaierror("nope"))
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+    tasks = [asyncio.create_task(resolve_host("ghost.example.com")) for _ in range(5)]
+    await _wait_until_entered(resolver)
+    resolver.release.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert resolver.calls == 1
+    assert all(isinstance(r, socket.gaierror) for r in results)
+    assert dns_cache._IN_FLIGHT.get(asyncio.get_running_loop()) == {}
+
+    # Nothing poisoned: the next caller runs a fresh lookup.
+    retry = _Resolver("93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", retry)
+    assert await resolve_host("ghost.example.com") == (_ip("93.184.216.34"),)
+    assert retry.hosts == ["ghost.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_cancel_the_shared_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = _GatedResolver("93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+    first = asyncio.create_task(resolve_host("api.example.com"))
+    await _wait_until_entered(resolver)
+    others = [asyncio.create_task(resolve_host("api.example.com")) for _ in range(3)]
+    await asyncio.sleep(0)
+
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    others[0].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await others[0]
+
+    resolver.release.set()
+    assert await asyncio.gather(*others[1:]) == [(_ip("93.184.216.34"),)] * 2
+    assert resolver.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_lookup_outliving_every_waiter_still_caches_its_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = _GatedResolver("93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+    only = asyncio.create_task(resolve_host("api.example.com"))
+    await _wait_until_entered(resolver)
+    only.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await only
+
+    pending = dns_cache._IN_FLIGHT[asyncio.get_running_loop()]["api.example.com"]
+    resolver.release.set()
+    await asyncio.wait([pending])
+    await asyncio.sleep(0)
+    assert await resolve_host("api.example.com") == (_ip("93.184.216.34"),)
+    assert resolver.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_detaches_in_flight_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lookup started before a clear serves its own waiters but neither the
+    callers after the clear nor the cache."""
+    stale = _GatedResolver("93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", stale)
+    before = asyncio.create_task(resolve_host("api.example.com"))
+    await _wait_until_entered(stale)
+
+    dns_cache.clear_resolution_cache()
+    fresh = _Resolver("203.0.113.7")
+    monkeypatch.setattr(socket, "getaddrinfo", fresh)
+    assert await resolve_host("api.example.com") == (_ip("203.0.113.7"),)
+
+    stale.release.set()
+    assert await before == (_ip("93.184.216.34"),)
+    await asyncio.sleep(0)
+    assert await resolve_host("api.example.com") == (_ip("203.0.113.7"),)
+    assert fresh.hosts == ["api.example.com"]
