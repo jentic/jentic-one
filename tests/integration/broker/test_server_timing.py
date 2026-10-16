@@ -124,6 +124,9 @@ class _Upstream:
     #: Per-request ``(status, delay before the response head)``, consumed in
     #: order; once empty every request gets an immediate ``200``.
     script: list[tuple[int, float]] = field(default_factory=list)
+    #: Send the head and part of the body, then close mid-body (the declared
+    #: ``Content-Length`` is never reached).
+    reset_mid_body: bool = False
 
 
 @pytest.fixture()
@@ -140,13 +143,16 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
         status, delay_s = state.script.pop(0) if state.script else (200, 0.0)
         if delay_s:
             await asyncio.sleep(delay_s)
+        body = _UPSTREAM_BODY
+        if state.reset_mid_body:
+            body = body[: len(body) // 2]
         writer.write(
             f"HTTP/1.1 {status} X\r\n".encode("latin-1")
             + b"Content-Type: application/json\r\n"
             + f"Server-Timing: {_UPSTREAM_TIMING}\r\n".encode("latin-1")
             + f"Content-Length: {len(_UPSTREAM_BODY)}\r\n".encode("latin-1")
             + b"Connection: close\r\n\r\n"
-            + _UPSTREAM_BODY
+            + body
         )
         await writer.drain()
         writer.close()
@@ -752,3 +758,34 @@ async def test_failed_upstream_records_no_overhead(
     # Buffered times its FAILED write after the upstream stage; streaming's
     # open-failure write sits inside it.
     assert recorder.has(ServerTimingStage.PERSIST) is not streaming
+
+
+async def test_streaming_failure_after_headers_records_no_overhead_without_its_record(
+    ctx: Context,
+    seeded_credential: None,
+    upstream: _Upstream,
+    overhead_reader: InMemoryMetricReader,
+) -> None:
+    """A stream that got the upstream headers and then reset mid-body records an
+    overhead sample only with its persisted record. The record is written only
+    after a body that completes (#1712), so this one persists nothing, times no
+    ``jentic-persist`` and records no sample, though its pre-header time is known."""
+    upstream.reset_mid_body = True
+    recorders: list[ServerTimingRecorder] = []
+    async with httpx.AsyncClient() as upstream_client:
+        app = _app(
+            ctx,
+            HttpRunner(upstream_client),
+            server_timing=False,
+            recorder_only=True,
+            recorders=recorders,
+        )
+        resp = await _execute(app, upstream.port)
+
+    assert resp.status_code == 200
+    assert resp.content != _UPSTREAM_BODY  # the body was cut off after the headers
+    assert await _statuses(ctx) == []
+    (recorder,) = recorders
+    assert recorder.has(ServerTimingStage.UPSTREAM)
+    assert not recorder.has(ServerTimingStage.PERSIST)
+    assert histogram_points(overhead_reader, _OVERHEAD) == []
