@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import socket
-from collections.abc import AsyncIterator, MutableMapping
+from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -45,8 +45,14 @@ from jentic_one.broker.web.routers.execute import _handle
 from jentic_one.mcp import execute as mcp_execute
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.egress_refusal import egress_refusal, egress_refusal_problem
-from jentic_one.shared.broker.protocols import ResolveResult, RuleVerdict
+from jentic_one.shared.broker.protocols import (
+    ResolveResult,
+    RevisionPinOutcome,
+    RevisionPinResult,
+    RuleVerdict,
+)
 from jentic_one.shared.config import EgressConfig
+from jentic_one.shared.dns_cache import clear_resolution_cache
 from jentic_one.shared.egress import DnsPinningTransport
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
@@ -205,7 +211,7 @@ def _app(resolver: Any) -> FastAPI:
     return app
 
 
-def _request_for(host: str, resolver: Any) -> Request:
+def _request_for(host: str, resolver: Any, *, headers: dict[str, str] | None = None) -> Request:
     path = f"/{host}/v1/invoices"
     scope = {
         "type": "http",
@@ -213,7 +219,7 @@ def _request_for(host: str, resolver: Any) -> Request:
         "path": path,
         "raw_path": path.encode(),
         "query_string": b"",
-        "headers": [],
+        "headers": [(k.encode(), v.encode()) for k, v in (headers or {}).items()],
         "app": _app(resolver),
     }
     return Request(scope)
@@ -267,7 +273,7 @@ _ALLOWED = ExecutionAuthorization(
 _DENIED = ActionDeniedError(detail="denied", type="action_denied")
 
 
-def _refusal_logs(logs: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
+def _refusal_logs(logs: Sequence[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
     return [entry for entry in logs if entry["event"] == "upstream_egress_refused"]
 
 
@@ -343,13 +349,177 @@ async def test_preflight_private_ip_outside_subnets_keeps_generic_problem_and_lo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", _resolving_to("192.168.1.5"))
+    monkeypatch.setattr(execute_router, "authorize_execution", _authorize_as(_ALLOWED))
     with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamUrlNotAllowedError) as e:
         await _run_handle(_request_for(_HOST, _HitResolver()), _SUBNET_ONLY)
     assert e.value.type == "invalid_upstream_url"
+    assert e.value.detail == BLOCKED_RANGE_MESSAGE
     assert e.value.directive is None
     [entry] = _refusal_logs(logs)
     assert entry["reason"] == "blocked_target"
     assert "192.168.1.5" not in json.dumps(entry)
+
+
+# --- every refused name does the same work (no timing or side-effect oracle) ---------
+
+#: A ``Jentic-Revision`` pin naming another API: the unregistered path looks it
+#: up (``discover_via_pins``), the registered path skips it, so pin handling is
+#: part of the work compared below.
+_OTHER_API_PIN = "acme:other:1=rev_abc123"
+
+#: Names the egress policy refuses for different reasons, each paired with
+#: the reason the operator log records for it.
+_REFUSED_NAMES = {
+    "domain_gap": ((_INTERNAL_IP,), "private_name_not_in_allowed_domains"),
+    "outside_subnets": (("192.168.1.5",), "blocked_target"),
+    "metadata": (("169.254.169.254",), "blocked_target"),
+    "mixed_answer": ((_INTERNAL_IP, "127.0.0.1"), "blocked_target"),
+}
+
+
+class _CountingResolver:
+    """A registry resolver that serves ``_HOST`` (or nothing) and counts every lookup."""
+
+    def __init__(self, *, registered: bool) -> None:
+        self._registered = registered
+        self.calls: list[str] = []
+
+    async def resolve_operation(self, **_kwargs: Any) -> ResolveResult | None:
+        self.calls.append("resolve_operation")
+        return await _HitResolver().resolve_operation() if self._registered else None
+
+    async def resolve_revision_pin(self, **_kwargs: Any) -> RevisionPinResult:
+        self.calls.append("resolve_revision_pin")
+        return RevisionPinResult(outcome=RevisionPinOutcome.UNKNOWN)
+
+
+async def _refusal_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    ips: tuple[str, ...],
+    *,
+    registered: bool,
+    authorization: ExecutionAuthorization | Exception,
+) -> tuple[dict[str, Any], list[str], list[dict[str, Any]]]:
+    """Run one refused request; return ``(body, work done, log lines)``.
+
+    The work is every registry lookup, authorization call and unregistered-hook
+    call in order. The log lines are returned whole; callers drop the
+    operator-only ``reason`` to compare what differs between cases.
+    """
+    # Each run resolves afresh: a cached answer would hide the case's own one.
+    clear_resolution_cache()
+    monkeypatch.setattr(socket, "getaddrinfo", _resolving_to(*ips))
+    resolver = _CountingResolver(registered=registered)
+    authorize = _authorize_as(authorization)
+
+    async def _counting_authorize(**kwargs: Any) -> ExecutionAuthorization:
+        resolver.calls.append("authorize_execution")
+        result: ExecutionAuthorization = await authorize(**kwargs)
+        return result
+
+    async def _hook(**_kwargs: Any) -> Response:
+        resolver.calls.append("unregistered_url_handler")
+        return Response(status_code=204)
+
+    monkeypatch.setattr(execute_router, "authorize_execution", _counting_authorize)
+    request = _request_for(_HOST, resolver, headers={"jentic-revision": _OTHER_API_PIN})
+    request.app.state.unregistered_url_handler = _hook
+    with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamUrlNotAllowedError) as e:
+        await _run_handle(request, _SUBNET_ONLY)
+    return broker_error_problem(e.value), resolver.calls, [dict(entry) for entry in logs]
+
+
+def _without_reason(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{key: value for key, value in entry.items() if key != "reason"} for entry in lines]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("registered", "authorization", "expected_work"),
+    [
+        pytest.param(
+            False, _DENIED, ["resolve_operation", "resolve_revision_pin"], id="unregistered"
+        ),
+        pytest.param(
+            True, _DENIED, ["resolve_operation", "authorize_execution"], id="registered-denied"
+        ),
+    ],
+)
+async def test_every_refused_name_does_the_same_work_for_an_unauthorized_caller(
+    monkeypatch: pytest.MonkeyPatch,
+    registered: bool,
+    authorization: Exception,
+    expected_work: list[str],
+) -> None:
+    # The domain-gap refusal is withheld until discovery and authorization have
+    # run. Every other refusal of a name must be too: refusing those at once
+    # would make the gap measurably slower (a registry round trip, the
+    # authorization events and denial counter) behind an identical body.
+    traces = {
+        case: await _refusal_trace(
+            monkeypatch, ips, registered=registered, authorization=authorization
+        )
+        for case, (ips, _reason) in _REFUSED_NAMES.items()
+    }
+    expected_body = {
+        "type": "invalid_upstream_url",
+        "title": BLOCKED_RANGE_MESSAGE,
+        "status": 400,
+        "detail": BLOCKED_RANGE_MESSAGE,
+        "error_origin": "broker",
+    }
+    gap_lines = _without_reason(traces["domain_gap"][2])
+    for case, (body, work, lines) in traces.items():
+        assert body == expected_body, case
+        assert work == expected_work, case
+        assert _without_reason(lines) == gap_lines, case
+        # Only the operator-facing reason tells the cases apart.
+        assert [entry["reason"] for entry in _refusal_logs(lines)] == [_REFUSED_NAMES[case][1]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("case", "ips_and_reason"), list(_REFUSED_NAMES.items()))
+async def test_every_refused_name_logs_its_real_reason_for_operators(
+    monkeypatch: pytest.MonkeyPatch, case: str, ips_and_reason: tuple[tuple[str, ...], str]
+) -> None:
+    ips, reason = ips_and_reason
+    monkeypatch.setattr(socket, "getaddrinfo", _resolving_to(*ips))
+    monkeypatch.setattr(execute_router, "authorize_execution", _authorize_as(_DENIED))
+    with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamUrlNotAllowedError):
+        await _run_handle(_request_for(_HOST, _HitResolver()), _SUBNET_ONLY)
+    [entry] = _refusal_logs(logs)
+    assert entry["reason"] == reason, case
+    assert entry["problem_type"] == "invalid_upstream_url"
+
+
+@pytest.mark.asyncio
+async def test_authorized_caller_sees_the_reason_after_the_same_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An authorized caller may learn the reason; it is still reached through
+    # the same discovery and authorization work for every refused name.
+    gap_body, gap_work, _ = await _refusal_trace(
+        monkeypatch, (_INTERNAL_IP,), registered=True, authorization=_ALLOWED
+    )
+    other_body, other_work, _ = await _refusal_trace(
+        monkeypatch, ("192.168.1.5",), registered=True, authorization=_ALLOWED
+    )
+    assert gap_work == other_work == ["resolve_operation", "authorize_execution"]
+    assert gap_body["type"] == "private_name_not_in_allowed_domains"
+    assert other_body["type"] == "invalid_upstream_url"
+    assert other_body["detail"] == BLOCKED_RANGE_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_malformed_url_is_refused_before_discovery() -> None:
+    # A malformed URL (here, no host) carries no DNS information, so it is
+    # refused at once.
+    resolver = _CountingResolver(registered=True)
+    with pytest.raises(UpstreamUrlNotAllowedError) as e:
+        await _run_handle(_request_for("https://:443", resolver), _SUBNET_ONLY)
+    assert e.value.type == "invalid_upstream_url"
+    assert e.value.detail == "upstream URL has no hostname"
+    assert resolver.calls == []
 
 
 @pytest.mark.asyncio

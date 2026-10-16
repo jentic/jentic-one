@@ -135,7 +135,7 @@ from jentic_one.shared.tracing import (
 )
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import (
-    PrivateNameNotAllowedError,
+    EgressPolicyError,
     normalise_upstream_url,
     validate_upstream_url_async,
 )
@@ -513,21 +513,21 @@ def _refuse_upstream_url(
     return refusal
 
 
-async def _preflight_egress(
-    raw_url: str, ctx: Context
-) -> tuple[str, PrivateNameNotAllowedError | None]:
-    """Validate the caller's raw URL; return ``(url, withheld domain-suffix gap)``.
+async def _preflight_egress(raw_url: str, ctx: Context) -> tuple[str, EgressPolicyError | None]:
+    """Validate the caller's raw URL; return ``(url, withheld egress-policy refusal)``.
 
-    Every refusal raises here except a name refused only for a missing
-    ``allowed_internal_domains`` suffix: that one is returned so ``_handle``
-    can raise it after discovery and authorization. Only an authorized caller
-    gets its distinct type; anyone else gets the generic refusal, so an
-    unprivileged caller cannot use the type to learn which names resolve into
-    the operator's trusted subnet.
+    A malformed URL (a plain ``ValueError``) raises here. Every refusal of a
+    target (:class:`EgressPolicyError`: a blocked name, a blocked resolved
+    address, a domain-suffix gap) is returned instead, so ``_handle`` raises it
+    after discovery and authorization. Every target refusal thus does the same
+    registry and authorization work and leaves the same events and counters,
+    whatever its reason, so neither the body nor the work done tells an
+    unprivileged caller which names resolve into the operator's trusted subnet.
+    Only an authorized caller sees the distinct domain-gap type.
     """
     try:
         return await validate_upstream_url_async(raw_url, ctx.config.broker.egress), None
-    except PrivateNameNotAllowedError as exc:
+    except EgressPolicyError as exc:
         return normalise_upstream_url(raw_url), exc
     except ValueError as exc:
         raise _refuse_upstream_url(exc, url=raw_url, stage="preflight", authorized=False) from exc
@@ -551,10 +551,10 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
-    # A name refused only for a missing allowed_internal_domains suffix is
-    # withheld (see _preflight_egress): nothing below makes an outbound call,
-    # and the refusal is raised once authorization has settled who may see it.
-    upstream_url, withheld_gap = await _preflight_egress(raw_url, ctx)
+    # An egress-policy refusal is withheld (see _preflight_egress): nothing
+    # below makes an outbound call, and the refusal is raised once
+    # authorization has settled who may see its reason.
+    upstream_url, withheld_refusal = await _preflight_egress(raw_url, ctx)
 
     try:
         resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
@@ -587,7 +587,7 @@ async def _handle(
                 await _handle_unregistered_url(
                     request, method=method, upstream_url=upstream_url, identity=identity
                 )
-                if withheld_gap is None
+                if withheld_refusal is None
                 else None
             )
             if handled is not None:
@@ -649,18 +649,18 @@ async def _handle(
             server_variables_unresolved=ctx_req.server_variables_unresolved,
         )
     except BrokerError:
-        if withheld_gap is None:
+        if withheld_refusal is None:
             raise
-        # The caller is not authorized for a registered operation, so the
+        # The caller is not authorized for a registered operation, so a
         # domain-suffix gap is reported like any other blocked address: the
         # distinct type would tell it which names resolve into the subnet.
         raise _refuse_upstream_url(
-            withheld_gap, url=upstream_url, stage="preflight", authorized=False
-        ) from withheld_gap
-    if withheld_gap is not None:
+            withheld_refusal, url=upstream_url, stage="preflight", authorized=False
+        ) from withheld_refusal
+    if withheld_refusal is not None:
         raise _refuse_upstream_url(
-            withheld_gap, url=upstream_url, stage="preflight", authorized=True
-        ) from withheld_gap
+            withheld_refusal, url=upstream_url, stage="preflight", authorized=True
+        ) from withheld_refusal
 
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
