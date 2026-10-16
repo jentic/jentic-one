@@ -10,7 +10,8 @@ same questions directly from the actor rows, with the same semantics:
 - ``agent`` → ``agents.status = 'active'`` (suspended/archived/missing → inactive)
   and, for an owned agent, the owner's ``users.active`` (an owned agent follows
   its owner's account status; ownerless agents depend on their own status);
-- ``user`` → ``users.active`` (disabled/missing → inactive);
+- ``user`` → ``users.active`` (disabled/missing → inactive), read through the
+  shared ``read_user_status`` the login-JWT verifier uses;
 - anything else → inactive. That covers the retired ``toolkit`` and
   ``service_account`` identities (theme 8 Phase 4 dropped the
   service-account tables; a job queued under one can never run).
@@ -28,8 +29,9 @@ Raw SQL against the admin schema — the broker may not import the ``admin`` ORM
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, text
+from sqlalchemy import text
 
+from jentic_one.shared.auth.actor_status import read_user_status
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -48,7 +50,6 @@ _AGENT_STATUS = text(
     f" ELSE '{_OWNER_INACTIVE}' END AS status, a.owner_id"
     " FROM agents a WHERE a.id = :actor_id"
 )
-_USER_ACTIVE = text("SELECT active FROM users WHERE id = :actor_id").columns(active=Boolean)
 _PERMISSION_GRANTED = text(
     "SELECT 1 FROM actor_permission_grants"
     " WHERE actor_id = :actor_id AND actor_type = :actor_type AND permission = :permission"
@@ -72,11 +73,8 @@ class ActorStatusResolver:
                 log_agent_owner_inactive(actor_id, row.owner_id)
             return bool(row.status == "active")
         if actor_type == ActorType.USER.value:
-            async with self._admin_db.session() as session:
-                active = (
-                    await session.execute(_USER_ACTIVE, {"actor_id": actor_id})
-                ).scalar_one_or_none()
-            return bool(active)
+            status = await read_user_status(self._admin_db, actor_id)
+            return status is not None and status.active
         return False
 
     async def holds_permission(self, *, actor_id: str, actor_type: str, permission: str) -> bool:

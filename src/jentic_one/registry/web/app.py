@@ -48,6 +48,8 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         # maps to a known, logged 500 rather than escaping as an opaque unhandled
         # traceback. See #642.
         (DatabaseConsistencyError, service_error_handler),
+        # A database that cannot answer — including the auth gate's users-row
+        # read — is a retryable 503, not a 401 or a bare 500.
         (DatabaseUnavailableError, service_error_handler),
     ]
 
