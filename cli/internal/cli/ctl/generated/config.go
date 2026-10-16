@@ -246,6 +246,19 @@ type BrokerConfig struct {
 	// RuleCacheTtlS corresponds to the JSON schema field "rule_cache_ttl_s".
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
 
+	// Emit a W3C ``Server-Timing`` header on execute responses with per-stage
+	// durations (``jentic-auth``, ``jentic-egress``, ``jentic-discover``,
+	// ``jentic-rules``, ``jentic-body``, ``jentic-idempotency``, ``jentic-cred``,
+	// ``jentic-upstream``, ``jentic-persist``, ``jentic-total``) for authenticated
+	// callers. A broker-generated error raised before the upstream call lists the
+	// stages that ran without durations. ``jentic-upstream`` includes the
+	// circuit-breaker check, so a circuit-open ``503`` carries durations even though
+	// no upstream request was sent. Off by default: timing data aids side-channel
+	// probing and fingerprinting, so enable it only where callers are trusted with it
+	// (e.g. while diagnosing latency). Streaming responses carry only the stages
+	// known before the headers are sent (no ``jentic-persist``).
+	ServerTiming bool `json:"server_timing,omitempty,omitzero" yaml:"server_timing,omitempty" mapstructure:"server_timing,omitempty"`
+
 	// ToolkitCacheTtlS corresponds to the JSON schema field "toolkit_cache_ttl_s".
 	ToolkitCacheTtlS float64 `json:"toolkit_cache_ttl_s,omitempty,omitzero" yaml:"toolkit_cache_ttl_s,omitempty" mapstructure:"toolkit_cache_ttl_s,omitempty"`
 
@@ -280,6 +293,9 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["rule_cache_ttl_s"]; !ok || v == nil {
 		plain.RuleCacheTtlS = 3.0
 	}
+	if v, ok := raw["server_timing"]; !ok || v == nil {
+		plain.ServerTiming = false
+	}
 	if v, ok := raw["toolkit_cache_ttl_s"]; !ok || v == nil {
 		plain.ToolkitCacheTtlS = 3.0
 	}
@@ -303,7 +319,7 @@ type BrokerResilienceConfig struct {
 	CircuitBreaker *CircuitBreakerConfig `json:"circuit_breaker,omitempty,omitzero" yaml:"circuit_breaker,omitempty" mapstructure:"circuit_breaker,omitempty"`
 
 	// Hard admission cap on concurrently executing brokered calls, **per broker
-	// process** — replicas multiply it. At the cap, new requests are shed with 429 +
+	// process** — replicas multiply it. At the cap, new requests are shed with 503 +
 	// ``Retry-After: shed_retry_after_s``.
 	MaxInFlight int `json:"max_in_flight,omitempty,omitzero" yaml:"max_in_flight,omitempty" mapstructure:"max_in_flight,omitempty"`
 
@@ -326,7 +342,7 @@ type BrokerResilienceConfig struct {
 	// Retry corresponds to the JSON schema field "retry".
 	Retry *RetryConfig `json:"retry,omitempty,omitzero" yaml:"retry,omitempty" mapstructure:"retry,omitempty"`
 
-	// ``Retry-After`` (seconds) returned with the 429 when admission sheds at
+	// ``Retry-After`` (seconds) returned with the 503 when admission sheds at
 	// ``max_in_flight``.
 	ShedRetryAfterS int `json:"shed_retry_after_s,omitempty,omitzero" yaml:"shed_retry_after_s,omitempty" mapstructure:"shed_retry_after_s,omitempty"`
 

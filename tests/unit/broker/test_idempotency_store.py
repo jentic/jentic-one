@@ -8,7 +8,8 @@ Exercises the full claim/replay state machine over the in-process memory backend
 - a retry while the original is still pending is ``IN_PROGRESS`` with a ``Retry-After``,
 - callers are isolated (one caller's key never replays another's),
 - a short pending TTL frees a crashed claim before the long replay window,
-- sensitive response headers are scrubbed and oversized bodies are dropped.
+- sensitive and per-exchange (``Server-Timing``) response headers are not stored
+  and oversized bodies are dropped.
 """
 
 from __future__ import annotations
@@ -130,6 +131,7 @@ async def test_sensitive_headers_scrubbed_on_store() -> None:
             "content-type": "application/json",
             "Set-Cookie": "session=abc",
             "Authorization": "Bearer secret",
+            "Server-Timing": "db;dur=12.5",
         },
         body=b"{}",
     )
@@ -139,6 +141,9 @@ async def test_sensitive_headers_scrubbed_on_store() -> None:
     assert "content-type" in replay.stored.headers
     assert "Set-Cookie" not in replay.stored.headers
     assert "Authorization" not in replay.stored.headers
+    # Per-exchange latency: a replay makes no upstream call, so it must not
+    # re-assert the original upstream's timing.
+    assert "Server-Timing" not in replay.stored.headers
 
 
 @pytest.mark.asyncio

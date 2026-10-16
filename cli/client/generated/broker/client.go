@@ -2543,6 +2543,7 @@ type ExecuteDeleteHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2554,6 +2555,7 @@ type ExecuteDeleteHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -2713,6 +2715,7 @@ type ExecuteGetHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2724,6 +2727,7 @@ type ExecuteGetHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -2883,6 +2887,7 @@ type ExecuteHeadHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -2894,6 +2899,7 @@ type ExecuteHeadHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -3053,6 +3059,7 @@ type ExecuteOptionsHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3064,6 +3071,7 @@ type ExecuteOptionsHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -3223,6 +3231,7 @@ type ExecutePatchHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3234,6 +3243,7 @@ type ExecutePatchHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -3393,6 +3403,7 @@ type ExecutePostHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3404,6 +3415,7 @@ type ExecutePostHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -3563,6 +3575,7 @@ type ExecutePutHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
@@ -3574,6 +3587,7 @@ type ExecutePutHTTPResp202Headers struct {
 	JenticExecutionId  *string
 	JenticOperation    *string
 	PreferenceApplied  *string
+	ServerTiming       *string
 	Traceparent        *string
 	Tracestate         *string
 }
@@ -4188,6 +4202,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4239,6 +4260,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -4460,6 +4488,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4511,6 +4546,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -4732,6 +4774,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4783,6 +4832,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -5004,6 +5060,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5055,6 +5118,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -5276,6 +5346,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5327,6 +5404,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -5548,6 +5632,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5599,6 +5690,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
@@ -5820,6 +5918,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5871,6 +5976,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 				return nil, err
 			}
 			headers.PreferenceApplied = &value
+		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
 		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
