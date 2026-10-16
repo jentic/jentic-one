@@ -44,6 +44,7 @@ from jentic_one.broker.core.exceptions import (
     UpgradeNotSupportedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
     UpstreamUrlNotAllowedError,
 )
 
@@ -73,6 +74,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     CredentialNeedsReconnectError: 401,
     CredentialRefreshTransientError: 502,
     UpstreamTimeoutError: 504,
+    UpstreamTransportError: 502,
     DeadlineExceededError: 504,
     UpstreamResponseTooLargeError: 502,
     RunnerSchemeUnsupportedError: 501,

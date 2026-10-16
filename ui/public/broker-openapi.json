@@ -267,6 +267,17 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "upstream_connect_failed": {
+                "summary": "The upstream refused the connection; no request bytes were sent.",
+                "value": {
+                  "detail": "The upstream connection could not be established.",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "status": 502,
+                  "title": "The upstream connection could not be established.",
+                  "type": "upstream_connect_failed"
+                }
+              },
               "upstream_response_too_large": {
                 "summary": "The broker aborted an upstream response over its size cap.",
                 "value": {
@@ -288,6 +299,17 @@
                   "status": 504,
                   "title": "The upstream did not respond within the deadline.",
                   "type": "upstream_timeout"
+                }
+              },
+              "upstream_transport_error": {
+                "summary": "The upstream connection failed (e.g. dropped mid-response); 502 Bad Gateway.",
+                "value": {
+                  "detail": "Upstream transport error (RemoteProtocolError)",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/reports",
+                  "status": 502,
+                  "title": "Upstream transport error (RemoteProtocolError)",
+                  "type": "upstream_transport_error"
                 }
               }
             },
