@@ -2031,9 +2031,9 @@ def test_worker_poll_and_concurrency_defaults_keep_serial_2s_poll():
 
 
 def test_worker_poll_and_concurrency_from_yaml(tmp_path: Path):
-    config = _load(tmp_path, {"worker": {"poll_interval_s": 0.25, "concurrency": 8}})
+    config = _load(tmp_path, {"worker": {"poll_interval_s": 0.25, "concurrency": 4}})
     assert config.worker.poll_interval_s == 0.25
-    assert config.worker.concurrency == 8
+    assert config.worker.concurrency == 4
 
 
 def test_worker_poll_and_concurrency_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2044,12 +2044,12 @@ def test_worker_poll_and_concurrency_from_env(tmp_path: Path, monkeypatch: pytes
     assert config.worker.concurrency == 4
 
 
-@pytest.mark.parametrize("value", [0.05, 60.0])
+@pytest.mark.parametrize("value", [0.25, 60.0])
 def test_worker_poll_interval_accepts_bounds(value: float):
     assert WorkerConfig(poll_interval_s=value).poll_interval_s == value
 
 
-@pytest.mark.parametrize("value", [0.0, 0.049, 60.01, -1.0])
+@pytest.mark.parametrize("value", [0.0, 0.05, 0.249, 60.01, -1.0])
 def test_worker_poll_interval_rejects_out_of_bounds(value: float):
     with pytest.raises(ValidationError):
         WorkerConfig(poll_interval_s=value)
@@ -2059,6 +2059,59 @@ def test_worker_poll_interval_rejects_out_of_bounds(value: float):
 def test_worker_concurrency_rejects_out_of_bounds(value: int):
     with pytest.raises(ValidationError):
         WorkerConfig(concurrency=value)
+
+
+def _with_admin(tmp_path: Path, admin: dict[str, Any], concurrency: int) -> AppConfig:
+    dbs = {**_min_dbs(), "admin": admin}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump({"databases": dbs, "worker": {"concurrency": concurrency}}))
+    return load_config(path)
+
+
+def test_worker_concurrency_above_one_is_refused_on_sqlite(tmp_path: Path):
+    """The handler's SQLite write lock spans the upstream call: only serial is safe."""
+    sqlite_admin = {"backend": "sqlite", "path": str(tmp_path / "admin.db")}
+    assert _with_admin(tmp_path, sqlite_admin, 1).worker.concurrency == 1
+    with pytest.raises(ConfigError, match=r"worker.concurrency=2 is not supported with a sqlite"):
+        _with_admin(tmp_path, sqlite_admin, 2)
+
+
+def test_worker_concurrency_above_one_is_refused_on_sqlite_via_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("JENTIC__WORKER__CONCURRENCY", "3")
+    sqlite_admin = {"backend": "sqlite", "path": str(tmp_path / "admin.db")}
+    with pytest.raises(ConfigError, match=r"not supported with a sqlite admin database"):
+        _with_admin(tmp_path, sqlite_admin, 1)
+
+
+@pytest.mark.parametrize(
+    ("pool_max", "concurrency", "ok"),
+    [
+        (10, 4, True),  # 8 connections < 10
+        (10, 5, False),  # 10 connections: no headroom
+        (10, 6, False),
+        (9, 4, True),
+        (8, 4, False),
+        (2, 1, True),  # serial is never refused
+        (129, 64, True),
+    ],
+)
+def test_worker_concurrency_must_fit_the_admin_pool_on_postgres(
+    tmp_path: Path, pool_max: int, concurrency: int, ok: bool
+):
+    """Each in-flight job holds ~2 admin connections; 2 x concurrency must stay below pool_max."""
+    admin = {"name": "admin", "pool_max": pool_max}
+    if ok:
+        assert _with_admin(tmp_path, admin, concurrency).worker.concurrency == concurrency
+    else:
+        with pytest.raises(ConfigError, match=r"2 per in-flight job.*pool_max"):
+            _with_admin(tmp_path, admin, concurrency)
+
+
+def test_worker_concurrency_pool_error_suggests_a_fitting_value(tmp_path: Path):
+    with pytest.raises(ConfigError, match=r"lower worker.concurrency to 4"):
+        _with_admin(tmp_path, {"name": "admin", "pool_max": 10}, 8)
 
 
 def test_worker_sweep_interval_default_yaml_and_env(

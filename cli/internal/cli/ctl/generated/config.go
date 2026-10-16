@@ -3094,10 +3094,14 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 // loops — across processes or replicas, each running up to “concurrency“
 // jobs — can poll the same queue without double-claiming a job.
 type WorkerConfig struct {
-	// Maximum jobs one worker process runs at once (1 = serial). Each in-flight job
-	// holds admin-DB connections, so keep ``databases.admin.pool_max`` comfortably
-	// above this. SQLite serialises writers, so values above 1 bring little benefit
-	// there.
+	// Maximum jobs one worker process runs at once (1 = serial). Postgres only:
+	// SQLite requires 1, because a job's handler holds the database write lock across
+	// its upstream call, so a second concurrent job's writes would time out. Each
+	// in-flight job holds about 2 admin-DB connections at once (its handler
+	// transaction plus the run-time authorization or credential-audit session it
+	// opens), so ``2 * concurrency`` must stay below ``databases.admin.pool_max``,
+	// leaving the remainder for HTTP requests and other background work in the same
+	// process.
 	Concurrency int `json:"concurrency,omitempty,omitzero" yaml:"concurrency,omitempty" mapstructure:"concurrency,omitempty"`
 
 	// DrainTimeoutS corresponds to the JSON schema field "drain_timeout_s".
@@ -3109,7 +3113,10 @@ type WorkerConfig struct {
 	// Idle wait (seconds) between job-queue polls when nothing is claimable. A job
 	// enqueued in the same process wakes the worker immediately, so this mainly
 	// bounds pickup latency for jobs enqueued by another process and how quickly
-	// visibility-expired jobs are reclaimed.
+	// visibility-expired jobs are reclaimed. Every poll is a write transaction (the
+	// claim is an ``UPDATE``) even when the queue is empty — on SQLite it takes the
+	// database write lock that request writes also wait on — so each process issues
+	// about ``1 / poll_interval_s`` of them per second while idle.
 	PollIntervalS float64 `json:"poll_interval_s,omitempty,omitzero" yaml:"poll_interval_s,omitempty" mapstructure:"poll_interval_s,omitempty"`
 
 	// First delay, in seconds, before the worker retries after losing its database
@@ -3169,8 +3176,8 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	if 60 < plain.PollIntervalS {
 		return fmt.Errorf("field %s: must be <= %v", "poll_interval_s", 60)
 	}
-	if 0.05 > plain.PollIntervalS {
-		return fmt.Errorf("field %s: must be >= %v", "poll_interval_s", 0.05)
+	if 0.25 > plain.PollIntervalS {
+		return fmt.Errorf("field %s: must be >= %v", "poll_interval_s", 0.25)
 	}
 	if v, ok := raw["reconnect_backoff_base_s"]; !ok || v == nil {
 		plain.ReconnectBackoffBaseS = 2.0

@@ -411,13 +411,17 @@ class WorkerConfig(BaseModel):
     )
     poll_interval_s: float = Field(
         default=2.0,
-        ge=0.05,
+        ge=0.25,
         le=60.0,
         description=(
             "Idle wait (seconds) between job-queue polls when nothing is claimable. "
             "A job enqueued in the same process wakes the worker immediately, so "
             "this mainly bounds pickup latency for jobs enqueued by another process "
-            "and how quickly visibility-expired jobs are reclaimed."
+            "and how quickly visibility-expired jobs are reclaimed. Every poll is a "
+            "write transaction (the claim is an ``UPDATE``) even when the queue is "
+            "empty — on SQLite it takes the database write lock that request writes "
+            "also wait on — so each process issues about ``1 / poll_interval_s`` of "
+            "them per second while idle."
         ),
     )
     concurrency: int = Field(
@@ -425,10 +429,15 @@ class WorkerConfig(BaseModel):
         ge=1,
         le=64,
         description=(
-            "Maximum jobs one worker process runs at once (1 = serial). Each "
-            "in-flight job holds admin-DB connections, so keep "
-            "``databases.admin.pool_max`` comfortably above this. SQLite serialises "
-            "writers, so values above 1 bring little benefit there."
+            "Maximum jobs one worker process runs at once (1 = serial). Postgres "
+            "only: SQLite requires 1, because a job's handler holds the database "
+            "write lock across its upstream call, so a second concurrent job's "
+            "writes would time out. Each in-flight job holds about 2 admin-DB "
+            "connections at once (its handler transaction plus the run-time "
+            "authorization or credential-audit session it opens), so "
+            "``2 * concurrency`` must stay below ``databases.admin.pool_max``, "
+            "leaving the remainder for HTTP requests and other background work "
+            "in the same process."
         ),
     )
     sweep_interval_s: float = Field(
@@ -2252,6 +2261,38 @@ class AppConfig(BaseModel):
                 # public_base_url; ``_serve`` warns via has_spa_platform_client.
                 return self
             self.auth.platform_clients.append(spa_client)
+        return self
+
+    @model_validator(mode="after")
+    def _worker_concurrency_fits_admin_db(self) -> AppConfig:
+        """Refuse a ``worker.concurrency`` the admin database cannot sustain.
+
+        SQLite: a job's handler transaction holds the write lock across its
+        upstream call, so a second concurrent job's claim and outcome writes
+        time out — a finished job's outcome is lost and the job re-runs on
+        reclaim. Postgres: each in-flight job holds about two admin
+        connections at once (handler transaction plus its authorization or
+        credential-audit session); at ``2 * concurrency >= pool_max`` every
+        connection can be held by an outer transaction while its inner one
+        waits, so jobs and HTTP requests sharing the pool time out together.
+        """
+        concurrency = self.worker.concurrency
+        if concurrency <= 1:
+            return self
+        admin = self.databases.admin
+        if admin.backend == "sqlite":
+            raise ValueError(
+                f"worker.concurrency={concurrency} is not supported with a sqlite "
+                "admin database; set worker.concurrency to 1"
+            )
+        if 2 * concurrency >= admin.pool_max:
+            raise ValueError(
+                f"worker.concurrency={concurrency} needs about {2 * concurrency} "
+                "admin-DB connections (2 per in-flight job), which does not fit "
+                f"databases.admin.pool_max={admin.pool_max}; raise pool_max above "
+                f"{2 * concurrency} or lower worker.concurrency to "
+                f"{max(1, (admin.pool_max - 1) // 2)}"
+            )
         return self
 
     def extension(self, name: str) -> BaseModel | None:

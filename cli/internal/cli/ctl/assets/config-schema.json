@@ -1988,7 +1988,7 @@
       "properties": {
         "concurrency": {
           "default": 1,
-          "description": "Maximum jobs one worker process runs at once (1 = serial). Each in-flight job holds admin-DB connections, so keep ``databases.admin.pool_max`` comfortably above this. SQLite serialises writers, so values above 1 bring little benefit there.",
+          "description": "Maximum jobs one worker process runs at once (1 = serial). Postgres only: SQLite requires 1, because a job's handler holds the database write lock across its upstream call, so a second concurrent job's writes would time out. Each in-flight job holds about 2 admin-DB connections at once (its handler transaction plus the run-time authorization or credential-audit session it opens), so ``2 * concurrency`` must stay below ``databases.admin.pool_max``, leaving the remainder for HTTP requests and other background work in the same process.",
           "maximum": 64,
           "minimum": 1,
           "title": "Concurrency",
@@ -2006,9 +2006,9 @@
         },
         "poll_interval_s": {
           "default": 2.0,
-          "description": "Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed.",
+          "description": "Idle wait (seconds) between job-queue polls when nothing is claimable. A job enqueued in the same process wakes the worker immediately, so this mainly bounds pickup latency for jobs enqueued by another process and how quickly visibility-expired jobs are reclaimed. Every poll is a write transaction (the claim is an ``UPDATE``) even when the queue is empty — on SQLite it takes the database write lock that request writes also wait on — so each process issues about ``1 / poll_interval_s`` of them per second while idle.",
           "maximum": 60.0,
-          "minimum": 0.05,
+          "minimum": 0.25,
           "title": "Poll Interval S",
           "type": "number"
         },
