@@ -159,6 +159,16 @@ async def test_below_threshold_failures_issue_no_statements(admin_db: DatabaseSe
 
 
 @pytest.mark.asyncio
+async def test_scan_renders_the_status_filter_inline(admin_db: DatabaseSession) -> None:
+    """The scan's ``status`` filter is a SQL literal, not a bind parameter, so a
+    generic prepared plan can still match the ``status = 'failed'`` partial
+    indexes on Postgres."""
+    failures = _Failures(admin_db, None)
+    (scan,) = _scans(await failures.fail())
+    assert "status = 'failed'" in scan
+
+
+@pytest.mark.asyncio
 async def test_dedup_holds_and_a_confirmed_dedup_suppresses_further_scans(
     admin_db: DatabaseSession,
 ) -> None:

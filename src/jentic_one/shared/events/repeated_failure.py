@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import String, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.events import Event
@@ -313,7 +313,11 @@ async def maybe_emit_repeated_failure(
                 select(func.count())
                 .select_from(ExecutionRecord)
                 .where(
-                    ExecutionRecord.status == ExecutionStatus.FAILED.value,
+                    # Rendered inline (not a bind parameter) so Postgres can match
+                    # the ``WHERE status = 'failed'`` partial indexes even under a
+                    # generic prepared-statement plan.
+                    ExecutionRecord.status
+                    == literal(ExecutionStatus.FAILED.value, String, literal_execute=True),
                     ExecutionRecord.actor_id == actor_id,
                     record_axis,
                     ExecutionRecord.operation_id == operation_id,
