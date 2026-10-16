@@ -175,16 +175,14 @@ async def unregistered_operation_error(
     status and problem ``type`` — client recovery keys on them — and names the
     draft in ``detail``, the ``draft_revision`` extension member and an
     ``agent_directive``. ``pins`` are the request's own ``Jentic-Revision``
-    pins, kept in a suggested header. The lookup is best-effort: if it fails,
-    the generic 404 is returned — except for an ``AttributeError`` or
-    ``TypeError``, which means the injected resolver does not implement the
-    protocol and must surface as the bug it is.
+    pins, kept in a suggested header. The lookup is best-effort: if it fails
+    for any reason, the generic 404 is returned. The resolver's conformance
+    to the protocol is checked once at injection
+    (``require_registry_resolver``), not here.
     """
     generic = OperationNotFoundError(detail=UNREGISTERED_URL_DETAIL, type="operation_not_found")
     try:
         match = await resolver.find_draft_match(method=method, url=url, identity=identity)
-    except (AttributeError, TypeError):
-        raise
     except Exception:
         logger.warning("draft_match_lookup_failed", method=method, exc_info=True)
         return generic

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
@@ -136,6 +136,32 @@ class RegistryResolverProtocol(Protocol):
         draft or not.
         """
         ...
+
+
+def require_registry_resolver(resolver: object) -> RegistryResolverProtocol:
+    """Return ``resolver`` if it implements every :class:`RegistryResolverProtocol` method.
+
+    Called once when the resolver is injected, so a resolver missing a method
+    fails at startup with ``TypeError`` instead of on the first request that
+    reaches it — callers of the best-effort methods (``find_draft_match``)
+    then need not tell a wiring bug from a failed lookup.
+    """
+    missing = [
+        name for name in _REGISTRY_RESOLVER_METHODS if not callable(getattr(resolver, name, None))
+    ]
+    if missing:
+        raise TypeError(
+            f"{type(resolver).__name__} does not implement RegistryResolverProtocol: "
+            f"missing {', '.join(missing)}"
+        )
+    return cast(RegistryResolverProtocol, resolver)
+
+
+_REGISTRY_RESOLVER_METHODS = tuple(
+    name
+    for name, member in vars(RegistryResolverProtocol).items()
+    if not name.startswith("_") and callable(member)
+)
 
 
 @runtime_checkable
