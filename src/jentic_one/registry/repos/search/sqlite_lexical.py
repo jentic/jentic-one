@@ -1,9 +1,10 @@
 """SQLite FTS5 (BM25) lexical search strategy.
 
 Ranks operations by SQLite's built-in ``bm25()`` over the ``operations_fts``
-virtual table, joins back to ``operations``/``api_revisions`` to apply the same
-revision-pin and active-state (published or imported) filters as every other
-strategy, and returns distance-ordered hits with keyset pagination.
+virtual table, joins back to ``operations``/``api_revisions`` to apply the shared
+pin/active-state/api-filter semantics (see
+:mod:`jentic_one.registry.repos.search.filters`), and returns distance-ordered
+hits with keyset pagination.
 
 SQLite's ``bm25()`` returns a value where a *more negative* number is a better
 match. We negate it into a non-negative relevance score, squash the unbounded
@@ -19,9 +20,9 @@ import uuid
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.registry.repos.search.filters import ACTIVE_REVISION_STATES
 from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit
 from jentic_one.registry.repos.search.registry import register_strategy
-from jentic_one.shared.models import ApiRevisionState
 
 
 @register_strategy
@@ -50,11 +51,11 @@ class SqliteLexicalStrategy:
 
         where_clauses = ["operations_fts MATCH :query"]
 
-        # Active revision states a search can surface (mirrors the
-        # ``ix_api_revisions_one_active`` index): a catalog import lands as
-        # IMPORTED and must be searchable without a manual promote.
+        # Active-state predicate from the shared contract (see ``filters``):
+        # this strategy hand-writes SQL against the FTS5 virtual table, so it
+        # binds ACTIVE_REVISION_STATES rather than using search_filter_clause.
         active_binds = []
-        for i, state in enumerate((ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED)):
+        for i, state in enumerate(ACTIVE_REVISION_STATES):
             key = f"active_state_{i}"
             active_binds.append(f":{key}")
             params[key] = state.value

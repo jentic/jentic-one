@@ -14,6 +14,7 @@ from jentic_one.registry.repos.search import (
     SearchUnsupportedError,
     build_strategy,
     resolve_strategy,
+    resolve_strategy_by_name,
 )
 from jentic_one.registry.repos.search.postgres_lexical import PostgresLexicalStrategy
 from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit, SearchStrategy
@@ -203,3 +204,66 @@ def test_build_strategy_exported_for_composite_strategies(
     assert isinstance(child, _ConfigurableFakeStrategy)
     assert child.app_config is app_config
     assert type(build_strategy(_FakeStrategy, config)) is _FakeStrategy
+
+
+def test_resolve_by_name_returns_registered_strategy() -> None:
+    """A composite resolves a built-in child by key without importing its module."""
+    pg = resolve_strategy_by_name("postgres", "lexical")
+    sqlite = resolve_strategy_by_name("sqlite", "lexical")
+    assert type(pg) is PostgresLexicalStrategy
+    assert type(sqlite) is SqliteLexicalStrategy
+
+
+def test_resolve_by_name_follows_the_registry(clean_test_key: None) -> None:
+    """The lookup is live: whatever is registered under the key is what resolves."""
+    with pytest.raises(SearchUnsupportedError):
+        resolve_strategy_by_name(*_TEST_KEY)
+    register_strategy(_FakeStrategy)
+    assert type(resolve_strategy_by_name(*_TEST_KEY)) is _FakeStrategy
+
+
+def test_resolve_by_name_unknown_name_raises_with_available_modes() -> None:
+    with pytest.raises(SearchUnsupportedError) as exc_info:
+        resolve_strategy_by_name("postgres", "no-such-mode")
+    message = str(exc_info.value)
+    assert "No search strategy for (postgres, no-such-mode)" in message
+    assert "'lexical'" in message
+
+
+def test_resolve_by_name_wrong_dialect_raises(clean_test_key: None) -> None:
+    """A name registered for one dialect does not resolve under another."""
+    register_strategy(_FakeStrategy)
+    with pytest.raises(SearchUnsupportedError, match=r"\(sqlite, test-mode\)"):
+        resolve_strategy_by_name("sqlite", _TEST_KEY[1])
+    with pytest.raises(SearchUnsupportedError, match=r"Available modes for nope: \[\]"):
+        resolve_strategy_by_name("nope", "lexical")
+
+
+def test_resolve_by_name_passes_config_to_configurable_child(
+    clean_test_key: None, sample_config_dict: dict[str, Any]
+) -> None:
+    register_strategy(_ConfigurableFakeStrategy)
+    config = SearchConfig(search_mode="hybrid")
+    app_config = AppConfig.model_validate(sample_config_dict)
+
+    child = resolve_strategy_by_name(*_TEST_KEY, config=config, app_config=app_config)
+
+    assert isinstance(child, _ConfigurableFakeStrategy)
+    assert child.config is config
+    assert child.app_config is app_config
+
+
+def test_resolve_by_name_defaults_config_to_the_requested_mode(clean_test_key: None) -> None:
+    register_strategy(_ConfigurableFakeStrategy)
+
+    child = resolve_strategy_by_name(*_TEST_KEY)
+
+    assert isinstance(child, _ConfigurableFakeStrategy)
+    assert child.config.search_mode == _TEST_KEY[1]
+    assert child.app_config is None
+
+
+def test_resolve_by_name_propagates_from_config_rejection(clean_test_key: None) -> None:
+    register_strategy(_RejectingConfigStrategy)
+    with pytest.raises(SearchUnsupportedError, match="provider not configured"):
+        resolve_strategy_by_name(*_TEST_KEY)
