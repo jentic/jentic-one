@@ -22,6 +22,11 @@ is exponential with full jitter; an upstream ``Retry-After`` (or
 ``X-RateLimit-Reset``) on a ``429``/``503`` is honored, normalized to integer
 seconds, and capped at the remaining deadline budget.
 
+When the loop gives up with an error and an earlier attempt may have reached
+the upstream, the re-raised error carries ``prior_attempt_sent`` so callers that
+ask "did the upstream possibly act?" (the idempotency claim) never read a final
+``pre_send`` / ``circuit_open`` as "nothing was sent".
+
 Streaming requests are **not** retried: the body has already begun transferring
 when failures surface, so the stream is passed straight through to the inner
 runner (its own per-attempt timeout / breaker still apply).
@@ -42,7 +47,7 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError
+from jentic_one.broker.core.exceptions import BrokerError, upstream_contact_ruled_out
 from jentic_one.broker.core.retry_after import parse_retry_after_seconds
 from jentic_one.shared.metrics import get_meter
 
@@ -103,17 +108,22 @@ class RetryRunner:
         deadline = (time.monotonic() + self._deadline_s) if self._deadline_s > 0 else None
         idempotent = _is_idempotent(request)
         attempt = 0
+        # Whether an attempt before the current one may have reached the upstream.
+        reached_upstream = False
         while True:
             attempt += 1
             try:
                 result = await self._inner.run(request)
             except BrokerError as exc:
                 if not self._should_retry_error(exc, idempotent=idempotent):
+                    self._mark_prior_attempts(exc, reached_upstream)
                     raise
                 delay = self._backoff(attempt, hint=None, deadline=deadline)
                 if not self._has_budget(attempt, delay, deadline):
                     _retry_exhausted_total.add(1)
+                    self._mark_prior_attempts(exc, reached_upstream)
                     raise
+                reached_upstream = reached_upstream or not upstream_contact_ruled_out(exc)
                 await self._sleep(delay, attempt)
                 continue
 
@@ -124,7 +134,19 @@ class RetryRunner:
             if not self._has_budget(attempt, delay, deadline):
                 _retry_exhausted_total.add(1)
                 return result
+            # The upstream answered this attempt, so it acted on the call.
+            reached_upstream = True
             await self._sleep(delay, attempt)
+
+    @staticmethod
+    def _mark_prior_attempts(exc: BrokerError, reached_upstream: bool) -> None:
+        """Flag the re-raised error when an earlier attempt may have reached the upstream.
+
+        The last attempt's error alone (e.g. ``circuit_open`` after a read
+        timeout tripped the breaker) would otherwise read as "nothing was sent".
+        """
+        if reached_upstream:
+            exc.prior_attempt_sent = True
 
     @asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
