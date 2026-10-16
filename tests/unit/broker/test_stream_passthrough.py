@@ -8,12 +8,14 @@ upstream teardown) and the web edge's ``guarded_body`` / ``open_streaming_respon
 from __future__ import annotations
 
 import asyncio
+import types
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
 import pytest
 
+import jentic_one.broker.web.streaming as streaming_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, StreamingResult
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
@@ -25,6 +27,7 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.streaming import guarded_body, open_streaming_response
+from jentic_one.shared.broker.execution import StreamingOutcome
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.resilience.circuit import _FAIL_PREFIX
 from jentic_one.shared.schemas import OperationInfo
@@ -156,6 +159,30 @@ async def test_guarded_body_client_disconnect_tears_down_upstream() -> None:
 
     # The body generator's finally ran: the AsyncExitStack closed the upstream.
     assert fake.closed is True
+
+
+@pytest.mark.asyncio
+async def test_guarded_body_duration_ms_keeps_sub_millisecond_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1715: the outcome's ``duration_ms`` is fractional ms, not whole ms.
+
+    It feeds the ``broker.upstream.duration`` histogram on the streaming path;
+    an ``int()`` here would collapse its sub-millisecond buckets.
+    """
+    monkeypatch.setattr(streaming_mod, "time", types.SimpleNamespace(perf_counter=lambda: 10.0019))
+    result = StreamingResult(
+        status_code=200, headers={}, content_type=None, aiter=_slow_iter([b"x"], delay_s=0.0)
+    )
+    stack = AsyncExitStack()
+    await stack.enter_async_context(_FakeStreamCtx(result).open())
+    outcome = StreamingOutcome(execution_id="exec-1", http_status=200, started_at_perf=10.0)
+
+    async for _ in guarded_body(result, stack, transfer_deadline_s=0, outcome=outcome):
+        pass
+
+    assert isinstance(outcome.duration_ms, float)
+    assert outcome.duration_ms == pytest.approx(1.9)
 
 
 @pytest.mark.asyncio

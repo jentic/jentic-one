@@ -228,7 +228,7 @@ class HttpRunner(UpstreamRunner):
                     type="upstream_transport_error",
                 ) from None
 
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        elapsed_ms = (time.perf_counter() - start) * 1000
         return RunnerResult(
             status_code=resp.status_code,
             body=body,
