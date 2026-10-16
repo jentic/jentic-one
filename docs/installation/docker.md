@@ -24,6 +24,15 @@ forwards them to the host's loopback on macOS and Windows. The native Windows
 `jentic.exe` can call a broker published this way; only the *operating* of the
 containers lives in WSL2.
 
+On a laptop, macOS can page out an idle Docker Desktop VM. The first request
+after a long idle spell can then take tens of seconds while the VM swaps back
+in. The server rides this out: dead pooled database connections are replaced
+on next use, and the job worker logs one `worker_db_connection_lost` warning
+followed by `worker_db_connection_recovered` (no traceback loop). To avoid
+the stall itself, give Docker Desktop generous memory headroom; for an
+always-on local deployment on a laptop, running from a source checkout
+([local setup](../development/local-setup.md)) avoids the VM entirely.
+
 ## 1. Pull and verify the image
 
 Tags (including version tags) can be re-pushed; only a `@sha256:` digest is
