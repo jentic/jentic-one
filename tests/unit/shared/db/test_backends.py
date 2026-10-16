@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
+import asyncpg
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -14,6 +16,14 @@ from jentic_one.shared.db.backends import (
     SqliteBackend,
     configure_sqlite_pragmas,
     get_backend,
+)
+from jentic_one.shared.db.backends.postgres import (
+    POOL_RECYCLE_S,
+    TCP_KEEPALIVE_COUNT,
+    TCP_KEEPALIVE_IDLE_S,
+    TCP_KEEPALIVE_INTERVAL_S,
+    KeepaliveConnection,
+    apply_tcp_keepalive,
 )
 
 
@@ -49,6 +59,38 @@ def test_postgres_make_url_and_engine_kwargs() -> None:
     assert url.database == "reg"
     kwargs = backend.engine_kwargs(config)
     assert kwargs["connect_args"]["server_settings"]["search_path"] == "registry,public"
+
+
+def test_postgres_engine_kwargs_harden_idle_connections() -> None:
+    """Pooled connections are pre-pinged, age-recycled, and use TCP keepalive (#1082)."""
+    kwargs = PostgresBackend().engine_kwargs(DatabaseConfig(name="reg"))
+    assert kwargs["pool_pre_ping"] is True
+    assert kwargs["pool_recycle"] == POOL_RECYCLE_S == 1800
+    assert kwargs["connect_args"]["connection_class"] is KeepaliveConnection
+    assert issubclass(KeepaliveConnection, asyncpg.Connection)
+
+
+def test_apply_tcp_keepalive_sets_socket_options() -> None:
+    """The keepalive helper enables SO_KEEPALIVE and tunes idle/interval/count."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        apply_tcp_keepalive(sock)
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
+        idle_opt = getattr(socket, "TCP_KEEPIDLE", None) or getattr(socket, "TCP_KEEPALIVE", None)
+        if idle_opt is not None:
+            assert sock.getsockopt(socket.IPPROTO_TCP, idle_opt) == TCP_KEEPALIVE_IDLE_S
+        if hasattr(socket, "TCP_KEEPINTVL"):
+            assert (
+                sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL)
+                == TCP_KEEPALIVE_INTERVAL_S
+            )
+        if hasattr(socket, "TCP_KEEPCNT"):
+            assert sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT) == TCP_KEEPALIVE_COUNT
+
+
+def test_apply_tcp_keepalive_skips_unix_sockets() -> None:
+    """Unix-domain sockets have no TCP layer; the helper leaves them untouched."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        apply_tcp_keepalive(sock)
 
 
 def test_sqlite_make_url_uses_path() -> None:
