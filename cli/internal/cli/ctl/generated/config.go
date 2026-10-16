@@ -711,80 +711,71 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Private-network allowlist for the platform's OAuth and credential calls.
+//
+// Holds only the two allowlist keys. A key left unset takes its value from
+// the matching “broker.egress“ key. These calls always pin DNS, so there is
+// no “dns_pinning_enabled“ key here, and unknown keys are rejected.
+type ControlEgressConfig struct {
+	// Domain suffixes (e.g. ``[".corp.internal"]``) whose resolved private IP is
+	// permitted for these calls; unset inherits
+	// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+	// allowed subnet. Accepts a YAML list or a comma-separated string.
+	AllowedInternalDomains *ControlEgressConfigAllowedInternalDomains `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// CIDRs exempted from the private-IP block for these calls (e.g.
+	// ``["10.50.0.0/16"]``); unset inherits `broker.egress.allowed_private_subnets`,
+	// and `[]` blocks every private range for these calls even when the broker allows
+	// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+	// a YAML list or a comma-separated string.
+	AllowedPrivateSubnets *ControlEgressConfigAllowedPrivateSubnets `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
+}
+
+// Domain suffixes (e.g. “[".corp.internal"]“) whose resolved private IP is
+// permitted for these calls; unset inherits
+// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+// allowed subnet. Accepts a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedInternalDomains []string
+
+type ControlEgressConfigAllowedInternalDomains_0 []string
+
+// CIDRs exempted from the private-IP block for these calls (e.g.
+// “["10.50.0.0/16"]“); unset inherits `broker.egress.allowed_private_subnets`,
+// and `[]` blocks every private range for these calls even when the broker allows
+// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+// a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedPrivateSubnets []string
+
+type ControlEgressConfigAllowedPrivateSubnets_0 []string
+
 // Control surface configuration.
 //
-// “egress“ governs the control plane's outbound OAuth and credential calls.
-// Each “control.egress“ key left unset takes its value from the matching
-// “broker.egress“ key, so the defaults listed for it apply only when the
-// broker leaves that key unset too. “control.egress.dns_pinning_enabled“ is
-// not consulted: control-plane calls always pin DNS.
+// “egress“ is the allowlist for the platform's outbound OAuth and credential
+// calls. Each “control.egress“ key left unset takes its value from the
+// matching “broker.egress“ key. The policy is read by whichever process makes
+// the call: the control surface for credential and OAuth app writes, the
+// connect-session confirm, code exchange, device authorization and the
+// identity probe, and the broker surface for the token refresh it runs before
+// injecting a credential. With one process per surface, set “control.egress“
+// (and the “broker.egress“ keys it inherits) identically on both.
 //
-// Unknown subkeys are ignored, so a “control:“ section written for another
-// release keeps validating.
+// Unknown subkeys of “control:“ are ignored, so a section written for
+// another release keeps validating; “control.egress“ rejects unknown keys so
+// a mistyped allowlist key fails at startup instead of silently allowing less.
 type ControlSurfaceConfig struct {
 	// Agent connect-session settings.
 	Connect *ControlConnectConfig `json:"connect,omitempty,omitzero" yaml:"connect,omitempty" mapstructure:"connect,omitempty"`
 
-	// Outbound SSRF/egress policy for the control plane's OAuth and credential calls:
-	// OAuth2 credential and OAuth app registration URL checks, token exchange and
-	// refresh, device authorization, and the vendor identity probe. Each key left
-	// unset takes its value from `broker.egress`, so a subnet or domain allowlisted
-	// for the broker is honoured here without listing it twice; set a key (e.g.
-	// `allowed_private_subnets: []`) to override it for the control plane alone.
-	// `dns_pinning_enabled` is not consulted: these calls always pin DNS. The OAuth
-	// endpoints an approver enters for their own client on a connect session stay
-	// under the strict policy regardless.
-	Egress *ControlSurfaceConfigEgress `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
-}
-
-// Outbound SSRF/egress policy for the control plane's OAuth and credential calls:
-// OAuth2 credential and OAuth app registration URL checks, token exchange and
-// refresh, device authorization, and the vendor identity probe. Each key left
-// unset takes its value from `broker.egress`, so a subnet or domain allowlisted
-// for the broker is honoured here without listing it twice; set a key (e.g.
-// `allowed_private_subnets: []`) to override it for the control plane alone.
-// `dns_pinning_enabled` is not consulted: these calls always pin DNS. The OAuth
-// endpoints an approver enters for their own client on a connect session stay
-// under the strict policy regardless.
-type ControlSurfaceConfigEgress struct {
-	// Domain suffixes (e.g. ``[".svc.cluster.local"]``) whose resolved private IP is
-	// permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML
-	// list or a comma-separated string.
-	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
-
-	// CIDRs exempted from the private-IP egress block (e.g. ``["10.50.0.0/16"]``).
-	// The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254,
-	// 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a
-	// listed range covers them. Accepts a YAML list or a comma-separated string.
-	AllowedPrivateSubnets []string `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
-
-	// Pin the outbound connection to the IP validated at connect time, closing the
-	// DNS-rebinding TOCTOU between pre-request validation and the runner's own
-	// resolution. Disable only to debug egress issues.
-	DnsPinningEnabled bool `json:"dns_pinning_enabled,omitempty,omitzero" yaml:"dns_pinning_enabled,omitempty" mapstructure:"dns_pinning_enabled,omitempty"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *ControlSurfaceConfigEgress) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	var controlSurfaceConfigEgress_0 ControlSurfaceConfigEgress_0
-	var errs []error
-	if err := controlSurfaceConfigEgress_0.UnmarshalJSON(value); err != nil {
-		errs = append(errs, err)
-	}
-	if len(errs) == 1 {
-		return fmt.Errorf("all validators failed: %s", errors.Join(errs...))
-	}
-	type Plain ControlSurfaceConfigEgress
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	*j = ControlSurfaceConfigEgress(plain)
-	return nil
+	// Private-network allowlist for the platform's OAuth and credential calls: OAuth2
+	// credential and OAuth app registration URL checks, own-client endpoints
+	// confirmed on a connect session, token exchange and refresh, device
+	// authorization, and the vendor identity probe. Each key left unset takes its
+	// value from `broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to
+	// override it for these calls alone. These calls always pin DNS. The process
+	// making the call reads it, and the broker surface makes token refresh calls, so
+	// with one process per surface set it identically on the control and broker
+	// surfaces.
+	Egress *ControlEgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 }
 
 // Credentials subsystem configuration.
@@ -3170,86 +3161,30 @@ type VendorIdentityProbeConfigMethod string
 const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
 const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
-
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
@@ -3278,32 +3213,90 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Top-level vendor auth registry.
+type VendorRegistryConfig struct {
+	// Entries corresponds to the JSON schema field "entries".
+	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+	for _, expected := range enumValues_VendorScopeConfigClassification {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
 	}
-	*j = VendorIdentityProbeConfigMethod(v)
+	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
-// Top-level vendor auth registry.
-type VendorRegistryConfig struct {
-	// Entries corresponds to the JSON schema field "entries".
-	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3389,9 +3382,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
-
-type ControlSurfaceConfigEgress_0 = EgressConfig
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
