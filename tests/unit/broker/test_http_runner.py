@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -123,6 +124,41 @@ async def test_transport_error_maps_to_broker_error() -> None:
         runner = HttpRunner(client)
         with pytest.raises(BrokerError):
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
+
+
+class _BodyRaises(httpx.AsyncByteStream):
+    """A response body that fails with ``exc`` after the upstream has answered."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise self._exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "expected_type"),
+    [
+        (httpx.ConnectError("reset"), "upstream_transport_error"),
+        (httpx.ConnectTimeout("slow"), "upstream_timeout"),
+    ],
+)
+async def test_connect_error_while_reading_the_body_is_not_pre_send(
+    exc: Exception, expected_type: str
+) -> None:
+    """Pins #1710: once the upstream answered, a connect-class error can't mean nothing was sent."""
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_BodyRaises(exc))
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(BrokerError) as excinfo:
+            await runner.run(RunnerRequest(method="POST", url="https://api.example.com/x"))
+    assert excinfo.value.type == expected_type
+    assert excinfo.value.pre_send is False
 
 
 _INJECTED_SECRET = "SECRET_TRAILING_NL"
