@@ -8,6 +8,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -194,37 +195,135 @@ func TestBundledSkills_PassHostedGate(t *testing.T) {
 			t.Errorf("bundled %s fails the hosted gate: %v", name, err)
 		}
 	}
+	// The manifest a same-version backend serves lists exactly the embed's
+	// skills and references; it must pass the index gate too.
+	names := skillgen.BundledNames()
+	rows := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		refs := make([]map[string]string, 0)
+		for _, ref := range skillgen.BundledReferences(name) {
+			refs = append(refs, map[string]string{"name": ref})
+		}
+		rows = append(rows, map[string]any{"name": name, "references": refs})
+	}
+	manifest, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := validateHostedIndex(manifest); err != nil {
+		t.Errorf("a same-version manifest fails the hosted index gate: %v", err)
+	}
+}
+
+// TestMCPSkillIndex_HostedSurfaceGate pins the index half of the skew
+// gate: a hosted manifest serves only when every skill and reference it
+// lists ships in this binary; a newer backend's manifest falls back to the
+// bundled one, so skill://index never advertises documents this server can
+// only serve bundled.
+func TestMCPSkillIndex_HostedSurfaceGate(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		body       string
+		wantHosted bool
+		wantLog    string
+	}{
+		{
+			name: "subset of the embed serves hosted",
+			body: `[{"name":"jentic","version":"7","references":[{"name":"cli.md"},{"name":"mcp.md"},{"name":"recovery.md"}],"future_key":1},` +
+				`{"name":"import-new-api","version":"1"}]`,
+			wantHosted: true,
+		},
+		{
+			name:    "unknown skill falls back",
+			body:    `[{"name":"jentic"},{"name":"brand-new-skill"}]`,
+			wantLog: "brand-new-skill",
+		},
+		{
+			name:    "unknown reference falls back",
+			body:    `[{"name":"jentic","references":[{"name":"mcp.md"},{"name":"http.md"}]}]`,
+			wantLog: "jentic/references/http.md",
+		},
+		{
+			name:    "rows of the wrong shape fall back",
+			body:    `[{"name":7}]`,
+			wantLog: "rows are malformed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			var logs bytes.Buffer
+			s := newTestMCPServer(t, nil)
+			s.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+			res, err := s.handleSkillIndexResource(activeCtx(srv.URL), readResourceRequest(skillIndexURI))
+			if err != nil {
+				t.Fatalf("handleSkillIndexResource must never fail on a hosted problem: %v", err)
+			}
+			c := singleContents(t, res)
+			if tc.wantHosted {
+				if c.Meta[skillMetaSource] != string(skillgen.SourceHosted) || c.Text != tc.body {
+					t.Fatalf("want the hosted manifest verbatim (source %v); logs:\n%s", c.Meta[skillMetaSource], logs.String())
+				}
+				return
+			}
+			want, err := bundledSkillIndex()
+			if err != nil {
+				t.Fatalf("bundledSkillIndex: %v", err)
+			}
+			if c.Meta[skillMetaSource] != string(skillgen.SourceBundled) || c.Text != string(want) {
+				t.Errorf("want the bundled manifest (source %v)", c.Meta[skillMetaSource])
+			}
+			if n := strings.Count(logs.String(), "hosted copy unusable, serving bundled manifest"); n != 1 {
+				t.Errorf("fallback log lines = %d, want exactly 1:\n%s", n, logs.String())
+			}
+			if !strings.Contains(logs.String(), tc.wantLog) {
+				t.Errorf("fallback log must say why (%q):\n%s", tc.wantLog, logs.String())
+			}
+		})
+	}
 }
 
 // TestMCPSession_ServedSkillPointersResolve pins the end-to-end contract over
 // the wire: whichever copy skill://jentic serves (hosted when coherent,
 // bundled when the hosted router has outrun this binary), every skill://
 // pointer in the served text is listed by resources/list and readable by
-// resources/read.
+// resources/read, and skill://index reports the same source as the document.
+// The backend double is coherent the way a real one is: a router pointing at
+// a new reference comes with a manifest listing it.
 func TestMCPSession_ServedSkillPointersResolve(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		body       string
+		index      string
 		wantSource skillgen.Source
 	}{
 		{
 			name:       "coherent hosted router",
 			body:       hostedRouter("jentic", "MCP session: read skill://jentic/references/mcp.md and skill://jentic/references/recovery.md."),
+			index:      `[{"name":"jentic","references":[{"name":"cli.md"},{"name":"mcp.md"},{"name":"recovery.md"}]}]`,
 			wantSource: skillgen.SourceHosted,
 		},
 		{
 			name:       "hosted router ahead of this binary",
 			body:       hostedRouter("jentic", "MCP session: read skill://jentic/references/mcp-v2.md."),
+			index:      `[{"name":"jentic","references":[{"name":"cli.md"},{"name":"mcp-v2.md"},{"name":"recovery.md"}]}]`,
 			wantSource: skillgen.SourceBundled,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/skills/jentic.md" {
+				switch r.URL.Path {
+				case "/skills/jentic.md":
+					_, _ = w.Write([]byte(tc.body))
+				case "/skills/index.json":
+					_, _ = w.Write([]byte(tc.index))
+				default:
 					http.NotFound(w, r)
-					return
 				}
-				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
 
@@ -248,6 +347,13 @@ func TestMCPSession_ServedSkillPointersResolve(t *testing.T) {
 			c := singleContents(t, res)
 			if c.Meta[skillMetaSource] != string(tc.wantSource) {
 				t.Fatalf("meta source = %v, want %s", c.Meta[skillMetaSource], tc.wantSource)
+			}
+			idx, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillIndexURI})
+			if err != nil {
+				t.Fatalf("resources/read skill://index: %v", err)
+			}
+			if got := singleContents(t, idx).Meta[skillMetaSource]; got != string(tc.wantSource) {
+				t.Errorf("index source = %v, want %s (same source as the skill document it indexes)", got, tc.wantSource)
 			}
 
 			ptrs := skillPointerRE.FindAllString(c.Text, -1)

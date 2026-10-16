@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,8 +86,9 @@ const skillProvenanceNote = " Served from the connected Jentic One backend when 
 // so the lane filter at registration time is also the read-time refusal:
 // skill://<name>/references/cli.md is never listed and never readable here,
 // while the same bytes stay public over the backend's HTTP routes. The URIs
-// stay valid whatever the backend serves; a hosted set that has drifted from
-// this binary shows up in the index read, not in resources/list.
+// stay valid whatever the backend serves; a hosted set that has outgrown
+// this binary makes the index read fall back to the bundled manifest
+// (validateHostedIndex), never grows resources/list.
 func (s *mcpServer) registerResources() {
 	for _, name := range skillgen.BundledNames() {
 		raw, err := skillgen.RawBundled(name)
@@ -334,22 +336,31 @@ func validateHostedSkill(name string, raw []byte) error {
 // documented tell for which source produced the manifest.
 //
 // A hosted 200 body only serves when it is shape-valid — well-formed JSON
-// whose top level is an array (the manifest's row list). Anything else is
-// treated exactly like a non-200: logged, then the bundled manifest serves.
+// whose top level is an array (the manifest's row list) — and describes a
+// surface this server can serve (unservableIndexEntry). Anything else is
+// treated exactly like a non-200: logged once with the reason, then the
+// bundled manifest serves. The surface check is the index's half of the
+// #1343 version-skew gate: a backend newer than this binary ships skills or
+// references the embed lacks, and its routers are then refused by the
+// document gate (skillDocFor) — so a manifest listing those extra entries
+// would advertise hosted versions and digests for documents this server
+// serves bundled. Refusing it keeps skill://index on the same source as the
+// documents it indexes, from the bytes already in hand (no per-document
+// fetch).
 func (s *mcpServer) handleSkillIndexResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	cctx, cancel := s.callContext(ctx)
 	defer cancel()
 
 	hosted, err := s.fetchHostedSkill(cctx, "/skills/index.json")
 	if err == nil {
-		if validSkillIndex(hosted) {
+		err = validateHostedIndex(hosted)
+		if err == nil {
 			s.logger.Info("skill index read", "source", skillgen.SourceHosted)
 			return skillReadResult(req.Params.URI, skillIndexMIME, skillDoc{raw: hosted, source: skillgen.SourceHosted}), nil
 		}
-		err = errors.New("hosted body is not a JSON-array manifest")
 	}
 	if !errors.Is(err, errNoBackend) {
-		s.logger.Info("skill index: hosted fetch failed, serving bundled manifest", "error", err)
+		s.logger.Info("skill index: hosted copy unusable, serving bundled manifest", "error", err)
 	}
 
 	raw, err := bundledSkillIndex()
@@ -358,6 +369,53 @@ func (s *mcpServer) handleSkillIndexResource(ctx context.Context, req *mcp.ReadR
 	}
 	s.logger.Info("skill index read", "source", skillgen.SourceBundled)
 	return skillReadResult(req.Params.URI, skillIndexMIME, skillDoc{raw: raw, source: skillgen.SourceBundled}), nil
+}
+
+// hostedIndexRow is the slice of a hosted manifest row the surface check
+// reads: the skill name and its reference filenames. Every other key is
+// ignored, so a newer backend adding row fields never trips the gate.
+type hostedIndexRow struct {
+	Name       string `json:"name"`
+	References []struct {
+		Name string `json:"name"`
+	} `json:"references"`
+}
+
+// validateHostedIndex is the gate a fetched hosted manifest must pass before
+// it serves as skill://index (see handleSkillIndexResource).
+func validateHostedIndex(raw []byte) error {
+	if !validSkillIndex(raw) {
+		return errors.New("hosted body is not a JSON-array manifest")
+	}
+	var rows []hostedIndexRow
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return fmt.Errorf("hosted manifest rows are malformed: %w", err)
+	}
+	if entry := unservableIndexEntry(rows); entry != "" {
+		return fmt.Errorf("hosted manifest lists %s, which this binary does not serve (backend newer than this CLI?)", entry)
+	}
+	return nil
+}
+
+// unservableIndexEntry returns the first manifest entry this binary does not
+// ship — a skill outside BundledNames, or a reference outside that skill's
+// BundledReferences — or "" when the manifest's surface is a subset of the
+// embed's. Any reference lane counts (the hosted manifest lists the CLI-lane
+// file too, and the binary ships it), matching unservablePointer.
+func unservableIndexEntry(rows []hostedIndexRow) string {
+	names := skillgen.BundledNames()
+	for _, row := range rows {
+		if !slices.Contains(names, row.Name) {
+			return "skill " + strconv.Quote(row.Name)
+		}
+		shipped := skillgen.BundledReferences(row.Name)
+		for _, ref := range row.References {
+			if !slices.Contains(shipped, ref.Name) {
+				return "reference " + strconv.Quote(row.Name+"/references/"+ref.Name)
+			}
+		}
+	}
+	return ""
 }
 
 // validSkillIndex is the shape gate for a hosted index body: well-formed JSON
