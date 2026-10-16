@@ -20,7 +20,7 @@ import httpx
 import structlog
 
 from jentic_one.shared.config import EgressConfig
-from jentic_one.shared.egress import build_strict_pinned_transport
+from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.url_validation import validate_upstream_url
 
 _logger = structlog.get_logger(__name__)
@@ -111,7 +111,7 @@ async def begin_device_authorization(
 
     try:
         async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_strict_pinned_transport(egress)
+            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
         ) as client:
             response = await client.post(
                 safe_url,
@@ -190,7 +190,7 @@ async def poll_device_authorization(
 
     try:
         async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_strict_pinned_transport(egress)
+            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
         ) as client:
             response = await client.post(
                 safe_url,

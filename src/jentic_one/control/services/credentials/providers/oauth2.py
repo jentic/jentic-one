@@ -38,7 +38,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
 )
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_strict_pinned_transport
+from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -126,7 +126,7 @@ class OAuth2Provider(ABC):
 
         try:
             async with httpx.AsyncClient(
-                timeout=30.0, transport=build_strict_pinned_transport(egress)
+                timeout=30.0, transport=build_always_pinned_transport(egress)
             ) as client:
                 response = await client.post(
                     safe_url,
