@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Iterator, MutableMapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +16,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.shared.context import Context
+from tests.web.registry.conftest import _build_app
 
 pytestmark = pytest.mark.integration
 
@@ -266,6 +267,7 @@ async def test_import_inline_content_over_spec_cap_413_without_job(
     assert resp.status_code == 413
     body = resp.json()
     assert body["type"] == "payload_too_large"
+    assert body["title"] == "Content Too Large"
     assert [e["pointer"] for e in body["errors"]] == ["#/sources/1/content"]
     assert await _job_count(web_context) == before
 
@@ -293,6 +295,7 @@ async def test_import_request_body_over_cap_413_without_job(
     assert resp.status_code == 413
     body = resp.json()
     assert body["type"] == "payload_too_large"
+    assert body["title"] == "Content Too Large"
     assert body["instance"] == "/apis"
     # Runs before auth, so the configured byte figure is not echoed back.
     assert "2048" not in body["detail"]
@@ -316,6 +319,68 @@ async def test_import_chunked_body_over_cap_413(
     )
 
     assert resp.status_code == 413
+    assert await _job_count(web_context) == before
+
+
+async def test_import_streamed_body_cut_off_at_cap(
+    web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Driven over raw ASGI with many ``more_body`` messages and no Content-Length,
+    the 413 arrives as soon as the running total crosses the cap: the messages
+    after that one are never pulled from ``receive``."""
+    cap = 2048
+    chunk = 512
+    monkeypatch.setattr(web_context.config.ingest, "max_import_request_bytes", cap)
+    payload = json.dumps({"sources": [_inline(_SMALL_SPEC) for _ in range(40)]}).encode()
+    messages = [payload[i : i + chunk] for i in range(0, len(payload), chunk)]
+    assert len(messages) >= 10
+    served = 0
+
+    async def receive() -> dict[str, Any]:
+        nonlocal served
+        body = messages[served]
+        served += 1
+        return {"type": "http.request", "body": body, "more_body": served < len(messages)}
+
+    sent: list[MutableMapping[str, Any]] = []
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/apis",
+        "raw_path": b"/apis",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/json")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    before = await _job_count(web_context)
+    await _build_app(web_context)(scope, receive, send)
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 413
+    # 4 x 512 bytes is exactly the cap; the 5th message crosses it and is the last read.
+    assert served == cap // chunk + 1
+    assert await _job_count(web_context) == before
+
+
+async def test_import_inline_content_with_lone_surrogate_is_422(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """An unpaired ``\\uD800`` escape is valid JSON but not encodable text: 422, not 500."""
+    raw = b'{"sources": [{"type": "inline", "filename": "a.yaml", "content": "a\\ud800b"}]}'
+    before = await _job_count(web_context)
+
+    resp = authed_client.post("/apis", content=raw, headers={"content-type": "application/json"})
+
+    assert resp.status_code == 422
     assert await _job_count(web_context) == before
 
 
