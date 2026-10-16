@@ -48,9 +48,16 @@ credentials:
   connect:
     state_secret: "perf-connect-state-secret-0123456789abcdef"  # pragma: allowlist secret
 
+# Token lifetimes (here and `auth.access_ttl_seconds` below) are raised to 6 h,
+# perf stack only: the tools refuse to start unless every token they use
+# outlives the planned run plus 5 min, and the full overhead matrix runs
+# ~54 min per `--repeat`, so the 1 h product default can't fit `--repeat 3`.
 admin:
   auth:
     jwt_secret: "perf-admin-jwt-secret-0123456789abcdef0123"  # pragma: allowlist secret
+    jwt_ttl_seconds: 21600
+    # Must be >= jwt_ttl_seconds (config validator).
+    session_ttl_seconds: 43200
   invite:
     pepper: "perf-invite-pepper-0123456789abcdef01234567"  # pragma: allowlist secret
 
@@ -59,6 +66,8 @@ auth:
   # also accepts the request's own base URL as an audience, so provisioning from
   # the host (127.0.0.1:18000) still validates.
   canonical_base_url: "http://127.0.0.1:8000"
+  # `at_` caller tokens: 6 h, perf stack only (see the note above `admin:`).
+  access_ttl_seconds: 21600
   idp:
     enabled: false
 

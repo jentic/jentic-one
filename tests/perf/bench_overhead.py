@@ -14,8 +14,9 @@ are exact. Report both; never subtract server-side histogram quantiles.
 The A/B is interleaved: every (case, rate) measures direct immediately before
 the broker run, so host drift (Docker Desktop, thermal) lands in both sides
 instead of in the overhead. ``--repeat K`` alternates direct/broker K times and
-records the spread (min/median/max) of the mean overhead; the row's headline
-numbers come from the median repeat.
+records the spread (min/median/max) of the mean overhead. K must be odd, so the
+row's headline numbers are one real repeat: the one whose mean overhead is the
+median (an even K would have no single middle repeat).
 
 A case whose broker or direct run has fewer than ``--min-ok`` expected-status
 responses is written with ``"valid": false`` (and left out of the report): a
@@ -39,6 +40,7 @@ import os
 import statistics
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -357,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-requests", type=int, default=50)
     parser.add_argument("--quick", action="store_true", help="10 rps, 10 s runs")
     parser.add_argument("--only", default="", help="comma-separated case names")
-    parser.add_argument("--repeat", type=int, default=1, help="direct/broker pairs per case")
+    parser.add_argument("--repeat", type=int, default=1, help="direct/broker pairs per case (odd)")
     parser.add_argument(
         "--min-ok",
         type=float,
@@ -366,8 +368,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
-    if args.repeat < 1:
-        parser.error("--repeat must be >= 1")
+    if args.repeat < 1 or args.repeat % 2 == 0:
+        parser.error("--repeat must be an odd number >= 1 (the headline is the median repeat)")
 
     env = PerfEnv.load()
     all_cases = cases(env)
@@ -406,6 +408,20 @@ def main(argv: list[str] | None = None) -> int:
     for row in invalid:
         print(f"INVALID {row['case']} @{row['rate']}: {'; '.join(row['invalid_reasons'])}")
     return 1 if invalid else 0
+
+
+def median_sample(
+    samples: list[dict[str, Any]], rank: Callable[[dict[str, Any]], float]
+) -> dict[str, Any]:
+    """The repeat whose ``rank`` is the median; needs an odd number of repeats.
+
+    An even count has no single middle repeat: either middle one would bias
+    the headline (the lower one is the minimum for two), and averaging two
+    repeats' percentiles is not a percentile.
+    """
+    if len(samples) % 2 == 0:
+        raise ValueError(f"need an odd number of repeats for a median repeat, got {len(samples)}")
+    return sorted(samples, key=rank)[len(samples) // 2]
 
 
 def _now() -> str:
@@ -457,7 +473,7 @@ def run_case(
         value = (s["overhead"] or {}).get("mean_ms") if plain else s["broker"]["mean_ms"]
         return float("inf") if value is None else float(value)
 
-    rep = sorted(samples, key=rank)[(len(samples) - 1) // 2]
+    rep = median_sample(samples, rank)
     means = [m for s in samples if (m := (s["overhead"] or {}).get("mean_ms")) is not None]
     spread = (
         {"min": min(means), "median": statistics.median(means), "max": max(means)}

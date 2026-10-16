@@ -85,8 +85,8 @@ def _first_list(body: Any) -> list[dict[str, Any]]:
     return []
 
 
-def admin_token(client: httpx.Client) -> tuple[str, float]:
-    """Log in (creating the admin on first run); returns (token, expires_at unix time)."""
+def admin_token(client: httpx.Client) -> tuple[str, float, float]:
+    """Log in (creating the admin on first run); returns (token, issued_at, expires_at)."""
     issued = time.time()
     resp = client.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     if resp.status_code != 200:
@@ -94,7 +94,7 @@ def admin_token(client: httpx.Client) -> tuple[str, float]:
             "/users:create-admin", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
         )
     body = _check(resp, 200)
-    return str(body["access_token"]), issued + float(body["expires_in"])
+    return str(body["access_token"]), issued, issued + float(body["expires_in"])
 
 
 def wait_job(client: httpx.Client, job_id: str, timeout_s: float = 120.0) -> dict[str, Any]:
@@ -256,6 +256,7 @@ def opaque_token(client: httpx.Client, app_url: str, agent_id: str) -> Caller:
         algorithm="EdDSA",
         headers={"kid": pub_jwk["kid"]},
     )
+    issued = time.time()
     body = _check(
         httpx.post(
             f"{app_url}/oauth/token",
@@ -271,14 +272,16 @@ def opaque_token(client: httpx.Client, app_url: str, agent_id: str) -> Caller:
         kind="at",
         token=str(body["access_token"]),
         agent_id=agent_id,
-        expires_at=time.time() + float(body.get("expires_in", 3600)),
+        expires_at=issued + float(body.get("expires_in", 3600)),
+        issued_at=issued,
     )
 
 
 def hs256_caller(agent_id: str) -> Caller:
     config = yaml.safe_load((PERF_DIR / "config.perf.yaml").read_text())
     secret = config["broker"]["jwt_secret"]
-    exp = int(time.time()) + JWT_TTL_S
+    iat = int(time.time())
+    exp = iat + JWT_TTL_S
     token = jwt.encode(
         {
             "sub": agent_id,
@@ -289,7 +292,9 @@ def hs256_caller(agent_id: str) -> Caller:
         secret,
         algorithm="HS256",
     )
-    return Caller(kind="jwt", token=token, agent_id=agent_id, expires_at=float(exp))
+    return Caller(
+        kind="jwt", token=token, agent_id=agent_id, expires_at=float(exp), issued_at=float(iat)
+    )
 
 
 def injection_error(vendor: Vendor, echo: dict[str, Any]) -> str | None:
@@ -345,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
 
     live_spec = httpx.get(f"{args.upstream}/specs/live.json", timeout=10).json()
     with httpx.Client(base_url=args.app, timeout=60) as anon:
-        token, token_expires_at = admin_token(anon)
+        token, token_issued_at, token_expires_at = admin_token(anon)
     with httpx.Client(
         base_url=args.app, timeout=60, headers={"Authorization": f"Bearer {token}"}
     ) as client:
@@ -360,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             agent_id=agent_id,
             admin_token=token,
             admin_expires_at=token_expires_at,
+            admin_issued_at=token_issued_at,
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         env.callers["jak"] = Caller(kind="jak", token=key, agent_id=agent_id)

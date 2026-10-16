@@ -12,9 +12,10 @@ recorded concurrently over the same window, plus a JSON summary with CPU
 share per subsystem plus the hottest frames. The
 subsystem buckets are first-match on the stack, in the order of ``BUCKETS``.
 
-The profile is only written if the load ran for the whole window and at least
-``--min-ok`` of its responses were 200 — otherwise the flamegraph would be of
-an idle (or failing) broker.
+The profile (flamegraph, raw stacks and summary JSON) is only kept if the load
+ran for the whole window and at least ``--min-ok`` of its responses were 200 —
+otherwise the sidecar's files are deleted, since they would profile an idle
+(or failing) broker.
 
 Usage::
 
@@ -204,6 +205,27 @@ def check_load(
         raise LoadError(why)
 
 
+def discard_profile(stem: str) -> None:
+    """Delete one run's raw stacks and flamegraph (the sidecar writes them first)."""
+    for suffix in (".txt", ".svg"):
+        (OUT_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
+
+
+def check_load_or_discard(
+    stem: str, result: dict[str, Any], errors: list[BaseException], alive: bool, min_ok: float
+) -> None:
+    """``check_load``, deleting the run's profile files if the load was not valid.
+
+    Otherwise ``results/pyspy/`` would keep an idle (or failing) broker's
+    flamegraph next to the valid ones.
+    """
+    try:
+        check_load(result, errors, alive, min_ok)
+    except LoadError:
+        discard_profile(stem)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="py-spy the broker under closed-loop load")
     parser.add_argument("--vendor", default="perf-noauth")
@@ -262,9 +284,10 @@ def main(argv: list[str] | None = None) -> int:
         ]
         codes = [proc.wait(timeout=args.duration + 60) for proc in procs]
         if any(codes):
+            discard_profile(stem)
             raise RuntimeError(f"py-spy record failed: exit codes {codes}")
         loader.join(timeout=load_s + 30)
-        check_load(result, errors, loader.is_alive(), args.min_ok)
+        check_load_or_discard(stem, result, errors, loader.is_alive(), args.min_ok)
 
     summary = analyse(OUT_DIR / f"{stem}.txt")
     print(f"load: {result['rps']:.1f} rps  p50={result['p50_ms']:.1f}ms")

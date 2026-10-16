@@ -107,6 +107,9 @@ class Caller:
     token: str
     agent_id: str
     expires_at: float | None = None
+    #: Unix time the token was minted (``None`` = unknown); with ``expires_at``
+    #: it gives the token's full lifetime.
+    issued_at: float | None = None
 
 
 @dataclass
@@ -125,6 +128,8 @@ class PerfEnv:
     admin_token: str = ""
     #: Unix time the admin token expires (``None`` = unknown, treated as stale).
     admin_expires_at: float | None = None
+    #: Unix time the admin token was minted (``None`` = unknown).
+    admin_issued_at: float | None = None
     created_at: str = ""
 
     def caller(self, kind: str = "jak") -> Caller:
@@ -145,21 +150,39 @@ class PerfEnv:
         ``admin`` whether it uses the admin token. Each must stay valid for
         ``run_s`` (the planned run length) plus ``margin_s``. An expired token
         turns every call into a fast 401, which would otherwise be measured.
+
+        When a stale token's full lifetime is itself shorter than the run,
+        re-provisioning can't help, so the error says to shorten the run.
         """
-        deadline = (time.time() if now is None else now) + run_s + margin_s
+        needed = run_s + margin_s
+        deadline = (time.time() if now is None else now) + needed
         kinds = list(self.callers) if callers is None else list(callers)
-        stale = [
-            f"{kind} caller (expires {_fmt_ts(self.callers[kind].expires_at)})"
+        tokens = [
+            (f"{kind} caller", self.callers[kind].expires_at, self.callers[kind].issued_at)
             for kind in kinds
-            if (exp := self.callers[kind].expires_at) is not None and exp < deadline
+            if self.callers[kind].expires_at is not None
         ]
-        if admin and (self.admin_expires_at is None or self.admin_expires_at < deadline):
-            stale.append(f"admin token (expires {_fmt_ts(self.admin_expires_at)})")
-        if stale:
+        if admin:
+            tokens.append(("admin token", self.admin_expires_at, self.admin_issued_at))
+        stale = [(label, exp, iat) for label, exp, iat in tokens if exp is None or exp < deadline]
+        if not stale:
+            return
+        listed = ", ".join(f"{label} (expires {_fmt_ts(exp)})" for label, exp, _ in stale)
+        too_long = [
+            label
+            for label, exp, iat in stale
+            if exp is not None and iat is not None and exp - iat < needed
+        ]
+        if too_long:
             raise SystemExit(
-                f"tokens expire before this run can finish (+{margin_s:.0f}s margin): "
-                f"{', '.join(stale)} — re-run `make perf-provision`"
+                f"the planned run (~{run_s / 60:.0f} min +{margin_s:.0f}s margin) is longer "
+                f"than the token lifetime of: {', '.join(too_long)} — split it with --only "
+                "or lower --repeat (or raise the TTLs in config.perf.yaml)"
             )
+        raise SystemExit(
+            f"tokens expire before this run can finish (+{margin_s:.0f}s margin): "
+            f"{listed} — re-run `make perf-provision`"
+        )
 
     def save(self, path: Path = DEFAULT_ENV_FILE) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

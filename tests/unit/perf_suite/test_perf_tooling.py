@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from tests.perf import bench_overhead, common, dbcost, provision, pyspy_profile, report
 from tests.perf.bench_overhead import Case
@@ -111,6 +112,38 @@ def test_run_case_measures_direct_right_before_broker_each_repeat(
     assert spread["max"] == pytest.approx(25.0)
     # Headline numbers come from the median repeat, not the first or last.
     assert row["overhead"]["mean_ms"] == pytest.approx(15.0)
+    assert row["overhead"]["mean_ms"] == pytest.approx(spread["median"])
+
+
+def _sample(overhead_ms: float) -> dict[str, Any]:
+    return {"overhead": {"mean_ms": overhead_ms}}
+
+
+def _rank(s: dict[str, Any]) -> float:
+    return float(s["overhead"]["mean_ms"])
+
+
+@pytest.mark.parametrize(
+    ("overheads", "median"), [([7.0], 7.0), ([9.0, 1.0, 4.0], 4.0), ([5, 1, 9, 3, 7], 5.0)]
+)
+def test_median_sample_is_the_middle_repeat(overheads: list[float], median: float) -> None:
+    rep = bench_overhead.median_sample([_sample(o) for o in overheads], _rank)
+    assert rep["overhead"]["mean_ms"] == median
+
+
+def test_median_sample_rejects_an_even_number_of_repeats() -> None:
+    # With two repeats the lower middle is the minimum: a best-of-two headline.
+    with pytest.raises(ValueError, match="odd"):
+        bench_overhead.median_sample([_sample(10.0), _sample(12.0)], _rank)
+
+
+@pytest.mark.parametrize("repeat", ["0", "2", "4"])
+def test_main_rejects_an_even_or_zero_repeat(
+    repeat: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        bench_overhead.main(["--repeat", repeat])
+    assert "odd" in capsys.readouterr().err
 
 
 # ── token freshness ───────────────────────────────────────────────────────────
@@ -121,6 +154,43 @@ def test_check_fresh_refuses_a_caller_that_expires_mid_run() -> None:
     env = _env(at=Caller("at", "at_x", "ag", expires_at=now + 1800))
     with pytest.raises(SystemExit, match="at caller"):
         env.check_fresh(callers=["at"], run_s=1700, now=now)
+
+
+def test_check_fresh_says_split_the_run_when_it_outlasts_the_token_lifetime() -> None:
+    now = 1_000_000.0
+    env = _env(at=Caller("at", "at_x", "ag", expires_at=now + 3600, issued_at=now))
+    with pytest.raises(SystemExit, match="longer than the token lifetime") as exc:
+        env.check_fresh(callers=["at"], run_s=2 * 3600, now=now)
+    assert "make perf-provision" not in str(exc.value)
+    assert "--only" in str(exc.value)
+
+
+def test_check_fresh_says_reprovision_when_a_fresh_token_would_fit() -> None:
+    now = 1_000_000.0
+    issued = now - 3000
+    env = _env(at=Caller("at", "at_x", "ag", expires_at=issued + 3600, issued_at=issued))
+    with pytest.raises(SystemExit, match="make perf-provision"):
+        env.check_fresh(callers=["at"], run_s=1800, now=now)
+
+
+def test_perf_config_tokens_outlive_the_full_overhead_matrix_at_repeat_3() -> None:
+    env = _env()
+    env.vendors["perf-noauth"]["api"] = {
+        "vendor": "v", "name": "n", "version": "1", "revision_id": "abc",
+    }  # fmt: skip
+    rates = (1, 10, 50)  # the CLI default set
+    plan = [
+        (case, rate)
+        for case in bench_overhead.cases(env)
+        for rate in bench_overhead.case_rates(case, rates, quick=False)
+    ]
+    run_s = bench_overhead.estimate_s(plan, _args(duration=20.0, repeat=3))
+    needed = run_s + common.TOKEN_MARGIN_S
+    config = yaml.safe_load((common.PERF_DIR / "config.perf.yaml").read_text())
+    assert config["auth"]["access_ttl_seconds"] > needed
+    admin_auth = config["admin"]["auth"]
+    assert admin_auth["jwt_ttl_seconds"] > needed
+    assert admin_auth["session_ttl_seconds"] >= admin_auth["jwt_ttl_seconds"]
 
 
 def test_check_fresh_ignores_callers_the_run_does_not_use() -> None:
@@ -138,9 +208,13 @@ def test_check_fresh_treats_an_unknown_admin_expiry_as_stale() -> None:
 def test_perf_env_round_trips_admin_expiry(tmp_path: Path) -> None:
     env = _env()
     env.admin_expires_at = 123.0
+    env.admin_issued_at = 100.0
+    env.callers["at"] = Caller("at", "at_x", "ag", expires_at=50.0, issued_at=20.0)
     path = tmp_path / "env.json"
     env.save(path)
-    assert PerfEnv.load(path).admin_expires_at == 123.0
+    loaded = PerfEnv.load(path)
+    assert (loaded.admin_issued_at, loaded.admin_expires_at) == (100.0, 123.0)
+    assert loaded.callers["at"].issued_at == 20.0
 
 
 # ── restore-on-exit and the variant state ─────────────────────────────────────
@@ -248,7 +322,7 @@ def test_dbcost_measure_aborts_unless_every_call_succeeded(
         dbcost.measure(_env(), "warm", "jak", n=200, rate=10)
 
 
-def test_dbcost_write_predicate_counts_cte_writes() -> None:
+def test_dbcost_stats_sql_interpolates_the_cte_aware_write_predicate() -> None:
     assert "WITH" in dbcost.WRITE_PREDICATE
     assert "{WRITE_PREDICATE}" not in dbcost.STATS_SQL
 
@@ -268,6 +342,30 @@ def test_check_load_rejects_a_failed_or_unfinished_or_failing_load() -> None:
     with pytest.raises(pyspy_profile.LoadError, match="ok_ratio"):
         pyspy_profile.check_load(bad, [], alive=False, min_ok=0.99)
     pyspy_profile.check_load(good, [], alive=False, min_ok=0.99)
+
+
+def test_a_rejected_load_deletes_its_flamegraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pyspy_profile, "OUT_DIR", tmp_path)
+    files = [tmp_path / "run.txt", tmp_path / "run.svg"]
+    for f in files:
+        f.write_text("x")
+    keep = tmp_path / "other.svg"
+    keep.write_text("x")
+    with pytest.raises(pyspy_profile.LoadError):
+        pyspy_profile.check_load_or_discard("run", {}, [], alive=False, min_ok=0.99)
+    assert not any(f.exists() for f in files)
+    assert keep.exists()
+
+
+def test_a_valid_load_keeps_its_flamegraph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pyspy_profile, "OUT_DIR", tmp_path)
+    svg = tmp_path / "run.svg"
+    svg.write_text("x")
+    good = bench_overhead.summarise(_oha_json({"200": 100}), 200)
+    pyspy_profile.check_load_or_discard("run", good, [], alive=False, min_ok=0.99)
+    assert svg.exists()
 
 
 # ── report ────────────────────────────────────────────────────────────────────

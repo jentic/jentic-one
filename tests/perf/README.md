@@ -38,7 +38,7 @@ make perf-down         # stop + wipe volumes
 | `pyspy_profile.py` (`make perf-profile`) | Where does the broker spend its CPU? | py-spy in a sidecar sharing the broker's PID namespace (image untouched), under oha closed-loop load; flamegraph SVG + CPU share per subsystem (DB client, DNS, OTel, ASGI, …). SQLAlchemy's greenlet bridge splits ORM stacks from their callers, so call-site shares are lower bounds. |
 | `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N sequential calls (one connection); aborts unless all N return 200. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the ping transaction per checkout when `pool_pre_ping` is on (the default). |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | How do faults, imports and mixed admin load behave? Roughly where's the knee? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. Closed loop suffers **coordinated omission** above the knee (slow responses lower the offered load, so queueing time is never recorded): its latencies there are a lower bound. |
-| Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. |
+| Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. Anonymous access is read-only (Viewer, `127.0.0.1` only); edit `obs/grafana/dashboards/broker-perf.json`, or log in as Grafana's built-in `admin` (password `admin` on first start, Grafana asks to change it) for Explore. |
 | `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over the latest overhead / dbcost / capacity / profile results (overhead also as a trend), plus links to every py-spy flamegraph and the latest Locust CSV. |
 
 ### Reading the overhead numbers
@@ -54,17 +54,24 @@ make perf-down         # stop + wipe volumes
   not Locust, whose closed-loop latencies past the knee omit queueing time.
 * Direct and broker runs are interleaved per case (direct immediately before
   broker), so host drift lands in both. One sample per case is noisy at the
-  1 ms level: use `--repeat 3` (or more) before calling a difference real; the
-  row records `overhead_mean_spread` (min/median/max) and the report draws it
-  as error bars.
+  1 ms level: use `--repeat 3` (or more) before calling a difference real.
+  `--repeat` must be odd, so the row's headline numbers are one real repeat:
+  the one whose mean overhead is the median. The row also records
+  `overhead_mean_spread` (min/median/max) and the report draws it as error
+  bars.
 * Every run must be mostly successful: a case (or capacity step, or profile)
   with fewer than `--min-ok` (default 0.99) expected-status responses is marked
   `"valid": false`, left out of the report, and the tool exits 1. Fast
   failures (401, 429, 5xx) skip the upstream and would read as *lower*
   overhead.
-* Tokens: `at_` caller and admin tokens live 1 h. Each tool refuses to start
-  if a token it uses would expire before the run (plus 5 min) can finish —
-  re-run `make perf-provision`.
+* Tokens: `config.perf.yaml` raises the `at_` caller and admin token
+  lifetimes to 6 h (`auth.access_ttl_seconds`, `admin.auth.jwt_ttl_seconds`;
+  the product default is 1 h) so the full overhead matrix (~54 min per
+  `--repeat`) fits `--repeat 3` with headroom. This is perf-stack config only.
+  The HS256 `jwt` caller lives 24 h. Each tool refuses to start if a token it
+  uses would expire before the run (plus 5 min) can finish — re-run
+  `make perf-provision`, or, if the run is longer than the token's whole
+  lifetime, split it with `--only` or lower `--repeat`.
 * Results record the host checkout's SHA (and `git_dirty`), the id/build time
   of the app image under test (rebuild with `make perf-build` after changes),
   and every service's image reference.
