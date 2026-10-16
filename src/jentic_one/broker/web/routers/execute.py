@@ -64,7 +64,7 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedLinks,
     HeldExecutionAcceptedResponse,
 )
-from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.discovery import (
@@ -169,7 +169,8 @@ async def _persist_streaming_outcome(
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler.
+    handler. It runs after the streamed body has been sent, so its write is never
+    part of the response's ``Server-Timing`` field.
     """
     status = (
         ExecutionStatus.FAILED
@@ -498,6 +499,15 @@ async def _handle_unregistered_url(
     return response
 
 
+async def _check_egress(url: str, ctx: Context) -> str:
+    """Run the egress allowlist check (with DNS resolution) as the egress stage."""
+    with stage(ServerTimingStage.EGRESS):
+        try:
+            return await validate_upstream_url_async(url, ctx.config.broker.egress)
+        except ValueError as exc:
+            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -516,10 +526,7 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
-    try:
-        upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
-    except ValueError as exc:
-        raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+    upstream_url = await _check_egress(raw_url, ctx)
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
@@ -528,56 +535,54 @@ async def _handle(
     # lookup — never an uncaught 500 mid-discovery.
     pins = parse_revisions(_revision_header(request))
 
-    discover_timing = stage_start()
-    resolved = await discover(resolver, method=method, url=upstream_url)
-    pinned_revisions: dict[str, str] | None = None
-    if resolved is None and pins:
-        # No live revision serves this URL; a pinned (e.g. never-promoted draft)
-        # revision still may.
-        via_pin = await discover_via_pins(
-            resolver, method=method, url=upstream_url, pins=pins, identity=identity
-        )
-        if via_pin is not None:
-            resolved, pinned_revision_id = via_pin
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    pinned_revision_id
-                )
-            }
-    if resolved is None:
-        handled = await _handle_unregistered_url(
-            request, method=method, upstream_url=upstream_url, identity=identity
-        )
-        if handled is not None:
-            return handled
-        raise OperationNotFoundError(
-            detail="Operation not found — unregistered upstream URL.",
-            type="operation_not_found",
-        )
-
-    # If a pin applies to the discovered API, translate it to a revision_id
-    # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
-    if pins and pinned_revisions is None:
-        revision_id = await resolve_pin_for_api(
-            resolver, api=resolved.api, pins=pins, identity=identity
-        )
-        if revision_id is not None:
-            pinned = await discover(
-                resolver, method=method, url=upstream_url, revision_id=revision_id
+    with stage(ServerTimingStage.DISCOVER):
+        resolved = await discover(resolver, method=method, url=upstream_url)
+        pinned_revisions: dict[str, str] | None = None
+        if resolved is None and pins:
+            # No live revision serves this URL; a pinned (e.g. never-promoted draft)
+            # revision still may.
+            via_pin = await discover_via_pins(
+                resolver, method=method, url=upstream_url, pins=pins, identity=identity
             )
-            if pinned is None:
-                raise OperationNotFoundError(
-                    detail="Operation not found in the pinned revision.",
-                    type="operation_not_found",
-                )
-            resolved = pinned
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    revision_id
-                )
-            }
+            if via_pin is not None:
+                resolved, pinned_revision_id = via_pin
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        pinned_revision_id
+                    )
+                }
+        if resolved is None:
+            handled = await _handle_unregistered_url(
+                request, method=method, upstream_url=upstream_url, identity=identity
+            )
+            if handled is not None:
+                return handled
+            raise OperationNotFoundError(
+                detail="Operation not found — unregistered upstream URL.",
+                type="operation_not_found",
+            )
 
-    stage_end(ServerTimingStage.DISCOVER, discover_timing)
+        # If a pin applies to the discovered API, translate it to a revision_id
+        # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
+        if pins and pinned_revisions is None:
+            revision_id = await resolve_pin_for_api(
+                resolver, api=resolved.api, pins=pins, identity=identity
+            )
+            if revision_id is not None:
+                pinned = await discover(
+                    resolver, method=method, url=upstream_url, revision_id=revision_id
+                )
+                if pinned is None:
+                    raise OperationNotFoundError(
+                        detail="Operation not found in the pinned revision.",
+                        type="operation_not_found",
+                    )
+                resolved = pinned
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        revision_id
+                    )
+                }
 
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
@@ -590,28 +595,27 @@ async def _handle(
     # Direct agent→credential bindings (theme-5): every caller kind rides this
     # path — retired toolkit keys resolve as successor agents. The legacy
     # toolkit-derivation path was deleted in Phase 6b.
-    rules_timing = stage_start()
-    authorization = await authorize_execution(
-        ctx=ctx,
-        identity=identity,
-        api=resolved.api,
-        operation_id=resolved.operation.id,
-        method=method,
-        path=rule_request_path(
-            resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
-        ),
-        upstream_url=upstream_url,
-        instance=request.url.path,
-        credential_deriver=credential_deriver,
-        agent_rule_evaluator=agent_rule_evaluator,
-        credential_name=request.headers.get("jentic-credential-name"),
-        credential_id=request.headers.get("jentic-credential-id"),
-        request_server_variables=ctx_req.server_variables,
-        server_variables_unresolved=ctx_req.server_variables_unresolved,
-        trace_id=ctx_req.trace_id,
-        operation_path=resolved.operation.path,
-    )
-    stage_end(ServerTimingStage.RULES, rules_timing)
+    with stage(ServerTimingStage.RULES):
+        authorization = await authorize_execution(
+            ctx=ctx,
+            identity=identity,
+            api=resolved.api,
+            operation_id=resolved.operation.id,
+            method=method,
+            path=rule_request_path(
+                resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
+            ),
+            upstream_url=upstream_url,
+            instance=request.url.path,
+            credential_deriver=credential_deriver,
+            agent_rule_evaluator=agent_rule_evaluator,
+            credential_name=request.headers.get("jentic-credential-name"),
+            credential_id=request.headers.get("jentic-credential-id"),
+            request_server_variables=ctx_req.server_variables,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+            trace_id=ctx_req.trace_id,
+            operation_path=resolved.operation.path,
+        )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
     if selected_credential is not None:
@@ -661,7 +665,8 @@ async def _handle(
         )
 
     # Buffer the body once (needed for the idempotency fingerprint and the call).
-    body = await _read_request_body(request, method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, method, ctx)
 
     # Claim/replay on Idempotency-Key. Async same-job_id replay is future
     # work — only the sync path is idempotent here.
@@ -676,7 +681,8 @@ async def _handle(
             ctx_req.credential_id or "",
             body,
         )
-        outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
+        with stage(ServerTimingStage.IDEMPOTENCY):
+            outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
         if outcome_idem.state is IdempotencyState.CONFLICT:
             raise IdempotencyConflictError(
                 detail="Idempotency-Key reused with a different request.",
@@ -705,14 +711,15 @@ async def _handle(
 
     response = _assemble_response(outcome, ctx_req)
     if idempotency is not None and idem_key and fp is not None:
-        await idempotency.complete(
-            identity.sub,
-            idem_key,
-            fp,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            body=outcome.result.body,
-        )
+        with stage(ServerTimingStage.IDEMPOTENCY):
+            await idempotency.complete(
+                identity.sub,
+                idem_key,
+                fp,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=outcome.result.body,
+            )
     return response
 
 
@@ -737,28 +744,24 @@ async def _execute_buffered(
     connection (or, on SQLite, the database write lock).
     """
     credential_name = request.headers.get("jentic-credential-name")
-    cred_timing = stage_start()
-    injection = await _resolve_credentials(
-        ctx_req,
-        ctx,
-        identity,
-        credential_name,
-        preresolved=selected_credential,
-        allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
-    )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
+    with stage(ServerTimingStage.CRED):
+        injection = await _resolve_credentials(
+            ctx_req,
+            ctx,
+            identity,
+            credential_name,
+            preresolved=selected_credential,
+            allowed_credential_ids=allowed_credential_ids,
+            credential_id=request.headers.get("jentic-credential-id"),
+        )
+        ctx_req.upstream_url, auth_headers = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+        await _check_egress(ctx_req.upstream_url, ctx)
     forwarded = forward_headers(request.headers, auth_headers)
-    stage_end(ServerTimingStage.CRED, cred_timing)
 
     broker = _resolve_broker(request, runner)
     return await run_execution(
@@ -799,30 +802,27 @@ async def _handle_streaming(
     streaming body completes (or errors). A DB failure is logged + counted but does
     not affect the already-sent response.
     """
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
-    cred_timing = stage_start()
-    injection = await _resolve_credentials(
-        ctx_req,
-        ctx,
-        identity,
-        credential_name,
-        preresolved=preresolved,
-        allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
-    )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
+    with stage(ServerTimingStage.CRED):
+        injection = await _resolve_credentials(
+            ctx_req,
+            ctx,
+            identity,
+            credential_name,
+            preresolved=preresolved,
+            allowed_credential_ids=allowed_credential_ids,
+            credential_id=request.headers.get("jentic-credential-id"),
+        )
+        ctx_req.upstream_url, auth_headers = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+        await _check_egress(ctx_req.upstream_url, ctx)
     forwarded = forward_headers(request.headers, auth_headers)
-    stage_end(ServerTimingStage.CRED, cred_timing)
 
     execution_id = mint_execution_id()
     started_at = datetime.now(UTC)
@@ -850,18 +850,16 @@ async def _handle_streaming(
     broker = _resolve_broker(request, runner)
     # Returns once the upstream response headers are in; the body (and its
     # persistence) follow after this response's headers are sent, so the
-    # streaming ``upstream`` stage is the header wait and ``persist`` is absent.
-    upstream_timing = stage_start()
-    response = await broker.execute_streaming(
-        runner,
-        runner_request,
-        ctx_req,
-        execution_id,
-        transfer_deadline_s=upstream_cfg.transfer_deadline_s,
-        background_callback=_persist_callback,
-    )
-    stage_end(ServerTimingStage.UPSTREAM, upstream_timing)
-    return response
+    # streaming upstream stage is the header wait and persist is absent.
+    with stage(ServerTimingStage.UPSTREAM):
+        return await broker.execute_streaming(
+            runner,
+            runner_request,
+            ctx_req,
+            execution_id,
+            transfer_deadline_s=upstream_cfg.transfer_deadline_s,
+            background_callback=_persist_callback,
+        )
 
 
 def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:
@@ -1011,7 +1009,8 @@ async def _handle_hold(
     parsed_url = urlparse(ctx_req.upstream_url)
     path = parsed_url.path
     execution_id = mint_execution_id()
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1025,7 +1024,7 @@ async def _handle_hold(
         ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
     }
 
-    async with ctx.admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:
         try:
             hold = await file_hold(
                 session,
@@ -1130,7 +1129,8 @@ async def _handle_async(
     rules were already enforced here at the edge.
     """
     execution_id = mint_execution_id()
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
 
     payload = _async_job_payload(
         ctx_req,
@@ -1142,7 +1142,7 @@ async def _handle_async(
         headers=replay_headers(request.headers),
     )
 
-    async with ctx.admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
             session,
             JobKind.EXECUTION,

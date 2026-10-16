@@ -1,10 +1,13 @@
 """Unit tests for the broker's opt-in ``Server-Timing`` header (#1717).
 
-Covers the request-scoped recorder (format, ordering, accumulation), the
-middleware's emission rules (authenticated callers only, upstream
-``Server-Timing`` kept verbatim with the broker's field appended, streaming
-responses carrying only pre-body stages), the config gate on the broker app,
-and the disabled path's cost.
+Covers the request-scoped recorder (format, ordering, accumulation, the
+``finally``-recording ``stage()`` handle), the middleware's emission rules
+(authenticated callers only; names without durations on a broker error raised
+before the upstream call; the upstream's ``Server-Timing`` forwarded with the
+broker's ``jentic-`` field appended and upstream entries claiming that
+namespace dropped; streaming responses carrying only pre-body stages), the
+config gate on the broker app (including a real load-shed ``503``), and the
+disabled path allocating nothing.
 
 ``run_execution``'s own stages (``upstream`` and ``persist``, on both the
 completed and the ``BrokerError`` path, and inert with no recorder as on the
@@ -26,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
@@ -34,14 +38,16 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 
 from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
-from jentic_one.broker.core.exceptions import UpstreamTimeoutError
+from jentic_one.broker.core.exceptions import OperationNotFoundError, UpstreamTimeoutError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.core.server_timing import (
     ServerTimingRecorder,
     ServerTimingStage,
+    StageTimer,
     activate,
     current_recorder,
     deactivate,
+    stage,
     stage_end,
     stage_start,
 )
@@ -50,18 +56,21 @@ from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidato
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.broker.web.deps import RequireExecuteAccess
+from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.server_timing import ServerTimingMiddleware
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.resilience.rate_limit import RateLimiter
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.state.backend import MemoryStateBackend
 from tests.unit.fake_tx import SessionScope
 
 _JWT_SECRET = "server-timing-test-secret-32-bytes-long!"  # pragma: allowlist secret
 _UPSTREAM_TIMING = 'db;dur=12.5, cache;desc="hit"'
-_ENTRY_RE = re.compile(r"^(?P<name>[a-z]+);dur=(?P<dur>\d+\.\d)$")
+_ENTRY_RE = re.compile(r"^(?P<name>jentic-[a-z]+);dur=(?P<dur>\d+\.\d)$")
 
 
 def _parse(value: str) -> dict[str, float]:
@@ -85,7 +94,16 @@ def test_header_value_orders_stages_and_formats_milliseconds() -> None:
     recorder.add(ServerTimingStage.AUTH, 1.25)
     recorder.add(ServerTimingStage.DISCOVER, 0.8)
 
-    assert recorder.header_value() == "auth;dur=1.2, discover;dur=0.8, upstream;dur=20.0"
+    assert recorder.header_value() == (
+        "jentic-auth;dur=1.2, jentic-discover;dur=0.8, jentic-upstream;dur=20.0"
+    )
+    assert recorder.header_value(with_durations=False) == (
+        "jentic-auth, jentic-discover, jentic-upstream"
+    )
+
+
+def test_every_stage_name_is_in_the_broker_namespace() -> None:
+    assert all(stage.value.startswith("jentic-") for stage in ServerTimingStage)
 
 
 def test_repeated_stage_accumulates() -> None:
@@ -112,27 +130,66 @@ def test_stage_hooks_record_into_the_active_recorder() -> None:
     assert current_recorder() is None
 
 
+def test_stage_records_a_stage_that_raises() -> None:
+    """A failing stage is still reported, so a slow failure shows where time went."""
+    recorder = ServerTimingRecorder()
+    token = activate(recorder)
+    try:
+        with pytest.raises(RuntimeError), stage(ServerTimingStage.DISCOVER) as timer:
+            raise RuntimeError("discovery failed")
+    finally:
+        deactivate(token)
+
+    assert recorder.has(ServerTimingStage.DISCOVER)
+    assert isinstance(timer, StageTimer)
+    assert timer.duration_ms == pytest.approx(recorder.duration_ms(ServerTimingStage.DISCOVER))
+
+
+@pytest.mark.asyncio
+async def test_stage_as_async_context_manager_covers_the_whole_block() -> None:
+    recorder = ServerTimingRecorder()
+    token = activate(recorder)
+    try:
+        with pytest.raises(RuntimeError):
+            async with stage(ServerTimingStage.PERSIST):
+                await asyncio.sleep(0.01)
+                raise RuntimeError("commit failed")
+    finally:
+        deactivate(token)
+
+    assert recorder.duration_ms(ServerTimingStage.PERSIST) >= 10 * 0.9
+
+
+def test_stage_end_returns_the_recorded_duration() -> None:
+    recorder = ServerTimingRecorder()
+    token = activate(recorder)
+    try:
+        duration = stage_end(ServerTimingStage.AUTH, stage_start())
+    finally:
+        deactivate(token)
+    assert duration == recorder.duration_ms(ServerTimingStage.AUTH)
+    assert recorder.elapsed_ms() >= duration
+
+
 def test_hooks_are_inert_without_a_recorder() -> None:
     assert current_recorder() is None
     assert stage_start() is None
-    stage_end(ServerTimingStage.AUTH, None)
-    stage_end(ServerTimingStage.AUTH, time.perf_counter())  # no recorder → still a no-op
+    assert stage_end(ServerTimingStage.AUTH, None) is None
+    # No recorder → still a no-op even with a real start reading.
+    assert stage_end(ServerTimingStage.AUTH, time.perf_counter()) is None
+    with stage(ServerTimingStage.CRED) as timer:
+        pass
+    assert timer.duration_ms is None
     assert current_recorder() is None
 
 
-def test_disabled_hooks_cost_is_negligible() -> None:
-    """With Server-Timing off every hook is one context-variable read.
+def test_disabled_stage_allocates_nothing() -> None:
+    """With no recorder every ``stage()`` is the same shared no-op handle.
 
-    The bound is deliberately loose (≈ 100x headroom on a laptop) so it only
-    trips if the disabled path grows real work — an allocation per call, a
-    config lookup, a lock.
+    The disabled path is one context-variable read and no allocation — pinned
+    structurally rather than by wall clock, so a loaded runner cannot flake it.
     """
-    iterations = 100_000
-    start = time.perf_counter()
-    for _ in range(iterations):
-        stage_end(ServerTimingStage.DISCOVER, stage_start())
-    per_pair_us = (time.perf_counter() - start) / iterations * 1e6
-    assert per_pair_us < 5.0, f"disabled stage hooks cost {per_pair_us:.2f}µs per pair"
+    assert stage(ServerTimingStage.DISCOVER) is stage(ServerTimingStage.UPSTREAM)
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +207,16 @@ def _identity(permissions: list[str] | None = None) -> Identity:
     )
 
 
-def _app(*, enabled: bool, identity: Identity | None = None) -> TestClient:
+def _app(
+    *,
+    enabled: bool,
+    identity: Identity | None = None,
+    rate_limiter: RateLimiter | None = None,
+    emit_header: bool = True,
+) -> TestClient:
     app = FastAPI()
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    install_broker_error_handlers(app)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -168,6 +232,31 @@ def _app(*, enabled: bool, identity: Identity | None = None) -> TestClient:
     async def plain(_identity: RequireExecuteAccess) -> Response:
         return Response(content=b"ok")
 
+    @app.get("/spoofing-upstream")
+    async def spoofing_upstream(_identity: RequireExecuteAccess) -> Response:
+        with stage(ServerTimingStage.UPSTREAM):
+            pass
+        return Response(content=b"ok", headers={"server-timing": _SPOOFING_UPSTREAM_TIMING})
+
+    @app.get("/discover-miss")
+    async def discover_miss(_identity: RequireExecuteAccess) -> Response:
+        with stage(ServerTimingStage.DISCOVER):
+            raise OperationNotFoundError(
+                detail="Operation not found — unregistered upstream URL.",
+                type="operation_not_found",
+            )
+
+    @app.get("/upstream-timeout")
+    async def upstream_timeout(_identity: RequireExecuteAccess) -> Response:
+        with stage(ServerTimingStage.UPSTREAM):
+            raise UpstreamTimeoutError(detail="upstream timed out", type="upstream_timeout")
+
+    @app.get("/recorder-elapsed")
+    async def recorder_elapsed(_identity: RequireExecuteAccess) -> Response:
+        recorder = current_recorder()
+        assert recorder is not None
+        return Response(content=str(recorder.has(ServerTimingStage.AUTH)).encode())
+
     @app.get("/streaming")
     async def streaming(_identity: RequireExecuteAccess) -> StreamingResponse:
         stage_end(ServerTimingStage.UPSTREAM, stage_start())
@@ -181,7 +270,9 @@ def _app(*, enabled: bool, identity: Identity | None = None) -> TestClient:
         return StreamingResponse(body(), headers={"server-timing": _UPSTREAM_TIMING})
 
     if enabled:
-        app.add_middleware(ServerTimingMiddleware)
+        app.add_middleware(ServerTimingMiddleware, emit_header=emit_header)
+    if rate_limiter is not None:
+        app.state.broker_rate_limiter = rate_limiter
 
     resolver = AsyncMock()
     resolver.resolve_access_token = AsyncMock(
@@ -195,6 +286,7 @@ def _app(*, enabled: bool, identity: Identity | None = None) -> TestClient:
 
 
 _AUTH = {"Authorization": "Bearer at_valid"}
+_SPOOFING_UPSTREAM_TIMING = 'db;dur=12.5, jentic-total;dur=0.1, cache;desc="a, jentic-x"'
 
 
 def test_disabled_emits_no_header_and_keeps_upstream_verbatim() -> None:
@@ -214,14 +306,49 @@ def test_enabled_appends_broker_field_after_upstream_field() -> None:
     assert len(fields) == 2
     assert fields[0] == _UPSTREAM_TIMING  # upstream's metrics, untouched, first
     stages = _parse(fields[1])
-    assert list(stages) == ["auth", "upstream", "total"]
+    assert list(stages) == ["jentic-auth", "jentic-upstream", "jentic-total"]
     assert all(dur >= 0.0 for dur in stages.values())
-    assert stages["total"] >= stages["auth"]
+    assert stages["jentic-total"] >= stages["jentic-auth"]
 
 
 def test_enabled_without_upstream_header_emits_single_field() -> None:
     resp = _app(enabled=True).get("/plain", headers=_AUTH)
-    assert list(_parse(resp.headers["server-timing"])) == ["auth", "total"]
+    assert list(_parse(resp.headers["server-timing"])) == ["jentic-auth", "jentic-total"]
+
+
+def test_upstream_entries_claiming_the_broker_namespace_are_dropped() -> None:
+    """Every ``jentic-*`` metric a client sees is the broker's own.
+
+    Other upstream entries survive byte-for-byte, including a quoted ``desc``
+    whose text merely mentions the prefix.
+    """
+    resp = _app(enabled=True).get("/spoofing-upstream", headers=_AUTH)
+    fields = resp.headers.get_list("server-timing")
+    assert fields[0] == 'db;dur=12.5, cache;desc="a, jentic-x"'
+    assert list(_parse(fields[1])) == ["jentic-auth", "jentic-upstream", "jentic-total"]
+
+
+def test_broker_error_before_upstream_lists_stage_names_without_durations() -> None:
+    """A 404 from discovery says where the request stopped, not how long it took."""
+    resp = _app(enabled=True).get("/discover-miss", headers=_AUTH)
+    assert resp.status_code == 404
+    assert resp.headers["server-timing"] == "jentic-auth, jentic-discover, jentic-total"
+
+
+def test_failure_after_the_upstream_call_carries_durations() -> None:
+    """A transport failure (504) reached the upstream: the failing stage is timed."""
+    resp = _app(enabled=True).get("/upstream-timeout", headers=_AUTH)
+    assert resp.status_code == 504
+    stages = _parse(resp.headers["server-timing"])
+    assert list(stages) == ["jentic-auth", "jentic-upstream", "jentic-total"]
+
+
+def test_emit_header_false_keeps_the_recorder_without_a_header() -> None:
+    """The recorder is active for in-process consumers; nothing reaches the caller."""
+    resp = _app(enabled=True, emit_header=False).get("/recorder-elapsed", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.content == b"True"
+    assert "server-timing" not in resp.headers
 
 
 def test_streaming_carries_only_stages_known_before_headers() -> None:
@@ -232,8 +359,8 @@ def test_streaming_carries_only_stages_known_before_headers() -> None:
     fields = resp.headers.get_list("server-timing")
     assert fields[0] == _UPSTREAM_TIMING
     stages = _parse(fields[1])
-    assert list(stages) == ["auth", "upstream", "total"]
-    assert "persist" not in stages
+    assert list(stages) == ["jentic-auth", "jentic-upstream", "jentic-total"]
+    assert "jentic-persist" not in stages
 
 
 @pytest.mark.parametrize(
@@ -251,6 +378,21 @@ def test_rejected_callers_get_no_timing(
     resp = _app(enabled=True, identity=identity).get("/plain", headers=headers)
     assert resp.status_code == expected_status
     assert "server-timing" not in resp.headers
+
+
+def test_rate_limited_caller_gets_no_timing() -> None:
+    """The 429 branch runs after the auth stage started; it must not record it."""
+    limiter = RateLimiter(MemoryStateBackend(), default_rpm=1, burst=1)
+    client = _app(enabled=True, rate_limiter=limiter)
+
+    allowed = client.get("/plain", headers=_AUTH)
+    assert allowed.status_code == 200
+    assert "server-timing" in allowed.headers
+
+    limited = client.get("/plain", headers=_AUTH)
+    assert limited.status_code == 429
+    assert "retry-after" in limited.headers
+    assert "server-timing" not in limited.headers
 
 
 def test_infra_routes_get_no_timing() -> None:
@@ -292,12 +434,25 @@ def test_middleware_sits_inside_admission_control(sample_config_dict: dict[str, 
     assert names.index("AdmissionControlMiddleware") < names.index("ServerTimingMiddleware")
 
 
+@pytest.mark.asyncio
+async def test_load_shed_503_carries_no_timing(sample_config_dict: dict[str, Any]) -> None:
+    """The real broker app at capacity sheds before the recorder runs."""
+    sample_config_dict.setdefault("broker", {}).setdefault("resilience", {})["max_in_flight"] = 0
+    app = _broker_app(sample_config_dict, server_timing=True)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
+        resp = await client.get("/api.example.com/v1/things", headers=_AUTH)
+    assert resp.status_code == 503
+    assert resp.json()["type"] == "server_at_capacity"
+    assert "server-timing" not in resp.headers
+
+
 # ---------------------------------------------------------------------------
 # run_execution: ``persist`` timed around its own admin transaction
 # ---------------------------------------------------------------------------
 
-_UPSTREAM_S = 0.2
-_PERSIST_S = 0.02
+_UPSTREAM_S = 0.08
+_PERSIST_S = 0.01
 
 
 class _SlowRunner(UpstreamRunner):

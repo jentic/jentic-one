@@ -215,7 +215,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
     )
     # Opt-in Server-Timing (#1717): absent unless enabled, so the default path
     # pays nothing beyond the stage hooks' context-variable reads. Added before
-    # admission control so it sits inside it — a shed 503 carries no timing.
+    # admission control so it sits inside it: a shed 503 carries no timing.
     if ctx.config.broker.server_timing:
         app.add_middleware(ServerTimingMiddleware)
     # One admission gate shared by the shedding middleware and the readiness
