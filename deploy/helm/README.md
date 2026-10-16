@@ -90,9 +90,10 @@ helm install jentic deploy/helm/jentic-one \
   path entry can name its own `service`/`port` to split traffic.
 - **The trusted-proxies requirement is not optional.** `ingress.enabled=true`
   fails the install unless every enabled auth-serving surface knows which proxy
-  addresses to trust — behind an ingress controller the OAuth rate limiters
-  otherwise key every request on the controller's IP, so one caller locks the
-  whole fleet out of `/authorize`. Set
+  addresses to trust — behind an ingress controller the pre-auth rate limiters
+  (OAuth endpoints and the password logins) otherwise key every request on the
+  controller's IP, so one caller locks the whole fleet out of `/authorize` and
+  `/auth/login`. Set
   `<svc>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` (or the same
   key in a mounted config file) to the controller's pod CIDR or IPs — addresses
   and CIDR networks, comma-separated (`\,` under `--set`), kept as narrow as the

@@ -19,14 +19,12 @@ from __future__ import annotations
 
 import ipaddress
 
-import structlog
 from fastapi import Request
 
 from jentic_one.shared.config import TrustedProxyNetwork
-from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
+from jentic_one.shared.state.backend import SharedStateBackend
+from jentic_one.shared.web.auth_state import get_auth_state_backend
 from jentic_one.shared.web.client_ip import client_ip
-
-logger = structlog.get_logger(__name__)
 
 #: IPv6 clients are grouped by this prefix length. One host (or one customer
 #: site) typically holds at least a whole /64 and can pick any interface ID
@@ -40,11 +38,7 @@ _NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 def get_auth_backend(request: Request) -> SharedStateBackend:
     """Return the app's shared auth-state backend (rate limits, consent handles)."""
-    backend: object = getattr(request.app.state, "auth_state_backend", None)
-    if isinstance(backend, SharedStateBackend):
-        return backend
-    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
-    return MemoryStateBackend()
+    return get_auth_state_backend(request)
 
 
 def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:

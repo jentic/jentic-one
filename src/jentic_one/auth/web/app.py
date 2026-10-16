@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import structlog
 from fastapi import APIRouter, FastAPI
 
 from jentic_one.auth.services.errors import AuthServiceError
@@ -31,13 +30,10 @@ from jentic_one.auth.web.verifier import make_superset_verifier as make_superset
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.state import build_state_backend
-from jentic_one.shared.state.factory import BackendKind
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.auth_state import install_auth_state_backend
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
-
-logger = structlog.get_logger(__name__)
 
 
 def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
@@ -76,30 +72,16 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the auth surface's shared state backend on the app.
+    """Install the auth surface's shared pre-auth state backend on the app.
 
+    The backend is shared with any other surface on the same app (the
+    password-login limiter); it is built once and closed by the app lifespan.
     The identity verifier is not installed here: ``shared.web.app_factory`` owns
     it (``install_platform_token_verifier``), so standalone and combined apps
     get the same chain and an injected installer's replacement is never
     clobbered by a later surface hook.
     """
-    backend_cfg = ctx.config.broker.resilience.backend
-    backend = build_state_backend(backend_cfg)
-    app.state.auth_state_backend = backend
-    if backend_cfg.backend is BackendKind.MEMORY:
-        # Rate limiters and consent-handle state live per-process on this
-        # backend, so a multi-worker deployment gets independent buckets and
-        # loses the anti-replay guarantee across workers. Warn loudly so an
-        # operator running >1 worker knows to configure Redis.
-        logger.warning(
-            "auth_state_backend_memory_selected — rate limits and consent "
-            "handles are per-process; configure redis for multi-worker deployments",
-        )
-
-    async def _close_auth_backend() -> None:
-        await backend.aclose()
-
-    app.router.add_event_handler("shutdown", _close_auth_backend)
+    install_auth_state_backend(app, ctx)
 
 
 def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:

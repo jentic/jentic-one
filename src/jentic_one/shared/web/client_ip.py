@@ -1,8 +1,14 @@
 """Caller-IP derivation for pre-auth rate limiters.
 
 Lives in ``shared`` so every surface that throttles anonymous traffic (the auth
-surface's OAuth doors, the admin ``/auth/login``) derives the caller identity
-the same way without a cross-surface import.
+surface's OAuth doors, the ``/auth/login`` and local-login password doors)
+derives the caller identity the same way without a cross-surface import.
+
+``trusted_proxies`` entries are IP addresses or CIDR networks, parsed once at
+config load into ``OAuthRateLimitConfig.trusted_networks``. ``X-Forwarded-For``
+is honoured only when the socket peer is inside one of them, and the header is
+walked right-to-left so hops an attacker prepends are never reached while a
+trusted proxy is still appending.
 """
 
 from __future__ import annotations
@@ -12,6 +18,13 @@ import ipaddress
 from fastapi import Request
 
 from jentic_one.shared.config import TrustedProxyNetwork
+
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+#: Prefix length an IPv6 caller is bucketed by. One subscriber is routinely
+#: handed a whole ``/64``, so a per-address key lets one host rotate through
+#: 2^64 fresh buckets.
+IPV6_RATE_LIMIT_PREFIX = 64
 
 
 def _is_port(value: str) -> bool:
@@ -43,7 +56,7 @@ def _strip_port(value: str) -> str:
     return host
 
 
-def _parse_request_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+def _parse_request_address(value: str) -> IPAddress | None:
     """Parse a socket or forwarded address for trust matching, or None if unparsable.
 
     A forwarded hop arrives here without its port (see :func:`_strip_port`);
@@ -58,6 +71,20 @@ def _parse_request_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
     return addr
+
+
+def parse_ip(value: str) -> IPAddress | None:
+    """Parse one address as it appears in a socket peer or an XFF hop.
+
+    Accepts an optional port (``1.2.3.4:5678``, ``[2001:db8::1]:443``) because
+    some proxies append one. An IPv4-mapped IPv6 address is unwrapped so a
+    dual-stack listener's ``::ffff:a.b.c.d`` peer keys and matches as IPv4.
+    Returns ``None`` for anything that is not an IP address.
+    """
+    candidate = _strip_port(value.strip())
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1]
+    return _parse_request_address(candidate)
 
 
 def _is_trusted(value: str, trusted_proxies: tuple[TrustedProxyNetwork, ...]) -> bool:
@@ -98,4 +125,17 @@ def client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]
     return hops[0]
 
 
-__all__ = ["client_ip"]
+def rate_limit_ip_key(ip: str) -> str:
+    """Bucket key for a caller IP: IPv4 per address, IPv6 per ``/64``."""
+    addr = parse_ip(ip)
+    if isinstance(addr, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{addr}/{IPV6_RATE_LIMIT_PREFIX}", strict=False))
+    return str(addr) if addr is not None else ip
+
+
+__all__ = [
+    "IPV6_RATE_LIMIT_PREFIX",
+    "client_ip",
+    "parse_ip",
+    "rate_limit_ip_key",
+]
