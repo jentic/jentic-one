@@ -34,6 +34,7 @@ from jentic_one.shared.db.backends import (
 from jentic_one.shared.db.backends.base import DatabaseBackend
 from jentic_one.shared.db.connectivity import is_connection_loss, redact_sql
 from jentic_one.shared.db.errors import (
+    DatabaseCommitOutcomeUnknownError,
     DatabaseConsistencyError,
     DatabaseDataError,
     DatabaseIntegrityError,
@@ -65,6 +66,11 @@ def _is_data_error(exc: DBAPIError) -> bool:
 def _unavailable(exc: BaseException) -> DatabaseUnavailableError:
     """Wrap a transient DB failure, dropping SQLAlchemy's ``[SQL: …]`` tail."""
     return DatabaseUnavailableError(redact_sql(str(exc)))
+
+
+def _commit_outcome_unknown(exc: BaseException) -> DatabaseCommitOutcomeUnknownError:
+    """Wrap a connection lost at commit, dropping SQLAlchemy's ``[SQL: …]`` tail."""
+    return DatabaseCommitOutcomeUnknownError(redact_sql(str(exc)))
 
 
 async def _rollback_after_connection_loss(sess: AsyncSession) -> None:
@@ -166,6 +172,8 @@ class DatabaseSession:
         a dropped or terminated backend as a bare ``DBAPIError``/
         ``InterfaceError``, not ``OperationalError``): raises
         DatabaseUnavailableError.
+        A connection lost at commit raises DatabaseCommitOutcomeUnknownError
+        (a DatabaseUnavailableError) instead: the commit may have landed.
         On any other exception: rolls back and re-raises unchanged.
 
         The *retries* parameter controls how many times a transient error during
@@ -235,6 +243,10 @@ class DatabaseSession:
                         await sess.rollback()
                         raise DatabaseIntegrityError(str(exc)) from exc
                     except (OperationalError, DisconnectionError) as exc:
+                        if is_connection_loss(exc):
+                            # Same unknown outcome as the DBAPIError branch below.
+                            await _rollback_after_connection_loss(sess)
+                            raise _commit_outcome_unknown(exc) from exc
                         await sess.rollback()
                         commit_attempts += 1
                         if commit_attempts > retries:
@@ -245,17 +257,17 @@ class DatabaseSession:
                             max_retries=retries,
                         )
                     except DBAPIError as exc:
-                        # A connection lost at commit leaves the transaction's
-                        # outcome on a dead connection: there is nothing left to
-                        # re-commit in place, so surface it at once and let
-                        # run_in_transaction re-run the whole unit of work on a
-                        # fresh connection. A too-long value can also surface at
-                        # commit (deferred flush); map data exceptions to the
-                        # same clean error as the in-body path and re-raise
-                        # anything else (#690).
+                        # A connection lost at commit leaves the outcome
+                        # unknown: the server may have applied the COMMIT
+                        # before the connection dropped. Surface it at once as
+                        # DatabaseCommitOutcomeUnknownError, which
+                        # run_in_transaction does not replay. A too-long value
+                        # can also surface at commit (deferred flush); map data
+                        # exceptions to the same clean error as the in-body
+                        # path and re-raise anything else (#690).
                         if is_connection_loss(exc):
                             await _rollback_after_connection_loss(sess)
-                            raise _unavailable(exc) from exc
+                            raise _commit_outcome_unknown(exc) from exc
                         await sess.rollback()
                         if _is_data_error(exc):
                             raise DatabaseDataError(str(exc)) from exc
@@ -313,11 +325,15 @@ class DatabaseSession:
         only retry at commit — this re-invokes ``fn`` on a *fresh* session when a
         transient failure (``OperationalError``/``DisconnectionError``, e.g. a
         SQLite ``database is locked``, or a lost Postgres connection) is raised
-        either inside ``fn`` or at commit. It waits ``backoff_s`` between
-        attempts and gives up after ``retries`` retries (so up to
+        inside ``fn`` or by a definite commit failure. It waits ``backoff_s``
+        between attempts and gives up after ``retries`` retries (so up to
         ``retries + 1`` total attempts), raising
         :class:`DatabaseUnavailableError`. A lost connection invalidates the
         pool, so the retry checks out a fresh connection.
+
+        A connection lost at commit is never replayed: the commit may already
+        have applied, so :class:`DatabaseCommitOutcomeUnknownError` (still a
+        503 at the edge) propagates after the first attempt.
 
         ``IntegrityError`` (→ :class:`DatabaseIntegrityError`) and every other
         exception propagate immediately without retry, matching the
@@ -330,6 +346,8 @@ class DatabaseSession:
                 async with self.transaction() as sess:
                     result = await fn(sess)
                 return result
+            except DatabaseCommitOutcomeUnknownError:
+                raise
             except DatabaseUnavailableError:
                 if attempt >= retries:
                     raise

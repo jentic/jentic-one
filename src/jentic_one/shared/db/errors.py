@@ -17,6 +17,16 @@ class DatabaseUnavailableError(Exception):
         self.detail = detail
 
 
+class DatabaseCommitOutcomeUnknownError(DatabaseUnavailableError):
+    """Raised when the connection is lost while a transaction is committing.
+
+    The server may already have applied the commit, so the outcome is unknown.
+    ``run_in_transaction`` never re-runs the unit of work for this error, since
+    a replay could apply it twice. Web handlers resolve it through the MRO to
+    the same 503 as its parent.
+    """
+
+
 class DatabaseDataError(Exception):
     """Raised when a write fails because a value does not fit its column.
 
