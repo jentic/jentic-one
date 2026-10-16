@@ -3293,37 +3293,9 @@ type VendorScopeConfig struct {
 	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
-type VendorScopeConfigClassification string
-
 const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
 const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
 const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
-	}
-	*j = VendorScopeConfigClassification(v)
-	return nil
-}
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
@@ -3349,6 +3321,36 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 		plain.Description = ""
 	}
 	*j = VendorScopeConfig(plain)
+	return nil
+}
+
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+
+type VendorScopeConfigClassification string
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
@@ -3434,5 +3436,3 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	*j = WorkerConfig(plain)
 	return nil
 }
-
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
