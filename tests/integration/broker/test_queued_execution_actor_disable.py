@@ -301,6 +301,8 @@ async def _run_worker(
     ctx: Context,
     executor: _RecordingExecutor,
     injector: _SpyInjector,
+    *,
+    expect_claim: bool = True,
 ) -> None:
     """One worker tick with the handler wired as the broker lifespan wires it."""
     handler = ExecutionHandler(
@@ -311,7 +313,8 @@ async def _run_worker(
     )
     registry = JobHandlerRegistry()
     registry.register(JobKind.EXECUTION, handler)
-    assert await WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())._tick()
+    claimed = await WorkerLoop(ctx.admin_db, registry, worker_config=WorkerConfig())._tick()
+    assert claimed is expect_claim
 
 
 async def _job_outcome(ctx: Context, job_id: str) -> tuple[Job, JobResult, list[Event]]:
@@ -382,7 +385,10 @@ async def test_queued_job_runs_for_an_actor_that_may_execute(
     assert EventType.EXECUTION_COMPLETED in [e.type for e in events]
 
 
-@pytest.mark.parametrize(("change", "denial"), _CHANGES)
+@pytest.mark.parametrize(
+    ("change", "denial"),
+    [pytest.param(_revoke_execute, ("insufficient_scope", 403), id="execute_revoked")],
+)
 @pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.USER])
 async def test_queued_job_denied_when_actor_changed_before_it_runs(
     integration_context: Context,
@@ -473,11 +479,8 @@ async def _delete_user(ctx: Context, actor_id: str) -> None:
 
 @pytest.mark.parametrize(
     ("actor_type", "remove"),
-    [
-        (ActorType.AGENT, _delete_agent),
-        (ActorType.USER, _delete_user),
-    ],
-    ids=["agent_row_deleted", "user_soft_deleted"],
+    [(ActorType.AGENT, _delete_agent)],
+    ids=["agent_row_deleted"],
 )
 async def test_queued_job_denied_when_actor_deleted(
     integration_context: Context,
@@ -506,3 +509,45 @@ async def test_queued_job_denied_for_an_actor_that_never_existed(
     await _run_worker(ctx, executor, injector)
 
     _assert_denied(*await _job_outcome(ctx, job_id), executor, injector)
+
+
+async def _disable_change(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
+    await _disable(ctx, actor_type, actor_id)
+
+
+async def _soft_delete_user(ctx: Context, actor_type: ActorType, actor_id: str) -> None:
+    await _delete_user(ctx, actor_id)
+
+
+@pytest.mark.parametrize(
+    ("actor_type", "change"),
+    [
+        (ActorType.AGENT, _disable_change),
+        (ActorType.USER, _disable_change),
+        (ActorType.USER, _soft_delete_user),
+    ],
+    ids=["agent_disabled", "user_disabled", "user_soft_deleted"],
+)
+async def test_lifecycle_change_cancels_the_queued_job_before_the_worker_claims_it(
+    integration_context: Context,
+    clean: None,
+    actor_type: ActorType,
+    change: _Change,
+) -> None:
+    """Disable/delete through the lifecycle service cancels the actor's queued
+    executions in the same transaction, so the worker never claims the job:
+    nothing is decrypted and nothing is sent upstream."""
+    ctx = integration_context
+    actor_id = await _seed_actor(ctx, actor_type)
+    job_id = await _enqueue(ctx, actor_id, actor_type)
+    await change(ctx, actor_type, actor_id)
+    executor, injector = _RecordingExecutor(), _SpyInjector()
+
+    await _run_worker(ctx, executor, injector, expect_claim=False)
+
+    async with ctx.admin_db.session() as session:
+        job = await session.get(Job, job_id)
+    assert job is not None
+    assert job.status == JobStatus.CANCELLED
+    assert executor.requests == []
+    assert injector.calls == 0
