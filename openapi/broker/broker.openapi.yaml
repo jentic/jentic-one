@@ -238,7 +238,7 @@ paths:
         call (e.g. a credential that is not provisioned, cannot be
         decrypted, or needs reconnecting), or an overall deadline
         (`deadline_exceeded`) that ran out before any request was sent
-        (while the call waited for an upstream connection slot, or
+        (while the call waited for a per-host concurrency permit, or
         between retries of a connect failure). The key is freed at once:
         retrying with the same key runs the request again.
       - **The upstream may have acted** — a read timeout
