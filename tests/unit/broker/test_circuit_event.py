@@ -55,13 +55,14 @@ def _clear_dedup() -> None:
 async def test_circuit_open_emits_event() -> None:
     """When CircuitOpenError is raised, emit_event should be called."""
     session = AsyncMock()
+    scope = SessionScope(session)
     broker = default_broker(_CircuitOpenRunner())
 
     with (
         patch(
             "jentic_one.broker.services.execution.service.record_execution",
             new_callable=AsyncMock,
-        ),
+        ) as mock_record,
         patch(
             "jentic_one.broker.services.execution.service.emit_event",
             new_callable=AsyncMock,
@@ -72,7 +73,7 @@ async def test_circuit_open_emits_event() -> None:
             _ctx_req(),
             body=None,
             headers=None,
-            admin_db=SessionScope(session),
+            admin_db=scope,
             broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
@@ -90,6 +91,10 @@ async def test_circuit_open_emits_event() -> None:
     assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]
     assert "api.example.com" in call_kwargs["summary"]
     assert call_kwargs["data"] == {"host": "api.example.com"}
+    # The record and every event (incl. the circuit-open event) share one transaction.
+    assert scope.opened == 1
+    assert mock_record.call_args.args[0] is session
+    assert all(c.args[0] is session for c in mock_emit.call_args_list)
 
 
 @pytest.mark.asyncio

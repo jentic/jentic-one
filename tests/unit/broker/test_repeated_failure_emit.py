@@ -137,20 +137,23 @@ async def test_run_execution_emits_repeated_failure_on_broker_error(session: Asy
     # Seed threshold-1 failures so the record persisted by this failing run is
     # the Nth — proving _persist flushes before the repeated-failure count runs.
     await _seed_prior_failures(session, 4)
+    scope = SessionScope(session, commit=True)
 
     with pytest.raises(BrokerError):
         await run_execution(
             _ctx_req(),
             body=None,
             headers=None,
-            admin_db=SessionScope(session, commit=True),
+            admin_db=scope,
             broker=default_broker(_FailRunner()),
             actor_id=_ACTOR,
             actor_type="agent",
             security_config=config,
         )
     # Whatever the caller rolls back on the re-raised BrokerError, the FAILED
-    # record and its events were committed by run_execution's own transaction.
+    # record and its events were committed by run_execution's own (single)
+    # transaction.
+    assert scope.opened == 1
     await session.rollback()
 
     events = await _repeated_events(session)

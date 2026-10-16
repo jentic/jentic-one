@@ -1,4 +1,4 @@
-"""Integration tests: no admin-DB connection is held across the upstream call (#1702).
+"""Integration tests: no admin-DB connection is held across the upstream call (#1740, #1749).
 
 The buffered sync path, the streaming path and the async worker all write the
 execution record in an admin transaction opened only after the upstream call
@@ -28,6 +28,8 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request, Response
 from sqlalchemy import delete, event, select
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
@@ -465,14 +467,55 @@ async def test_upstream_failure_persists_failed_record(
     assert _checked_out(admin_db) == 0
 
 
+@contextmanager
+def _fail_access_audit_commit(trace_id: str) -> Iterator[list[str]]:
+    """Fail the commit of the audit transaction holding this trace's ``credential.accessed``.
+
+    The event is flushed inside the audit transaction, so the failure lands at
+    commit time (the transient-``OperationalError`` path of
+    ``DatabaseSession.transaction``), with the admin DB still connected. Only
+    the first commit fails, which is the shape of a transient error: a commit
+    retried after the rollback would succeed with the event discarded.
+    """
+    failed: list[str] = []
+    marker = "fail_access_audit_commit"
+
+    def _after_flush(session: Session, _flush_context: Any) -> None:
+        for obj in session.new:
+            if (
+                isinstance(obj, Event)
+                and obj.type == EventType.CREDENTIAL_ACCESSED
+                and obj.trace_id == trace_id
+            ):
+                session.info[marker] = obj.id
+
+    def _before_commit(session: Session) -> None:
+        event_id = session.info.pop(marker, None)
+        if event_id is not None:
+            failed.append(event_id)
+            raise OperationalError("COMMIT", {}, Exception("simulated audit commit failure"))
+
+    event.listen(Session, "after_flush", _after_flush)
+    event.listen(Session, "before_commit", _before_commit)
+    try:
+        yield failed
+    finally:
+        event.remove(Session, "after_flush", _after_flush)
+        event.remove(Session, "before_commit", _before_commit)
+
+
 async def test_failed_access_audit_fails_the_injection(
     integration_context: Context,
     upstream: _Upstream,
     seeded_credential: str,
     trace_id: str,
 ) -> None:
-    """With the admin DB unavailable the access event cannot be committed, so the
-    injection fails and the credential is never sent upstream."""
+    """A ``credential.accessed`` audit write that fails to commit fails the
+    injection: the call errors and the credential is never sent upstream.
+
+    The surface has no ``DatabaseUnavailableError`` mapping, so the error renders
+    as a 500.
+    """
     admin_db = integration_context.admin_db
     async with httpx.AsyncClient() as upstream_client:
         app = _app(
@@ -481,13 +524,11 @@ async def test_failed_access_audit_fails_the_injection(
             f"http://127.0.0.1:{upstream.port}/thing",
             trace_id,
         )
-        await admin_db.close()
-        try:
+        with _fail_access_audit_commit(trace_id) as failed_commits:
             resp = await _call(app, "/buffered")
-        finally:
-            await admin_db.connect()
 
-    assert resp.status_code == 500
+    assert len(failed_commits) == 1, "the audit commit was not attempted exactly once"
+    assert resp.status_code == 500, resp.text
     assert upstream.seen == [], "the credential was used without a committed audit event"
     assert await _access_events(admin_db, trace_id) == []
     assert await _execution(admin_db, trace_id) is None
