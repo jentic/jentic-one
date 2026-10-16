@@ -49,6 +49,11 @@ class RunnerRequest:
     # signing runner signs this exact (method, url, body) and merges the auth
     # headers. None for all other credential types (static injection covers them).
     signing: SigV4Material | None = None
+    # Whether the caller sent an ``Idempotency-Key``. The header itself is
+    # broker-consumed and never forwarded upstream, so ``headers`` cannot carry
+    # it; this flag is what lets the retry gate treat a keyed request as safe to
+    # retry after it was sent. Only the bool travels, never the key value.
+    has_idempotency_key: bool = False
 
 
 @dataclass(frozen=True, slots=True)

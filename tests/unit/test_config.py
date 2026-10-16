@@ -6,6 +6,7 @@ import base64
 import os
 import threading
 import time
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -35,6 +36,7 @@ from jentic_one.shared.config import (
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
+    TrustedIssuerConfig,
     _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
@@ -1848,3 +1850,102 @@ def test_entitlement_env_override_round_trip(config_file: Path):
     assert config.entitlement.license_dimensions == ["users", "executions"]
     assert config.entitlement.region == "eu-west-1"
     assert config.entitlement.refresh_interval_seconds == 600
+
+
+# --- trusted-issuer jwks_url scheme (#1723) -----------------------------------
+
+_HTTP_JWKS_EVENT = "trusted_issuer_jwks_url_plain_http"
+
+
+def _http_jwks_warnings(logs: list[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
+    return [log for log in logs if log["event"] == _HTTP_JWKS_EVENT]
+
+
+def test_trusted_issuer_http_jwks_url_accepted_outside_production():
+    """Outside production a plain-http JWKS is accepted, with one warning naming the issuer."""
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False),
+        structlog.testing.capture_logs() as logs,
+    ):
+        cfg = TrustedIssuerConfig(issuer="https://idp.local", jwks_url="http://idp.local/jwks")
+    assert cfg.jwks_url == "http://idp.local/jwks"
+    warnings = _http_jwks_warnings(logs)
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["issuer"] == "https://idp.local"
+
+
+def test_trusted_issuer_http_jwks_url_accepted_when_jentic_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Unset JENTIC_ENV is development — the same default every production guard uses."""
+    monkeypatch.delenv("JENTIC_ENV", raising=False)
+    with structlog.testing.capture_logs() as logs:
+        TrustedIssuerConfig(issuer="https://idp.local", jwks_url="http://idp.local/jwks")
+    assert len(_http_jwks_warnings(logs)) == 1
+
+
+def test_trusted_issuer_http_jwks_url_rejected_in_production():
+    """Production keeps https mandatory; the error names the field and the rule."""
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ValidationError) as excinfo,
+    ):
+        TrustedIssuerConfig(issuer="https://idp.local", jwks_url="http://idp.local/jwks")
+    message = str(excinfo.value)
+    assert "jwks_url must be https:// in production" in message
+    assert "http:// is only allowed outside production" in message
+    assert "https://idp.local" in message
+
+
+@pytest.mark.parametrize("env", ["production", "development"])
+def test_trusted_issuer_https_jwks_url_accepted_without_warning(env: str):
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": env}, clear=False),
+        structlog.testing.capture_logs() as logs,
+    ):
+        cfg = TrustedIssuerConfig(issuer="https://idp.local", jwks_url="https://idp.local/jwks")
+    assert cfg.jwks_url == "https://idp.local/jwks"
+    assert _http_jwks_warnings(logs) == []
+
+
+@pytest.mark.parametrize("env", ["production", "development"])
+@pytest.mark.parametrize(
+    "url", ["file:///etc/jwks.json", "ftp://idp.local/jwks", "idp.local/jwks", "HTTP://idp/x"]
+)
+def test_trusted_issuer_non_http_jwks_url_rejected_everywhere(env: str, url: str):
+    """Only http(s) is a JWKS endpoint — the fetcher (urllib) would also open file://."""
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": env}, clear=False),
+        pytest.raises(ValidationError, match="jwks_url must be"),
+    ):
+        TrustedIssuerConfig(issuer="https://idp.local", jwks_url=url)
+
+
+_ISSUER_ENV = {
+    "JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__0__ISSUER": "https://idp-a.local",
+    "JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__0__JWKS_URL": "http://idp-a.local/jwks",
+    "JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__1__ISSUER": "https://idp-b.local",
+    "JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__1__JWKS_URL": "http://idp-b.local/jwks",
+}
+
+
+def test_http_jwks_url_env_override_outside_production(config_file: Path):
+    """The env-var path loads http issuers outside production, one warning per issuer."""
+    env = {"JENTIC_ENV": "development"} | _ISSUER_ENV
+    with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
+        config = load_config(config_file)
+    issuers = config.broker.jwt_verification.trusted_issuers
+    assert [i.jwks_url for i in issuers] == ["http://idp-a.local/jwks", "http://idp-b.local/jwks"]
+    warned = sorted(log["issuer"] for log in _http_jwks_warnings(logs))
+    assert warned == ["https://idp-a.local", "https://idp-b.local"]
+    assert all("jwks_url" not in log for log in _http_jwks_warnings(logs))
+
+
+def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
+    env = {"JENTIC_ENV": "production", "JENTIC__APPS": "broker"} | _ISSUER_ENV
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
+    ):
+        load_config(config_file)
