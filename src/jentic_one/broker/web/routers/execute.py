@@ -78,8 +78,11 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    UnmappedFailure,
+    UnmappedFailureRecorder,
     default_broker,
     persist_streaming_execution,
+    persist_unmapped_failure,
     run_execution,
 )
 from jentic_one.broker.services.idempotency import (
@@ -221,6 +224,68 @@ async def _persist_streaming_outcome(
             execution_id=outcome.execution_id,
             exc_info=True,
         )
+
+
+async def _persist_unmapped_failure(
+    failure: UnmappedFailure,
+    ctx: Context,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+) -> None:
+    """Write the FAILED record of a buffered call that ended in an unmapped error.
+
+    Runs off the request on the app's background-task registry, under
+    ``broker.streaming_persist_timeout_s``, so the 500 never waits on the admin
+    DB. A DB failure, timeout or shutdown cancellation propagates to the
+    registry, which logs it and counts it on ``app.background_tasks``
+    (``kind=unmapped_failure_persist``).
+    """
+    async with ctx.admin_db.transaction() as session:
+        await persist_unmapped_failure(
+            session,
+            failure,
+            ctx_req=ctx_req,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            security_config=ctx.config.security,
+        )
+
+
+def _unmapped_failure_recorder(
+    request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
+) -> UnmappedFailureRecorder:
+    """The buffered path's recorder: schedule the record write and return."""
+    background_tasks = get_background_tasks(request.app)
+    timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
+    async def _record(failure: UnmappedFailure) -> None:
+        persist = _persist_unmapped_failure(
+            failure,
+            ctx,
+            ctx_req,
+            identity.sub,
+            identity.actor_type.value,
+            origin=identity.origin.value,
+        )
+        if background_tasks is None:
+            # An app built without a registry (a bare test app) writes inline,
+            # still bounded; a failure reaches ``run_execution``, which logs it
+            # and re-raises the original error. Every app from
+            # ``create_surface_app`` has a registry.
+            async with asyncio.timeout(timeout_s):
+                await persist
+            return
+        background_tasks.spawn(
+            persist,
+            kind="unmapped_failure_persist",
+            timeout_s=timeout_s,
+            log_fields={"execution_id": failure.execution_id, "trace_id": ctx_req.trace_id},
+        )
+
+    return _record
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -740,6 +805,7 @@ async def _handle(
             security_config=ctx.config.security,
             signing=injection.signing,
             has_idempotency_key=bool(idem_key),
+            on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
         )
 
     response = _assemble_response(outcome, ctx_req)

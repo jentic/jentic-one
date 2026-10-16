@@ -192,7 +192,7 @@ Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
 name, never the secret). On the buffered and async paths the write happens
-before the response. On the streaming fast path every outcome — completed,
+before the response, except for a buffered call's unmapped failure (below). On the streaming fast path every outcome — completed,
 failed partway through the body, or cut off by a client disconnect — writes
 exactly one record, and the write is **best-effort** and never holds the
 response: it is handed to the app's background-task registry
@@ -213,7 +213,12 @@ refused, a TLS failure, a timeout), the circuit breaker fast-fails it, or the
 request is cancelled — records one `FAILED` row with no HTTP status, handed
 to the same registry alongside the error response (best-effort; the error
 response never waits on it). A circuit fast-fail also raises the
-rate-limited `UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path.
+rate-limited `UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path. A
+buffered call that ends in an exception the broker does not map (the caller
+gets a 500) also records one `FAILED` row with no HTTP status, handed to the
+same registry and bounded by the same timeout, so the 500 never waits on it.
+Every failure with no upstream response stores the elapsed time as its
+`duration_ms`, on both paths.
 
 The record's `error` uses one vocabulary on every path: the problem `type` the
 caller received for a broker error (`upstream_connect_failed`,
@@ -222,6 +227,8 @@ caller received for a broker error (`upstream_connect_failed`,
 broker decision), `server_error: <ExceptionClass>` for an unmapped failure,
 `Upstream returned <status>` for an upstream 4xx/5xx, and, on the streaming
 path only, `client_disconnect`, `transfer_deadline_exceeded` and `cancelled`.
+On the async path the job result carries the failure, and an unmapped
+exception writes no execution record there.
 A failure with no upstream response counts on `broker.executions.total` but
 adds no `broker.execution.duration_ms` sample. Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential

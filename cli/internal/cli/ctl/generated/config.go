@@ -247,9 +247,10 @@ type BrokerConfig struct {
 	RuleCacheTtlS float64 `json:"rule_cache_ttl_s,omitempty,omitzero" yaml:"rule_cache_ttl_s,omitempty" mapstructure:"rule_cache_ttl_s,omitempty"`
 
 	// Budget (seconds) for writing one streaming execution's record and lifecycle
-	// event. The write runs after the response, off the request, so it never delays
-	// the client; past the budget it is abandoned, logged and counted on
-	// ``app.background_tasks`` (``kind=streaming_execution_persist``,
+	// event, and the FAILED record of a buffered call that ended in an unmapped error
+	// (a 500). The write runs off the request, so it never delays the client; past
+	// the budget it is abandoned, logged and counted on ``app.background_tasks``
+	// (``kind=streaming_execution_persist`` or ``unmapped_failure_persist``,
 	// ``outcome=timed_out``).
 	StreamingPersistTimeoutS float64 `json:"streaming_persist_timeout_s,omitempty,omitzero" yaml:"streaming_persist_timeout_s,omitempty" mapstructure:"streaming_persist_timeout_s,omitempty"`
 

@@ -210,7 +210,7 @@
         },
         "streaming_persist_timeout_s": {
           "default": 10.0,
-          "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist``, ``outcome=timed_out``).",
+          "description": "Budget (seconds) for writing one streaming execution's record and lifecycle event, and the FAILED record of a buffered call that ended in an unmapped error (a 500). The write runs off the request, so it never delays the client; past the budget it is abandoned, logged and counted on ``app.background_tasks`` (``kind=streaming_execution_persist`` or ``unmapped_failure_persist``, ``outcome=timed_out``).",
           "exclusiveMinimum": 0,
           "title": "Streaming Persist Timeout S",
           "type": "number"

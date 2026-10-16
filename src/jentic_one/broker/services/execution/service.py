@@ -10,6 +10,8 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -67,6 +69,30 @@ _THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
     401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
     403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class UnmappedFailure:
+    """A buffered execution that ended in an exception the broker does not map.
+
+    The caller receives a 500 for it; this carries what its FAILED record needs.
+    ``error`` is :func:`execution_error`'s ``server_error: <ExceptionClass>``.
+    """
+
+    execution_id: str
+    started_at: datetime
+    duration_ms: int
+    error: str
+
+
+#: Records an :class:`UnmappedFailure` without holding the error response: the
+#: sync router's recorder hands the write to the app's background-task registry
+#: and returns.
+UnmappedFailureRecorder = Callable[[UnmappedFailure], Awaitable[None]]
+
+
+def _elapsed_ms(t0: float) -> int:
+    return int((time.perf_counter() - t0) * 1000)
 
 
 def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
@@ -159,6 +185,7 @@ async def run_execution(
     security_config: SecurityConfig | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
+    on_unmapped_failure: UnmappedFailureRecorder | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -167,6 +194,13 @@ async def run_execution(
     it to problem+json. The ``broker`` (and thus the shared upstream client it
     wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
+
+    An exception the broker does not map (the caller gets a 500) is counted as
+    a FAILED execution and handed to ``on_unmapped_failure``, then re-raised
+    unchanged. The sync router's recorder writes the FAILED record off the
+    request, so the 500 never waits on the database; a recorder that raises is
+    logged and never masks the cause. Without a recorder no record is written:
+    the async worker reports the failure on the job result.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
@@ -223,6 +257,7 @@ async def run_execution(
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         error = execution_error(exc)
+        duration_ms = _elapsed_ms(t0)
         logger.error(
             "execution_failed", execution_id=execution_id, error=error, detail=exc.detail[:128]
         )
@@ -238,7 +273,7 @@ async def run_execution(
             started_at=started_at,
             status=ExecutionStatus.FAILED,
             http_status=None,
-            duration_ms=0,
+            duration_ms=duration_ms,
             error=error,
             actor_id=actor_id,
             actor_type=actor_type,
@@ -266,6 +301,19 @@ async def run_execution(
         # which rolls back on any exception. Commit the FAILED record + events
         # now so they survive the re-raise that maps the BrokerError to HTTP.
         await session.commit()  # arch-allow: manual-commit
+        raise
+    except Exception as exc:
+        await _settle_unmapped_failure(
+            exc,
+            operation_id=operation_id,
+            failure=UnmappedFailure(
+                execution_id=execution_id,
+                started_at=started_at,
+                duration_ms=_elapsed_ms(t0),
+                error=execution_error(exc),
+            ),
+            recorder=on_unmapped_failure,
+        )
         raise
 
     result = outcome.result
@@ -330,6 +378,80 @@ async def run_execution(
     )
 
     return outcome
+
+
+async def _settle_unmapped_failure(
+    exc: Exception,
+    *,
+    operation_id: str | None,
+    failure: UnmappedFailure,
+    recorder: UnmappedFailureRecorder | None,
+) -> None:
+    """Count and hand off an unmapped failure; never raises over ``exc``."""
+    logger.error(
+        "execution_failed",
+        execution_id=failure.execution_id,
+        error=failure.error,
+    )
+    # No upstream response: one FAILED execution, no duration sample — the
+    # same policy as a BrokerError and the streaming path.
+    _executions_total.add(1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED})
+    if recorder is None:
+        return
+    try:
+        await recorder(failure)
+    except Exception:
+        logger.error(
+            "unmapped_failure_record_failed",
+            execution_id=failure.execution_id,
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+
+
+async def persist_unmapped_failure(
+    session: Any,
+    failure: UnmappedFailure,
+    *,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+    security_config: SecurityConfig | None = None,
+) -> None:
+    """Write the FAILED record and lifecycle events for an :class:`UnmappedFailure`.
+
+    The metric is already counted by :func:`run_execution` when it hands the
+    failure off; this writes only the row (no upstream status) and the
+    ``execution.failed`` event, as a ``BrokerError`` does.
+    """
+    await _persist(
+        ctx_req,
+        session=session,
+        execution_id=failure.execution_id,
+        started_at=failure.started_at,
+        status=ExecutionStatus.FAILED,
+        http_status=None,
+        duration_ms=failure.duration_ms,
+        error=failure.error,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        origin=origin,
+    )
+    await _emit_execution_lifecycle(
+        session,
+        execution_id=failure.execution_id,
+        status=ExecutionStatus.FAILED,
+        error_msg=failure.error,
+        trace_id=ctx_req.trace_id,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        toolkit_id=ctx_req.toolkit_id,
+        credential_id=ctx_req.credential_id,
+        operation=ctx_req.operation,
+        security_config=security_config,
+        origin=origin,
+    )
 
 
 async def execute_upstream(

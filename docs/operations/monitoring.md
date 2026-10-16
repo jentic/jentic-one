@@ -138,7 +138,8 @@ A few instruments are worth alerting on by name:
 was not written because of a database failure, a timeout or a shutdown
 cut-off — the only signal that happened),
 `app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
-(work handed off after a response — today the streaming execution record —
+(work handed off after a response — the streaming execution record, and the
+record of a buffered call that ended in an unmapped error —
 that hit its budget or was cut off by a shutdown drain),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
