@@ -20,7 +20,6 @@ import contextlib
 import logging
 import socket
 import time
-import uuid
 from collections.abc import AsyncGenerator, MutableMapping
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +35,7 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.adapters.runners.http import HttpRunner
+from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.errors import install_broker_error_handlers
@@ -358,7 +358,7 @@ async def test_persist_failure_is_counted_and_never_escapes(
     integration_context: Context, served: _Served, execution_ids: list[str]
 ) -> None:
     """A real DB failure (duplicate execution id) is logged and counted only."""
-    execution_id = f"exec_{uuid.uuid4().hex}"
+    execution_id = mint_execution_id()
     execution_ids.append(execution_id)
     with (
         patch.object(execute_router, "mint_execution_id", return_value=execution_id),
