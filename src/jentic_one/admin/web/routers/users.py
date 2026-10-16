@@ -186,8 +186,10 @@ async def delete_user(
     deactivated so history and audit references stay resolvable — but the
     action is terminal: there is no re-enable arm. For the reversible kill
     switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
-    their outstanding invites. Idempotent: deleting an already-deleted user
-    answers 204 and changes nothing.
+    their outstanding invites: redeeming one answers 409
+    ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+    Idempotent: deleting an already-deleted user answers 204 and changes
+    nothing.
     """
     await user_svc.delete(user_id, identity=identity)
     return Response(status_code=204)
