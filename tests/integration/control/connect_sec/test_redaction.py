@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import socket
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -208,14 +208,17 @@ def _free_port() -> int:
 
 
 @pytest.fixture()
-def restore_logging() -> Iterator[None]:
+def restore_logging(request: pytest.FixtureRequest) -> None:
     root = logging.getLogger()
     handlers, level = root.handlers[:], root.level
     structlog_config = structlog.get_config()
-    yield
-    root.handlers[:] = handlers
-    root.setLevel(level)
-    structlog.configure(**structlog_config)
+
+    def _restore() -> None:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        structlog.configure(**structlog_config)
+
+    request.addfinalizer(_restore)
 
 
 class _Lines(logging.Handler):
