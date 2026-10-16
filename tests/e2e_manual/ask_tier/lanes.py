@@ -246,11 +246,11 @@ class CliLane:
             timeout=timeout,
         )
 
-    def popen(self, *args: str) -> subprocess.Popen[str]:
+    def popen(self, *args: str, stdin: int = subprocess.PIPE) -> subprocess.Popen[str]:
         return subprocess.Popen(
             [str(self.env.cli), *args],
             env=self._env(),
-            stdin=subprocess.PIPE,
+            stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

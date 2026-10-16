@@ -800,7 +800,7 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
     hid = body["held_execution_id"]
     t0 = time.time()
     polled = _http_mcp_payload(
-        w.http.call("get_execution_result", {"held_execution_id": hid, "wait": 5000})
+        w.http.call("get_execution_result", {"held_execution_id": hid, "timeout": 5})
     )
     waited = time.time() - t0
     expect(
@@ -808,13 +808,13 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
         and polled.get("state") == "pending"
         and polled.get("status") == "held"
         and 4 <= waited < 20,
-        "wait (ms) bounds a held poll",
+        "timeout (s) bounds a held poll",
         [polled, waited],
     )
     threading.Timer(3, lambda: w.owner.decide(hid, "approve")).start()
     t0 = time.time()
     done = _http_mcp_payload(
-        w.http.call("get_execution_result", {"held_execution_id": hid, "wait": 30000})
+        w.http.call("get_execution_result", {"held_execution_id": hid, "timeout": 30})
     )
     expect(done.get("status") == "completed", "wait returns once approved", done)
     o.note(f"HTTP MCP: approved mid-wait, returned after {time.time() - t0:.1f}s")
@@ -871,7 +871,7 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
         expect(not err and payload.get("status") == 202, "Go MCP held result", resp)
         ghid = payload["body"]["held_execution_id"]
         threading.Timer(3, lambda: w.admin.decide(ghid, "approve")).start()
-        resp = go.call("get_execution_result", {"held_execution_id": ghid, "wait": 30000})
+        resp = go.call("get_execution_result", {"held_execution_id": ghid, "timeout": 30})
         err, payload = mcp_payload(resp)
         expect(
             not err and payload.get("status") == "completed", "Go MCP wait returns the result", resp
@@ -920,7 +920,7 @@ def _only_pending(w: World, agent_id: str, timeout: float = 30) -> str:
 
 
 def s13_cli_held_exit(w: World, o: Outcome) -> None:
-    """`jentic execute` on a held call: exit 3, `--wait`, and `jentic holds wait`."""
+    """`jentic execute` on a held call: exit 3, `--wait`, and `jentic executions poll`."""
     withdraw_all_pending(w)
     target = f"GET:{w.env.upstream}/items"
     rc, out, err = cli_execute(w.cli, target, "--query", "limit=130")
@@ -928,34 +928,35 @@ def s13_cli_held_exit(w: World, o: Outcome) -> None:
     expect(rc == 3, "a held call exits 3 (TIMEOUT_PENDING)", {"rc": rc, "err": err})
     hid = out["body"]["held_execution_id"]
 
-    # `holds wait` with a short budget on a still-held call: exit 3.
-    p = w.cli.run("holds", "wait", hid, "--timeout", "3s", "--json")
-    expect(p.returncode == 3, "`holds wait` times out with exit 3", p.stdout + p.stderr)
+    # `executions poll` with a short budget on a still-held call: exit 3.
+    p = w.cli.run("executions", "poll", hid, "--timeout", "3s", "--json")
+    expect(p.returncode == 3, "`executions poll` times out with exit 3", p.stdout + p.stderr)
     # Approved mid-wait: exit 0 with the upstream response.
     threading.Timer(3, lambda: w.admin.decide(hid, "approve")).start()
-    p = w.cli.run("holds", "wait", hid, "--json")
+    p = w.cli.run("executions", "poll", hid, "--json")
     res = w.cli.parse(p.stdout)
     expect(
         p.returncode == 0 and res.get("status") == 200,
-        "`holds wait` prints the run's result",
+        "`executions poll` prints the run's result",
         p.stdout + p.stderr,
     )
 
-    # Denied: `holds wait` exits 2 with the denial.
+    # Denied: `executions poll` exits 2 with the denial.
     _, out, _ = cli_execute(w.cli, target, "--query", "limit=131")
     dhid = out["body"]["held_execution_id"]
     w.admin.decide(dhid, "deny", "cli deny")
-    p = w.cli.run("holds", "wait", dhid, "--json")
+    p = w.cli.run("executions", "poll", dhid, "--json")
     expect(
         p.returncode == 2 and "cli deny" in p.stdout + p.stderr,
-        "`holds wait` on a denied call exits 2 with the reason",
+        "`executions poll` on a denied call exits 2 with the reason",
         p.stdout + p.stderr,
     )
 
     # `execute --wait`: blocks on the decision, then prints the result.
-    proc = w.cli.popen("execute", target, "--query", "limit=132", "--wait", "--json")
-    if proc.stdin:
-        proc.stdin.close()
+    # stdin at /dev/null: execute reads no request body from it.
+    proc = w.cli.popen(
+        "execute", target, "--query", "limit=132", "--wait", "--json", stdin=subprocess.DEVNULL
+    )
     try:
         whid = _only_pending(w, w.cli.agent_id)
         w.admin.decide(whid, "approve")
