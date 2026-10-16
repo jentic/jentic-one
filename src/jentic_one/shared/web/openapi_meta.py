@@ -827,34 +827,62 @@ def authenticated_security() -> list[dict[str, list[str]]]:
 
 # Operations that are intentionally unauthenticated and must NOT inherit the
 # global BearerAuth requirement.
+#
+# Every entry carries its own ``#`` justification comment on the line(s)
+# directly above it — what it returns and what binds or limits it in place of a
+# platform token. ``tests/arch/test_route_auth_gate.py`` enforces this, fails
+# on entries that match no real route, and fails on any route that neither
+# authenticates nor is declared here.
 PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
     {
-        # Health probes (root + per-surface) are dependency-free liveness checks.
+        # Root liveness probe of the combined app: dependency-free, returns only
+        # a status string and the running version.
         "getHealth",
         # Backend-identity probe: unauthenticated, self-describing, no secrets.
         "getInstance",
+        # Admin-surface health probe (``/admin/health`` combined, ``/health``
+        # standalone): liveness plus the setup_required first-run flag the SPA
+        # and CLI read before any user exists. No tenant data.
         "health",
+        # Control-surface liveness probe: dependency-free, returns only the
+        # surface name and status.
         "controlHealth",
-        "adminHealth",
+        # Registry-surface liveness probe: dependency-free, returns only the
+        # surface name and status.
         "registryHealth",
+        # Auth-surface liveness probe: dependency-free, returns only the
+        # surface name and status.
         "authHealth",
-        # Unauthenticated auth/onboarding flows.
+        # Password login: the caller has no token yet; the credential is the
+        # request body, verified by AuthService.authenticate.
         "login",
+        # Invite redemption: the caller has no token yet; bound by the
+        # single-use invite token in the request body.
         "redeemInvite",
         # First-run setup: create the first admin. Self-closes (410) once any
         # user exists, so it is safe to leave unauthenticated.
         "createAdmin",
-        # Token + authorize + dynamic-registration endpoints: the caller has no
-        # platform token yet (you call these to *get* one / to bootstrap a client).
+        # OAuth token endpoint: the caller has no platform token yet (it calls
+        # this to *get* one); authenticated by the grant itself (code + PKCE,
+        # refresh token, client assertion). Rate limited.
         "tokenEndpoint",
+        # OAuth /authorize entry point: a browser starting the flow has no
+        # platform token yet; bound by the registered client and its redirect
+        # URI, and carries the flow forward in signed state. Rate limited.
         "authorizeEndpoint",
+        # Agent dynamic registration (RFC 7591): the agent has no platform
+        # token yet; it receives a pending registration that an admin must
+        # approve before any token is issued.
         "registerEndpoint",
         # Anonymous OAuth-client DCR front door: flagship MCP
         # clients register anonymously; the boundary is admin approval +
         # consent, not registration. Rate limited and config-gated instead.
         "registerOauthClientEndpoint",
-        # OAuth redirect callbacks (bound by a signed state param, not a session).
+        # Credential-connect OAuth redirect callback: the upstream provider
+        # redirects the browser here; bound by a signed state param, not a session.
         "oauthCallback",
+        # IdP login redirect callback on the /authorize flow: bound by the
+        # signed authorize state param, not a session. Rate limited.
         "authorizeOauthCallback",
         # Approval-pending status poll: anonymous by design (the polling
         # browser has no platform token yet), bound by the signed
@@ -862,8 +890,12 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # bare client_id. Returns only the pending/approved/denied tri-state;
         # rate limited in its own bucket instead.
         "approvalStatusEndpoint",
-        # OAuth consent screen (presented after IdP login, before issuing the code).
+        # OAuth consent screen (presented after IdP login, before issuing the
+        # code): bound by the consent handle from the signed flow state.
         "consentPage",
+        # OAuth consent form submission: same browser-mid-flow caller as the
+        # consent page; bound by the consent handle and rate limited. Mints the
+        # auth code only on approval.
         "consentSubmit",
         # Inline first-agent creation on the zero-agents consent page (P4):
         # same browser-mid-flow caller as the consent submit (no platform
@@ -881,17 +913,26 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # browser mid-authorization with no token yet. Config-gated
         # (auth.local_login.enabled → 404) and rate limited instead.
         "loginPage",
+        # Local-account login form submission: the credential is the request
+        # body; bound by the signed authorize state and a single-use CSRF
+        # nonce. Config-gated (404) and rate limited like the login page.
         "loginSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
-        # Unauthenticated discovery metadata.
+        # JWKS: the public signing keys clients need to verify tokens; public
+        # key material only, unauthenticated by spec.
         "jwks",
+        # RFC 8414 authorization-server metadata: endpoint URLs and supported
+        # algorithms only, unauthenticated by spec.
         "oauthAuthorizationServer",
-        # /mcp-scoped discovery documents: RFC 8414 for the
-        # path-scoped issuer, RFC 9728 protected-resource metadata, and its
-        # root-path alias. Unauthenticated by spec; config-gated (404) instead.
+        # /mcp-scoped RFC 8414 discovery document for the path-scoped issuer.
+        # Unauthenticated by spec; config-gated (404) instead.
         "mcpOauthAuthorizationServer",
+        # RFC 9728 protected-resource metadata for /mcp. Unauthenticated by
+        # spec; config-gated (404) instead.
         "mcpOauthProtectedResource",
+        # Root-path alias of the RFC 9728 /mcp protected-resource document.
+        # Unauthenticated by spec; config-gated (404) instead.
         "mcpOauthProtectedResourceRootAlias",
         # Public IdP-login capability hint (enabled flag + provider name only;
         # no secrets). The SPA reads this pre-login to render the SSO button.

@@ -4,7 +4,9 @@ Web modules (broker/web, control/web) must:
 - Never import sqlalchemy, asyncpg, or DatabaseSession directly.
 - Never import repository modules.
 - Never construct Context directly (must use dependency injection).
-- All non-health routers must reference identity/permission dependencies.
+
+Route authentication is enforced structurally (from the built apps' dependency
+trees, not source text) in ``test_route_auth_gate.py``.
 """
 
 from __future__ import annotations
@@ -183,87 +185,6 @@ def test_web_no_direct_context_construction() -> None:
             + "\n".join(violations)
             + "\n\nFix: Use 'ctx: Context = Depends(get_ctx)' in the route signature "
             "instead of constructing Context yourself."
-        )
-        pytest.fail(msg)
-
-
-def _check_router_has_auth(filepath: Path) -> list[str]:
-    """Check that non-health router files reference identity/permission dependencies.
-
-    Router files (in routers/ directory) must use get_current_identity or
-    equivalent auth dependency, unless they are health-check routers.
-    """
-    if "health" in filepath.name or "discovery" in filepath.name or "authorize" in filepath.name:
-        return []
-    # The anonymous OAuth-client DCR front door (RFC 7591):
-    # deliberately unauthenticated — flagship MCP clients register anonymously;
-    # the boundary is admin approval + consent. Gated by config + per-IP rate
-    # limiting instead of an identity dependency.
-    if filepath.name == "oauth_client_registration.py":
-        return []
-    # The local-account login form on the /authorize flow (#1276): the caller
-    # is a browser mid-authorization with no token yet — the credential IS the
-    # request body, verified by AuthService.authenticate. Gated by config
-    # (auth.local_login.enabled → 404), the signed authorize state, a
-    # single-use CSRF nonce, and the authorize rate limiter instead of an
-    # identity dependency.
-    if filepath.name == "local_login.py":
-        return []
-
-    source = filepath.read_text(encoding="utf-8")
-
-    auth_indicators = (
-        "get_current_identity",
-        "Identity",
-        "RequireOrgAdmin",
-        "RequireActiveIdentity",
-        "RequireIdentity",
-        "RequireBrokerIdentity",
-        "RequireExecuteAccess",
-        "RequireUsersRead",
-        "RequireUsersWrite",
-        "RequireAgentsRead",
-        "RequireAgentsWrite",
-        "required_permission",
-        "required_permissions",
-        "require_permission",
-    )
-
-    has_auth = any(indicator in source for indicator in auth_indicators)
-
-    has_routes = "@router." in source or "@app." in source
-
-    if has_routes and not has_auth:
-        return [
-            f"{filepath} — router defines routes but has no auth dependency "
-            f"(all non-health routes must use get_current_identity for permission scoping)"
-        ]
-    return []
-
-
-@pytest.mark.arch
-def test_web_routers_require_auth() -> None:
-    """All non-health router files must reference authentication dependencies.
-
-    Every route (except health/liveness) must enforce permission checks via
-    get_current_identity or equivalent. This ensures no unauthenticated access
-    to business endpoints.
-    """
-    violations: list[str] = []
-    for web_dir in _web_dirs():
-        routers_dir = web_dir / "routers"
-        if not routers_dir.exists():
-            continue
-        for py_file in python_files_in(routers_dir):
-            if py_file.name == "__init__.py":
-                continue
-            violations.extend(_check_router_has_auth(py_file))
-    if violations:
-        msg = (
-            "Routers missing authentication:\n"
-            + "\n".join(violations)
-            + "\n\nFix: Add 'identity: Identity = get_current_identity("
-            "required_permissions=[Permission.XXX])' to all route handlers."
         )
         pytest.fail(msg)
 

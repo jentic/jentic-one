@@ -31,6 +31,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 
 - [`test_module_boundaries.py`](test_module_boundaries.py) — surfaces never import each other; `shared/` imports no surface
 - [`test_web_layer.py`](test_web_layer.py) — web layer rules (`web → services → repos → core`)
+- [`test_route_auth_gate.py`](test_route_auth_gate.py) — every route on every built app shape (including `shared/web/` and container-installed routes) carries an auth dependency or a justified, non-stale public declaration (`PUBLIC_OPERATION_IDS`); classified from dependency trees, not source text
 - [`test_web_links_absolute.py`](test_web_links_absolute.py) — routers build links through `build_link`, never by hand
 - [`test_broker_runner_seam.py`](test_broker_runner_seam.py) — the broker execution path stays runner-shaped, not inlined
 - [`test_worker_no_inline_dispatch.py`](test_worker_no_inline_dispatch.py) — the async worker holds no inline upstream dispatch
