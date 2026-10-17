@@ -13,6 +13,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime
@@ -132,6 +133,7 @@ from jentic_one.shared.tracing import (
 )
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -168,7 +170,11 @@ async def _persist_streaming_outcome(
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler.
+    handler. Runs off the request on the app's background-task registry, under
+    ``broker.streaming_persist_timeout_s``. A DB failure, or the write being
+    abandoned (its timeout or the shutdown drain cancels it), is logged and
+    counted on ``broker.streaming_execution.persist_failures``; the
+    cancellation itself propagates.
     """
     status = (
         ExecutionStatus.FAILED
@@ -194,6 +200,17 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
             )
+    except asyncio.CancelledError:
+        _streaming_persist_failures.add(1)
+        # The registry logs the error-level line for this incident
+        # (background_task_timed_out / background_task_cancelled) with kind and
+        # budget; this one only ties the abandoned write to its execution.
+        logger.warning(
+            "streaming_execution_persist_abandoned",
+            execution_id=outcome.execution_id,
+            trace_id=ctx_req.trace_id,
+        )
+        raise
     except Exception:
         _streaming_persist_failures.add(1)
         logger.error(
@@ -753,9 +770,13 @@ async def _handle_streaming(
     response-size cap + transfer deadline + client-disconnect teardown owned by
     ``open_streaming_response``.
 
-    Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors). A DB failure is logged + counted but does
-    not affect the already-sent response.
+    Persistence is best-effort and never holds the response: once the
+    streaming body ends — completed, failed mid-body, or cut off by a client
+    disconnect — the completion callback schedules ``_persist_streaming_outcome``
+    exactly once on the app's background-task registry and returns, so an
+    aborted response's connection closes without waiting on the database. A DB
+    failure, timeout or shutdown cancellation is logged + counted and never
+    affects the already-sent response.
     """
     body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
@@ -792,8 +813,11 @@ async def _handle_streaming(
         has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
+    background_tasks = get_background_tasks(request.app)
+    persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        await _persist_streaming_outcome(
+        persist = _persist_streaming_outcome(
             outcome,
             ctx,
             ctx_req,
@@ -801,6 +825,18 @@ async def _handle_streaming(
             identity.sub,
             identity.actor_type.value,
             origin=identity.origin.value,
+        )
+        if background_tasks is None:
+            # An app built without a registry (a bare test app) writes inline,
+            # still bounded; every app from ``create_surface_app`` has one.
+            async with asyncio.timeout(persist_timeout_s):
+                await persist
+            return
+        background_tasks.spawn(
+            persist,
+            kind="streaming_execution_persist",
+            timeout_s=persist_timeout_s,
+            log_fields={"execution_id": outcome.execution_id, "trace_id": ctx_req.trace_id},
         )
 
     broker = _resolve_broker(request, runner)

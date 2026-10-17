@@ -192,11 +192,22 @@ Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
 name, never the secret). On the buffered and async paths the write happens
-before the response; on the streaming fast path it is a post-response
-background task and **best-effort** — a database failure there is logged and
-counted (`broker.streaming_execution.persist_failures`,
-[monitoring.md](../operations/monitoring.md)) but does not fail the call, so
-a completed call can, rarely, lack its record. Lifecycle events (`EXECUTION_COMPLETED` /
+before the response. On the streaming fast path every outcome — completed,
+failed partway through the body, or cut off by a client disconnect — writes
+exactly one record, and the write is **best-effort** and never holds the
+response: it is handed to the app's background-task registry
+([`shared/web/background_tasks.py`](../../src/jentic_one/shared/web/background_tasks.py))
+and bounded by `broker.streaming_persist_timeout_s`; on shutdown the registry
+drains for up to `services.background_task_drain_timeout_s` before the
+databases close. A database failure, timeout, or shutdown cancellation is
+logged and counted (`broker.streaming_execution.persist_failures`,
+`app.background_tasks`, [monitoring.md](../operations/monitoring.md)) but does
+not fail the call, so a call can, rarely, lack its record. When the upstream
+fails partway through a streamed body, the status line has already been sent:
+the broker logs one `upstream_network_failure` (or `streaming_response_aborted`
+for a size-cap or transfer-deadline cut-off) and closes the connection without
+the final chunk, so an HTTP/1.1 chunked or HTTP/2 client sees a truncated body
+(an HTTP/1.0 client reads a close-delimited body and cannot tell). Lifecycle events (`EXECUTION_COMPLETED` /
 `EXECUTION_FAILED`), permission denials (`PBAC_DENIED`), and credential
 incidents each emit typed events into the monitor.
 

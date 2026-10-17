@@ -37,6 +37,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     BrokerError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     switch_toolkit_directive,
@@ -275,6 +276,33 @@ class HttpRunner(UpstreamRunner):
                 )
             yield chunk
 
+    async def _stream_body(self, resp: httpx.Response) -> AsyncIterator[bytes]:
+        """The streaming passthrough's body: :meth:`_cap_iter` with transport errors mapped.
+
+        A failure here happens after the response has started (the upstream
+        dropped or stalled partway through the body), so it is raised as
+        :class:`UpstreamBodyInterruptedError` for the streaming edge to log,
+        abort and record — never as a raw ``httpx`` exception, and never as the
+        open-phase error a failure before the headers maps to. Its
+        ``transport_error`` names the failure class; the message is never
+        surfaced (see :func:`_transport_error_detail`).
+        """
+        try:
+            async for chunk in self._cap_iter(resp.aiter_raw(), resp.status_code):
+                yield chunk
+        except httpx.TimeoutException as exc:
+            raise UpstreamBodyInterruptedError(
+                detail="The upstream stopped sending the response body within the deadline.",
+                type="upstream_timeout",
+                transport_error=type(exc).__name__,
+            ) from None
+        except httpx.HTTPError as exc:
+            raise UpstreamBodyInterruptedError(
+                detail=_transport_error_detail(exc),
+                type="upstream_transport_error",
+                transport_error=type(exc).__name__,
+            ) from None
+
     @contextlib.asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
         """Open the upstream response and stream it without buffering.
@@ -285,7 +313,9 @@ class HttpRunner(UpstreamRunner):
         ``CancelledError`` propagating out of the consuming generator — the
         response is ``aclose()``d and the pool slot released (no zombie drain).
         The yielded ``aiter`` enforces the same mid-stream size cap as
-        :meth:`run`. The per-host bulkhead is held for the full stream lifetime.
+        :meth:`run` and raises a mid-body transport failure as a domain error
+        (see :meth:`_stream_body`). The per-host bulkhead is held for the full
+        stream lifetime.
         """
         host = httpx.URL(request.url).host
         async with self._bulkhead.guard(host):
@@ -301,7 +331,7 @@ class HttpRunner(UpstreamRunner):
                         status_code=resp.status_code,
                         headers=dict(resp.headers),
                         content_type=resp.headers.get("content-type"),
-                        aiter=self._cap_iter(resp.aiter_raw(), resp.status_code),
+                        aiter=self._stream_body(resp),
                     )
             except httpx.TimeoutException as exc:
                 raise UpstreamTimeoutError(

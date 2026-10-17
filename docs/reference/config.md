@@ -96,6 +96,7 @@ Service-level settings (immutable after boot).
 | `services.request_timeout_s` | number | `30.0` | `JENTIC__SERVICES__REQUEST_TIMEOUT_S` |  |
 | `services.retry_max` | integer | `3` | `JENTIC__SERVICES__RETRY_MAX` |  |
 | `services.retry_backoff_s` | number | `1.0` | `JENTIC__SERVICES__RETRY_BACKOFF_S` |  |
+| `services.background_task_drain_timeout_s` | number (>= 0) | `10.0` | `JENTIC__SERVICES__BACKGROUND_TASK_DRAIN_TIMEOUT_S` | On shutdown, how long (seconds) the app waits for work requests handed off after their response (e.g. streaming execution records) before cancelling what is still running. Runs before the databases close; each cancelled task is logged and counted on `app.background_tasks` (`outcome=cancelled`). |
 
 ## `worker`
 
@@ -226,6 +227,7 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
+| `broker.streaming_persist_timeout_s` | number (> 0) | `10.0` | `JENTIC__BROKER__STREAMING_PERSIST_TIMEOUT_S` | Budget (seconds) for writing one streaming execution's record and lifecycle event. The write runs after the response, off the request, so it never delays the client; past the budget it is abandoned, logged and counted on `app.background_tasks` (`kind=streaming_execution_persist`, `outcome=timed_out`). |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

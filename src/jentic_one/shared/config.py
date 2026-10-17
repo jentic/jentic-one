@@ -314,6 +314,17 @@ class ServicesConfig(BaseModel):
     request_timeout_s: float = 30.0
     retry_max: int = 3
     retry_backoff_s: float = 1.0
+    background_task_drain_timeout_s: float = Field(
+        default=10.0,
+        ge=0,
+        description=(
+            "On shutdown, how long (seconds) the app waits for work requests "
+            "handed off after their response (e.g. streaming execution records) "
+            "before cancelling what is still running. Runs before the databases "
+            "close; each cancelled task is logged and counted on "
+            "``app.background_tasks`` (``outcome=cancelled``)."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1699,6 +1710,17 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    streaming_persist_timeout_s: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Budget (seconds) for writing one streaming execution's record and "
+            "lifecycle event. The write runs after the response, off the request, "
+            "so it never delays the client; past the budget it is abandoned, "
+            "logged and counted on ``app.background_tasks`` "
+            "(``kind=streaming_execution_persist``, ``outcome=timed_out``)."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

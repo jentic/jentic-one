@@ -355,9 +355,9 @@ async def persist_streaming_execution(
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called from the background task after the streaming response body completes
-    (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    Called once after the streaming response body ends, on every outcome
+    (completed, failed mid-body, client disconnect). Shares metrics
+    instrumentation with the buffered path for observability parity.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
