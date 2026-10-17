@@ -10020,8 +10020,8 @@ type ClientInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -13152,8 +13152,8 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
@@ -26384,8 +26384,8 @@ type ClientWithResponsesInterface interface {
 	// granted scopes, the consenting user, its `status`, created and last-used
 	// timestamps, and `can_revoke` for the caller. Filter by `status`
 	// (`active` or `revoked`); results are cursor-paginated. Allowed for the
-	// agent's owner or an admin. An agent the caller cannot see answers 404,
-	// the same as one that does not exist. Revoke a grant with
+	// agent's owner or an admin; any other caller gets 404, the same as for an
+	// agent that does not exist. Revoke a grant with
 	// `POST /oauth-grants/{grant_id}:revoke`.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -44344,8 +44344,8 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 // granted scopes, the consenting user, its `status`, created and last-used
 // timestamps, and `can_revoke` for the caller. Filter by `status`
 // (`active` or `revoked`); results are cursor-paginated. Allowed for the
-// agent's owner or an admin. An agent the caller cannot see answers 404,
-// the same as one that does not exist. Revoke a grant with
+// agent's owner or an admin; any other caller gets 404, the same as for an
+// agent that does not exist. Revoke a grant with
 // `POST /oauth-grants/{grant_id}:revoke`.
 //
 // Returns a wrapper object for the known response body format(s).

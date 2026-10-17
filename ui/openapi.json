@@ -24333,7 +24333,7 @@
     "/agents/{agent_id}/oauth-grants": {
       "description": "`GET`: List an agent's connected OAuth clients.",
       "get": {
-        "description": "List the OAuth clients a user has consented to act as this agent.\n\nEach grant gives the client's display name and redirect-URI origin, the\ngranted scopes, the consenting user, its `status`, created and last-used\ntimestamps, and `can_revoke` for the caller. Filter by `status`\n(`active` or `revoked`); results are cursor-paginated. Allowed for the\nagent's owner or an admin. An agent the caller cannot see answers 404,\nthe same as one that does not exist. Revoke a grant with\n`POST /oauth-grants/{grant_id}:revoke`.",
+        "description": "List the OAuth clients a user has consented to act as this agent.\n\nEach grant gives the client's display name and redirect-URI origin, the\ngranted scopes, the consenting user, its `status`, created and last-used\ntimestamps, and `can_revoke` for the caller. Filter by `status`\n(`active` or `revoked`); results are cursor-paginated. Allowed for the\nagent's owner or an admin; any other caller gets 404, the same as for an\nagent that does not exist. Revoke a grant with\n`POST /oauth-grants/{grant_id}:revoke`.",
         "operationId": "listAgentOauthGrants",
         "parameters": [
           {

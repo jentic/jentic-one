@@ -84,8 +84,8 @@ async def list_agent_oauth_grants(
     granted scopes, the consenting user, its `status`, created and last-used
     timestamps, and `can_revoke` for the caller. Filter by `status`
     (`active` or `revoked`); results are cursor-paginated. Allowed for the
-    agent's owner or an admin. An agent the caller cannot see answers 404,
-    the same as one that does not exist. Revoke a grant with
+    agent's owner or an admin; any other caller gets 404, the same as for an
+    agent that does not exist. Revoke a grant with
     `POST /oauth-grants/{grant_id}:revoke`.
     """
     page = await grant_svc.list_grants_for_agent(
