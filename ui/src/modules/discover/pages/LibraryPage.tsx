@@ -44,6 +44,7 @@ import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { CatalogLedger } from '@/modules/discover/components/CatalogLedger';
 import { useDragToAdd } from '@/modules/discover/lib/useDragToAdd';
 import { workspaceHrefFor, entityDisplay } from '@/modules/discover/lib/catalogRelations';
+import { spansSources } from '@/modules/discover/lib/catalogSpec';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
 import { DiscoverStatusRow } from '@/modules/discover/components/DiscoverStatusRow';
 import {
@@ -123,17 +124,22 @@ export default function LibraryPage() {
 	const jumpScope = `${debouncedQuery}\u0000${filter}`;
 	const activeJump = jumpStart?.scope === jumpScope ? jumpStart : null;
 	// The browse feed is in `entry_id` order, so a jump lands inside one
-	// source: the one the head feed is browsing when the letter is picked.
-	const headSource = catalog.entities[catalog.entities.length - 1]?.sourceSlug ?? 'public';
+	// source: the one the head feed is browsing when the letter is picked
+	// (the ledger hides the rail once the loaded rows span sources). Nothing
+	// loaded yet: no source to jump in, so no jump.
+	const headSource = catalog.entities[catalog.entities.length - 1]?.sourceSlug ?? null;
+	const jumpSource = activeJump?.source ?? null;
 	const jumpFeed = useCatalogJump({
-		startKey: debouncedQuery.length === 0 ? (activeJump?.key ?? null) : null,
-		sourceSlug: activeJump?.source ?? headSource,
+		startKey: debouncedQuery.length === 0 && jumpSource ? (activeJump?.key ?? null) : null,
+		sourceSlug: jumpSource ?? '',
 		filter,
 		pollWhilePending: hasPendingImports,
 	});
 	const handleJump = useCallback(
-		(letter: RailLetter) =>
-			setJumpStart({ key: jumpStartKey(letter), scope: jumpScope, source: headSource }),
+		(letter: RailLetter) => {
+			if (headSource == null) return;
+			setJumpStart({ key: jumpStartKey(letter), scope: jumpScope, source: headSource });
+		},
 		[jumpScope, headSource],
 	);
 	const { startKey: jumpRangeStart, loadEarlierFrom } = jumpFeed;
@@ -217,6 +223,7 @@ export default function LibraryPage() {
 		],
 		[catalog.entities, jumpFeed.entities, workspaceEntities, browsingAll],
 	);
+	const mixedSources = useMemo(() => spansSources(loadedEntities), [loadedEntities]);
 
 	// The count line's vendor figure: distinct vendors among the rows loaded so
 	// far (the catalog response carries no vendor total). Browsing only — a
@@ -482,6 +489,7 @@ export default function LibraryPage() {
 				title={sheetDisplay?.title}
 				icon={sheetDisplay?.icon}
 				workspaceHref={sheetWorkspaceHref}
+				showSource={mixedSources}
 			/>
 
 			<ImportSpecDialog open={importOwnOpen} onClose={() => setImportOwnOpen(false)} />

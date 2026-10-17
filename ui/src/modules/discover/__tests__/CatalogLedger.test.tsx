@@ -573,6 +573,30 @@ describe('CatalogLedger', () => {
 		await checkA11y(container);
 	});
 
+	it('badges rows with their source and hides the rail only when sources are mixed', () => {
+		const { unmount } = renderWithProviders(<Harness />);
+		// One source (the usual install): no badges, the rail stays.
+		expect(screen.queryAllByTestId('catalog-row-source')).toEqual([]);
+		expect(screen.getByRole('toolbar', { name: 'Jump to letter' })).toBeInTheDocument();
+		unmount();
+
+		renderWithProviders(
+			<Harness
+				entities={[
+					...ENTITIES,
+					api('acme.com', { entryId: 'internal/acme.com', sourceSlug: 'internal' }),
+				]}
+			/>,
+		);
+		const badge = within(rowFor('acme.com')).getByTestId('catalog-row-source');
+		expect(badge).toHaveTextContent('internal');
+		expect(within(rowFor('zoom.us')).getByTestId('catalog-row-source')).toHaveTextContent(
+			'public',
+		);
+		// The feed runs source by source: a letter has no single place to land.
+		expect(screen.queryByRole('toolbar', { name: 'Jump to letter' })).toBeNull();
+	});
+
 	it('keeps the sr-only announcer inside the list, so the document never scrolls', () => {
 		// A shell-like frame: viewport-tall, clipped, with an unpositioned inner
 		// scroller holding a long catalog. An absolutely positioned descendant

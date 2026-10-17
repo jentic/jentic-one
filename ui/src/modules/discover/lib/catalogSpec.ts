@@ -22,6 +22,21 @@ export function isGitHubUrl(url: string): boolean {
 	}
 }
 
+/**
+ * Whether the loaded entries come from more than one catalog source. Source
+ * badges and tags show only then (with one source every row would carry the
+ * same word), and the A–Z rail hides: the browse feed is in `entry_id` order,
+ * source by source, so a letter has no single place to jump to.
+ */
+export function spansSources(entities: Iterable<{ sourceSlug: string }>): boolean {
+	let first: string | undefined;
+	for (const e of entities) {
+		if (first === undefined) first = e.sourceSlug;
+		else if (e.sourceSlug !== first) return true;
+	}
+	return false;
+}
+
 /** "+1 other source" / "+3 other sources" — the entries collapsed into this one. */
 export function alternatesLabel(alternates: number): string {
 	return `+${alternates.toLocaleString()} other source${alternates === 1 ? '' : 's'}`;

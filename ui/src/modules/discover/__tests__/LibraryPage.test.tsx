@@ -1099,4 +1099,83 @@ describe('LibraryPage', () => {
 		await waitFor(() => expect(landedLetter()).toBe('A'));
 		expect(document.activeElement).toBe(document.getElementById('catalog-letter-A'));
 	});
+
+	it('reports the oldest source sync age in the status row', async () => {
+		let age: number | null = 7200;
+		worker.use(
+			http.get('/catalog', ({ request }) => {
+				if (new URL(request.url).searchParams.get('registered_only') === 'true')
+					return undefined;
+				return HttpResponse.json({
+					data: [],
+					catalog_total: 0,
+					registered_count: 0,
+					outdated_count: 0,
+					oldest_source_sync_age_seconds: age,
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		const { unmount } = renderWithProviders(<LibraryPage />);
+		expect(await screen.findByTestId('discover-status-age')).toHaveTextContent(
+			'updated 2h ago',
+		);
+		unmount();
+
+		age = null;
+		renderWithProviders(<LibraryPage />);
+		expect(await screen.findByTestId('discover-status-age')).toHaveTextContent(
+			'never refreshed',
+		);
+	});
+
+	it("builds a rail jump cursor inside the head feed's own source (not public)", async () => {
+		// An install whose only source is `internal`: the jump cursor is
+		// `internal/<letter>`, never a hard-coded `public/`.
+		const row = (id: string) => ({
+			entry_id: `internal/${id}`,
+			source_slug: 'internal',
+			catalog_api_id: id,
+			vendor: id,
+			has_spec: true,
+			registered: false,
+			_links: {
+				self: `/catalog/internal/${id}`,
+				operations: `/catalog/internal/${id}/operations`,
+				import: `/catalog/internal/${id}:import`,
+			},
+		});
+		const cursors: (string | null)[] = [];
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const url = new URL(request.url);
+				const empty = { catalog_total: 3, registered_count: 0, outdated_count: 0 };
+				if (url.searchParams.get('registered_only') === 'true')
+					return HttpResponse.json({ data: [], ...empty, has_more: false });
+				const cursor = url.searchParams.get('cursor');
+				const after = cursor ? (JSON.parse(atob(cursor)) as { id: string }).id : null;
+				cursors.push(after);
+				if (after === 'internal/z')
+					return HttpResponse.json({ data: [row('zoom.us')], ...empty, has_more: false });
+				if (after == null)
+					return HttpResponse.json({
+						data: [row('abc.com'), row('acme.com')],
+						...empty,
+						has_more: true,
+						next_cursor: btoa(JSON.stringify({ id: 'internal/acme.com' })),
+					});
+				await delay('infinite');
+				return HttpResponse.json({ data: [], ...empty, has_more: false });
+			}),
+		);
+
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('abc.com');
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
+		fireEvent.click(within(rail).getByRole('button', { name: /^Z — / }));
+		expect(await screen.findByRole('button', { name: 'View zoom.us' })).toBeInTheDocument();
+		expect(cursors).toContain('internal/z');
+		expect(cursors.some((c) => c?.startsWith('public/'))).toBe(false);
+	});
 });

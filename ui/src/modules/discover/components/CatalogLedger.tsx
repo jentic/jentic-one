@@ -54,7 +54,7 @@ import {
 	readyCredentialsForEntry,
 	workspaceHrefFor,
 } from '@/modules/discover/lib/catalogRelations';
-import { versionLabel } from '@/modules/discover/lib/catalogSpec';
+import { spansSources, versionLabel } from '@/modules/discover/lib/catalogSpec';
 import {
 	buildCatalogLedger,
 	letterHeading,
@@ -369,16 +369,11 @@ export function CatalogLedger({
 		}
 		return map;
 	}, [entities, jump?.entities, workspaceEntities, factsFor]);
-	// Source badges only when the loaded rows mix sources: with one source
-	// (the usual install) every row would carry the same word.
-	const mixedSources = useMemo(() => {
-		const sources = new Set<string>();
-		for (const e of [...(workspaceEntities ?? []), ...entities, ...(jump?.entities ?? [])]) {
-			sources.add(e.sourceSlug);
-			if (sources.size > 1) return true;
-		}
-		return false;
-	}, [entities, jump?.entities, workspaceEntities]);
+	// Source badges only when the loaded rows mix sources (see `spansSources`).
+	const mixedSources = useMemo(
+		() => spansSources([...(workspaceEntities ?? []), ...entities, ...(jump?.entities ?? [])]),
+		[entities, jump?.entities, workspaceEntities],
+	);
 
 	// One stable handler for every row, so the memoised rows don't all
 	// re-render whenever the ledger does (a new page, a jump, a selection).
@@ -823,7 +818,9 @@ export function CatalogLedger({
 		</div>
 	);
 
-	if (model.mode === 'flat') return table;
+	// No rail across mixed sources: the feed runs source by source, so a
+	// letter has no single place to land (see `spansSources`).
+	if (model.mode === 'flat' || mixedSources) return table;
 
 	return (
 		<div className="grid grid-cols-[24px_minmax(0,1fr)] gap-2.5">
