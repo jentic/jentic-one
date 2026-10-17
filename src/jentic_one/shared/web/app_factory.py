@@ -36,6 +36,7 @@ from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
 from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.provider_refresh import ProviderConfigRefresher
 from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -573,6 +574,41 @@ async def _enter_invalidation_bus(stack: contextlib.AsyncExitStack, bus: Invalid
     stack.push_async_callback(bus.stop)
 
 
+def _subscribe_provider_refresh(
+    ctx: Context, bus: InvalidationBus
+) -> ProviderConfigRefresher | None:
+    """Keep ``ctx.providers`` in step with provider-config writes from any process.
+
+    Only a process that resolves providers (control, the broker) and can read
+    the admin DB subscribes; any other one opens no ``LISTEN`` for it.
+    """
+    if not (ctx.resolves_providers and ctx.is_db_allowed("admin")):
+        return None
+    refresher = ProviderConfigRefresher(ctx.refresh_providers)
+    refresher.subscribe(bus)
+    return refresher
+
+
+async def _enter_provider_refresh(
+    stack: contextlib.AsyncExitStack, refresher: ProviderConfigRefresher | None
+) -> None:
+    """Start ``refresher`` (after the bus) and schedule its stop on ``stack``.
+
+    The lifespan also stops it explicitly before ``ctx.shutdown()`` so no
+    rebuild runs against closing pools; the stack entry covers a startup that
+    fails before the lifespan's ``try`` is reached. ``stop`` is idempotent.
+    """
+    if refresher is None:
+        return
+    await refresher.start()
+    stack.push_async_callback(refresher.stop)
+
+
+async def _stop_provider_refresh(refresher: ProviderConfigRefresher | None) -> None:
+    if refresher is not None:
+        await refresher.stop()
+
+
 @asynccontextmanager
 async def _null_lifespan() -> AsyncGenerator[None]:
     """No-op surface lifespan used when a surface provides no extra_lifespan."""
@@ -648,6 +684,7 @@ def create_surface_app(
     if "broker" not in enabled_apps:
         _require_admin_db(ctx, f"control-plane surface {sorted(enabled_apps)}")
     invalidation_bus = _resolve_invalidation_bus(ctx, container)
+    provider_refresher = _subscribe_provider_refresh(ctx, invalidation_bus)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -662,6 +699,7 @@ def create_surface_app(
             contextlib.AsyncExitStack() as lifespan_stack,
         ):
             await _enter_invalidation_bus(lifespan_stack, invalidation_bus)
+            await _enter_provider_refresh(lifespan_stack, provider_refresher)
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             # Worker starts *inside* the surface lifespan so it can share any
@@ -698,6 +736,7 @@ def create_surface_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _stop_provider_refresh(provider_refresher)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
@@ -953,6 +992,7 @@ def create_combined_app(
     """
     container = container or AppContainer.default(ctx)
     invalidation_bus = _resolve_invalidation_bus(ctx, container)
+    provider_refresher = _subscribe_provider_refresh(ctx, invalidation_bus)
     structlog.get_logger(__name__).info("creating combined app", apps=apps)
     _require_admin_db(ctx, f"combined control-plane app {apps}")
 
@@ -965,6 +1005,7 @@ def create_combined_app(
         # ctx.startup(), exited in reverse order before ctx.shutdown().
         async with contextlib.AsyncExitStack() as lifespan_stack:
             await _enter_invalidation_bus(lifespan_stack, invalidation_bus)
+            await _enter_provider_refresh(lifespan_stack, provider_refresher)
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             worker_task = _start_worker(ctx, set(apps))
@@ -983,6 +1024,7 @@ def create_combined_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _stop_provider_refresh(provider_refresher)
                 await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 

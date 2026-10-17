@@ -22,14 +22,20 @@ from jentic_one.shared.invalidation import (
     parse_trigger_payload,
     topic_for,
 )
+from jentic_one.shared.provider_refresh import PROVIDER_CONFIG_TOPIC
 from jentic_one.testing import BaseInvalidationBusContract
 
 _ADMIN_MIGRATION = importlib.import_module(
     "jentic_one.migrations.admin.versions.e046c1696c4b_add_cache_invalidation_triggers"
 )
+_PROVIDER_CONFIG_MIGRATION = importlib.import_module(
+    "jentic_one.migrations.admin.versions.b7d41c2e9f60_add_provider_config_invalidation_trigger"
+)
 _CONTROL_MIGRATION = importlib.import_module(
     "jentic_one.migrations.control.versions.5a78aa331015_add_cache_invalidation_triggers"
 )
+#: Every admin-tree migration that attaches the admin trigger function.
+_ADMIN_TRIGGER_MIGRATIONS = (_ADMIN_MIGRATION, _PROVIDER_CONFIG_MIGRATION)
 
 
 def test_trigger_payload_round_trips() -> None:
@@ -68,12 +74,19 @@ def test_migrations_publish_on_the_bus_channel() -> None:
         assert f"pg_notify('{PG_INVALIDATION_CHANNEL}'" in migration.FUNCTION_SQL
 
 
-def test_broker_subscribes_to_exactly_the_triggered_tables() -> None:
-    """A subscribed topic with no trigger would silently fall back to TTLs."""
-    triggered = {topic_for("admin", t) for t in _ADMIN_MIGRATION.TRIGGERED_TABLES} | {
-        topic_for("control", t) for t in _CONTROL_MIGRATION.TRIGGERED_TABLES
-    }
-    assert triggered == BROKER_TOPICS
+def test_subscribers_cover_exactly_the_triggered_tables() -> None:
+    """A subscribed topic with no trigger would never fire; a trigger nobody hears is waste."""
+    triggered = {
+        topic_for("admin", t) for m in _ADMIN_TRIGGER_MIGRATIONS for t in m.TRIGGERED_TABLES
+    } | {topic_for("control", t) for t in _CONTROL_MIGRATION.TRIGGERED_TABLES}
+    assert triggered == BROKER_TOPICS | {PROVIDER_CONFIG_TOPIC}
+
+
+def test_provider_config_trigger_reuses_the_admin_function_and_reports_no_config() -> None:
+    """The payload names the provider only; config_json (ciphertext) is never a key."""
+    assert _PROVIDER_CONFIG_MIGRATION.down_revision == _ADMIN_MIGRATION.revision
+    assert _PROVIDER_CONFIG_MIGRATION.FUNCTION == _ADMIN_MIGRATION.FUNCTION
+    assert _PROVIDER_CONFIG_MIGRATION.TRIGGERED_TABLES == {"provider_configs": ("name",)}
 
 
 async def test_noop_bus_conforms_and_never_delivers() -> None:
