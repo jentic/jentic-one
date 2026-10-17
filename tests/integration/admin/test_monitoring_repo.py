@@ -98,8 +98,12 @@ async def _seed(
 async def test_daily_buckets_groups_by_day(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:
-    now = datetime.now(UTC)
-    # Two executions today, one yesterday — must collapse into two day buckets.
+    # Anchored at a fixed mid-day timestamp, not the wall clock: seeding relative
+    # to ``now`` puts ``now - 30min`` on the previous day between 00:00 and
+    # 00:30 UTC (#1808). ``daily_buckets`` only takes a lower-bound cutoff, so
+    # nothing here depends on the current time.
+    now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
+    # Two executions on the anchor day, one the day before — two day buckets.
     await _seed(admin_db, now, "completed")
     await _seed(admin_db, now - timedelta(minutes=30), "failed")
     await _seed(admin_db, now - timedelta(days=1), "completed")
@@ -114,10 +118,11 @@ async def test_daily_buckets_groups_by_day(
         assert len(bucket.date) == 10
         assert bucket.date[4] == "-" and bucket.date[7] == "-"
     by_date = {b.date: b for b in buckets}
-    today = by_date[now.strftime("%Y-%m-%d")]
-    assert today.total == 2
-    assert today.success == 1
-    assert today.failed == 1
+    anchor_day = by_date["2026-01-15"]
+    assert anchor_day.total == 2
+    assert anchor_day.success == 1
+    assert anchor_day.failed == 1
+    assert by_date["2026-01-14"].total == 1
 
 
 async def test_daily_buckets_respects_cutoff(
