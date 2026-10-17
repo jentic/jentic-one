@@ -15,7 +15,6 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx2 import Response
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -27,30 +26,11 @@ from jentic_one.admin.repos import (
     OAuthClientRepository,
 )
 from jentic_one.shared.context import Context
+from tests.web.auth.conftest import _build_app, _make_agent_token, assert_same_response
 
 pytestmark = pytest.mark.integration
 
 _CLIENT_ID = "oc_web_grant_visibility"
-
-#: Headers that legitimately differ per request or with the echoed id length.
-_PER_REQUEST_HEADERS = frozenset({"date", "content-length", "x-request-id", "traceparent"})
-
-
-def assert_same_response(
-    foreign: Response, foreign_id: str, unknown: Response, unknown_id: str
-) -> None:
-    """Assert two responses match once the requested ids are normalised.
-
-    Compares the status, every header except the per-request ones, and the
-    raw body with each response's own requested id replaced.
-    """
-    assert foreign.status_code == unknown.status_code
-
-    def _headers(resp: Response) -> dict[str, str]:
-        return {k: v for k, v in resp.headers.items() if k.lower() not in _PER_REQUEST_HEADERS}
-
-    assert _headers(foreign) == _headers(unknown)
-    assert foreign.text.replace(foreign_id, "<id>") == unknown.text.replace(unknown_id, "<id>")
 
 
 @pytest.fixture()
@@ -130,6 +110,53 @@ def test_agent_outside_caller_visibility_is_404_like_missing(
         resp = owner_client.get(f"/agents/{agent_id}/oauth-grants")
         assert resp.status_code == 404, resp.text
         assert resp.json()["type"] == "actor_not_found"
+
+
+@pytest.fixture()
+async def sibling_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
+    """A second agent of the owner user, a sibling of ``test_agent_id``."""
+    async with web_context.admin_db.transaction() as session:
+        agent = await AgentRepository.create(
+            session,
+            name="sibling-agent",
+            owner_id=owner_user_id,
+            registered_by=owner_user_id,
+            created_by="usr_test",
+        )
+    yield agent.id
+
+    async with web_context.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.id == agent.id))
+        await session.commit()
+
+
+@pytest.mark.parametrize("caller", ["sibling", "self"])
+def test_agent_caller_who_does_not_own_the_agent_matches_unknown_id(
+    web_context: Context,
+    owner_client: TestClient,
+    owner_user_id: str,
+    test_agent_id: str,
+    sibling_agent_id: str,
+    caller: str,
+) -> None:
+    """A caller who can see the agent without owning it gets the unknown-agent 404.
+
+    That covers a sibling agent reading through owner delegation and the
+    agent itself. The owner still lists the agent's grants.
+    """
+    caller_id = sibling_agent_id if caller == "sibling" else test_agent_id
+    token = _make_agent_token(web_context, caller_id, owner_user_id, ["owner:agents:read"])
+    unknown_id = "agnt_does_not_exist"
+    with TestClient(
+        _build_app(web_context), headers={"Authorization": f"Bearer {token}"}
+    ) as agent_client:
+        foreign = agent_client.get(f"/agents/{test_agent_id}/oauth-grants")
+        unknown = agent_client.get(f"/agents/{unknown_id}/oauth-grants")
+    assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["type"] == "actor_not_found"
+    assert_same_response(foreign, test_agent_id, unknown, unknown_id)
+
+    assert owner_client.get(f"/agents/{test_agent_id}/oauth-grants").status_code == 200
 
 
 def test_unauthenticated_is_401(unauthed_client: TestClient, test_agent_id: str) -> None:
