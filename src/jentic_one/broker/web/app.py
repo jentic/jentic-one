@@ -110,7 +110,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
             SharedStateIdempotencyStore(
                 state,
                 pending_ttl_s=idem.pending_ttl_s,
-                done_ttl_s=idem.ttl_s,
+                done_ttl_s=idem.replay_ttl_s(resilience.backend.backend),
                 max_response_bytes=idem.max_response_bytes,
             )
             if idem.enabled

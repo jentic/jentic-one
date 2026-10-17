@@ -70,18 +70,18 @@ func TestResolveExecuteBody_BlockingSocketStdinDoesNotHang(t *testing.T) {
 	sock := idleSocketStdin(t)
 
 	var body io.Reader
-	var ct string
+	var mp *multipartBody
 	var rerr error
 	withStdin(t, sock, func() {
 		runWithTimeout(t, 5*time.Second, "resolveExecuteBody with blocking socket stdin", func() {
-			body, ct, rerr = resolveExecuteBody(&executeOptions{})
+			body, mp, rerr = resolveExecuteBody(&executeOptions{})
 		})
 	})
 	if rerr != nil {
 		t.Fatalf("resolveExecuteBody: %v", rerr)
 	}
-	if ct != "" {
-		t.Errorf("multipart content type = %q, want empty", ct)
+	if mp != nil {
+		t.Errorf("multipart body = %+v, want nil", mp)
 	}
 	if body != nil {
 		t.Errorf("body = %v, want nil (an idle socket stdin must not be read as a body)", body)

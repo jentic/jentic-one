@@ -101,6 +101,10 @@ type sidecar struct {
 	Source     string   `json:"source"`
 	BaseURL    string   `json:"base_url,omitempty"`
 	References []string `json:"references,omitempty"`
+	// Version is the content version the install was rendered from, compared
+	// against the bundled copy for staleness (#1342). Sidecars predating the
+	// field omit it; readers fall back to the SKILL.md frontmatter.
+	Version string `json:"version,omitempty"`
 }
 
 // sidecarPath is the sidecar file for a given SKILL.md target.
@@ -310,7 +314,7 @@ func (a agentsAdapter) Target(scope Scope, _ string, env DetectEnv) string {
 }
 
 func (a agentsAdapter) Render(c Canonical, existing []byte) ([]byte, bool, error) {
-	res := splice(existing, c.Name, agentsPointerBody(c), c.source())
+	res := splice(existing, c.Name, agentsPointerBody(c), c.source(), c.Version)
 	return res.out, res.changed, nil
 }
 

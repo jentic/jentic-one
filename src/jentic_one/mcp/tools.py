@@ -78,7 +78,6 @@ from jentic_one.control.services.vendors.service import (
     VendorNotConfiguredError,
     VendorRegistryService,
 )
-from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import approvals
 from jentic_one.mcp import execute as ex
@@ -129,7 +128,6 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
 from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state import MemoryStateBackend
 
 _INVALID_PARAMS = mcp_types.INVALID_PARAMS
 
@@ -168,6 +166,10 @@ class CallEnv:
     #: sessions that target a registry API; ``None`` when this process cannot
     #: read the registry.
     security_schemes_lookup: SecuritySchemesLookupProtocol | None = None
+    #: the control surface's per-actor connect limiter for ``request_connection``
+    #: (``app.state.mcp_connect_limiter``, on the configured shared-state
+    #: backend); ``None`` when the process does not wire one.
+    connect_limiter: RateLimiter | None = None
 
 
 ToolCallResult = mcp_types.CallToolResult | mcp_types.InputRequiredResult
@@ -1701,20 +1703,6 @@ def _api_target_tool_error(exc: Exception, target: str) -> ToolError | None:
     return None
 
 
-#: Per-actor rate-limit twin of the route's: the mount calls the
-#: connect-session service in-process, bypassing the route's app-state
-#: limiter, so it carries its own with the SAME policy knobs (imported from
-#: the route module — one place owns the policy). In-memory / per-worker like
-#: the route's — sufficient for the abuse case (one actor spamming the
-#: vendor's authorize endpoint), not a coordinated-cluster limit.
-_connect_limiter = RateLimiter(
-    MemoryStateBackend(),
-    default_rpm=_CONNECT_RPM,
-    burst=_CONNECT_BURST,
-    namespace="mcp_integrations_connect",
-)
-
-
 async def handle_request_connection(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
@@ -1792,7 +1780,16 @@ async def handle_request_connection(
             "request_connection once they confirm.",
         ) from None
 
-    outcome = await _connect_limiter.acquire(env.identity.sub)
+    # The route's per-actor policy, on its own bucket: the mount calls the
+    # connect-session service in-process, bypassing the route's limiter.
+    if env.connect_limiter is None:
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "connect sessions are unavailable: this process has no connect rate limiter",
+            actionable="Tell your human operator the MCP mount is misconfigured.",
+            extra={"retryable": False},
+        )
+    outcome = await env.connect_limiter.acquire(env.identity.sub)
     if not outcome.allowed:
         raise ToolError(
             CODE_TRANSPORT_ERROR,

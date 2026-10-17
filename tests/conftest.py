@@ -8,6 +8,8 @@ import pytest
 
 from jentic_one.shared.dns_cache import clear_resolution_cache
 
+pytest_plugins = ("tests.harness.logging_isolation",)
+
 
 @pytest.fixture(autouse=True)
 def _isolated_resolution_cache() -> Iterator[None]:
