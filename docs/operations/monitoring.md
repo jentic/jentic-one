@@ -140,3 +140,14 @@ its record was silently dropped — the only signal that happened),
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
+
+If an extension's catalog search strategy is selected
+(`catalog.search_strategy` other than `token`), watch
+`jentic_one.catalog_search.strategy_failures`. Its labels are `strategy` (the
+configured name, or `unknown` for a client-supplied cursor), `reason`
+(`timeout`, `error`, `unregistered`, `invalid`, `not_configured`) and
+`outcome` (`fallback` — page one served by `token`; `unavailable` — a later
+page answered 503; `rejected` — a stale cursor answered 400). Alert on
+`outcome="unavailable"` above zero. The matching log events are
+`catalog_search_strategy_fallback`, `catalog_search_strategy_unavailable` and
+`catalog_search_rows_dropped`.
