@@ -811,6 +811,10 @@ func TestConnect_APITargetErrorCodes(t *testing.T) {
 			ux.CodeBrokerDenied, "Do not open more",
 		},
 		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "Do not ask again"},
+		{
+			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
+			ux.CodeBrokerDenied, "ask your operator to resume it",
+		},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			withXDG(t)
