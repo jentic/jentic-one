@@ -80,13 +80,16 @@ class BaseStateBackendContract:
 
     # -- shape ---------------------------------------------------------------
 
-    def test_is_shared_state_backend(self) -> None:
-        backend = self.backend_factory()
-        for role in (SharedStateBackend, KeyValueStore, RateLimitStore, AtomicStore):
-            assert isinstance(backend, role), f"{type(backend).__name__} is not a {role.__name__}"
+    async def test_is_shared_state_backend(self) -> None:
+        async with self._backend() as backend:
+            for role in (SharedStateBackend, KeyValueStore, RateLimitStore, AtomicStore):
+                assert isinstance(backend, role), (
+                    f"{type(backend).__name__} is not a {role.__name__}"
+                )
 
-    def test_method_signatures(self) -> None:
-        impl = type(self.backend_factory())
+    async def test_method_signatures(self) -> None:
+        async with self._backend() as backend:
+            impl = type(backend)
         for protocol, method in _PROTOCOL_METHODS:
             assert_signature_matches(impl, protocol, method)
 
