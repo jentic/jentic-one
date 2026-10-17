@@ -4,13 +4,17 @@ image:
 
 replicas: 1
 
+# The memory limit holds the ~130Mi process baseline plus the default memory
+# shared-state backend's 192 MiB cap
+# (broker.resilience.backend.memory.max_total_bytes), with headroom. Raise it
+# together with those budgets.
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
   limits:
     cpu: 500m
-    memory: 256Mi
+    memory: 512Mi
 
 healthCheck:
   path: /health

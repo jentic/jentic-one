@@ -121,10 +121,10 @@ def test_disable_and_enable(authed_client: TestClient, managed_user_id: str) -> 
     assert resp.status_code == 204
 
 
-def test_users_write_cannot_update_or_manage_admin(
+def test_users_write_cannot_update_another_user(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str, managed_user_id: str
 ) -> None:
-    """A users:write holder cannot PATCH another user (404) or manage a stronger one (403).
+    """A users:write holder cannot PATCH another user (404).
 
     Pins #1654: the PATCH answers the same 404 as ``GET /users/{id}`` for any
     payload, leaks no profile, and changes nothing.
@@ -175,9 +175,68 @@ def test_users_write_cannot_update_or_manage_admin(
     assert resp.json()["id"] == managed_user_id
     assert resp.json()["last_name"] == "Self"
 
-    resp = unauthed_client.post(f"/users/{admin_user_id}:disable", headers=headers)
-    assert resp.status_code == 403
-    assert resp.json()["type"] == "user_management_forbidden"
+
+def test_users_write_cannot_manage_another_user(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str, managed_user_id: str
+) -> None:
+    """Status changes, deletion and re-invites on another user answer 404, like GET.
+
+    The target is outside a non-admin caller's ``User`` scope, so nothing is
+    written; the caller still reaches their own account.
+    """
+
+    async def _grant() -> None:
+        async with web_context.admin_db.transaction() as session:
+            await UserPermissionGrantRepository.set_permissions(
+                session,
+                managed_user_id,
+                permissions={"users:read", "users:write"},
+                granted_by=None,
+                created_by="usr_test",
+            )
+
+    asyncio.get_event_loop().run_until_complete(_grant())
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": managed_user_id,
+        "email": "web-managed@test.local",
+        "actor_type": "user",
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def _admin_state() -> tuple[bool, str, int]:
+        async with web_context.admin_db.session() as session:
+            admin = await session.get(User, admin_user_id)
+            tokens = await session.execute(
+                select(InviteToken.id).where(InviteToken.user_id == admin_user_id)
+            )
+            assert admin is not None
+            return admin.active, admin.email, len(tokens.scalars().all())
+
+    before = asyncio.get_event_loop().run_until_complete(_admin_state())
+    for method, path in (
+        ("post", f"/users/{admin_user_id}:disable"),
+        ("post", f"/users/{admin_user_id}:enable"),
+        ("post", f"/users/{admin_user_id}:reissue-invite"),
+        ("delete", f"/users/{admin_user_id}"),
+    ):
+        resp = unauthed_client.request(method.upper(), path, headers=headers)
+        assert resp.status_code == 404, path
+        assert resp.json()["type"] == "user_not_found"
+    assert asyncio.get_event_loop().run_until_complete(_admin_state()) == before
+    assert before[:2] == (True, ADMIN_EMAIL)
+
+    # The caller's own (redeemed) account is in scope: the invite-state check runs.
+    resp = unauthed_client.post(f"/users/{managed_user_id}:reissue-invite", headers=headers)
+    assert resp.status_code == 409
+
+
+def test_org_admin_can_manage_another_user(authed_client: TestClient, managed_user_id: str) -> None:
+    for path in (f"/users/{managed_user_id}:disable", f"/users/{managed_user_id}:enable"):
+        assert authed_client.post(path).status_code == 204
+    assert authed_client.delete(f"/users/{managed_user_id}").status_code == 204
 
 
 def test_invite_state_filter(authed_client: TestClient, admin_user_id: str) -> None:
