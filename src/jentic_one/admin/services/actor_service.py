@@ -12,10 +12,21 @@ from jentic_one.admin.scoping.filters import build_access_filters, build_lookup_
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.schemas.actors import ActorView
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permission_catalog import (
+    CREDENTIALS_READ,
+    ORG_ADMIN,
+    OWNER_CREDENTIALS_READ,
+    compute_effective,
+)
 from jentic_one.shared.context import Context
-from jentic_one.shared.lookups import CredentialCreatorLookupProtocol
+from jentic_one.shared.credentials import CredentialCreatorLookupProtocol
 from jentic_one.shared.models import ActorType
+
+# Users are ``usr_`` KSUIDs (``admin/core/schema/users.py``); only those can be
+# a credential creator the agent and user arms did not already resolve.
+_USER_ID_PREFIX = "usr_"
+# ``GET /credentials`` admits a caller holding either.
+_CREDENTIAL_READ_PERMISSIONS = frozenset({CREDENTIALS_READ, OWNER_CREDENTIALS_READ})
 
 
 class ActorService:
@@ -88,38 +99,66 @@ class ActorService:
           (``build_access_filters(identity, Agent)``), the same set
           ``GET /agents/{id}`` answers for.
         - Users (``build_lookup_user_filters``): the caller itself, the owner
-          or approver of an agent it can see, the actor of an event or audit
-          entry it can see, and the creator of a credential it can read
-          (shared credentials included, through the credential read scoping).
+          or approver of an agent it can see (with ``agents:read``), and the
+          actor of an event it can see (with ``events:read``).
+        - Users still unresolved after that: the creator of a credential the
+          caller can read (with ``credentials:read`` or
+          ``owner:credentials:read``), shared credentials included through the
+          credential read scoping.
 
         ``org:admin`` resolves every actor. ``users:read`` does not widen
         this: it reads only the caller's own user row elsewhere too. There is
-        no listing or search. Cost: one directory query, plus one credential
-        read for the creator relation, each bounded by ``ids``.
+        no listing or search.
+
+        Cost: one directory query bounded by ``ids``. Only when some requested
+        ``usr_`` id is still unresolved does the credential relation run: the
+        control surface's credential read scoping (its binding and owned-agent
+        reads plus one credential query), then one more directory query for
+        the creators it returns. Both are bounded by the unresolved ids.
         """
         unique_ids = list(dict.fromkeys(ids))
         if not unique_ids:
             return []
-        creator_ids = await self._visible_credential_creators(unique_ids, identity=identity)
         agent_filters = build_access_filters(identity, Agent)
-        user_filters = build_lookup_user_filters(identity, extra_user_ids=creator_ids)
+        user_filters = build_lookup_user_filters(identity)
         async with self._ctx.admin_db.session() as session:
             rows = await ActorDirectoryRepository.get_by_ids(
                 session, unique_ids, agent_filters=agent_filters, user_filters=user_filters
             )
+
+        resolved = {row.id for row in rows}
+        unresolved_users = [
+            i for i in unique_ids if i.startswith(_USER_ID_PREFIX) and i not in resolved
+        ]
+        creator_ids = await self._visible_credential_creators(unresolved_users, identity=identity)
+        if creator_ids:
+            async with self._ctx.admin_db.session() as session:
+                rows = [
+                    *rows,
+                    *await ActorDirectoryRepository.get_by_ids(
+                        session, sorted(creator_ids), agent_filters=agent_filters
+                    ),
+                ]
+            rows.sort(key=lambda row: row.id)
         return [_to_view(row) for row in rows]
 
     async def _visible_credential_creators(
-        self, ids: Sequence[str], *, identity: Identity
+        self, user_ids: Sequence[str], *, identity: Identity
     ) -> set[str]:
-        """The ids in ``ids`` that created a credential the caller can read.
+        """The ids in ``user_ids`` that created a credential the caller can read.
 
-        ``org:admin`` already resolves every user, and the caller always
-        resolves itself, so neither needs the credential query.
+        Runs only for a caller holding a credential read permission (the
+        ``GET /credentials`` gate) and only when the process can read the
+        credentials (``credential_creators`` installed). ``org:admin`` never
+        gets here with unresolved users, and the caller already resolves
+        itself.
         """
-        if self._credential_creators is None or ORG_ADMIN in identity.permissions:
+        if self._credential_creators is None or not user_ids:
             return set()
-        candidates = [i for i in ids if i != identity.sub]
+        perms = compute_effective(set(identity.permissions))
+        if ORG_ADMIN in perms or perms.isdisjoint(_CREDENTIAL_READ_PERMISSIONS):
+            return set()
+        candidates = [i for i in user_ids if i != identity.sub]
         if not candidates:
             return set()
         return await self._credential_creators.visible_creator_ids(candidates, identity=identity)
