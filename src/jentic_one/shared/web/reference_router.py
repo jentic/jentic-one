@@ -11,8 +11,7 @@ keeping it out of the spec keeps the spec clean.
 
 from __future__ import annotations
 
-import contextlib
-import threading
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -35,31 +34,22 @@ def _cached_payload(app: Any) -> dict[str, Any] | None:
     return dict(cached) if cached is not None else None
 
 
-def _reference_payload(
-    app: Any,
-    source_app: Callable[[], Any] | None,
-    build_lock: threading.Lock | None = None,
-) -> dict[str, Any]:
+def _reference_payload(app: Any, source_app: Callable[[], Any] | None) -> dict[str, Any]:
     """Build (and cache on app.state) the reference payload for this app.
 
     The join introspects routes + the curated permission map, which is stable for the
     lifetime of the process, so it is computed once and cached. ``source_app``, when
     given, builds the app to introspect instead of the serving one (a partial
     control-plane process documents the whole control plane, not only its own
-    routes). ``build_lock`` single-flights the build: concurrent cold callers wait
-    for the first build and reuse its payload instead of each building their own.
+    routes). A build that raises caches nothing, so the next request retries it.
     """
     cached = _cached_payload(app)
     if cached is not None:
         return cached
-    with build_lock if build_lock is not None else contextlib.nullcontext():
-        cached = _cached_payload(app)
-        if cached is not None:
-            return cached
-        endpoints = collect_endpoints(source_app() if source_app is not None else app)
-        payload = build_reference_payload(endpoints)
-        setattr(app.state, _CACHE_ATTR, payload)
-        return payload
+    endpoints = collect_endpoints(source_app() if source_app is not None else app)
+    payload = build_reference_payload(endpoints)
+    setattr(app.state, _CACHE_ATTR, payload)
+    return payload
 
 
 def get_reference_router(source_app: Callable[[], Any] | None = None) -> APIRouter:
@@ -68,11 +58,13 @@ def get_reference_router(source_app: Callable[[], Any] | None = None) -> APIRout
     By default the reference introspects the serving app. ``source_app`` is a
     zero-argument factory for the app to introspect instead. Building it is
     CPU-bound, so the first (cold) request builds it off the event loop, exactly
-    once however many cold requests race; every later request is answered from
-    the cached payload on the loop.
+    once however many cold requests race: the waiters park on an
+    :class:`asyncio.Lock` on the loop, so a cold burst occupies one threadpool
+    worker, not one per request. Every later request is answered from the cached
+    payload on the loop.
     """
     router = APIRouter()
-    build_lock = threading.Lock()
+    build_lock = asyncio.Lock()
 
     @router.get(REFERENCE_PATH, include_in_schema=False)
     async def endpoints_reference(request: Request) -> JSONResponse:
@@ -81,7 +73,10 @@ def get_reference_router(source_app: Callable[[], Any] | None = None) -> APIRout
         cached = _cached_payload(request.app)
         if cached is not None:
             return JSONResponse(cached)
-        payload = await run_in_threadpool(_reference_payload, request.app, source_app, build_lock)
+        async with build_lock:
+            payload = _cached_payload(request.app)
+            if payload is None:
+                payload = await run_in_threadpool(_reference_payload, request.app, source_app)
         return JSONResponse(payload)
 
     return router
