@@ -1083,6 +1083,40 @@
       "title": "IngestConfig",
       "type": "object"
     },
+    "InvalidationConfig": {
+      "description": "Cross-process cache invalidation (the ``InvalidationBus``).\n\nOn PostgreSQL, triggers on the admin and control source tables (tokens,\nAPI keys, actors, grants, permission rules, bindings, credentials) send a\n``NOTIFY`` when a change commits, and a process that caches authorization\nstate — the broker — holds one dedicated ``LISTEN`` connection per database\nserver and drops the affected cache entries on receipt. A revoke made\nthrough one process therefore takes effect on every broker before the\ncache TTLs lapse. A process with nothing to invalidate opens no connection.\n\nSQLite has no notification channel: the bus is a no-op there and the cache\nTTLs bound staleness. Disable it (``enabled: false``) when the database is\nreached through a pooler that cannot hold a session-level ``LISTEN`` — for\nexample PgBouncer in transaction pooling mode — and the TTLs apply as on\nSQLite.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Listen for cross-process invalidation notifications on PostgreSQL. No effect on SQLite.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "health_check_interval_s": {
+          "default": 15.0,
+          "description": "How often the LISTEN connection is probed. A probe that fails or does not answer within this interval counts as a lost connection.",
+          "exclusiveMinimum": 0,
+          "title": "Health Check Interval S",
+          "type": "number"
+        },
+        "reconnect_backoff_base_s": {
+          "default": 0.5,
+          "description": "First delay before re-opening a lost LISTEN connection; doubles per failed attempt up to reconnect_backoff_max_s.",
+          "exclusiveMinimum": 0,
+          "title": "Reconnect Backoff Base S",
+          "type": "number"
+        },
+        "reconnect_backoff_max_s": {
+          "default": 30.0,
+          "description": "Ceiling on the delay between LISTEN reconnect attempts.",
+          "exclusiveMinimum": 0,
+          "title": "Reconnect Backoff Max S",
+          "type": "number"
+        }
+      },
+      "title": "InvalidationConfig",
+      "type": "object"
+    },
     "JwtVerificationConfig": {
       "description": "Hardened inbound-JWT verification for the broker edge.\n\nWhen ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs\nagainst the issuers' published JWKS (asymmetric, key-rotation-aware) and\nenforces ``iss`` (trusted set), ``aud`` (``audience``), and ``exp``/``nbf``\nwith ``leeway_s`` clock-skew. Empty (the default) leaves the asymmetric path\noff — the legacy HS256 ``broker.jwt_secret`` path (dev/test) still applies.",
       "properties": {
@@ -2216,6 +2250,9 @@
     },
     "ingest": {
       "$ref": "#/$defs/IngestConfig"
+    },
+    "invalidation": {
+      "$ref": "#/$defs/InvalidationConfig"
     },
     "logging": {
       "$ref": "#/$defs/LoggingConfig"

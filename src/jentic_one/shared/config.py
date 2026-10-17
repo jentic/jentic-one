@@ -2322,6 +2322,54 @@ class ReleaseCheckConfig(BaseModel):
     cache_ttl_seconds: int = 21600  # 6h
 
 
+class InvalidationConfig(BaseModel):
+    """Cross-process cache invalidation (the ``InvalidationBus``).
+
+    On PostgreSQL, triggers on the admin and control source tables (tokens,
+    API keys, actors, grants, permission rules, bindings, credentials) send a
+    ``NOTIFY`` when a change commits, and a process that caches authorization
+    state — the broker — holds one dedicated ``LISTEN`` connection per database
+    server and drops the affected cache entries on receipt. A revoke made
+    through one process therefore takes effect on every broker before the
+    cache TTLs lapse. A process with nothing to invalidate opens no connection.
+
+    SQLite has no notification channel: the bus is a no-op there and the cache
+    TTLs bound staleness. Disable it (``enabled: false``) when the database is
+    reached through a pooler that cannot hold a session-level ``LISTEN`` — for
+    example PgBouncer in transaction pooling mode — and the TTLs apply as on
+    SQLite.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Listen for cross-process invalidation notifications on PostgreSQL. "
+            "No effect on SQLite."
+        ),
+    )
+    reconnect_backoff_base_s: float = Field(
+        default=0.5,
+        gt=0,
+        description=(
+            "First delay before re-opening a lost LISTEN connection; doubles per "
+            "failed attempt up to reconnect_backoff_max_s."
+        ),
+    )
+    reconnect_backoff_max_s: float = Field(
+        default=30.0,
+        gt=0,
+        description="Ceiling on the delay between LISTEN reconnect attempts.",
+    )
+    health_check_interval_s: float = Field(
+        default=15.0,
+        gt=0,
+        description=(
+            "How often the LISTEN connection is probed. A probe that fails or "
+            "does not answer within this interval counts as a lost connection."
+        ),
+    )
+
+
 class EntitlementConfig(BaseModel):
     """AWS Marketplace license gate for the Marketplace-listed deployment.
 
@@ -2447,6 +2495,7 @@ class AppConfig(BaseModel):
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
+    invalidation: InvalidationConfig = Field(default_factory=InvalidationConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.

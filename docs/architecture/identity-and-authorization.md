@@ -185,7 +185,12 @@ different questions:
    permission. On the broker, `CachedTokenValidator`
    ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py)) fronts the resolvers with a short-TTL
    cache keyed on the token's SHA-256 (both hits and misses cached, LRU
-   bounded).
+   bounded). On PostgreSQL that cache — and the broker's rule and binding
+   caches — also drop entries when another process commits a change to the
+   rows they were read from (a revoke, a disabled agent, an edited grant or
+   rule), via the `InvalidationBus` (see
+   [composition and processes](composition-and-processes.md#cross-process-cache-invalidation));
+   on SQLite the TTL alone bounds staleness.
 2. **Row visibility** (`scoping/`): services pass the identity's access
    filters into repos, so a list endpoint only ever queries the rows the
    caller may see.
