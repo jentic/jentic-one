@@ -18,7 +18,8 @@ The check is static and covers these writer shapes:
   or ``table("credentials")``;
 - ``bulk_insert_mappings``/``bulk_update_mappings`` with ``Credential``;
 - SQL text naming the table in a string literal, or in an f-string whose
-  placeholders are module-level string constants.
+  placeholders are module-level string constants. A string that is a whole
+  statement (a docstring) is not executed and is skipped.
 
 A statement built at module or class level is checked in every function that
 uses it.
@@ -87,6 +88,15 @@ class _FileChecker:
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         self._constants[target.id] = node.value.value
+        # A string that is a whole statement (a docstring, or a bare string used as
+        # a comment) is never executed, so SQL-looking text in it is not a write.
+        self._statement_strings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
 
     def _is_model(self, node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
@@ -125,7 +135,8 @@ class _FileChecker:
     def _sql_strings(self, node: ast.AST) -> Iterable[tuple[int, str]]:
         for n in ast.walk(node):
             if isinstance(n, ast.Constant) and isinstance(n.value, str):
-                yield n.lineno, n.value
+                if id(n) not in self._statement_strings:
+                    yield n.lineno, n.value
             elif isinstance(n, ast.JoinedStr):
                 parts: list[str] = []
                 for value in n.values:
@@ -301,3 +312,22 @@ def test_a_module_level_statement_is_checked_where_it_is_used(tmp_path: Path) ->
 
     orphan = _check_file(_write_module(tmp_path, {}, extra))
     assert any("used by no function" in v for v in orphan), orphan
+
+
+@pytest.mark.arch
+def test_sql_text_in_docstrings_and_bare_strings_is_not_a_write(tmp_path: Path) -> None:
+    sql = "UPDATE credentials SET active = false"
+    source = tmp_path / "docs_only.py"
+    source.write_text(
+        f'"""Module docstring: {sql}."""\n'
+        f'class Repo:\n    """Class docstring: {sql}."""\n'
+        f'    async def f(self, session):\n        """Runs {sql}."""\n'
+        f'        "Bare string statement: DELETE FROM credentials."\n'
+        "        return None\n"
+    )
+    assert _check_file(source) == []
+
+    # A docstring does not hide a real write in the same function.
+    bodies = {"documented": f'"""Runs {sql}."""\n    await session.execute(text("{sql}"))'}
+    violations = _check_file(_write_module(tmp_path, bodies))
+    assert any("documented()" in v for v in violations), violations
