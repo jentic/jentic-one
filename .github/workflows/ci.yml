@@ -354,6 +354,11 @@ jobs:
           make build-base
           docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:scan .
 
+      # The image must ship exactly the `uv export --frozen --no-dev` set the
+      # test jobs ran against (#1819) — a few seconds on the image just built.
+      - name: Check image packages match uv.lock
+        run: make check-image-lock IMAGE=jentic-one/app:scan
+
       - name: Trivy image scan (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

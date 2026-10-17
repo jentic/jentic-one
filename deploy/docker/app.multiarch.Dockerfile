@@ -61,6 +61,12 @@ COPY openapi/ openapi/
 COPY --from=ui-builder /ui/dist ui/dist
 
 RUN uv build --wheel --out-dir /build/dist
+# The wheel's metadata carries only the open ranges from pyproject.toml, so
+# `pip install <wheel>` alone would re-resolve them against PyPI at build time.
+# The app stage installs this hash-pinned export of uv.lock first and the
+# wheel with --no-deps, so the image ships exactly the locked set CI tests
+# (#1819). Universal markers keep it valid for amd64 and arm64 alike.
+RUN uv export --frozen --no-dev --no-emit-project -o /build/dist/requirements.txt
 
 FROM ${UBUNTU_IMAGE} AS runtime
 
@@ -89,13 +95,16 @@ EXPOSE 8000
 # --- app stage (mirrors deploy/docker/app.Dockerfile) ---------------------
 FROM runtime AS app
 
-COPY --from=builder /build/dist/*.whl /tmp/
+COPY --from=builder /build/dist/*.whl /build/dist/requirements.txt /tmp/
 # Ubuntu's system python is PEP 668 externally-managed, so the wheel lands in
-# a venv; /opt/venv/bin on PATH keeps the `python` runtime contract.
+# a venv; /opt/venv/bin on PATH keeps the `python` runtime contract. The
+# locked requirements install first and the wheel goes in with --no-deps, so
+# pip never re-resolves the dependency ranges (`make check-image-lock` guards).
 RUN python3.12 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt && \
     whl="$(ls /tmp/jentic_one-*.whl)" && \
-    /opt/venv/bin/pip install --no-cache-dir "${whl}" && \
-    rm /tmp/*.whl
+    /opt/venv/bin/pip install --no-cache-dir --no-deps "${whl}" && \
+    rm /tmp/*.whl /tmp/requirements.txt
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # Writable data dir for the SQLite backend. Pre-creating it owned by the runtime

@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES)) perf-build perf-up perf-provision perf-overhead perf-dbcost perf-capacity perf-profile perf-ui perf-load perf-obs perf-report perf-down
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES)) perf-build perf-up perf-provision perf-overhead perf-dbcost perf-capacity perf-profile perf-ui perf-load perf-obs perf-report perf-down
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -256,6 +256,10 @@ save-all: $(addprefix save-,$(SERVICES)) ## Save all built images as tarballs un
 
 images: ## List locally built jentic-one images
 	@docker images "$(IMG_PREFIX)/*"
+
+check-image-lock: ## Fail if IMAGE's Python packages differ from uv.lock (IMAGE=<tag>, optional PLATFORM=linux/arm64)
+	@test -n "$(IMAGE)" || { echo "usage: make check-image-lock IMAGE=<tag> [PLATFORM=linux/<arch>]"; exit 1; }
+	./scripts/check-image-lock.sh "$(IMAGE)" $(if $(PLATFORM),--platform "$(PLATFORM)")
 
 # ─── Release (publish the app image to a real registry) ───────────────────
 # One `app` image serves every surface — the surface set is chosen at runtime

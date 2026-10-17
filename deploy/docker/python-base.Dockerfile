@@ -39,6 +39,12 @@ COPY openapi/ openapi/
 COPY --from=ui-builder /ui/dist ui/dist
 
 RUN uv build --wheel --out-dir /build/dist
+# The wheel's metadata carries only the open ranges from pyproject.toml, so
+# `pip install <wheel>` alone would re-resolve them against PyPI at build time.
+# The service stages install this hash-pinned export of uv.lock first and the
+# wheel with --no-deps, so the image ships exactly the locked set CI tests
+# (#1819). Universal markers keep it valid for amd64 and arm64 alike.
+RUN uv export --frozen --no-dev --no-emit-project -o /build/dist/requirements.txt
 
 FROM ${UBUNTU_IMAGE} AS runtime
 

@@ -205,6 +205,20 @@ docker buildx imagetools inspect ubuntu:24.04
 `uv` is pinned to a major.minor (`ghcr.io/astral-sh/uv:0.7`); pin further to
 a digest if you need to.
 
+## Reproducibility: Python dependencies come from `uv.lock`
+
+The builder stage writes `uv export --frozen --no-dev --no-emit-project` (hash
+pinned, universal markers) next to the wheel. Every service image installs
+that file with `pip install --require-hashes -r requirements.txt`, then the
+wheel with `--no-deps`. pip never re-resolves the wheel's open
+`pyproject.toml` ranges, so an image ships exactly the dependency set the test
+suite runs against, whatever day it is built. To change a dependency, update
+`uv.lock` (`make lock` / `make upgrade`); the image follows.
+
+`make check-image-lock IMAGE=<tag> [PLATFORM=linux/<arch>]` fails when a built
+image's installed distributions differ from the lock export. CI runs it on the
+scanned app image, and the release job runs it on each arch before pushing.
+
 ## .dockerignore
 
 `.dockerignore` at the repo root keeps the build fast (only
@@ -226,6 +240,7 @@ add it to `.dockerignore` immediately.
 | `make push-<svc>`       | Push `<svc>` image with both tags (single-arch; registry must be configured) |
 | `make release-image`    | Build + push the multi-arch `app` image to `REGISTRY` (see Multi-arch)   |
 | `make images`           | List all locally-built `jentic-one/*` images                             |
+| `make check-image-lock` | Fail if `IMAGE`'s Python packages differ from `uv.lock` (optional `PLATFORM`) |
 | `make clean`            | Remove caches, `dist/`, and `build/`                                     |
 
 `SERVICES` is defined at the top of `Makefile`; `build/` is gitignored and
