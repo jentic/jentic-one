@@ -5639,7 +5639,7 @@ type OAuthGrantResponse struct {
 // document and is hard-capped at “PREVIEW_MAX_OPERATIONS“ operations, so there
 // is no large/mutating result set that would justify keyset cursors.
 //
-// Examples: {"data":[],"info":{"description":"Payments.","title":"Stripe","version":"2024-01-01"},"offset":0,"security_schemes":{},"total":42,"truncated":true}
+// Examples: {"data":[],"info":{"description":"Payments.","title":"Stripe","version":"2024-01-01"},"offset":0,"required_schemes":[],"security_schemes":{},"server_variables":{},"total":42,"truncated":true}
 type OperationPreviewListResponse struct {
 	// Data The page of previewed operations.
 	//
@@ -5656,10 +5656,20 @@ type OperationPreviewListResponse struct {
 	// Examples: 0
 	Offset int `json:"offset"`
 
-	// SecuritySchemes Slimmed `components.securitySchemes` projection.
+	// RequiredSchemes Every security scheme some operation in the spec requires, over the whole spec (not just this window or filter).
+	//
+	// Examples: ["BearerAuth"]
+	RequiredSchemes *[]string `json:"required_schemes,omitempty"`
+
+	// SecuritySchemes Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, `refreshUrl` and `scopes` in `flow_details`.
 	//
 	// Examples: {"BearerAuth":{"scheme":"bearer","type":"http"}}
 	SecuritySchemes map[string]map[string]interface{} `json:"security_schemes"`
+
+	// ServerVariables The first server's URL variables (`servers[0].variables`), each with its `default`, `enum` and `description` when the spec sets them.
+	//
+	// Examples: {"tenant":{"default":"acme","description":"Your tenant subdomain."}}
+	ServerVariables *map[string]map[string]interface{} `json:"server_variables,omitempty"`
 
 	// Total Total operations in the spec (pre-page).
 	//

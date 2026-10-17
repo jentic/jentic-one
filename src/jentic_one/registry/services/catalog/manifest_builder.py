@@ -445,6 +445,10 @@ class PreviewProjection:
     operations: list[PreviewOperation]
     info: PreviewInfo
     security_schemes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: ``servers[0].variables`` (name -> ``default`` / ``enum`` / ``description``).
+    server_variables: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Every scheme some operation requires, over the whole spec (unfiltered).
+    required_schemes: list[str] = field(default_factory=list)
 
 
 def resolve_local_ref(doc: dict[str, Any], ref: str) -> dict[str, Any] | None:
@@ -518,10 +522,71 @@ def slim_security_schemes(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
         elif scheme_type == "oauth2":
             flows = scheme.get("flows") or {}
             slim["flows"] = list(flows.keys()) if isinstance(flows, dict) else []
+            slim["flow_details"] = _oauth_flow_details(flows)
         elif scheme_type == "openIdConnect":
             slim["openIdConnectUrl"] = scheme.get("openIdConnectUrl")
         out[name] = slim
     return out
+
+
+def _oauth_flow_details(flows: object) -> dict[str, dict[str, Any]]:
+    """Each OAuth2 flow's URLs and scopes, keeping only well-typed values."""
+    if not isinstance(flows, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for flow_name, flow in flows.items():
+        if not isinstance(flow_name, str) or not isinstance(flow, dict):
+            continue
+        detail: dict[str, Any] = {
+            key: flow[key]
+            for key in ("authorizationUrl", "tokenUrl", "refreshUrl")
+            if isinstance(flow.get(key), str)
+        }
+        scopes = flow.get("scopes")
+        if isinstance(scopes, dict):
+            detail["scopes"] = {str(k): v if isinstance(v, str) else "" for k, v in scopes.items()}
+        out[flow_name] = detail
+    return out
+
+
+def server_variables(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """``servers[0].variables``, keeping ``default``, ``enum`` and ``description``."""
+    servers = doc.get("servers")
+    if not isinstance(servers, list) or not servers or not isinstance(servers[0], dict):
+        return {}
+    variables = servers[0].get("variables")
+    if not isinstance(variables, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, var in variables.items():
+        if not isinstance(name, str) or not isinstance(var, dict):
+            continue
+        slim: dict[str, Any] = {}
+        if isinstance(var.get("default"), str):
+            slim["default"] = var["default"]
+        if isinstance(var.get("description"), str):
+            slim["description"] = var["description"]
+        enum = var.get("enum")
+        if isinstance(enum, list):
+            slim["enum"] = [v for v in enum if isinstance(v, str)]
+        out[name] = slim
+    return out
+
+
+def required_security_schemes(doc: dict[str, Any]) -> list[str]:
+    """Every scheme name some operation requires (op security, else the doc's), in order."""
+    doc_security = flatten_security(doc.get("security"))
+    seen: dict[str, None] = {}
+    for methods in (doc.get("paths") or {}).values():
+        if not isinstance(methods, dict):
+            continue
+        for method, op in methods.items():
+            if method.lower() not in _HTTP_METHODS or not isinstance(op, dict):
+                continue
+            raw = op.get("security")
+            for name in flatten_security(raw) if raw is not None else doc_security:
+                seen.setdefault(name, None)
+    return list(seen)
 
 
 def parse_preview_operations(
@@ -610,4 +675,6 @@ def project_preview(
             description=info_raw.get("description"),
         ),
         security_schemes=slim_security_schemes(doc),
+        server_variables=server_variables(doc),
+        required_schemes=required_security_schemes(doc),
     )

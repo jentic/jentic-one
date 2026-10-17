@@ -251,10 +251,10 @@ export interface ServerVarDef {
  *  - **local** — call `GET /apis/{vendor}/{name}/{version}/openapi`. The list
  *    row's `security_schemes` is a flat `string[]` (just type names) so it
  *    isn't enough for field-level shaping; the served spec is.
- *  - **catalog** — read the entry's security schemes through the catalog
- *    operations preview (`selectedApi.entryId`); a catalog entry declares no
- *    server variables there. Cached for 5 minutes so flipping between auth
- *    pills doesn't refetch.
+ *  - **catalog** — read the entry's security schemes (with OAuth2 flow URLs
+ *    and scopes) and `servers[0].variables` through the catalog operations
+ *    preview (`selectedApi.entryId`). Cached for 5 minutes so flipping between
+ *    auth pills doesn't refetch.
  *
  * Returns the parsed scheme options plus the raw scheme map (callers that need
  * `name`/`in` detail consume the raw map; the rest use `options`).

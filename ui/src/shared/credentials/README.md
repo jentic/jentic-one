@@ -101,8 +101,9 @@ API's OpenAPI `components.securitySchemes` collects the secret.
   `components.securitySchemes` off that. Cached for 5 minutes.
 - **Catalog schemes come from the operations preview**
   (`GET /catalog/{entry_id}/operations`): the server reads the spec, so the
-  browser never fetches from the source host. The preview lists OAuth2 flows
-  by name only, so a catalog pick has no flow URLs or scopes to prefill.
+  browser never fetches from the source host. It carries each OAuth2 flow's
+  URLs and scopes (`flow_details`), `servers[0].variables` and the spec-wide
+  `required_schemes`, so a catalog pick prefills like a served spec.
 - **`provider` discovery is still hard-coded.** The picker doesn't change the
   Pipedream-vs-static `provider` story — see the gaps section above.
 - **Two-endpoint merge.** mini had a single unified `/apis?q=` that blended

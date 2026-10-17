@@ -177,32 +177,39 @@ export function getApi(vendor: string, name: string, version: string): Promise<A
 }
 
 /**
- * Security schemes of a catalog entry that isn't imported yet, read from
- * `GET /catalog/{entry_id}/operations` (the server fetches the spec, so the
- * browser never reaches the source host). Returned as a minimal OpenAPI-shaped
- * document (`info`, `components.securitySchemes`, and a top-level `security`
- * listing every scheme an operation requires) so the scheme parsers read it
- * like a served spec. The preview lists OAuth2 flows by name only, so each
- * flow maps to an empty flow object (no URLs or scopes to prefill), and it
- * carries no `servers`, so a catalog pick has no server variables.
+ * Security schemes and server variables of a catalog entry that isn't imported
+ * yet, read from `GET /catalog/{entry_id}/operations` (the server fetches the
+ * spec, so the browser never reaches the source host). Returned as a minimal
+ * OpenAPI-shaped document so the scheme parsers read it like a served spec:
+ * `components.securitySchemes` (OAuth2 flows rebuilt from `flow_details`, so
+ * authorization/token URLs and scopes prefill), `servers[0].variables` (so
+ * per-tenant hosts prompt as before) and a top-level `security` listing every
+ * scheme the spec's operations require (`required_schemes`, computed over the
+ * whole spec, not one page of operations).
  */
 export async function fetchCatalogSchemeSpec(entryId: string): Promise<Record<string, unknown>> {
-	const res = await CatalogService.previewCatalogOperations({ entryId });
+	const res = await CatalogService.previewCatalogOperations({ entryId, limit: 1 });
 	const securitySchemes = Object.fromEntries(
 		Object.entries(res.security_schemes ?? {}).map(([name, scheme]) => {
-			const flows: unknown = scheme.flows;
+			const { flow_details: details, flows, ...rest } = scheme as Record<string, unknown>;
+			if (!Array.isArray(flows)) return [name, scheme];
+			const detailMap = (details ?? {}) as Record<string, Record<string, unknown>>;
 			return [
 				name,
-				Array.isArray(flows)
-					? { ...scheme, flows: Object.fromEntries(flows.map((f) => [String(f), {}])) }
-					: scheme,
+				{
+					...rest,
+					flows: Object.fromEntries(
+						flows.map((f) => [String(f), detailMap[String(f)] ?? {}]),
+					),
+				},
 			];
 		}),
 	);
-	const required = [...new Set(res.data.flatMap((op) => op.security ?? []))];
+	const variables = res.server_variables ?? {};
 	return {
 		info: res.info,
 		components: { securitySchemes },
-		security: required.map((name) => ({ [name]: [] })),
+		...(Object.keys(variables).length > 0 ? { servers: [{ url: '', variables }] } : {}),
+		security: (res.required_schemes ?? []).map((name) => ({ [name]: [] })),
 	};
 }

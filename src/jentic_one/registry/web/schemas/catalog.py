@@ -366,6 +366,8 @@ class OperationPreviewListResponse(BaseModel):
                         "description": "Payments.",
                     },
                     "security_schemes": {},
+                    "server_variables": {},
+                    "required_schemes": [],
                 }
             ]
         }
@@ -379,6 +381,26 @@ class OperationPreviewListResponse(BaseModel):
     )
     info: PreviewInfoResponse = Field(description="The spec's `info` block.")
     security_schemes: dict[str, dict[str, object]] = Field(
-        description="Slimmed `components.securitySchemes` projection.",
+        description=(
+            "Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists "
+            "its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, "
+            "`refreshUrl` and `scopes` in `flow_details`."
+        ),
         examples=[{"BearerAuth": {"type": "http", "scheme": "bearer"}}],
+    )
+    server_variables: dict[str, dict[str, object]] = Field(
+        default_factory=dict,
+        description=(
+            "The first server's URL variables (`servers[0].variables`), each with its "
+            "`default`, `enum` and `description` when the spec sets them."
+        ),
+        examples=[{"tenant": {"default": "acme", "description": "Your tenant subdomain."}}],
+    )
+    required_schemes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Every security scheme some operation in the spec requires, over the whole "
+            "spec (not just this window or filter)."
+        ),
+        examples=[["BearerAuth"]],
     )

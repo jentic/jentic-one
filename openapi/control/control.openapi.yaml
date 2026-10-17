@@ -8088,7 +8088,9 @@ components:
           title: Stripe
           version: '2024-01-01'
         offset: 0
+        required_schemes: []
         security_schemes: {}
+        server_variables: {}
         total: 42
         truncated: true
       properties:
@@ -8124,16 +8126,35 @@ components:
           - 0
           title: Offset
           type: integer
+        required_schemes:
+          description: Every security scheme some operation in the spec requires, over the whole spec (not just this window or filter).
+          examples:
+          - - BearerAuth
+          items:
+            type: string
+          title: Required Schemes
+          type: array
         security_schemes:
           additionalProperties:
             additionalProperties: true
             type: object
-          description: Slimmed `components.securitySchemes` projection.
+          description: Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, `refreshUrl` and `scopes` in `flow_details`.
           examples:
           - BearerAuth:
               scheme: bearer
               type: http
           title: Security Schemes
+          type: object
+        server_variables:
+          additionalProperties:
+            additionalProperties: true
+            type: object
+          description: The first server's URL variables (`servers[0].variables`), each with its `default`, `enum` and `description` when the spec sets them.
+          examples:
+          - tenant:
+              default: acme
+              description: Your tenant subdomain.
+          title: Server Variables
           type: object
         total:
           description: Total operations in the spec (pre-page).
