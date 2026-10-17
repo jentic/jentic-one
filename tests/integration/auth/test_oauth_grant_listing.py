@@ -29,6 +29,7 @@ from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminS
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     OAuthGrantAccessDeniedError,
+    OAuthGrantNotFoundError,
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.auth.identity import Identity
@@ -396,11 +397,12 @@ async def test_can_revoke_matrix_consenter_transfer_and_admin_arms(
         await grant_svc.revoke_grant(grant_id, identity=new_owner)
 
     # Read-only-admin arm: `oauth-clients:read` alone neither lifts list
-    # scoping (the grant is outside its rows) nor grants the revoke.
+    # scoping (the grant is outside its rows) nor grants the revoke, which
+    # answers like an unknown grant.
     ro_admin = Identity(sub=ro_admin_id, email="", permissions=["oauth-clients:read"])
     cross = await OAuthGrantAdminService(integration_context).list_grants(identity=ro_admin)
     assert cross.data == []
-    with pytest.raises(OAuthGrantAccessDeniedError):
+    with pytest.raises(OAuthGrantNotFoundError):
         await grant_svc.revoke_grant(grant_id, identity=ro_admin)
 
     # org:admin sees and CAN revoke — capability True on both surfaces.

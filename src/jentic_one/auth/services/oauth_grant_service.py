@@ -19,6 +19,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.oauth_grant_admin_service import (
+    GRANT_REVOKE_ADMIN_PERMISSIONS,
     OAuthGrantAdminService,
     viewer_can_revoke,
 )
@@ -229,10 +230,24 @@ class OAuthGrantService:
         in the same transaction (belt — the resolvers' live grant gate is the
         braces). Idempotent: revoking an already-revoked grant re-runs the
         sweep but writes no second audit/event.
+
+        A grant the caller cannot see (``build_access_filters`` on
+        ``OAuthClientGrant``) raises the same ``OAuthGrantNotFoundError`` as
+        an unknown id. A holder of a revoke-admin permission may revoke any
+        grant, so the lookup is unscoped for them. Only a caller who can see
+        the grant but is not its consenting user (the bound agent, or the
+        agent's owner on a grant someone else consented to) gets
+        ``OAuthGrantAccessDeniedError``.
         """
+        is_revoke_admin = bool(GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions))
+        access_filters = (
+            None if is_revoke_admin else build_access_filters(identity, OAuthClientGrant)
+        )
 
         async def _write(session: AsyncSession) -> bool:
-            grant = await OAuthClientGrantRepository.get_by_id(session, grant_id)
+            grant = await OAuthClientGrantRepository.get_by_id(
+                session, grant_id, filters=access_filters
+            )
             if grant is None:
                 raise OAuthGrantNotFoundError(grant_id)
             if not viewer_can_revoke(grant.user_id, identity):
