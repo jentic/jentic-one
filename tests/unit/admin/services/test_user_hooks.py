@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -24,7 +24,7 @@ def _empty_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_hooks_run_in_registration_order_with_the_delete_arguments() -> None:
-    calls: list[tuple[str, Any, str, Identity]] = []
+    calls: list[tuple[str, Context, str, Identity]] = []
 
     async def _first(ctx: Context, user_id: str, identity: Identity) -> None:
         calls.append(("first", ctx, user_id, identity))
@@ -57,8 +57,16 @@ async def test_registering_the_same_hook_twice_runs_it_once() -> None:
     assert calls == ["usr_gone"]
 
 
-async def test_a_failing_hook_is_skipped_and_later_hooks_still_run() -> None:
+async def test_a_failing_hook_is_skipped_and_later_hooks_still_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
+    counted: list[tuple[int, dict[str, str]]] = []
+    monkeypatch.setattr(
+        user_hooks.user_deleted_hook_failures_counter,
+        "add",
+        lambda amount, attributes: counted.append((amount, attributes)),
+    )
 
     async def _failing(_ctx: Context, _user_id: str, _identity: Identity) -> None:
         raise RuntimeError("boom")
@@ -72,6 +80,8 @@ async def test_a_failing_hook_is_skipped_and_later_hooks_still_run() -> None:
     await run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY)
 
     assert calls == ["usr_gone"]
+    # Only the failing hook is counted, named by module and qualname.
+    assert counted == [(1, {"hook": f"{__name__}.{_failing.__qualname__}"})]
 
 
 async def test_no_hooks_registered_is_a_no_op() -> None:
