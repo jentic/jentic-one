@@ -28,6 +28,7 @@ from jentic_one.integrations.aws_marketplace.installer import (
 )
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.context import Context
+from jentic_one.shared.invalidation import InvalidationBus
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 #: A mounted router spec: ``(router, prefix, tags)`` — same shape the surface
@@ -74,6 +75,13 @@ class AppContainer:
     :class:`~jentic_one.shared.web.protocols.UnregisteredUrlHandler` docstring
     for the egress contract and the controls it opts out of. ``None`` (default)
     → today's 404.
+
+    ``invalidation_bus`` replaces the process's cross-process cache-invalidation
+    transport (see :class:`~jentic_one.shared.invalidation.InvalidationBus`).
+    ``None`` (default) → ``build_invalidation_bus(ctx)``: ``LISTEN``/``NOTIFY``
+    on PostgreSQL, a no-op on SQLite. The app factory stashes the chosen bus on
+    ``app.state.invalidation_bus`` before any installer runs (so caches can
+    subscribe) and starts/stops it inside the app lifespan.
     """
 
     ctx: Context
@@ -82,6 +90,7 @@ class AppContainer:
     extra_installers: Sequence[Installer] = field(default_factory=tuple)
     extra_lifespans: Sequence[LifespanFactory] = field(default_factory=tuple)
     unregistered_url_handler: UnregisteredUrlHandler | None = None
+    invalidation_bus: InvalidationBus | None = None
 
     @classmethod
     def default(cls, ctx: Context) -> AppContainer:
