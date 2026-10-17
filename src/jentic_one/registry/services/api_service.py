@@ -88,7 +88,6 @@ class ApiPageItem(BaseModel):
     origin: str | None = None
     source_url: str | None = None
     update_available: bool = False
-    catalog_entry_id: str | None = None
 
 
 class ApiPage(BaseModel):
@@ -123,8 +122,6 @@ class ApiView:
     origin: str | None = None
     source_url: str | None = None
     update_available: bool = False
-    #: The catalog entry (``{source_slug}/{external_id}``) the API was imported from.
-    catalog_entry_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,7 +203,6 @@ class ApiService:
                         name=row.name,
                         version=row.version,
                         catalog_api_id=row.catalog_api_id,
-                        catalog_entry_id=row.catalog_entry_id,
                         display_name=row.display_name,
                         description=row.description,
                         icon_url=row.icon_url,
@@ -534,7 +530,6 @@ class ApiService:
             name=api.name,
             version=api.version,
             catalog_api_id=api.catalog_api_id,
-            catalog_entry_id=api.catalog_entry_id,
             display_name=api.display_name,
             description=api.description,
             icon_url=api.icon_url,

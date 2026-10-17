@@ -1081,7 +1081,6 @@ components:
             vendor: stripe.com
             version: '2024-04-10'
           catalog_api_id: stripe.com
-          catalog_entry_id: public/stripe.com
           created_at: '2026-01-10T08:00:00Z'
           current_revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
           description: 'Online payments platform: charges, customers, subscriptions and payouts.'
@@ -1179,7 +1178,6 @@ components:
         _links: *id017
         api: *id019
         catalog_api_id: stripe.com
-        catalog_entry_id: public/stripe.com
         created_at: '2026-01-10T08:00:00Z'
         current_revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         description: 'Online payments platform: charges, customers, subscriptions and payouts.'
@@ -1209,14 +1207,6 @@ components:
           examples:
           - stripe.com
           title: Catalog Api Id
-        catalog_entry_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Catalog entry the API was imported from (`{source_slug}/{external_id}`), the id the `/catalog/{entry_id}` routes take; null for manual imports.
-          examples:
-          - public/stripe.com
-          title: Catalog Entry Id
         created_at:
           description: When the API was created (RFC 3339).
           examples:

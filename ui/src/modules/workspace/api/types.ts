@@ -42,9 +42,6 @@ export interface WorkspaceApi {
 	/** Catalog identity slug (`domain[/sub-api]`) recorded at import, when any —
 	 * the preferred friendly-title source. */
 	catalogApiId: string | null;
-	/** Catalog entry (`{source_slug}/{external_id}`) the API was imported from, when any —
-	 * the id the catalog re-import and snooze routes take. */
-	catalogEntryId: string | null;
 	displayName: string | null;
 	description: string | null;
 	iconUrl: string | null;

@@ -194,14 +194,6 @@ class ApiResponse(BaseModel):
         ),
         examples=[ex.CATALOG_API_ID],
     )
-    catalog_entry_id: str | None = Field(
-        default=None,
-        description=(
-            "Catalog entry the API was imported from (`{source_slug}/{external_id}`), the "
-            "id the `/catalog/{entry_id}` routes take; null for manual imports."
-        ),
-        examples=[ex.CATALOG_ENTRY_ID],
-    )
     display_name: str | None = Field(
         description="Human-readable name to show for the API; null if not set.",
         examples=["Stripe"],
