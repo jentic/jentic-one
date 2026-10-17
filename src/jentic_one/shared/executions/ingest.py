@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.shared.db.utils import insert_append_only_row
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
 
@@ -45,33 +46,37 @@ async def record_execution(
     ``operation`` carries the resolved operation's identity as one object;
     it is flattened onto the record's ``operation_id`` / ``operation_path`` /
     ``operation_method`` columns here (the DB shape stays flat).
+
+    The row is append-only and the caller supplies its id, so it is written
+    without an ORM instance and nothing is read back (see
+    :func:`insert_append_only_row`). ``created_at`` and ``updated_at`` come
+    from their column defaults.
     """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
 
-    record = ExecutionRecord(
-        id=execution_id,
-        toolkit_id=toolkit_id or None,
-        trace_id=trace_id,
-        started_at=started_at,
-        status=status,
-        duration_ms=duration_ms,
-        operation_id=operation.id if operation else None,
-        operation_path=operation.path if operation else None,
-        operation_method=operation.method if operation else None,
-        api_vendor=api_vendor,
-        api_name=api_name,
-        api_version=api_version,
-        api_host=api_host,
-        http_status=http_status,
-        error=error,
-        pinned_revisions=pinned_revisions,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        credential_id=credential_id,
-        credential_name=credential_name,
-    )
-    session.add(record)
-    await session.flush()
-    return str(record.id)
+    values: dict[str, Any] = {
+        "id": execution_id,
+        "toolkit_id": toolkit_id or None,
+        "trace_id": trace_id,
+        "started_at": started_at,
+        "status": status,
+        "duration_ms": duration_ms,
+        "operation_id": operation.id if operation else None,
+        "operation_path": operation.path if operation else None,
+        "operation_method": operation.method if operation else None,
+        "api_vendor": api_vendor,
+        "api_name": api_name,
+        "api_version": api_version,
+        "api_host": api_host,
+        "http_status": http_status,
+        "error": error,
+        "pinned_revisions": pinned_revisions,
+        "actor_id": actor_id,
+        "actor_type": actor_type,
+        "origin": origin,
+        "credential_id": credential_id,
+        "credential_name": credential_name,
+    }
+    await insert_append_only_row(session, ExecutionRecord, values)
+    return execution_id

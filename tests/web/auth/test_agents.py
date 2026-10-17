@@ -866,7 +866,7 @@ async def self_registered_alert_id(
 ) -> AsyncGenerator[str, None]:
     """The actionable `agent.self_registered` event DCR files for the agent."""
     async with web_context.admin_db.transaction() as session:
-        event = await EventRepository.create(
+        event_id = await EventRepository.create(
             session,
             type=EventType.AGENT_SELF_REGISTERED,
             severity="info",
@@ -877,10 +877,10 @@ async def self_registered_alert_id(
             actor_id=dcr_agent_id,
             actor_type="agent",
         )
-    yield event.id
+    yield event_id
 
     async with web_context.admin_db.session() as session:
-        await session.execute(delete(Event).where(Event.id == event.id))
+        await session.execute(delete(Event).where(Event.id == event_id))
         await session.commit()
 
 
@@ -950,7 +950,7 @@ async def test_approve_leaves_other_agents_alerts_untouched(
     stay as append-only history regardless of which agent is decided.
     """
     async with web_context.admin_db.transaction() as session:
-        other = await EventRepository.create(
+        other_id = await EventRepository.create(
             session,
             type=EventType.AGENT_SELF_REGISTERED,
             severity="info",
@@ -961,7 +961,6 @@ async def test_approve_leaves_other_agents_alerts_untouched(
             actor_id="agnt_other_pending",
             actor_type="agent",
         )
-    other_id = other.id
 
     try:
         resp = admin_client.post(f"/agents/{dcr_agent_id}:approve")
