@@ -32,8 +32,8 @@ class CatalogUpdateCheckRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _outdated_base(now: datetime | None = None) -> Select[tuple[uuid.UUID, str]]:
-        """Shared selectable of ``(local_api_id, spec_url)`` for genuinely-outdated APIs.
+    def _outdated_base(now: datetime | None = None) -> Select[tuple[uuid.UUID, str | None]]:
+        """Shared selectable of ``(local_api_id, catalog_entry_id)`` for genuinely-outdated APIs.
 
         An API is *outdated* when its check row carries a ``last_notified_digest`` (a real
         ``catalog.update_available`` fired for it) that differs from the digest of the API's
@@ -50,7 +50,7 @@ class CatalogUpdateCheckRepository:
         leave the API stuck as outdated forever even after the served revision adopts the
         upstream. An API with no non-archived revision is excluded (nothing served to be
         outdated). Exposes both the ``local_api_id`` (for API-keyed surfaces) and the
-        ``spec_url`` (for the manifest-keyed catalog list).
+        ``catalog_entry_id`` (for the entry-keyed catalog list).
 
         Snooze (C1, #925): a row is *also* excluded while an operator snooze covers the exact
         change currently prompting — ``snoozed_digest == last_notified_digest`` and the snooze
@@ -66,13 +66,13 @@ class CatalogUpdateCheckRepository:
         )
 
     @staticmethod
-    def _served_outdated_core() -> Select[tuple[uuid.UUID, str]]:
+    def _served_outdated_core() -> Select[tuple[uuid.UUID, str | None]]:
         """The outdated selectable *without* the snooze predicate — the shared core.
 
         Ranks each API's non-archived revisions exactly as the notify sweep does (current
         revision first, then newest ``created_at``, then ``id`` as the deterministic
         tiebreak), keeps only rank 1 (the served revision), and returns the
-        ``(local_api_id, spec_url)`` rows whose ``last_notified_digest`` differs from that
+        ``(local_api_id, catalog_entry_id)`` rows whose ``last_notified_digest`` differs from that
         served revision's digest. :meth:`_outdated_base` appends :meth:`_not_snoozed`;
         :meth:`_outdated_base_unsnoozed` returns this as-is. Kept single-sourced so the
         served-revision selection can never drift between the snoozed and include-snoozed
@@ -99,7 +99,7 @@ class CatalogUpdateCheckRepository:
         return (
             select(
                 CatalogUpdateCheck.local_api_id.label("local_api_id"),
-                CatalogUpdateCheck.spec_url.label("spec_url"),
+                CatalogUpdateCheck.catalog_entry_id.label("catalog_entry_id"),
             )
             .join(served, served.c.api_id == CatalogUpdateCheck.local_api_id)
             .where(served.c.rnk == 1)
@@ -149,10 +149,10 @@ class CatalogUpdateCheckRepository:
 
         The API-keyed form of the outdated set. **Use this for per-API surfaces** (the
         ``/apis`` list and single-API view): those are keyed on the local ``api_id``, and two
-        distinct local APIs can share one upstream ``source_url`` (umbrella specs split across
-        vendor + sub-APIs, or the same URL re-imported under a different identity). Testing
-        ``source_url`` membership would then flag *every* API sharing that URL — including ones
-        already up to date. Testing ``api_id`` membership is exact. See :meth:`_outdated_base`.
+        distinct local APIs can track one catalog entry (the same entry imported twice under
+        different identities). Testing entry membership would then flag *every* API tracking
+        that entry, including ones already up to date. Testing ``api_id`` membership is exact.
+        See :meth:`_outdated_base`.
 
         ``include_snoozed=True`` bypasses the snooze exclusion (C1) so an operator surface can
         still list snoozed rows.
@@ -166,15 +166,14 @@ class CatalogUpdateCheckRepository:
         return {api_id for (api_id,) in result.all() if api_id is not None}
 
     @staticmethod
-    async def outdated_spec_urls(
+    async def outdated_entry_ids(
         session: AsyncSession, *, now: datetime | None = None, include_snoozed: bool = False
     ) -> set[str]:
-        """Spec URLs whose upstream has a notified update the served revision hasn't adopted.
+        """Catalog entry ids whose upstream has a notified update an import hasn't adopted.
 
-        The manifest-keyed form. **Use this only for the catalog list**, which is keyed on the
-        manifest ``spec_url`` (each manifest entry maps to a distinct ``spec_url``), so URL
-        membership is exact there. For per-API surfaces use :meth:`outdated_api_ids` instead —
-        ``source_url`` is not unique across local APIs. See :meth:`_outdated_base`.
+        The entry-keyed form. **Use this only for the catalog list**, which is keyed on the
+        entry. For per-API surfaces use :meth:`outdated_api_ids` instead: one entry can be
+        tracked by more than one local API. See :meth:`_outdated_base`.
 
         ``include_snoozed=True`` bypasses the snooze exclusion (C1).
         """
@@ -183,11 +182,11 @@ class CatalogUpdateCheckRepository:
             if include_snoozed
             else CatalogUpdateCheckRepository._outdated_base(now)
         )
-        result = await session.execute(select(base.subquery().c.spec_url))
-        return {url for (url,) in result.all() if url}
+        result = await session.execute(select(base.subquery().c.catalog_entry_id))
+        return {entry_id for (entry_id,) in result.all() if entry_id}
 
     @staticmethod
-    def _outdated_base_unsnoozed() -> Select[tuple[uuid.UUID, str]]:
+    def _outdated_base_unsnoozed() -> Select[tuple[uuid.UUID, str | None]]:
         """:meth:`_outdated_base` without the snooze exclusion (include-snoozed surfaces)."""
         return CatalogUpdateCheckRepository._served_outdated_core()
 
@@ -238,15 +237,20 @@ class CatalogUpdateCheckRepository:
         session: AsyncSession,
         *,
         local_api_id: uuid.UUID,
-        spec_url: str,
-        etag: str | None,
+        catalog_entry_id: str,
+        validator: str | None,
         digest: str | None,
         checked_at: datetime,
+        content_hint: str | None = None,
         notified_digest: str | None = None,
         notified_event_class: str | None = None,
         sync_notified: bool = False,
     ) -> CatalogUpdateCheck:
         """Insert or update the observation for ``local_api_id`` and return the row.
+
+        ``content_hint`` is the entry's listing hint at probe time. It is stored as
+        given (``None`` clears it), so a source that stops publishing hints never
+        leaves a stale one that would short-circuit a later probe.
 
         ``notified_digest`` is only written when non-``None`` — a probe that
         observes no change (or a ``304``) must not clear the digest that last
@@ -286,8 +290,9 @@ class CatalogUpdateCheckRepository:
         if row is None:
             row = CatalogUpdateCheck(
                 local_api_id=local_api_id,
-                spec_url=spec_url,
-                last_seen_etag=etag,
+                catalog_entry_id=catalog_entry_id,
+                last_seen_validator=validator,
+                last_seen_content_hint=content_hint,
                 last_seen_digest=digest,
                 last_notified_digest=digest if sync_notified else notified_digest,
                 last_notified_event_class=(
@@ -297,9 +302,14 @@ class CatalogUpdateCheckRepository:
             )
             session.add(row)
         else:
-            row.spec_url = spec_url
-            if etag is not None:
-                row.last_seen_etag = etag
+            if row.catalog_entry_id != catalog_entry_id:
+                # The API now tracks another entry: what was seen for the old
+                # one says nothing about the new one.
+                row.last_seen_validator = None
+            row.catalog_entry_id = catalog_entry_id
+            row.last_seen_content_hint = content_hint
+            if validator is not None:
+                row.last_seen_validator = validator
             if digest is not None:
                 row.last_seen_digest = digest
             if sync_notified:
@@ -326,7 +336,7 @@ class CatalogUpdateCheckRepository:
 
         Split out from :meth:`upsert` so the update-notify sweep can order the durable
         "notified" marker **after** the cross-DB event emit (emit-then-mark). The upsert
-        commits the observation (etag/digest/last_checked_at) in the registry DB; the event
+        commits the observation (validator/digest/last_checked_at) in the registry DB; the event
         lands in the *admin* DB in a separate transaction, so there is no shared commit. If
         the process crashed between marking notified and emitting, dedupe — which keys on
         ``(last_notified_digest, last_notified_event_class)`` — would suppress the

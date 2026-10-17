@@ -2,10 +2,14 @@
 
 One row per **local** registered API (``local_api_id``, unique — never the
 upstream manifest id, per D-005a) recording what the update-notify sweep last
-observed for that API's upstream spec URL:
+observed for the catalog entry that API was imported from (``catalog_entry_id``):
 
-- ``last_seen_etag`` — the validator sent back as ``If-None-Match`` on the next
-  sweep so an unchanged spec answers ``304`` and transfers no body.
+- ``last_seen_validator`` — the opaque validator the entry's source returned,
+  sent back on the next sweep so an unchanged spec answers "not modified" and
+  transfers no body (an ``If-None-Match`` ETag for a URL source).
+- ``last_seen_content_hint`` — the entry's listing ``content_hint`` when it was
+  last probed. While the entry still lists the same (non-null) hint, the sweep
+  treats the spec as unchanged and does not fetch at all.
 - ``last_seen_digest`` — ``sha256`` of the last fetched spec bytes. Recorded for
   observability / future weak-ETag handling; the current MVP dedupes on
   ``last_notified_digest`` and compares against the registered revision's
@@ -38,7 +42,10 @@ class CatalogUpdateCheck(RegistryBase):
     """Per-API record of the last upstream-spec observation for update notify."""
 
     __tablename__ = "catalog_update_checks"
-    __table_args__ = (Index("ix_catalog_update_checks_local_api_id", "local_api_id", unique=True),)
+    __table_args__ = (
+        Index("ix_catalog_update_checks_local_api_id", "local_api_id", unique=True),
+        Index("ix_catalog_update_checks_catalog_entry_id", "catalog_entry_id"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(30),
@@ -48,11 +55,14 @@ class CatalogUpdateCheck(RegistryBase):
     )
     #: The local registry API this row tracks (``apis.id``). No FK constraint:
     #: the row is cheap scratch state and a dropped API is reconciled by the
-    #: sweep (a check with no matching registered spec url is simply ignored).
+    #: sweep (a check whose API is gone is simply ignored).
     local_api_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
-    #: The upstream spec URL probed (the API's revision ``source_url``).
-    spec_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    last_seen_etag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The catalog entry probed (``{source_slug}/{external_id}``, the API's
+    #: ``catalog_entry_id``). NULL only on a row migrated from before entries
+    #: were recorded, until the next sweep probes it.
+    catalog_entry_id: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    last_seen_validator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen_content_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_notified_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: The event *class* that ``last_notified_digest`` was emitted under
