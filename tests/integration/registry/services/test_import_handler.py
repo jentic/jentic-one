@@ -2462,8 +2462,10 @@ async def test_import_job_result_reports_server_url_changes(
         ]
     }
 
+    # The DB handle is passed positionally so the call does not depend on its
+    # parameter name.
     result = await ImportHandler(integration_context).execute(
-        job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+        str(uuid.uuid4()), None, payload=payload, created_by="usr_test"
     )
 
     assert result.body["revisions"][0]["server_url_changes"] == {
