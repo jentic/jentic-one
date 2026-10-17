@@ -24,6 +24,7 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `resolve_strategy_by_name` | `jentic_one.registry.repos.search` | Composition seam: a composite strategy (e.g. a hybrid fusing lexical + semantic) resolves its children by `(dialect, name)` instead of importing their modules, so it uses whatever is registered under that key. Raises `SearchUnsupportedError` naming the available modes when the key is unknown. |
 | `ACTIVE_REVISION_STATES` / `search_filter_clause` | `jentic_one.registry.repos.search` | The shared pin/active-state/api-filter contract every strategy applies, so composite strategies fuse filter-identical result sets. Use `search_filter_clause(api_filters=..., revision_pins=...)` on a statement that joins `ApiRevision`; hand-written SQL builds its state predicate from `ACTIVE_REVISION_STATES`. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
+| `register_state_backend` | `jentic_one.shared.state` | Register a shared-state backend (rate-limit buckets, circuit counters, `Idempotency-Key` records, auth single-use markers) under a name operators select with `state.backend`. The builder receives a `StateBackendBuildContext` (the `state:` section, whose free-form `options` mapping it validates itself, and the process's surface set) and returns a `SharedStateBackend`. The process builds one backend at app assembly, shares it across every surface it serves, and closes it once at shutdown; an unregistered name fails startup listing the registered ones. `memory` (the default) and `redis` (deprecated) are built in. Prove it with `BaseStateBackendContract`. |
 | `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. |
 | `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
@@ -104,6 +105,40 @@ register_pipeline_stage(
     PipelineStageSpec(name="my_ext.embed_operations", factory=EmbedOperationsStage)
 )
 ```
+
+A **shared-state backend** is registered the same way. OSS supports one
+process per surface on the in-process `memory` backend; a backend registered
+here is how a deployment shares rate limits, circuit state and idempotency
+records across several processes of one surface:
+
+```python
+from pydantic import BaseModel
+
+from jentic_one.shared.state import (
+    SharedStateBackend,
+    StateBackendBuildContext,
+    register_state_backend,
+)
+
+
+class ClusterOptions(BaseModel):
+    url: str
+
+
+def build_cluster_backend(ctx: StateBackendBuildContext) -> SharedStateBackend:
+    # state.options is passed through unvalidated: validate it here, so a bad
+    # value fails startup rather than the first request.
+    opts = ClusterOptions.model_validate(ctx.config.options)
+    return MyClusterBackend(opts.url, key_prefix=f"jentic:{','.join(sorted(ctx.apps))}:")
+
+
+register_state_backend("my-cluster", build_cluster_backend)
+```
+
+Operators select it with `state.backend: my-cluster` (settings under
+`state.options`, or `JENTIC__STATE__OPTIONS__URL`). The backend must implement
+every `SharedStateBackend` method atomically across processes; subclass
+`BaseStateBackendContract` (step 3) to prove it.
 
 ### 2. Build an `AppContainer` and compose the app
 
@@ -239,6 +274,25 @@ class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
 These `Test*` subclasses are collected by pytest and fail loudly if your
 implementation diverges from the built-in contract — the same guard the OSS
 suite runs against its own defaults ([`tests/unit/testing/test_compliance_oss.py`](../../tests/unit/testing/test_compliance_oss.py)).
+
+A shared-state backend also has a behavioural contract: claims are won once,
+counters keep their first deadline, buckets refill at their rate, entries
+expire. `BaseStateBackendContract` runs it against a fresh backend per test
+(its tests are `async def`, so run them under pytest-asyncio):
+
+```python
+from jentic_one.shared.state import SharedStateBackend
+from jentic_one.testing import BaseStateBackendContract
+
+
+class TestMyClusterBackendContract(BaseStateBackendContract):
+    def backend_factory(self) -> SharedStateBackend:
+        return MyClusterBackend(TEST_URL, key_prefix=f"test:{uuid.uuid4().hex}:")
+
+    # Expiry and refill tests call advance(); it sleeps by default. Override it
+    # to move an injected clock instead, as the memory backend's suite does
+    # (tests/unit/shared/state/test_state_backend_contract.py).
+```
 
 ### 4. (Optional) Compose your own CLI binary
 

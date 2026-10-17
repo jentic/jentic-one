@@ -138,15 +138,6 @@
       "title": "AuthConfig",
       "type": "object"
     },
-    "BackendKind": {
-      "description": "Which shared-state implementation to build.\n\nDefined here as the single source of truth; consumers import it from this\npackage rather than defining a second enum.",
-      "enum": [
-        "memory",
-        "redis"
-      ],
-      "title": "BackendKind",
-      "type": "string"
-    },
     "BaseModel": {
       "properties": {},
       "title": "BaseModel",
@@ -224,11 +215,8 @@
       "type": "object"
     },
     "BrokerResilienceConfig": {
-      "description": "Resilience envelope: admission + rate limit / circuit.\n\nThe shared-state ``backend`` selection drives *both* the rate limiter and\nthe circuit breaker (memory default; Redis is cluster-wide). Queue\nbackpressure / async-credential / retention knobs are future work.",
+      "description": "Resilience envelope: admission + rate limit / circuit.\n\nThe rate limiter and circuit breaker run on the process's shared-state\nbackend (the top-level ``state:`` section). Queue backpressure /\nasync-credential / retention knobs are future work.",
       "properties": {
-        "backend": {
-          "$ref": "#/$defs/StateBackendConfig"
-        },
         "circuit_breaker": {
           "$ref": "#/$defs/CircuitBreakerConfig"
         },
@@ -924,7 +912,7 @@
       "type": "object"
     },
     "IdempotencyConfig": {
-      "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
+      "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (the\n``state:`` backend). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
       "properties": {
         "enabled": {
           "default": true,
@@ -952,7 +940,7 @@
             }
           ],
           "default": null,
-          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on redis. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
+          "description": "Replay window of a completed Idempotency-Key record, in seconds. Unset, it is 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other. On memory, every record is held in process for this long, so the TTL divides the sustained idempotent request rate the idem budget can hold.",
           "title": "Ttl S"
         }
       },
@@ -1208,7 +1196,7 @@
       "type": "object"
     },
     "MemoryBackendConfig": {
-      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by the redis backend.",
+      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by every other backend.",
       "properties": {
         "max_bytes_per_namespace": {
           "default": 16777216,
@@ -1226,7 +1214,7 @@
         },
         "max_total_bytes": {
           "default": 201326592,
-          "description": "Most approximate bytes all namespaces of one memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. Each surface that keeps shared state (auth, broker, control) has its own backend, so a process holds up to this much per such surface. Raise the container memory limit together with it.",
+          "description": "Most approximate bytes all namespaces of the memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. A process builds one backend shared by every surface it serves, so this caps the whole process's shared state. Raise the container memory limit together with it.",
           "minimum": 1,
           "title": "Max Total Bytes",
           "type": "integer"
@@ -1701,17 +1689,27 @@
       "type": "object"
     },
     "StateBackendConfig": {
-      "description": "Configuration for :func:`build_state_backend`.",
+      "description": "The process's shared-state backend (top-level ``state:`` section).\n\nOne backend per process holds the rate-limit buckets, circuit-breaker\ncounters, ``Idempotency-Key`` records and the auth surface's single-use\nmarkers of every surface the process serves.",
       "properties": {
         "backend": {
-          "$ref": "#/$defs/BackendKind",
-          "default": "memory"
+          "default": "memory",
+          "description": "Name of the shared-state backend to build: ``memory`` (in-process, the default), ``redis`` (deprecated), or a name an extension registered with ``register_state_backend``. An unregistered name fails at startup with the list of registered names.",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "title": "Backend",
+          "type": "string"
         },
         "memory": {
           "$ref": "#/$defs/MemoryBackendConfig"
         },
+        "options": {
+          "additionalProperties": true,
+          "description": "Settings for a backend registered by an extension, passed to its builder unvalidated (the builder validates them). Ignored by the built-in memory and redis backends.",
+          "title": "Options",
+          "type": "object"
+        },
         "redis_key_prefix": {
           "default": "jentic:broker:",
+          "description": "Prefix the deprecated ``redis`` backend puts on every key; set a per-environment value when deployments share one Redis.",
           "title": "Redis Key Prefix",
           "type": "string"
         },
@@ -1727,6 +1725,7 @@
             }
           ],
           "default": null,
+          "description": "Connection URL of the deprecated ``redis`` backend; required by it.",
           "title": "Redis Url"
         }
       },
@@ -2264,6 +2263,10 @@
     },
     "services": {
       "$ref": "#/$defs/ServicesConfig"
+    },
+    "state": {
+      "$ref": "#/$defs/StateBackendConfig",
+      "description": "The process's shared-state backend, built once and shared by every surface the process serves. The deprecated broker.resilience.backend section (and its JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into it for one release."
     },
     "telemetry": {
       "$ref": "#/$defs/TelemetryConfig"

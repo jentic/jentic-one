@@ -12,9 +12,9 @@ any vendor's own throttle: ``CONNECT_RPM`` sustained requests per minute,
 ``request_connection`` tool calls the connect-session service in-process, so it
 carries its own bucket with the same policy.
 
-Both limiters run on the configured shared-state backend
-(``broker.resilience.backend``): per process on ``memory``, cluster-wide on
-a shared backend.
+Both limiters run on the process's shared-state backend (``state:``,
+``Context.state_backend``): per process on ``memory``, cluster-wide on a
+shared backend.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from fastapi import FastAPI
 
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state import MemoryStateBackend, RateLimitStore, build_state_backend
+from jentic_one.shared.state import MemoryStateBackend, RateLimitStore
 
 _logger = structlog.get_logger(__name__)
 
@@ -45,16 +45,14 @@ def _limiter(store: RateLimitStore, namespace: str) -> RateLimiter:
 
 
 def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
-    """Build the control surface's shared-state backend and both connect limiters."""
-    backend = build_state_backend(ctx.config.broker.resilience.backend)
+    """Install both connect limiters on the process's shared-state backend.
+
+    The backend is the process's one instance (closed by ``ctx.shutdown()``).
+    """
+    backend = ctx.state_backend
     setattr(app.state, _BACKEND_ATTR, backend)
     for attr, namespace in _NAMESPACES.items():
         setattr(app.state, attr, _limiter(backend, namespace))
-
-    async def _close_control_backend() -> None:
-        await backend.aclose()
-
-    app.router.add_event_handler("shutdown", _close_control_backend)
 
 
 def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:

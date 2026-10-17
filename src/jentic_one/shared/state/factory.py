@@ -1,18 +1,38 @@
-"""Factory + config for the shared-state backend.
+"""Config, registry and factory for the shared-state backend.
 
-``build_state_backend`` is called at app startup by each surface that keeps
-shared state (auth, broker, control); the resulting backend is closed at
-shutdown. Within a surface the rate limiters, circuit breaker, idempotency
-store and single-use markers receive the same instance.
+A process builds **one** shared-state backend from the top-level ``state:``
+config section (:attr:`jentic_one.shared.context.Context.state_backend`); every
+surface the process serves (auth, broker, control) shares it, and the process
+closes it once at shutdown.
 
-The ``BackendKind.REDIS`` path **fails fast at startup** when no ``redis_url`` is
-configured, and the redis implementation is imported lazily so the default
-memory path needs no ``redis`` dependency.
+Backends are looked up by name in a registry. ``memory`` (the in-process
+default) and ``redis`` (deprecated) are built in; an extension adds its own
+with :func:`register_state_backend` before the app is built::
+
+    from jentic_one.shared.state import StateBackendBuildContext, register_state_backend
+
+    def build_cluster(ctx: StateBackendBuildContext) -> SharedStateBackend:
+        opts = ClusterOptions.model_validate(ctx.config.options)
+        return ClusterStateBackend(opts.url)
+
+    register_state_backend("redis-cluster", build_cluster)
+
+and selects it with ``state.backend: redis-cluster``. Built-in backends read
+their own typed sections (``state.memory``, ``state.redis_url``); a registered
+backend reads the free-form ``state.options`` mapping and validates it itself.
+An unknown name fails at startup with the list of registered names.
+
+The redis implementation is imported lazily so the default memory path needs
+no ``redis`` dependency.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
+import re
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field, SecretStr
@@ -30,16 +50,14 @@ _logger = structlog.get_logger(__name__)
 
 _DEFAULT_REDIS_KEY_PREFIX = "jentic:broker:"
 
+#: Name of the built-in in-process backend (the default).
+MEMORY_BACKEND = "memory"
+#: Name of the built-in, deprecated redis backend.
+REDIS_BACKEND = "redis"
 
-class BackendKind(StrEnum):
-    """Which shared-state implementation to build.
-
-    Defined here as the single source of truth; consumers import it from this
-    package rather than defining a second enum.
-    """
-
-    MEMORY = "memory"
-    REDIS = "redis"
+#: What a backend name may look like, in config and at registration.
+BACKEND_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
+_BACKEND_NAME_RE = re.compile(BACKEND_NAME_PATTERN)
 
 
 # Built-in budgets for the broker's ``Idempotency-Key`` entries. ``idem``
@@ -114,7 +132,7 @@ class MemoryBackendConfig(BaseModel):
     and so on). Each namespace has its own budget, so one key kind filling up
     never starves another. A namespace that is full of live entries refuses
     new writes (the request that needed it gets a 503) rather than evicting a
-    live entry. Ignored by the redis backend.
+    live entry. Ignored by every other backend.
     """
 
     max_entries_per_namespace: int = Field(
@@ -136,12 +154,12 @@ class MemoryBackendConfig(BaseModel):
         default=DEFAULT_MEMORY_MAX_TOTAL_BYTES,
         ge=1,
         description=(
-            "Most approximate bytes all namespaces of one memory backend may hold "
+            "Most approximate bytes all namespaces of the memory backend may hold "
             "together (201326592, 192 MiB, by default); a write past it is refused "
-            "like a full namespace, never by evicting a live entry. Each surface "
-            "that keeps shared state (auth, broker, control) has its own backend, "
-            "so a process holds up to this much per such surface. Raise the "
-            "container memory limit together with it."
+            "like a full namespace, never by evicting a live entry. A process "
+            "builds one backend shared by every surface it serves, so this caps "
+            "the whole process's shared state. Raise the container memory limit "
+            "together with it."
         ),
     )
     namespaces: dict[str, MemoryNamespaceBudgetConfig] = Field(
@@ -189,53 +207,190 @@ class MemoryBackendConfig(BaseModel):
 
 
 class StateBackendConfig(BaseModel):
-    """Configuration for :func:`build_state_backend`."""
+    """The process's shared-state backend (top-level ``state:`` section).
 
-    backend: BackendKind = BackendKind.MEMORY
-    redis_url: SecretStr | None = None
-    redis_key_prefix: str = _DEFAULT_REDIS_KEY_PREFIX
+    One backend per process holds the rate-limit buckets, circuit-breaker
+    counters, ``Idempotency-Key`` records and the auth surface's single-use
+    markers of every surface the process serves.
+    """
+
+    backend: str = Field(
+        default=MEMORY_BACKEND,
+        pattern=BACKEND_NAME_PATTERN,
+        description=(
+            "Name of the shared-state backend to build: ``memory`` (in-process, "
+            "the default), ``redis`` (deprecated), or a name an extension "
+            "registered with ``register_state_backend``. An unregistered name "
+            "fails at startup with the list of registered names."
+        ),
+    )
+    redis_url: SecretStr | None = Field(
+        default=None,
+        description="Connection URL of the deprecated ``redis`` backend; required by it.",
+    )
+    redis_key_prefix: str = Field(
+        default=_DEFAULT_REDIS_KEY_PREFIX,
+        description=(
+            "Prefix the deprecated ``redis`` backend puts on every key; set a "
+            "per-environment value when deployments share one Redis."
+        ),
+    )
     memory: MemoryBackendConfig = Field(default_factory=MemoryBackendConfig)
+    options: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Settings for a backend registered by an extension, passed to its "
+            "builder unvalidated (the builder validates them). Ignored by the "
+            "built-in memory and redis backends."
+        ),
+    )
 
 
-def build_state_backend(cfg: StateBackendConfig) -> SharedStateBackend:
-    """Build the configured shared-state backend.
+@dataclass(frozen=True, slots=True)
+class StateBackendBuildContext:
+    """What a :data:`StateBackendBuilder` receives.
+
+    Attributes:
+        config: The resolved ``state:`` section. A registered backend reads
+            its settings from ``config.options``.
+        apps: The surfaces the process serves (for example
+            ``frozenset({"broker"})``), so a builder can derive a key prefix
+            or pool size per process shape.
+    """
+
+    config: StateBackendConfig
+    apps: frozenset[str] = field(default_factory=frozenset)
+
+
+#: Builds a ready shared-state backend. Called once per process at startup;
+#: the process calls the result's ``aclose()`` once at shutdown. Raise to
+#: fail startup (for example on invalid ``state.options``).
+StateBackendBuilder = Callable[[StateBackendBuildContext], SharedStateBackend]
+
+
+def _build_memory(ctx: StateBackendBuildContext) -> SharedStateBackend:
+    memory = ctx.config.memory
+    return MemoryStateBackend(
+        max_entries=memory.max_entries_per_namespace,
+        max_bytes=memory.max_bytes_per_namespace,
+        max_total_bytes=memory.max_total_bytes,
+        namespace_budgets=memory.budgets(),
+    )
+
+
+def _build_redis(ctx: StateBackendBuildContext) -> SharedStateBackend:
+    cfg = ctx.config
+    if not cfg.redis_url:
+        raise RuntimeError(f"the {REDIS_BACKEND} state backend requires state.redis_url")
+    _logger.warning(
+        "state_backend_deprecated",
+        backend=REDIS_BACKEND,
+        detail=(
+            "the built-in redis shared-state backend is deprecated and will be "
+            "removed; jentic-one supports one process per surface on the memory "
+            "backend, and multi-process shared state comes from a backend an "
+            "extension registers with register_state_backend"
+        ),
+        actionable_step=(
+            "Set state.backend to memory and run one process per surface, or "
+            "select a registered shared backend."
+        ),
+    )
+    if cfg.redis_key_prefix == _DEFAULT_REDIS_KEY_PREFIX:
+        _logger.warning(
+            "redis state backend using the default key prefix; set a "
+            "per-environment redis_key_prefix to avoid cross-deployment "
+            "key collisions on a shared Redis cluster",
+            redis_key_prefix=cfg.redis_key_prefix,
+        )
+    # Imported lazily so the default memory path needs no ``redis`` dependency.
+    # ``redis`` ships as an optional extra (``pip install jentic-one[redis]``),
+    # so surface an actionable error rather than a bare ImportError.
+    try:
+        from jentic_one.shared.state.redis import RedisStateBackend
+    except ImportError as exc:
+        raise RuntimeError(
+            f"the {REDIS_BACKEND} state backend requires the optional 'redis' "
+            "dependency; install it with `pip install jentic-one[redis]` "
+            "(or `uv sync --extra redis`)"
+        ) from exc
+
+    return RedisStateBackend(cfg.redis_url.get_secret_value(), key_prefix=cfg.redis_key_prefix)
+
+
+_BUILTIN_BACKENDS: dict[str, StateBackendBuilder] = {
+    MEMORY_BACKEND: _build_memory,
+    REDIS_BACKEND: _build_redis,
+}
+_REGISTRY: dict[str, StateBackendBuilder] = dict(_BUILTIN_BACKENDS)
+_REGISTRY_LOCK = threading.Lock()
+
+
+def register_state_backend(name: str, builder: StateBackendBuilder) -> None:
+    """Register a shared-state backend under *name*, selectable as ``state.backend``.
+
+    Call at import time (for example in an extension package's ``__init__``),
+    before the app is built. Idempotent for the same ``(name, builder)``.
+
+    Raises:
+        ValueError: *name* is not lowercase letters, digits, ``-`` and ``_``
+            (starting with a letter or digit), is a built-in backend, or is
+            already registered to a different builder.
+    """
+    if not _BACKEND_NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"invalid state backend name {name!r}: use lowercase letters, digits, "
+            "'-' and '_', starting with a letter or digit"
+        )
+    if name in _BUILTIN_BACKENDS:
+        raise ValueError(f"state backend {name!r} is built in and cannot be re-registered")
+    with _REGISTRY_LOCK:
+        existing = _REGISTRY.get(name)
+        if existing is not None and existing is not builder:
+            raise ValueError(f"state backend {name!r} is already registered to {existing!r}")
+        _REGISTRY[name] = builder
+
+
+def registered_state_backends() -> tuple[str, ...]:
+    """The names ``state.backend`` may take, sorted."""
+    with _REGISTRY_LOCK:
+        return tuple(sorted(_REGISTRY))
+
+
+def unregister_state_backend(name: str) -> None:
+    """Remove a registered (non-built-in) backend. For tests only."""
+    if name in _BUILTIN_BACKENDS:
+        raise ValueError(f"state backend {name!r} is built in and cannot be unregistered")
+    with _REGISTRY_LOCK:
+        _REGISTRY.pop(name, None)
+
+
+def build_state_backend(
+    cfg: StateBackendConfig, *, apps: frozenset[str] = frozenset()
+) -> SharedStateBackend:
+    """Build the backend ``cfg.backend`` names.
 
     Args:
-        cfg: Backend selection plus Redis connection details.
+        cfg: The ``state:`` section.
+        apps: The surfaces the process serves, passed to the builder.
 
     Returns:
         A concrete backend implementing all three state roles.
 
     Raises:
-        RuntimeError: If ``BackendKind.REDIS`` is selected without a ``redis_url``,
-            or if the optional ``redis`` dependency is not installed.
+        RuntimeError: ``cfg.backend`` is not registered, or its builder
+            refused the config (for example ``redis`` without ``redis_url``
+            or without the optional ``redis`` dependency).
     """
-    if cfg.backend is BackendKind.REDIS:
-        if not cfg.redis_url:
-            raise RuntimeError(f"{BackendKind.REDIS} backend requires redis_url")
-        if cfg.redis_key_prefix == _DEFAULT_REDIS_KEY_PREFIX:
-            _logger.warning(
-                "redis state backend using the default key prefix; set a "
-                "per-environment redis_key_prefix to avoid cross-deployment "
-                "key collisions on a shared Redis cluster",
-                redis_key_prefix=cfg.redis_key_prefix,
-            )
-        # Imported lazily so the default memory path needs no ``redis`` dependency.
-        # ``redis`` ships as an optional extra (``pip install jentic-one[redis]``),
-        # so surface an actionable error rather than a bare ImportError.
-        try:
-            from jentic_one.shared.state.redis import RedisStateBackend
-        except ImportError as exc:
-            raise RuntimeError(
-                f"{BackendKind.REDIS} backend requires the optional 'redis' "
-                "dependency; install it with `pip install jentic-one[redis]` "
-                "(or `uv sync --extra redis`)"
-            ) from exc
-
-        return RedisStateBackend(cfg.redis_url.get_secret_value(), key_prefix=cfg.redis_key_prefix)
-    return MemoryStateBackend(
-        max_entries=cfg.memory.max_entries_per_namespace,
-        max_bytes=cfg.memory.max_bytes_per_namespace,
-        max_total_bytes=cfg.memory.max_total_bytes,
-        namespace_budgets=cfg.memory.budgets(),
-    )
+    with _REGISTRY_LOCK:
+        builder = _REGISTRY.get(cfg.backend)
+        names = sorted(_REGISTRY)
+    if builder is None:
+        raise RuntimeError(
+            f"unknown shared-state backend {cfg.backend!r} (state.backend); registered "
+            f"backends: {', '.join(names)}. A backend outside these must be registered "
+            "with jentic_one.shared.state.register_state_backend before the app is built."
+        )
+    backend = builder(StateBackendBuildContext(config=cfg, apps=apps))
+    _logger.info("state_backend_built", backend=cfg.backend, apps=sorted(apps))
+    return backend
