@@ -488,18 +488,18 @@ later rollback still decrypts what was written under the new key)
 > as much as you raise the budgets.
 
 Every subchart exposes `replicas` and `resources` in its values (only the
-gateway's `replicas` may usefully go above 1 — see below). The defaults are sized for evaluation, not
-load: registry/control request 100m/128Mi with a 500m/256Mi limit, the
-broker requests 100m/256Mi with a 500m/512Mi limit (its default `memory`
-shared-state budgets, above), and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
-a hint: it boots at roughly 150Mi RSS, and every concurrent password or
+gateway's `replicas` may usefully go above 1 — see below). The defaults are
+sized for evaluation, not load: registry/control request 100m/128Mi with a
+500m/256Mi limit, the broker requests 100m/256Mi with a 500m/512Mi limit (its
+default `memory` shared-state budgets, above), and app/admin request 256Mi
+with a 1Gi limit. The app's floor is real, not a hint: it boots at roughly 150Mi RSS, and every concurrent password or
 OAuth client-secret verification adds 64Mi (argon2id with
 `memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit
 is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 512Mi.
 
 **OSS supports one process per surface.** The app (the combined process,
-which serves auth and control), control and broker keep their rate-limit
+whose auth and control surfaces keep shared state), control and broker keep their rate-limit
 buckets, circuit-breaker counters, `Idempotency-Key` records and the auth
 surface's OAuth rate limiters and consent-nonce anti-replay in the process,
 on the `memory` shared-state backend. A second replica of one of them gets
@@ -508,16 +508,18 @@ re-executed on the other replica, and a consent handle can be redeemed
 twice. Registry and admin keep no such state today, but multi-replica runs
 of them are not tested either. Keep `replicas: 1` on every surface except
 the gateway (a stateless proxy); the chart prints a warning at
-install/upgrade time when any other surface asks for more. Multi-process shared state comes from a backend an extension
-registers with `register_state_backend`
+install/upgrade time when any other surface asks for more. Multi-process
+shared state comes from a backend an extension registers with
+`register_state_backend`
 ([extending-jentic-one.md](../development/extending-jentic-one.md)) and
 selects with `state.backend` (`JENTIC__STATE__BACKEND` via `extraEnv`); the
 built-in `redis` backend is deprecated, needs the optional `[redis]` extra
 that the published `ghcr.io/jentic/jentic-one-app` image does **not**
 include, and will be removed.
 
-- **Broker** — scale up (raise `broker.resources` and
-  `broker.resilience.max_in_flight`) rather than out.
+- **Broker** — scale up rather than out: raise the chart's `broker.resources`
+  and the broker's `broker.resilience.max_in_flight` config key
+  (`JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` via `broker.extraEnv`).
 - **App** — the same one-replica rule applies; the auth surface's limiters and
   anti-replay ride the same backend. Multi-replica surfaces are not part of
   the CI smoke matrix.

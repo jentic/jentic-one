@@ -506,10 +506,11 @@ async def _run_shutdown_handlers(app: FastAPI) -> None:
     """Run the handlers registered with ``app.router.add_event_handler("shutdown", …)``.
 
     FastAPI runs those handlers only for an app without its own ``lifespan``,
-    and every app built here has one, so the lifespan runs them itself. Surface
-    installers use them to close what they built (the auth and control
-    surfaces' shared-state backends). Best-effort: a failing handler is logged
-    and the rest still run.
+    and every app built here has one, so the lifespan runs them itself, for
+    installers (container ``extra_installers`` included) that register one to
+    close what they built. The process's shared-state backend is not closed
+    here; the lifespan closes it last (``ctx.close_state_backend()``).
+    Best-effort: a failing handler is logged and the rest still run.
     """
     for handler in list(app.router.on_shutdown):
         try:

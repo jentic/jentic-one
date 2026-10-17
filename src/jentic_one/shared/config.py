@@ -1583,7 +1583,7 @@ class IdempotencyConfig(BaseModel):
         description=(
             "Replay window of a completed Idempotency-Key record, in seconds. Unset, "
             f"it is {MEMORY_IDEMPOTENCY_TTL_S:.0f} (1 h) on the memory shared-state "
-            f"backend and {SHARED_IDEMPOTENCY_TTL_S:.0f} (24 h) on any other. On memory, "
+            f"backend and {SHARED_IDEMPOTENCY_TTL_S:.0f} (24 h) on any other backend. On memory, "
             "every record is held in process for this long, so the TTL divides the "
             "sustained idempotent request rate the idem budget can hold."
         ),
@@ -1912,27 +1912,46 @@ def _reject_conflicting_state_sections(current: dict[str, Any], legacy: dict[str
     """Raise when a key set under both ``state`` and the old section disagrees.
 
     Both merge orders are validated: they produce the same backend config only
-    when every key set in both agrees. A section that does not validate on its
-    own is left to the main validation, which reports it under ``state``.
+    when every key set in both agrees. When exactly one order validates, a key
+    set in both carries a value that is invalid on one side, which is a
+    disagreement too: letting ``state`` win would silently drop it. When
+    neither validates, the config is invalid whichever side wins, and the main
+    validation reports it under ``state``.
     """
-    try:
-        new_wins = StateBackendConfig.model_validate(_deep_merge(legacy, current))
-        old_wins = StateBackendConfig.model_validate(_deep_merge(current, legacy))
-    except ValidationError:
+    merged_new_wins = _deep_merge(legacy, current)
+    merged_old_wins = _deep_merge(current, legacy)
+    new_wins = _validated_state_section(merged_new_wins)
+    old_wins = _validated_state_section(merged_old_wins)
+    if new_wins is None and old_wins is None:
         return
-    if new_wins == old_wins:
-        return
-    differing = sorted(
-        name
-        for name in StateBackendConfig.model_fields
-        if getattr(new_wins, name) != getattr(old_wins, name)
-    )
+    if new_wins is not None and old_wins is not None:
+        if new_wins == old_wins:
+            return
+        differing = sorted(
+            name
+            for name in StateBackendConfig.model_fields
+            if getattr(new_wins, name) != getattr(old_wins, name)
+        )
+    else:
+        differing = sorted(
+            name
+            for name in current.keys() & legacy.keys()
+            if merged_new_wins.get(name) != merged_old_wins.get(name)
+        )
     raise ValueError(
         f"state and the deprecated {_DEPRECATED_STATE_PATH} both set "
         f"{', '.join(differing)} to different values (check the config file and the "
         "JENTIC__STATE__* / JENTIC__BROKER__RESILIENCE__BACKEND__* env vars); remove "
         f"{_DEPRECATED_STATE_PATH} and keep the value under state"
     )
+
+
+def _validated_state_section(data: dict[str, Any]) -> StateBackendConfig | None:
+    """``data`` as a :class:`StateBackendConfig`, or None when it does not validate."""
+    try:
+        return StateBackendConfig.model_validate(data)
+    except ValidationError:
+        return None
 
 
 def _warn_deprecated_state_section_once(*, both: bool) -> None:

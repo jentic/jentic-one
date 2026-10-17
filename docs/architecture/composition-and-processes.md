@@ -123,9 +123,8 @@ section (`Context.state_backend`) while its app is assembled, so an unknown
 `state.backend` fails before the process serves, with the list of registered
 names. Every surface the process serves shares it — in the combined app the
 auth limiters and single-use markers and the control connect limiters; in a
-broker process the rate limiter, circuit breaker and idempotency store (and
-the auth verifier's limiters). The app lifespan closes it once, after every
-surface teardown.
+broker process the rate limiter, circuit breaker and idempotency store. The
+app lifespan closes it once, after every surface teardown.
 
 ## The memory shared-state backend is bounded
 

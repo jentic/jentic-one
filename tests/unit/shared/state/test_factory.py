@@ -136,7 +136,9 @@ def test_redis_default_prefix_warns() -> None:
     with structlog.testing.capture_logs() as logs:
         backend = build_state_backend(cfg)
     assert backend is not None
-    assert any("default key prefix" in entry.get("event", "") for entry in logs)
+    warnings = [e for e in logs if e["event"] == "state_backend_default_redis_key_prefix"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
 
 
 def test_redis_custom_prefix_does_not_warn() -> None:
@@ -147,4 +149,4 @@ def test_redis_custom_prefix_does_not_warn() -> None:
     )
     with structlog.testing.capture_logs() as logs:
         build_state_backend(cfg)
-    assert not any("default key prefix" in entry.get("event", "") for entry in logs)
+    assert not [e for e in logs if e["event"] == "state_backend_default_redis_key_prefix"]

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import pytest
+import structlog.testing
 from fastapi import FastAPI
 
 from jentic_one.auth.web.app import install_on_app as install_auth
@@ -20,7 +22,7 @@ from jentic_one.shared.state import (
     register_state_backend,
 )
 from jentic_one.shared.state.factory import unregister_state_backend
-from jentic_one.shared.web.app_factory import create_combined_app
+from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 
 
 class _CountingBackend(MemoryStateBackend):
@@ -116,3 +118,64 @@ async def test_the_app_lifespan_closes_the_backend_even_when_startup_fails(
         async with app.router.lifespan_context(app):
             pass
     assert backend.closes == 1
+
+
+async def test_the_surface_lifespan_closes_the_backend_after_its_extra_lifespan(
+    sample_config_dict: dict[str, Any],
+    counting: list[_CountingBackend],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The broker's runners (its extra_lifespan) drain on a still-open backend."""
+    ctx = _ctx(sample_config_dict, backend="counting")
+    closes_seen_by_extra: list[int] = []
+
+    @asynccontextmanager
+    async def _extra(app: FastAPI) -> AsyncIterator[None]:
+        backend = ctx.state_backend
+        try:
+            yield
+        finally:
+            closes_seen_by_extra.append(cast("_CountingBackend", backend).closes)
+
+    async def _noop() -> None:
+        return None
+
+    app = create_surface_app(
+        ctx, title="t", routers=[], enabled_apps={"probe"}, extra_lifespan=_extra
+    )
+    monkeypatch.setattr(ctx, "startup", _noop)
+    monkeypatch.setattr(ctx, "shutdown", _noop)
+    async with app.router.lifespan_context(app):
+        pass
+    (backend,) = counting
+    assert closes_seen_by_extra == [0], "the backend was closed before extra_lifespan exited"
+    assert backend.closes == 1
+
+
+async def test_a_failing_backend_close_is_logged_and_does_not_mask_a_startup_error(
+    sample_config_dict: dict[str, Any],
+    counting: list[_CountingBackend],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _ctx(sample_config_dict, backend="counting")
+    app = create_control_app(ctx)
+    (backend,) = counting
+
+    async def _fail_close() -> None:
+        raise ConnectionError("backend gone")
+
+    async def _fail_startup() -> None:
+        raise RuntimeError("database unreachable")
+
+    monkeypatch.setattr(backend, "aclose", _fail_close)
+    monkeypatch.setattr(ctx, "startup", _fail_startup)
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(RuntimeError, match="database unreachable"),
+    ):
+        async with app.router.lifespan_context(app):
+            pass
+    failures = [e for e in logs if e["event"] == "state_backend_close_failed"]
+    assert len(failures) == 1
+    assert failures[0]["log_level"] == "warning"
+    assert failures[0]["backend"] == "counting"
