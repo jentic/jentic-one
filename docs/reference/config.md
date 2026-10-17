@@ -106,7 +106,7 @@ Background job-worker durability knobs. The worker claims a job, sets a **visibi
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `worker.visibility_timeout_s` | number | `120.0` | `JENTIC__WORKER__VISIBILITY_TIMEOUT_S` |  |
+| `worker.visibility_timeout_s` | number (> 0) | `120.0` | `JENTIC__WORKER__VISIBILITY_TIMEOUT_S` |  |
 | `worker.max_attempts` | integer | `5` | `JENTIC__WORKER__MAX_ATTEMPTS` |  |
 | `worker.retry_backoff_base_s` | number | `2.0` | `JENTIC__WORKER__RETRY_BACKOFF_BASE_S` |  |
 | `worker.retry_backoff_max_s` | number | `60.0` | `JENTIC__WORKER__RETRY_BACKOFF_MAX_S` |  |
