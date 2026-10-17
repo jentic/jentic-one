@@ -596,8 +596,8 @@ def credential_binding_suspended_directive(
     The agent's binding to a credential covering this API is suspended. The
     operator made that call, so the recovery is theirs: resume the binding.
     Deliberately carries no ``suggested_command``, ``connect`` or
-    ``provisioning_url`` — a new connect for the same API is refused while the
-    suspension stands, and suggesting one would steer the agent around it.
+    ``provisioning_url``: a new connect for the same API is refused while the
+    suspension stands, so there is no connect to offer.
     """
     api = "/".join(part for part in (vendor, name) if part)
     return AgentDirective(

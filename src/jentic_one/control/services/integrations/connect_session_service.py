@@ -1347,6 +1347,17 @@ class ConnectSessionService:
         matches any credential value. Called only after the caller's right to
         name the agent is settled, so it says nothing about another owner's
         agent.
+
+        Accepted semantics:
+
+        - Any suspended binding covering the API refuses the connect, even
+          when another, active binding already covers the same API. The
+          suspension stands until the operator resumes or removes it.
+        - The check reads in its own sessions before the bind transaction,
+          so a suspension that lands in the milliseconds between this check
+          and a ``confirm`` bind is not caught here. A suspension made after
+          the bind is outside this check by design; the broker enforces it
+          per call.
         """
         if agent_id is None:
             return
@@ -3442,7 +3453,10 @@ class ConnectSessionService:
         request); the REVOKE audit entry names it, with the session's
         initiator in ``after``. Without it (scanner, callback and expiry
         paths) the entry is attributed to the initiator with
-        ``origin=system``.
+        ``origin=system``. A session that ``confirm`` ends because the
+        platform detected drift (``scheme_changed``, ``servers_changed``,
+        ``oauth_app_changed``) is deliberately left system-attributed too:
+        ending it is the platform's decision, not the confirming caller's.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
