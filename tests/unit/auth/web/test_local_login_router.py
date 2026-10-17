@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import secrets
 import time
 from typing import Any
@@ -895,13 +896,13 @@ def test_csrf_key_is_owned_by_a_keyed_digest_not_the_address(ctx: MagicMock) -> 
     fields = _get_form(ctx, client)
 
     client_key, nonce = fields["csrf"].split(".")
-    assert len(client_key) == 32
-    assert int(client_key, 16) >= 0
+    assert re.fullmatch(r"[0-9a-f]{32}", client_key)
     keys = [k for k in app.state.auth_state_backend._kv if k.startswith("login-csrf:")]
     assert keys == [f"login-csrf:{client_key}:{nonce}"]
     assert key_owner(keys[0]) == client_key
-    assert "2001" not in keys[0]
-    assert "db8" not in keys[0]
+    # Only the owner segment could carry the address; the nonce is random.
+    assert "2001" not in client_key
+    assert "db8" not in client_key
 
 
 def test_login_survives_the_client_ip_changing_between_form_and_submit(
