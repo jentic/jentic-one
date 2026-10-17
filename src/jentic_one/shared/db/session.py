@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
 
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.backends import (
@@ -32,7 +33,9 @@ from jentic_one.shared.db.backends import (
     get_backend,
 )
 from jentic_one.shared.db.backends.base import DatabaseBackend
+from jentic_one.shared.db.connectivity import is_connection_loss, redact_sql
 from jentic_one.shared.db.errors import (
+    DatabaseCommitOutcomeUnknownError,
     DatabaseConsistencyError,
     DatabaseDataError,
     DatabaseIntegrityError,
@@ -42,6 +45,32 @@ from jentic_one.shared.db.errors import (
 T = TypeVar("T")
 
 logger = structlog.get_logger(__name__)
+
+# ``Session.info`` key set while a commit is in flight and cleared once it
+# returns, so a failure raised by a manual ``session.commit()`` inside a
+# ``transaction()`` body is told apart from one raised by an ordinary statement.
+_COMMIT_IN_FLIGHT = "jentic_commit_in_flight"
+
+
+class _CommitTrackingSession(Session):
+    """ORM session that flags the window in which a commit is running."""
+
+    def commit(self) -> None:
+        self.info[_COMMIT_IN_FLIGHT] = True
+        super().commit()
+        self.info.pop(_COMMIT_IN_FLIGHT, None)
+
+
+def _connection_lost_error(sess: AsyncSession, exc: BaseException) -> DatabaseUnavailableError:
+    """Map a connection lost in a ``transaction()`` body to its domain error.
+
+    A loss while a manual ``session.commit()`` was running leaves the outcome
+    unknown, exactly like a loss at the context manager's own commit, so it
+    raises :class:`DatabaseCommitOutcomeUnknownError` and is never replayed.
+    """
+    if sess.info.pop(_COMMIT_IN_FLIGHT, False):
+        return _commit_outcome_unknown(exc)
+    return _unavailable(exc)
 
 
 def _is_data_error(exc: DBAPIError) -> bool:
@@ -59,6 +88,28 @@ def _is_data_error(exc: DBAPIError) -> bool:
     orig = exc.orig
     sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
     return bool(sqlstate) and str(sqlstate).startswith("22")
+
+
+def _unavailable(exc: BaseException) -> DatabaseUnavailableError:
+    """Wrap a transient DB failure, dropping SQLAlchemy's ``[SQL: …]`` tail."""
+    return DatabaseUnavailableError(redact_sql(str(exc)))
+
+
+def _commit_outcome_unknown(exc: BaseException) -> DatabaseCommitOutcomeUnknownError:
+    """Wrap a connection lost at commit, dropping SQLAlchemy's ``[SQL: …]`` tail."""
+    return DatabaseCommitOutcomeUnknownError(redact_sql(str(exc)))
+
+
+async def _rollback_after_connection_loss(sess: AsyncSession) -> None:
+    """Best-effort rollback on a session whose connection is already gone.
+
+    A rollback on a dead connection can itself raise; that secondary error
+    must not replace the connection-loss error the caller maps and retries.
+    """
+    try:
+        await sess.rollback()
+    except Exception as exc:
+        logger.debug("rollback_after_connection_loss_failed", error=redact_sql(str(exc)))
 
 
 def get_database_url(config: DatabaseConfig) -> URL:
@@ -106,7 +157,11 @@ class DatabaseSession:
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
             enable_sqlite_manual_begin(self._engine)
-        self._session_factory = async_sessionmaker(bind=self._engine, expire_on_commit=False)
+        self._session_factory = async_sessionmaker(
+            bind=self._engine,
+            expire_on_commit=False,
+            sync_session_class=_CommitTrackingSession,
+        )
 
     async def close(self) -> None:
         """Dispose the engine and release all connections."""
@@ -117,11 +172,21 @@ class DatabaseSession:
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
-        """Yield an async session, ensuring cleanup on exit."""
+        """Yield an async session, ensuring cleanup on exit.
+
+        A lost Postgres connection (see
+        :func:`~jentic_one.shared.db.connectivity.is_connection_loss`) raises
+        :class:`DatabaseUnavailableError` so web surfaces answer a retryable
+        503; any other exception propagates unchanged.
+        """
         factory = self.session_factory
         async with factory() as sess:
             try:
                 yield sess
+            except DBAPIError as exc:
+                if is_connection_loss(exc):
+                    raise _unavailable(exc) from exc
+                raise
             finally:
                 await sess.close()
 
@@ -133,7 +198,14 @@ class DatabaseSession:
         DatabaseIntegrityError.
         On DataError (e.g. a value too long for its column): rolls back and
         raises DatabaseDataError.
-        On OperationalError/DisconnectionError: raises DatabaseUnavailableError.
+        On OperationalError/DisconnectionError, or any DBAPI error that means the
+        Postgres connection was lost (``is_connection_loss`` — asyncpg surfaces
+        a dropped or terminated backend as a bare ``DBAPIError``/
+        ``InterfaceError``, not ``OperationalError``): raises
+        DatabaseUnavailableError.
+        A connection lost at commit raises DatabaseCommitOutcomeUnknownError
+        (a DatabaseUnavailableError) instead: the commit may have landed. This
+        also covers a manual ``session.commit()`` inside the body.
         On any other exception: rolls back and re-raises unchanged.
 
         The *retries* parameter controls how many times a transient error during
@@ -161,8 +233,11 @@ class DatabaseSession:
                 await sess.rollback()
                 raise DatabaseIntegrityError(str(exc)) from exc
             except (OperationalError, DisconnectionError) as exc:
+                if is_connection_loss(exc):
+                    await _rollback_after_connection_loss(sess)
+                    raise _connection_lost_error(sess, exc) from exc
                 await sess.rollback()
-                raise DatabaseUnavailableError(str(exc)) from exc
+                raise _unavailable(exc) from exc
             except InvalidRequestError as exc:
                 # Belt-and-braces for an accidental async lazy load (MissingGreenlet
                 # is an InvalidRequestError) on a stale/detached ORM instance: map it
@@ -171,11 +246,16 @@ class DatabaseSession:
                 await sess.rollback()
                 raise DatabaseConsistencyError(str(exc)) from exc
             except DBAPIError as exc:
-                # A value that does not fit its column (e.g. a string longer
-                # than the VARCHAR length) is a client-fixable input problem,
-                # not a server fault. asyncpg surfaces truncation as a bare
-                # DBAPIError, so match on the SQLSTATE too (#690). Anything that
-                # is not a data exception propagates unchanged.
+                # A lost connection (no pre-ping, or one dropped mid-request)
+                # is transient: map it so run_in_transaction retries on a fresh
+                # connection. A value that does not fit its column (e.g. a
+                # string longer than the VARCHAR length) is a client-fixable
+                # input problem, not a server fault. asyncpg surfaces both as a
+                # bare DBAPIError, so match on the cause chain / SQLSTATE
+                # (#690). Anything else propagates unchanged.
+                if is_connection_loss(exc):
+                    await _rollback_after_connection_loss(sess)
+                    raise _connection_lost_error(sess, exc) from exc
                 await sess.rollback()
                 if _is_data_error(exc):
                     raise DatabaseDataError(str(exc)) from exc
@@ -198,19 +278,31 @@ class DatabaseSession:
                         await sess.rollback()
                         raise DatabaseIntegrityError(str(exc)) from exc
                     except (OperationalError, DisconnectionError) as exc:
+                        if is_connection_loss(exc):
+                            # Same unknown outcome as the DBAPIError branch below.
+                            await _rollback_after_connection_loss(sess)
+                            raise _commit_outcome_unknown(exc) from exc
                         await sess.rollback()
                         commit_attempts += 1
                         if commit_attempts > retries:
-                            raise DatabaseUnavailableError(str(exc)) from exc
+                            raise _unavailable(exc) from exc
                         logger.warning(
                             "transient_commit_error_retrying",
                             attempt=commit_attempts,
                             max_retries=retries,
                         )
                     except DBAPIError as exc:
-                        # A too-long value can also surface at commit (deferred
-                        # flush). Map data exceptions to the same clean error as
-                        # the in-body path; re-raise anything else (#690).
+                        # A connection lost at commit leaves the outcome
+                        # unknown: the server may have applied the COMMIT
+                        # before the connection dropped. Surface it at once as
+                        # DatabaseCommitOutcomeUnknownError, which
+                        # run_in_transaction does not replay. A too-long value
+                        # can also surface at commit (deferred flush); map data
+                        # exceptions to the same clean error as the in-body
+                        # path and re-raise anything else (#690).
+                        if is_connection_loss(exc):
+                            await _rollback_after_connection_loss(sess)
+                            raise _commit_outcome_unknown(exc) from exc
                         await sess.rollback()
                         if _is_data_error(exc):
                             raise DatabaseDataError(str(exc)) from exc
@@ -267,10 +359,17 @@ class DatabaseSession:
         Unlike :meth:`transaction` — a single-``yield`` context manager that can
         only retry at commit — this re-invokes ``fn`` on a *fresh* session when a
         transient failure (``OperationalError``/``DisconnectionError``, e.g. a
-        SQLite ``database is locked``) is raised either inside ``fn`` or at
-        commit. It waits ``backoff_s`` between attempts and gives up after
-        ``retries`` retries (so up to ``retries + 1`` total attempts), raising
-        :class:`DatabaseUnavailableError`.
+        SQLite ``database is locked``, or a lost Postgres connection) is raised
+        inside ``fn`` or by a definite commit failure. It waits ``backoff_s``
+        between attempts and gives up after ``retries`` retries (so up to
+        ``retries + 1`` total attempts), raising
+        :class:`DatabaseUnavailableError`. A lost connection invalidates the
+        pool, so the retry checks out a fresh connection.
+
+        A connection lost at commit is never replayed: the commit may already
+        have applied, so :class:`DatabaseCommitOutcomeUnknownError` (still a
+        503 at the edge) propagates after the first attempt. The same holds
+        for a manual ``session.commit()`` inside ``fn``.
 
         ``IntegrityError`` (→ :class:`DatabaseIntegrityError`) and every other
         exception propagate immediately without retry, matching the
@@ -283,6 +382,8 @@ class DatabaseSession:
                 async with self.transaction() as sess:
                     result = await fn(sess)
                 return result
+            except DatabaseCommitOutcomeUnknownError:
+                raise
             except DatabaseUnavailableError:
                 if attempt >= retries:
                     raise

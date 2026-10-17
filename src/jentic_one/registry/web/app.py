@@ -18,7 +18,7 @@ from jentic_one.registry.web.routers import (
     search,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.errors import DatabaseConsistencyError
+from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.health import make_health_router
 
@@ -48,6 +48,7 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         # maps to a known, logged 500 rather than escaping as an opaque unhandled
         # traceback. See #642.
         (DatabaseConsistencyError, service_error_handler),
+        (DatabaseUnavailableError, service_error_handler),
     ]
 
 
