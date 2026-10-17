@@ -1,6 +1,6 @@
 """Data test for the wrongly-superseded overlay repair migration (#1078).
 
-Pins revision ``f9a0b1c2d3e4`` against a real (SQLite) database through the real
+Pins revision ``e6858b8a3657`` against a real (SQLite) database through the real
 Alembic chain: an overlay deprecated as ``superseded_by_reimport`` whose confirmed
 revision is still the served revision of its own API is restored to CONFIRMED, while
 legitimately superseded, rolled-back, manually deprecated, cross-API, unlinked and
@@ -17,13 +17,13 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from jentic_one.migrations.registry.versions import (
-    f9a0b1c2d3e4_restore_overlays_wrongly_superseded as repair_migration,
+    e6858b8a3657_restore_overlays_wrongly_superseded as repair_migration,
 )
 from jentic_one.migrations.run import downgrade, upgrade
 
 _DB = "registry"
 _PARENT_REV = "e8f9a0b1c2d3"  # pragma: allowlist secret
-_REV = "f9a0b1c2d3e4"  # pragma: allowlist secret
+_REV = "e6858b8a3657"  # pragma: allowlist secret
 
 _REIMPORT = "superseded_by_reimport"
 

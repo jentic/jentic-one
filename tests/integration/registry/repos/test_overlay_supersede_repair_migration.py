@@ -1,4 +1,4 @@
-"""Integration test for the f9a0b1c2d3e4 wrongly-superseded overlay repair (#1078).
+"""Integration test for the e6858b8a3657 wrongly-superseded overlay repair (#1078).
 
 Runs the migration's repair body against the real registry database (SQLite locally,
 Postgres in CI) so its correlated predicate is exercised on both backends. The full
@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from jentic_one.migrations.registry.versions import (
-    f9a0b1c2d3e4_restore_overlays_wrongly_superseded as repair_migration,
+    e6858b8a3657_restore_overlays_wrongly_superseded as repair_migration,
 )
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api

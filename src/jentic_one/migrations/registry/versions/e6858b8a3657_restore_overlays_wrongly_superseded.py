@@ -1,6 +1,6 @@
 """restore overlays wrongly deprecated by a cross-API supersede
 
-Revision ID: f9a0b1c2d3e4
+Revision ID: e6858b8a3657
 Revises: e8f9a0b1c2d3
 Create Date: 2026-10-17
 
@@ -20,8 +20,9 @@ This restores exactly the rows only that bug can produce:
   overlay's own API. A legitimate supersede always archives the confirmed revision,
   so a legitimately superseded overlay never matches; rollback and manual deprecations
   carry a different reason;
-- no other CONFIRMED overlay already claims that revision, so the restore can never
-  produce two live overlays for one served revision.
+- no other CONFIRMED overlay already claims that revision, so a row is never restored
+  alongside an already-CONFIRMED overlay for that revision. Two deprecated candidates
+  that share a revision are both restored, which reinstates their pre-#1078 state.
 
 Matching rows go back to ``status = 'confirmed'`` with ``deprecated_at`` and
 ``deprecated_reason`` cleared. ``confirmed_at`` and the revision links are untouched.
@@ -42,7 +43,7 @@ from alembic import op
 
 from jentic_one.shared.db.types import GUID
 
-revision: str = "f9a0b1c2d3e4"  # pragma: allowlist secret
+revision: str = "e6858b8a3657"  # pragma: allowlist secret
 down_revision: str | None = "e8f9a0b1c2d3"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
