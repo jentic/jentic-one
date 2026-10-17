@@ -3,7 +3,8 @@
 Runs the production wiring (``InProcessRegistryResolver`` with a
 ``DiscoveryCache``) against a real Registry DB and asserts:
 
-- a repeat lookup is served without a registry statement;
+- a repeat lookup is served without a registry statement, and a miss reads
+  the registry with no BEGIN/ROLLBACK (``read_session()``);
 - in a deployed broker (its own process, so no registry commit ever reaches
   its routing generation) a promote or delete takes effect exactly when the
   default TTL lapses, and the previous route is served until then;
@@ -62,6 +63,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ORIGIN_CATALOG, ApiRevisionSourceType, ApiRevisionState
 from jentic_one.shared.schemas import APIReference
 from jentic_one.wiring import InProcessRegistryResolver, build_discovery_cache
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -239,6 +241,18 @@ async def test_repeat_lookup_is_served_without_registry_statements(
     assert first.operation.id == await _operation_of(registry_db, seeded["live"])
     assert cold, "the first lookup must read the registry"
     assert warm == []
+
+
+async def test_cache_miss_reads_the_registry_in_a_read_session(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    """A miss loads through ``read_session()``, so it sends no BEGIN/ROLLBACK."""
+    resolver = _cached_resolver(registry_db)
+
+    with trace_round_trips(registry_db) as trace:
+        assert await discover(resolver, method="GET", url=URL) is not None
+
+    trace.assert_no_begin_or_rollback()
 
 
 async def test_ttl_zero_reads_registry_every_call(
