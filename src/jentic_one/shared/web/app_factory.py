@@ -505,11 +505,14 @@ async def _null_lifespan() -> AsyncGenerator[None]:
 async def _run_shutdown_handlers(app: FastAPI) -> None:
     """Run the handlers registered with ``app.router.add_event_handler("shutdown", …)``.
 
-    FastAPI runs those handlers only for an app without its own ``lifespan``,
-    and every app built here has one, so the lifespan runs them itself. Surface
-    installers use them to close what they built (the auth and control
-    surfaces' shared-state backends). Best-effort: a failing handler is logged
-    and the rest still run.
+    FastAPI runs an app's own shutdown handlers only from its default lifespan,
+    and every app built here has its own, so this lifespan runs them itself.
+    Surface installers use them to close what they built (the auth and control
+    surfaces' shared-state backends). Register on ``app.router`` itself: an
+    included router's handlers already run through that router's lifespan,
+    which FastAPI merges into the app's, and are copied onto ``app.router``
+    too, so they would run twice. Best-effort: a failing handler is logged and
+    the rest still run.
     """
     for handler in list(app.router.on_shutdown):
         try:
