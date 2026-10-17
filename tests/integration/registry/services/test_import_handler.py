@@ -2344,6 +2344,84 @@ async def test_deprecate_superseded_overlay_cas_rejects_relink_after_guard(
     assert await _overlay_deprecated_events(integration_context, overlay_id) == []
 
 
+async def test_deprecate_superseded_overlay_cas_rejects_unlinked_rematerialize(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#1078: a re-materialize committed as current but not yet linked blocks the demote.
+
+    The overlay still links its archived revision, so the guard and every overlay-row
+    CAS predicate pass. Between the guard and the CAS, a re-materialize's ingest makes a
+    fresh overlay-origin revision the API's current one (its relink is a later,
+    separate step). The CAS checks the API row's current revision, so the overlay stays
+    CONFIRMED and no event is emitted; the later relink then points a CONFIRMED overlay
+    at its served revision.
+    """
+    handler = ImportHandler(integration_context)
+    async with registry_db.session() as session:
+        api = Api(vendor="rm-vendor", name="rm-api", version="1.0.0")
+        session.add(api)
+        await session.flush()
+        archived = ApiRevision(
+            api_id=api.id, state="archived", origin="overlay", spec_digest="sha256:old"
+        )
+        rematerialized = ApiRevision(
+            api_id=api.id, state="archived", origin="overlay", spec_digest="sha256:new"
+        )
+        session.add_all([archived, rematerialized])
+        await session.flush()
+        overlay = Overlay(
+            api_id=api.id,
+            document=_OVERLAY_DOC,
+            status="confirmed",
+            confirmed_revision_id=archived.id,
+            created_by="usr_author",
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id, api_id, rematerialized_id = overlay.id, api.id, rematerialized.id
+        archived_id = archived.id
+
+    guard = ImportHandler._supersede_skip_reason
+
+    async def _guard_then_rematerialize(
+        session: Any, overlay: Overlay | None, superseding_api_id: uuid.UUID | None
+    ) -> Any:
+        reason = await guard(session, overlay, superseding_api_id)
+        await session.execute(
+            update(ApiRevision)
+            .where(ApiRevision.id == rematerialized_id)
+            .values(state="imported")
+            .execution_options(synchronize_session=False)
+        )
+        await session.execute(
+            update(Api)
+            .where(Api.id == api_id)
+            .values(current_revision_id=rematerialized_id)
+            .execution_options(synchronize_session=False)
+        )
+        return reason
+
+    with patch.object(
+        ImportHandler, "_supersede_skip_reason", staticmethod(_guard_then_rematerialize)
+    ):
+        skipped = await handler._deprecate_superseded_overlay(
+            "job-rm",
+            overlay_id,
+            superseding_api_id=api_id,
+            actor_id="usr_operator",
+            actor_type="user",
+        )
+
+    assert skipped is None
+    async with registry_db.session() as session:
+        row = (await session.execute(select(Overlay).where(Overlay.id == overlay_id))).scalar_one()
+    assert row.status == "confirmed"
+    assert row.confirmed_revision_id == archived_id
+    assert await _overlay_deprecated_events(integration_context, overlay_id) == []
+
+
 async def test_deprecate_superseded_overlay_is_idempotent_under_repeat(
     integration_context: Context,
     registry_db: DatabaseSession,

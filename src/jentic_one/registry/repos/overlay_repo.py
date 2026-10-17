@@ -16,7 +16,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.overlays import Overlay
 from jentic_one.registry.repos.search.filters import ACTIVE_REVISION_STATES
-from jentic_one.shared.models import OverlayStatus
+from jentic_one.shared.models import ORIGIN_OVERLAY, OverlayStatus
 
 
 class _Unset(Enum):
@@ -258,6 +258,7 @@ class OverlayRepository:
         expected_api_id: uuid.UUID | None = None,
         expected_confirmed_revision_id: uuid.UUID | _Unset | None = _UNSET,
         require_confirmed_revision_inactive: bool = False,
+        require_api_serves_non_overlay: bool = False,
     ) -> int:
         """Set an overlay's status, returning the number of rows updated.
 
@@ -274,6 +275,10 @@ class OverlayRepository:
         means "must still be NULL"; omit it to not check), and
         ``require_confirmed_revision_inactive`` requires that the linked revision is not
         an active (published/imported) revision — a NULL or dangling link passes.
+        ``require_api_serves_non_overlay`` requires that the overlay's API row is not
+        serving an overlay-origin revision: a re-materialize that committed its new
+        revision as current, but has not linked it to the overlay yet, makes the CAS
+        match nothing. An API with no current revision passes.
         """
         values: dict[str, Any] = {"status": status, "updated_at": func.now()}
         if confirmed_at is not None:
@@ -298,6 +303,14 @@ class OverlayRepository:
                 ~exists().where(
                     ApiRevision.id == Overlay.confirmed_revision_id,
                     ApiRevision.state.in_(ACTIVE_REVISION_STATES),
+                )
+            )
+        if require_api_serves_non_overlay:
+            stmt = stmt.where(
+                ~exists().where(
+                    Api.id == Overlay.api_id,
+                    ApiRevision.id == Api.current_revision_id,
+                    ApiRevision.origin == ORIGIN_OVERLAY.value,
                 )
             )
         result = cast(

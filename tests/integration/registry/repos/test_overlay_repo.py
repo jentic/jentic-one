@@ -536,3 +536,70 @@ async def test_set_status_cas_rechecks_guarded_fields(
         fetched = await OverlayRepository.get_by_id(session, overlay_id)
     assert fetched is not None
     assert fetched.status == ("deprecated" if expected_rows else "confirmed")
+
+
+@pytest.mark.parametrize(
+    ("current_origin", "expected_rows"),
+    [
+        # A re-materialize committed its overlay-origin revision as current but has not
+        # linked it yet: the overlay is served again, so the demote must not fire.
+        ("overlay", 0),
+        # The fresh upstream is served (every legitimate supersede): the demote fires.
+        ("catalog", 1),
+        (None, 1),
+        # No current revision at all: nothing overlay-origin is served.
+        ("no_current", 1),
+    ],
+)
+async def test_set_status_cas_requires_api_serving_non_overlay(
+    registry_db: DatabaseSession,
+    sample_api: Api,
+    current_origin: str | None,
+    expected_rows: int,
+) -> None:
+    """#1078: ``require_api_serves_non_overlay`` keys on the overlay's API current revision.
+
+    The overlay still links its archived revision, so every overlay-row predicate holds;
+    only the API row shows that a re-materialize landed between the guard and the CAS.
+    """
+    async with registry_db.session() as session:
+        archived = ApiRevision(api_id=sample_api.id, state="archived", spec_digest="sha256:arc")
+        session.add(archived)
+        await session.flush()
+        if current_origin != "no_current":
+            current = ApiRevision(
+                api_id=sample_api.id,
+                state="imported",
+                origin=current_origin,
+                spec_digest="sha256:cur",
+            )
+            session.add(current)
+            await session.flush()
+            await session.execute(
+                update(Api).where(Api.id == sample_api.id).values(current_revision_id=current.id)
+            )
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"rm": 1}, created_by="usr_test"
+        )
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay.id)
+            .values(status=OverlayStatus.CONFIRMED, confirmed_revision_id=archived.id)
+        )
+        await session.commit()
+        overlay_id, archived_id = overlay.id, archived.id
+
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_status(
+            session,
+            overlay_id,
+            OverlayStatus.DEPRECATED,
+            deprecated_at=datetime.now(UTC),
+            expected_status=OverlayStatus.CONFIRMED,
+            expected_api_id=sample_api.id,
+            expected_confirmed_revision_id=archived_id,
+            require_confirmed_revision_inactive=True,
+            require_api_serves_non_overlay=True,
+        )
+        await session.commit()
+    assert rows == expected_rows

@@ -83,7 +83,6 @@ class _SupersedeTarget:
 class _SupersedeRecovery:
     """Outcome of a recovered duplicate-on-retry A4b supersede."""
 
-    api_id: uuid.UUID
     skipped: SupersedeSkipReason | None
 
 
@@ -306,7 +305,8 @@ class ImportHandler:
             # content already exists" *did* achieve its goal (the revision exists and
             # we linked it above) — treat it as success, not a failed job. Same for a
             # supersede re-import recovered on duplicate-retry (fresh upstream already
-            # served, overlay deprecated) — see _recover_supersede.
+            # served; the overlay is deprecated unless the same-API guard skips) — see
+            # _recover_supersede.
             if (
                 failures
                 and not revisions
@@ -412,9 +412,12 @@ class ImportHandler:
         the overlay's revision is still served and deprecating it would make its status
         lie. The guard reads under a row lock and the demote's compare-and-swap re-checks
         the same fields (API row, confirmed revision, revision not active), so a concurrent
-        re-materialize cannot slip in between check and write. A skip is logged as
-        ``overlay_supersede_skipped``, counted, and its reason returned so the caller can
-        record it on the job result. Returns ``None`` otherwise.
+        relink cannot slip in between check and write. The CAS also requires that the
+        overlay's API is not serving an overlay-origin revision: in every legitimate
+        supersede the served revision is the fresh upstream, so a re-materialize that
+        committed its revision as current before linking it blocks the demote. A skip is
+        logged as ``overlay_supersede_skipped``, counted, and its reason returned so the
+        caller can record it on the job result. Returns ``None`` otherwise.
 
         L2 (#921): on a successful demote we emit an attributed ``overlay.deprecated``
         event so the overlay is not *silently* flipped behind the audit log. ``actor_id``/
@@ -485,13 +488,19 @@ class ImportHandler:
                         expected_api_id=superseding_api_id,
                         expected_confirmed_revision_id=overlay.confirmed_revision_id,
                         require_confirmed_revision_inactive=True,
+                        require_api_serves_non_overlay=True,
                     )
             if demoted == 0:
                 logger.warning(
                     "overlay_supersede_not_deprecated",
                     job_id=job_id,
                     overlay_id=target_overlay_id,
-                    reason="overlay_not_confirmed_or_missing",
+                    reason="cas_rejected",
+                    detail=(
+                        "the overlay is missing, no longer confirmed, or changed since the "
+                        "guard read (relinked, its revision active again, or its API "
+                        "serving a re-materialized overlay revision)"
+                    ),
                 )
                 return None
             await self._emit_overlay_deprecated(
@@ -754,16 +763,17 @@ class ImportHandler:
         # API row that serves the fresh upstream: a different row skips as ``api_mismatch``,
         # and an overlay whose revision is still active skips as ``revision_still_served``.
         #
-        # Residual (#940): this recovery path passes no ``superseding_revision``, so
-        # ``_deprecate_superseded_overlay`` cannot re-resolve and checks the enqueue-time
-        # ``overlay_id`` against the guard. Under a *concurrent confirm that changed the live
-        # overlay after enqueue* AND a crash mid-supersede (a double fault), that id can be
-        # stale. We do not re-resolve because by recovery time the archived overlay revision
-        # is no longer served, so there is no reliable ``superseded_revision_id`` to key on.
-        # The guard and CAS still limit the demote to a CONFIRMED overlay on the serving API
-        # row whose revision is no longer active, so state is never corrupted; the narrow
-        # cost is a possibly-wrong-overlay demote in this double-fault corner. Left as a
-        # known residual rather than adding a heuristic that could misfire.
+        # Residual double fault (#1810): this recovery path passes no
+        # ``superseding_revision``, so ``_deprecate_superseded_overlay`` cannot re-resolve
+        # and checks the enqueue-time ``overlay_id`` against the guard. Under a *concurrent
+        # confirm that changed the live overlay after enqueue* AND a crash mid-supersede,
+        # that id can be stale. We do not re-resolve because by recovery time the archived
+        # overlay revision is no longer served, so there is no reliable
+        # ``superseded_revision_id`` to key on. The guard and CAS still limit the demote to
+        # a CONFIRMED overlay on the serving API row whose revision is no longer active, so
+        # state is never corrupted; the narrow cost is a possibly-wrong-overlay demote in
+        # this double-fault corner. Left as a known residual rather than adding a heuristic
+        # that could misfire.
         skipped = await self._deprecate_superseded_overlay(
             job_id,
             overlay_id,
@@ -771,7 +781,7 @@ class ImportHandler:
             actor_id=actor_id,
             actor_type=actor_type,
         )
-        return _SupersedeRecovery(api_id=api_id, skipped=skipped)
+        return _SupersedeRecovery(skipped=skipped)
 
     async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
         """Link an overlay to its already-materialized revision after a duplicate re-ingest.
