@@ -1,0 +1,30 @@
+{{- /*
+Post-install/upgrade notes. Warns (never fails) when a stateful surface asks
+for more than one replica: OSS supports one process per surface, because each
+surface keeps its rate limits, circuit state, Idempotency-Key records and the
+auth surface's anti-replay markers in its process (the memory shared-state
+backend). The gateway is a stateless proxy and is exempt. Multi-process shared
+state needs a backend registered with register_state_backend and selected with
+state.backend (JENTIC__STATE__BACKEND); the chart cannot see that choice, so it
+warns regardless and names the escape hatch.
+*/ -}}
+{{- $scaled := list }}
+{{- range $name := (list "app" "admin" "registry" "control" "broker") }}
+{{- $svc := index $.Values $name }}
+{{- if and $svc $svc.enabled (gt (int (default 1 $svc.replicas)) 1) }}
+{{- $scaled = append $scaled (printf "%s.replicas=%d" $name (int $svc.replicas)) }}
+{{- end }}
+{{- end }}
+Jentic One {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+{{- if $scaled }}
+
+WARNING: more than one replica is set for a surface that keeps shared state
+in its process: {{ join ", " $scaled }}.
+Jentic One supports one process per surface (the gateway excepted). Each
+extra replica gets its own rate-limit buckets, circuit-breaker counters,
+Idempotency-Key records and auth anti-replay markers, so limits multiply and
+a replay or consent handle can be accepted twice. Set replicas: 1, or select
+a shared-state backend registered with register_state_backend via
+state.backend (JENTIC__STATE__BACKEND in extraEnv). The built-in redis
+backend is deprecated. See docs/installation/helm.md ("Scaling and HA").
+{{- end }}
