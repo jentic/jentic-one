@@ -27051,7 +27051,7 @@ paths:
                 error_description: rate limit exceeded, retry later
               schema:
                 $ref: '#/components/schemas/OAuthErrorResponse'
-          description: Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).
+          description: Per-client_id + client-network rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).
         '500':
           content:
             application/problem+json:

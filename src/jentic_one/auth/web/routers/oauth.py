@@ -313,7 +313,7 @@ token_router = APIRouter(route_class=_TokenRoute)
             "401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
         ),
         429: oauth_error(
-            "Per-client+IP rate limit exceeded (`Retry-After` header set; "
+            "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; "
             "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).",
             error="slow_down",
             error_description="rate limit exceeded, retry later",
