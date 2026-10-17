@@ -455,7 +455,7 @@ Require-approval holds: held execution jobs awaiting a human reviewer. An execut
 
 ## `state`
 
-The process's shared-state backend (top-level `state:` section). One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records and the auth surface's single-use markers of every surface the process serves.
+The process's shared-state backend (top-level `state:` section). One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records, the auth surface's single-use markers, the broker's auth-failure counters and the MCP session-event dedupe of every surface the process serves.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |

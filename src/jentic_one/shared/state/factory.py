@@ -132,11 +132,16 @@ class MemoryBackendConfig(BaseModel):
     Every key belongs to a namespace, its prefix up to the first ``:``
     (``idem`` for Idempotency-Key records, ``idem-body`` for their stored
     response bodies, ``auth`` for the auth surface's single-use markers,
-    ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,
+    ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters
+    and their open-circuit report claims, ``broker-authfail`` and
+    ``broker-authfail-emit`` for the broker's auth-failure counters,
+    ``mcp-session`` and ``mcp-session-cap`` for the MCP session-event dedupe,
     and so on). Each namespace has its own budget, so one key kind filling up
     never starves another. A namespace that is full of live entries refuses
     new writes (the request that needed it gets a 503) rather than evicting a
-    live entry. Ignored by every other backend.
+    live entry; the telemetry namespaces (``broker-authfail*``, the ``cb``
+    report claims, ``mcp-session*``) only skip the count or fall back to the
+    database dedupe instead. Ignored by every other backend.
     """
 
     max_entries_per_namespace: int = Field(
@@ -214,8 +219,9 @@ class StateBackendConfig(BaseModel):
     """The process's shared-state backend (top-level ``state:`` section).
 
     One backend per process holds the rate-limit buckets, circuit-breaker
-    counters, ``Idempotency-Key`` records and the auth surface's single-use
-    markers of every surface the process serves.
+    counters, ``Idempotency-Key`` records, the auth surface's single-use
+    markers, the broker's auth-failure counters and the MCP session-event
+    dedupe of every surface the process serves.
     """
 
     backend: str = Field(
