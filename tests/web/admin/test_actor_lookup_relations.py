@@ -28,12 +28,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos import AgentRepository, UserRepository
+from jentic_one.admin.repos import AgentRepository, EventRepository, UserRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
@@ -300,5 +301,93 @@ def test_agent_resolves_the_decider_of_a_hold_it_filed(
     assert [e["id"] for e in resp.json()["data"]] == [seen]
     # Another owner's agent filed the other hold: invisible, so like an unknown id.
     assert _lookup(unauthed_client, headers, hidden) == _lookup(
+        unauthed_client, headers, _UNKNOWN_USER
+    )
+
+
+@dataclass(frozen=True)
+class _EventActors:
+    on_member: str
+    on_member_agent: str
+    on_other_agent: str
+
+
+@pytest.fixture()
+async def event_actors(web_context: Context, world: _World) -> AsyncGenerator[_EventActors, None]:
+    """Users acting on events about the member, the member's agent, and another owner's agent."""
+    ctx = web_context
+    actors = _EventActors(
+        on_member=await _user(ctx, "evt-on-member"),
+        on_member_agent=await _user(ctx, "evt-on-member-agent"),
+        on_other_agent=await _user(ctx, "evt-on-other-agent"),
+    )
+    async with ctx.admin_db.session() as session:
+        other_agent = await AgentRepository.create(
+            session,
+            name="lookup-rel-evt-other",
+            owner_id=world.other_owner_id,
+            registered_by=world.other_owner_id,
+            created_by=world.other_owner_id,
+            status=ActorStatus.ACTIVE,
+        )
+        event_ids = []
+        for created_by, actor_id in (
+            (world.member_id, actors.on_member),
+            (world.member_agent_id, actors.on_member_agent),
+            (other_agent.id, actors.on_other_agent),
+        ):
+            event_id = await EventRepository.create(
+                session,
+                type="credential.used",
+                severity="info",
+                summary="lookup rel event",
+                created_by=created_by,
+                actor_id=actor_id,
+                actor_type="user",
+            )
+            event_ids.append(event_id)
+        await session.commit()
+        other_agent_id = other_agent.id
+    yield actors
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Event).where(Event.id.in_(event_ids)))
+        await session.execute(delete(Agent).where(Agent.id == other_agent_id))
+        await session.execute(
+            delete(User).where(
+                User.id.in_([actors.on_member, actors.on_member_agent, actors.on_other_agent])
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.parametrize("about", ["on_member", "on_member_agent"])
+def test_event_actor_resolves_with_events_read_only(
+    unauthed_client: TestClient,
+    web_context: Context,
+    world: _World,
+    event_actors: _EventActors,
+    about: str,
+) -> None:
+    """With ``events:read``, the actor of an event about the member or its agent resolves.
+
+    Without it, the same id answers byte-for-byte like an unknown id.
+    """
+    actor = getattr(event_actors, about)
+    granted = _headers(web_context, world.member_id, ("events:read",))
+    resp = unauthed_client.get("/actors/lookup", params={"id": actor}, headers=granted)
+    assert resp.status_code == 200, resp.text
+    assert [e["id"] for e in resp.json()["data"]] == [actor]
+
+    withheld = _headers(web_context, world.member_id, _MEMBER_PERMISSIONS)
+    assert _lookup(unauthed_client, withheld, actor) == _lookup(
+        unauthed_client, withheld, _UNKNOWN_USER
+    )
+
+
+def test_event_actor_on_another_owners_agent_answers_like_an_unknown_id(
+    unauthed_client: TestClient, web_context: Context, world: _World, event_actors: _EventActors
+) -> None:
+    headers = _headers(web_context, world.member_id, ("events:read",))
+    assert _lookup(unauthed_client, headers, event_actors.on_other_agent) == _lookup(
         unauthed_client, headers, _UNKNOWN_USER
     )
