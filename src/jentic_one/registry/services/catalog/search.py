@@ -33,7 +33,11 @@ Contract for a strategy:
 - Ranking must be deterministic for a fixed request: a walk re-ranks on every
   page and resumes after the cursor's exact ``(score, api_id)`` position, so
   scores must be bit-for-bit stable across calls. ``rank()`` runs once per
-  page; cache per ``(q, manifest_revision)`` if ranking is expensive.
+  page. If ranking is expensive, cache **per-entry scores** keyed by
+  ``(q, manifest_revision, api_id)`` and rank ``request.entries`` from that
+  map; never cache the ranked list — ``entries`` also depends on the list
+  filters and on which APIs are registered or outdated, so two requests with
+  the same ``q`` and revision can carry different candidates.
 - Raise to signal failure. On the first page of a walk the service falls back
   to ``token`` for the whole walk; on a later page it answers 503 (the walk's
   order can't be continued by a different ranker).
@@ -55,13 +59,19 @@ is assembled, with either a strategy **class** (built per config, through an
 optional ``from_config(catalog_config, *, app_config)`` classmethod — see
 :class:`ConfigurableCatalogSearchStrategy`) or a ready-made **instance**.
 Select it with ``catalog.search_strategy``. App assembly fails with a
-``ConfigError`` when the configured name is not registered or can't be built.
+``ConfigError`` when the configured name is not registered or can't be built,
+so a process never serves with a configured strategy it lacks.
+``from_config`` runs synchronously while the app is assembled, before the
+event loop serves requests: create network clients lazily on the first
+``rank()`` call, not in ``from_config``.
 
-A cursor records the strategy that served its walk (key ``st``; reserved to
-gain a version suffix later). A later page is served only by that strategy and
-only while it is the configured one: a cursor naming any other strategy is
-rejected (400, restart the search); one naming the configured strategy on a
-process where it isn't registered answers 503 (another replica may serve it).
+A cursor records the strategy that served its walk (key ``st``). A later page
+is served only by that strategy and only while it is the configured one: a
+cursor naming any other strategy is rejected (400, restart the search). A
+failure of the configured strategy on a later page answers 503 (retry the
+page, or restart the search). Because of the boot check, a cursor naming the
+configured strategy on a process where it isn't registered is a defensive
+case only; it also answers 503.
 """
 
 from __future__ import annotations
@@ -147,7 +157,7 @@ class CatalogSearchRequest:
     options: Mapping[str, str] = field(default_factory=lambda: _EMPTY_OPTIONS)
     #: Opaque identifier of the manifest snapshot ``entries`` came from; it
     #: changes whenever the snapshot is replaced. ``None`` when unknown. Use it
-    #: as a cache key, never parse it.
+    #: in a per-entry score cache key (with ``q`` and ``api_id``), never parse it.
     manifest_revision: str | None = None
 
 
@@ -170,7 +180,10 @@ class ConfigurableCatalogSearchStrategy(Protocol):
     A registered class that defines ``from_config`` is built through it;
     one without it is built zero-arg. The service builds once per booted
     config and reuses the instance across requests, so construction may be
-    expensive (clients, models) but the instance must be safe to share.
+    expensive (models, indexes) but the instance must be safe to share.
+    Construction runs synchronously at app assembly, before the event loop
+    serves requests, so create network clients (HTTP sessions, connection
+    pools) lazily on the first ``rank()`` call.
     """
 
     @classmethod

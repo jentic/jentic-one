@@ -229,8 +229,11 @@ def build_default_container(ctx: Context) -> AppContainer:
     Any process that can read the registry DB may serve catalog searches (the
     registry surface, or control's ``/mcp`` ``search_catalog`` tool), so this is
     also where ``catalog.search_strategy`` is validated: an unregistered or
-    unbuildable strategy fails the boot with ``ConfigError``. Downstream
-    containers that start here inherit the check.
+    unbuildable strategy fails the boot with ``ConfigError``. The check keys
+    on registry DB access, not on the surface, so it also runs in processes
+    that hold that access without serving the catalog (the broker included);
+    failing fast there too is deliberate. Downstream containers that start
+    here inherit the check.
     """
     if ctx.is_db_allowed("registry"):
         validate_catalog_search_config(ctx.config)

@@ -137,9 +137,8 @@ async def list_catalog(
 
     A search walk keeps the ranking that served its first page. A later page
     whose cursor names a ranking that is not the configured one answers 400
-    (restart the search without a cursor); one whose ranking fails or isn't
-    available on this replica answers 503 ``catalog_search_unavailable`` with
-    ``Retry-After`` (retry the page, or restart the search).
+    (restart the search without a cursor); one whose ranking fails answers 503
+    ``catalog_search_unavailable`` (retry the page, or restart the search).
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(
