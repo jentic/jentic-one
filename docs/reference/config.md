@@ -313,8 +313,8 @@ Public API catalog settings (manifest source + staleness).
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |
 | `catalog.update_sweep_jitter_ratio` | number (>= 0.0, <= 1.0) | `0.15` | `JENTIC__CATALOG__UPDATE_SWEEP_JITTER_RATIO` |  |
-| `catalog.search_strategy` | string (min length 1) | `"token"` | `JENTIC__CATALOG__SEARCH_STRATEGY` | Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the built-in token-overlap scorer; other names must be registered by an extension, or app startup fails. |
-| `catalog.search_deadline_ms` | integer (>= 1, <= 60000) | `300` | `JENTIC__CATALOG__SEARCH_DEADLINE_MS` | Time budget in milliseconds for one ranking call by a non-`token` search strategy. On the first page of a walk a timeout falls back to `token` for the whole walk; on a later page it answers 503. |
+| `catalog.search_strategy` | string (min length 1) | `"token"` | `JENTIC__CATALOG__SEARCH_STRATEGY` | Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the built-in token-overlap scorer; other names must be registered by an extension (provisional extension seam; see the extending guide), or app startup fails. Register a strategy on every replica before selecting it, and switch back to `token` before downgrading. |
+| `catalog.search_deadline_ms` | integer (>= 1, <= 60000) | `300` | `JENTIC__CATALOG__SEARCH_DEADLINE_MS` | Time budget in milliseconds for one ranking call by a non-`token` search strategy. On the first page of a walk a timeout falls back to `token` for the whole walk; on a later page it answers 503. Every page re-ranks, so set it well above the strategy's tail latency. |
 
 ## `credentials`
 

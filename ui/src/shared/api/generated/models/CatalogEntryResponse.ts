@@ -16,7 +16,7 @@ export type CatalogEntryResponse = {
     /**
      * Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.
      */
-    match?: (CatalogMatchResponse | null);
+    match?: CatalogMatchResponse;
     /**
      * Manifest path of the entry within the public-APIs repo.
      */
