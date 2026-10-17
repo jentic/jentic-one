@@ -15,7 +15,7 @@ from jentic_one.shared.config import OAuthRateLimitConfig
 
 
 def _request(socket_ip: str | None, *forwarded: str) -> Request:
-    headers = [(b"x-forwarded-for", line.encode()) for line in forwarded]
+    headers = [(b"x-forwarded-for", line.encode("latin-1")) for line in forwarded]
     scope = {
         "type": "http",
         "method": "GET",
@@ -73,6 +73,7 @@ def _ip(trusted: list[str], socket_ip: str | None, forwarded: str | None = None)
         (["fd00::/8"], "fd00::5", "[2001:db8::42]", "2001:db8::42"),
         # Something that only looks like a port suffix is kept whole.
         (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7:http", "203.0.113.7:http"),
+        (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7:\u00b2", "203.0.113.7:\u00b2"),
         # Empty list elements are ignored rather than becoming an identity.
         (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7, , 10.2.0.1,", "203.0.113.7"),
         (["10.0.0.0/8"], "10.0.0.5", " , ", "10.0.0.5"),
