@@ -42,7 +42,7 @@ from jentic_one.registry.web.schemas.catalog import (
     PreviewParameterResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.pagination import MAX_CATALOG_CURSOR_LENGTH, InvalidCursorError
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -113,10 +113,10 @@ async def list_catalog(
     ),
     cursor: str | None = Query(
         default=None,
-        max_length=MAX_CATALOG_CURSOR_LENGTH,
         description=(
             "Opaque cursor from a previous page's `next_cursor`; keep the other filters "
-            "unchanged while paging."
+            "unchanged while paging. A cursor longer than 1 KB, or one this server didn't "
+            "issue, answers 400."
         ),
         openapi_examples=ex.example(ex.CURSOR),
     ),

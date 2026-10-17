@@ -252,9 +252,11 @@ def test_cursor_with_malformed_strategy_name_is_400(admin_client: TestClient) ->
 
 
 @pytest.mark.usefixtures("catalog")
-def test_over_long_cursor_is_rejected_before_decoding(admin_client: TestClient) -> None:
+def test_over_long_cursor_is_400_like_any_invalid_cursor(admin_client: TestClient) -> None:
+    """The 1 KB cap is the cursor parser's, so clients see one restartable 400."""
     resp = admin_client.get("/catalog", params={"q": _Q, "cursor": "A" * 2000})
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"] == "Invalid pagination cursor"
 
 
 @pytest.mark.usefixtures("catalog")
