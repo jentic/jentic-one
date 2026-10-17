@@ -62,6 +62,13 @@ _BODY_KEY_PREFIX = "idem-body:"
 MAX_RECORD_HEADER_BYTES = 512
 _MAX_STATUS_CODE = 999
 _SEPARATORS = (",", ":")
+# Headers a replay needs most (the media type, where a 201 put the resource,
+# its validator, and when to retry), kept first when the cap binds; the rest
+# follow in response order.
+_PRIORITY_HEADERS = ("content-type", "location", "etag", "content-location", "retry-after")
+_HEADER_RANK = {name: rank for rank, name in enumerate(_PRIORITY_HEADERS)}
+# How long a released body slot lingers once its body is dropped.
+_RELEASED_BODY_TTL_S = 1.0
 # Record phases. PENDING carries only the fingerprint (no response yet); DONE
 # carries the serialized response and is what a replay re-emits.
 _PHASE_PENDING = "pending"
@@ -109,12 +116,16 @@ def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
 
 
 def _cap_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Keep headers (``content-type`` first) while their JSON stays within the cap.
+    """Keep headers (:data:`_PRIORITY_HEADERS` first) while their JSON stays within the cap.
 
     Bounds the record size: a response with very many or very long headers
     replays without the ones past the cap rather than inflating every record.
+    A header that does not fit is skipped, so a later, shorter one may still
+    be kept.
     """
-    ordered = sorted(headers.items(), key=lambda kv: kv[0].lower() != "content-type")
+    ordered = sorted(
+        headers.items(), key=lambda kv: _HEADER_RANK.get(kv[0].lower(), len(_PRIORITY_HEADERS))
+    )
     kept: dict[str, str] = {}
     used = 2  # the enclosing ``{}``
     for name, value in ordered:
@@ -254,14 +265,18 @@ class SharedStateIdempotencyStore:
         When the store refuses the record too, the claim is overwritten with a
         status-only tombstone, which is never larger than the claim and so is
         always accepted while the claim is live. A retry then replays the
-        status instead of running the upstream call again.
+        status instead of running the upstream call again. The tombstone
+        carries no body reference, so a body stored for it is released rather
+        than left spending the caller's ``idem-body`` share.
         """
         omit = len(body) > self._max_response_bytes
         body_slot = self._body_slot(caller, key)
+        body_stored = False
         if body and not omit:
             try:
                 # Outlives the record, so a replay never finds the record without it.
                 await self._store.set(body_slot, body, ttl_s=self._done_ttl + self._pending_ttl)
+                body_stored = True
             except StateBackendCapacityError:
                 omit = True
                 _logger.warning("idempotency_body_not_stored", reason="body_budget_full")
@@ -279,6 +294,8 @@ class SharedStateIdempotencyStore:
             return
         except StateBackendCapacityError:
             pass
+        if body_stored:
+            await self._release_body(body_slot)
         try:
             await self._store.set(slot, _tombstone(fingerprint, status_code), ttl_s=self._done_ttl)
         except StateBackendCapacityError:
@@ -294,6 +311,20 @@ class SharedStateIdempotencyStore:
             )
             return
         _logger.warning("idempotency_record_stored_as_tombstone", reason="store_full")
+
+    async def _release_body(self, body_slot: str) -> None:
+        """Drop a stored body nothing will reference.
+
+        Overwrites it with an empty value on a one-second TTL: the KV role has
+        no delete, and an overwrite no larger than the live entry always fits
+        its budget, so the release cannot itself be refused while the body is
+        live.
+        """
+        try:
+            await self._store.set(body_slot, b"", ttl_s=_RELEASED_BODY_TTL_S)
+        except StateBackendCapacityError:
+            # Only when the body already expired; there is nothing to release.
+            return
 
     def _retry_after(self) -> int:
         # Round the short claim TTL up to whole seconds for the Retry-After hint.
