@@ -88,6 +88,14 @@ func AtLeast(version, minimum string) bool {
 	return true
 }
 
+// Parses reports whether v carries a MAJOR.MINOR[.PATCH] release AtLeast can
+// compare. A caller can tell "the server says it is older" (Parses and not
+// AtLeast) from "the server doesn't say" (not Parses).
+func Parses(v string) bool {
+	_, ok := parseRelease(v)
+	return ok
+}
+
 // parseRelease reads the leading MAJOR.MINOR.PATCH of v (a "v" prefix
 // allowed; a missing PATCH reads as 0). Each component is its leading digits.
 func parseRelease(v string) ([3]int, bool) {

@@ -93,3 +93,14 @@ func TestAtLeast(t *testing.T) {
 		}
 	}
 }
+
+func TestParses(t *testing.T) {
+	for v, want := range map[string]bool{
+		"0.44.0": true, "v0.44.0": true, "0.44": true, "0.44.0rc1": true, "0.44.0-rc.1": true,
+		"": false, "dev": false, "main": false, "0": false, "v": false,
+	} {
+		if got := Parses(v); got != want {
+			t.Errorf("Parses(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
