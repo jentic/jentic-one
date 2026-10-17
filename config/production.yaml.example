@@ -203,6 +203,11 @@ broker:
       #     # The built-in defaults:
       #     idem: {max_entries: 250000, max_bytes: 134217728, max_owner_share: 0.1}
       #     idem-body: {max_entries: 1000000, max_bytes: 33554432, max_owner_share: 0.1}
+      #     # Login page CSRF nonces: the per-namespace defaults above, and each
+      #     # client (IPv4 address or IPv6 /64) may hold 2% of them, about 370
+      #     # nonces in their 5-minute TTL, so one flooding client gets 503 while
+      #     # everyone else can still sign in.
+      #     login-csrf: {max_entries: 100000, max_bytes: 16777216, max_owner_share: 0.02}
 
 admin:
   auth:

@@ -27,6 +27,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from structlog.testing import capture_logs
 
 from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
@@ -39,8 +40,19 @@ from jentic_one.auth.web.flow import (
     verify_payload,
 )
 from jentic_one.auth.web.routers import authorize, local_login
-from jentic_one.shared.config import AuthConfig, LocalLoginConfig, PlatformClientConfig
-from jentic_one.shared.state.backend import MemoryStateBackend, StateBackendCapacityError
+from jentic_one.shared.config import (
+    AuthConfig,
+    LocalLoginConfig,
+    OAuthRateLimitConfig,
+    PlatformClientConfig,
+)
+from jentic_one.shared.state.backend import (
+    MemoryStateBackend,
+    NamespaceBudget,
+    StateBackendCapacityError,
+    key_owner,
+)
+from jentic_one.shared.state.factory import StateBackendConfig, build_state_backend
 from jentic_one.shared.web.errors import state_backend_capacity_error_handler
 
 JWT_SECRET = "unit-test-jwt-secret"
@@ -594,7 +606,8 @@ def test_ls_single_use_on_success(ctx: MagicMock) -> None:
         assert replay_get.status_code == 302
         assert replay_get.headers["location"] == "/error?error=invalid_state"
 
-        fresh_nonce = asyncio.run(_mint_nonce_for(app, fields["ls"]))
+        client_key = fields["csrf"].split(".", 1)[0]
+        fresh_nonce = asyncio.run(_mint_nonce_for(app, fields["ls"], client_key))
         replay_post = client.post(
             "/login",
             data={
@@ -611,15 +624,15 @@ def test_ls_single_use_on_success(ctx: MagicMock) -> None:
     authorize_svc.issue_authorization_code.assert_awaited_once()
 
 
-async def _mint_nonce_for(app: FastAPI, ls: str) -> str:
+async def _mint_nonce_for(app: FastAPI, ls: str, client_key: str) -> str:
     """Mint a server-side nonce bound to ``ls`` directly against the backend."""
     nonce = secrets.token_urlsafe(32)
     await app.state.auth_state_backend.set(
-        f"login-csrf:{nonce}",
+        f"login-csrf:{client_key}:{nonce}",
         hashlib.sha256(ls.encode()).hexdigest().encode(),
         ttl_s=300.0,
     )
-    return nonce
+    return f"{client_key}.{nonce}"
 
 
 def test_failure_does_not_burn_ls(ctx: MagicMock, client: TestClient) -> None:
@@ -679,3 +692,244 @@ def test_login_form_escapes_email_echo(ctx: MagicMock, client: TestClient) -> No
     assert resp.status_code == 200
     assert "<script>alert(1)</script>" not in resp.text
     assert "&lt;script&gt;" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Per-client share of the login-csrf namespace: one client flooding the form
+# is refused without refusing anyone else.
+
+FLOODER_IP = "203.0.113.7"
+VICTIM_IP = "198.51.100.9"
+
+
+def _share_app(ctx: MagicMock, *, max_entries: int = 10, share: float = 0.2) -> FastAPI:
+    """An app whose ``login-csrf`` namespace holds ``max_entries``, ``share`` per client."""
+    app = _make_app(ctx)
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
+    app.state.auth_state_backend = MemoryStateBackend(
+        namespace_budgets={
+            "login-csrf": NamespaceBudget(
+                max_entries=max_entries, max_bytes=10**9, max_owner_share=share
+            )
+        }
+    )
+    return app
+
+
+def _client_at(app: FastAPI, host: str) -> TestClient:
+    return TestClient(app, client=(host, 50000))
+
+
+def _assert_capacity_refusal(resp: Any) -> None:
+    assert resp.status_code == 503
+    assert resp.headers["content-type"] == "application/problem+json"
+    assert resp.json()["type"] == "state_backend_capacity"
+    assert 1 <= int(resp.headers["Retry-After"]) <= 300
+
+
+def _platform_login(app: FastAPI, client: TestClient, ctx: MagicMock) -> Any:
+    """Render the form and submit correct credentials for a platform client."""
+    authorize_svc = MagicMock()
+    authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-share")
+    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    fields = _get_form(ctx, client)
+    with patch.object(local_login, "AuthService", return_value=_auth_ok("usr_victim")):
+        return client.post(
+            "/login",
+            data={"email": "victim@test.local", "password": "correct", **fields},
+            follow_redirects=False,
+        )
+
+
+def test_a_flooding_client_cannot_refuse_another_clients_login(ctx: MagicMock) -> None:
+    """One IP filling its share gets 503 + Retry-After; another IP still signs in."""
+    app = _share_app(ctx)  # 10 nonces, 2 per client
+    flooder = _client_at(app, FLOODER_IP)
+    ls = _signed_state(ctx)
+    for _ in range(2):
+        assert flooder.get("/login", params={"ls": ls}).status_code == 200
+
+    _assert_capacity_refusal(flooder.get("/login", params={"ls": ls}))
+
+    resp = _platform_login(app, _client_at(app, VICTIM_IP), ctx)
+    assert resp.status_code == 302
+    assert parse_qs(urlsplit(resp.headers["location"]).query)["code"] == ["authcode-share"]
+
+
+def test_the_default_login_csrf_share_refuses_only_the_flooder(ctx: MagicMock) -> None:
+    """With the built-in budgets, a single IP is refused after its ~370 nonces
+    (rate limit raised out of the way), and another IP still signs in."""
+    ctx.config.auth.oauth_rate_limit = OAuthRateLimitConfig(
+        authorize_rpm=1_000_000, authorize_burst=1_000_000
+    )
+    app = _make_app(ctx)
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
+    app.state.auth_state_backend = build_state_backend(StateBackendConfig())
+    flooder = _client_at(app, FLOODER_IP)
+    ls = _signed_state(ctx)
+
+    rendered = 0
+    while (resp := flooder.get("/login", params={"ls": ls})).status_code == 200:
+        rendered += 1
+        assert rendered < 1_000, "the flooder was never refused"
+    _assert_capacity_refusal(resp)
+    # Twice the default authorize limiter's per-IP allowance in one TTL
+    # (burst 30 + 30/min for 5 min = 180), and nowhere near the namespace.
+    assert 360 <= rendered <= 400
+
+    victim = _platform_login(app, _client_at(app, VICTIM_IP), ctx)
+    assert victim.status_code == 302
+
+
+def test_a_spoofed_forwarded_for_does_not_escape_the_share(ctx: MagicMock) -> None:
+    """X-Forwarded-For from an untrusted socket is ignored, so rotating it
+    leaves the flooder in its own share."""
+    app = _share_app(ctx)
+    flooder = _client_at(app, FLOODER_IP)
+    ls = _signed_state(ctx)
+    statuses = [
+        flooder.get(
+            "/login", params={"ls": ls}, headers={"X-Forwarded-For": f"192.0.2.{i}"}
+        ).status_code
+        for i in range(3)
+    ]
+    assert statuses == [200, 200, 503]
+
+
+def test_a_trusted_proxy_forwarded_for_separates_clients(ctx: MagicMock) -> None:
+    """Behind a listed proxy, each forwarded client has its own share."""
+    proxy = "10.0.0.2"
+    ctx.config.auth.oauth_rate_limit = OAuthRateLimitConfig(trusted_proxies=[proxy])
+    app = _share_app(ctx)
+    via_proxy = _client_at(app, proxy)
+    ls = _signed_state(ctx)
+
+    def get(client_addr: str) -> int:
+        return via_proxy.get(
+            "/login", params={"ls": ls}, headers={"X-Forwarded-For": client_addr}
+        ).status_code
+
+    assert [get(FLOODER_IP) for _ in range(3)] == [200, 200, 503]
+    assert get(VICTIM_IP) == 200
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "shared"),
+    [
+        ("2001:db8:1:2::1", "2001:db8:1:2:ffff:ffff:ffff:fffe", True),
+        ("2001:db8:1:2::1", "2001:db8:1:3::1", False),
+        ("::ffff:203.0.113.7", "203.0.113.7", True),
+        ("203.0.113.7", "203.0.113.8", False),
+    ],
+)
+def test_ipv6_clients_share_by_64_prefix(
+    ctx: MagicMock, first: str, second: str, shared: bool
+) -> None:
+    """Addresses in one IPv6 /64 (or an IPv4 address and its IPv4-mapped
+    form) count as one client; distinct /64s and IPv4 addresses do not."""
+    app = _share_app(ctx)
+    ls = _signed_state(ctx)
+    a, b = _client_at(app, first), _client_at(app, second)
+    assert [a.get("/login", params={"ls": ls}).status_code for _ in range(2)] == [200, 200]
+
+    resp = b.get("/login", params={"ls": ls})
+
+    if shared:
+        _assert_capacity_refusal(resp)
+    else:
+        assert resp.status_code == 200
+
+
+def test_csrf_key_is_owned_by_a_keyed_digest_not_the_address(ctx: MagicMock) -> None:
+    """The nonce is stored as ``login-csrf:<client-key>:<nonce>``: the client
+    key is 32 hex characters, the form token is ``<client-key>.<nonce>``,
+    and no form of the address appears in the key."""
+    app = _make_app(ctx)
+    client = _client_at(app, "2001:db8:1:2::1")
+    fields = _get_form(ctx, client)
+
+    client_key, nonce = fields["csrf"].split(".")
+    assert len(client_key) == 32
+    assert int(client_key, 16) >= 0
+    keys = [k for k in app.state.auth_state_backend._kv if k.startswith("login-csrf:")]
+    assert keys == [f"login-csrf:{client_key}:{nonce}"]
+    assert key_owner(keys[0]) == client_key
+    assert "2001" not in keys[0]
+    assert "db8" not in keys[0]
+
+
+def test_login_survives_the_client_ip_changing_between_form_and_submit(
+    ctx: MagicMock,
+) -> None:
+    """The form token carries its client key, so a phone that renders the
+    form on one network and submits from another still signs in."""
+    app = _make_app(ctx)
+    authorize_svc = MagicMock()
+    authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-roam")
+    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    fields = _get_form(ctx, _client_at(app, "198.51.100.20"))
+
+    with patch.object(local_login, "AuthService", return_value=_auth_ok("usr_roam")):
+        resp = _client_at(app, "2001:db8:9::5").post(
+            "/login",
+            data={"email": "u@test.local", "password": "correct", **fields},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302
+    assert parse_qs(urlsplit(resp.headers["location"]).query)["code"] == ["authcode-roam"]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda key, nonce: nonce,  # bare nonce, no client key
+        lambda key, nonce: f"{key}:{nonce}",  # wrong separator
+        lambda key, nonce: f"{key[:-1]}:.{nonce}",  # a ':' inside the client key
+        lambda key, nonce: f"{key}.{nonce}:x",  # a ':' after the nonce
+        lambda key, nonce: f"{key.upper()}.{nonce}",  # not the canonical client key
+        lambda key, nonce: f"{key}.{nonce}.{nonce}",  # extra segment
+    ],
+)
+def test_submit_rejects_a_malformed_csrf_token(ctx: MagicMock, tamper: Any) -> None:
+    """A token that is not exactly ``<client-key>.<nonce>`` is rejected before
+    any lookup: the credential check never runs."""
+    app = _make_app(ctx)
+    client = TestClient(app)
+    fields = _get_form(ctx, client)
+    key, nonce = fields["csrf"].split(".")
+
+    with patch.object(local_login, "AuthService") as svc_cls:
+        resp = client.post(
+            "/login",
+            data={
+                "email": "u@test.local",
+                "password": "pw",
+                "ls": fields["ls"],
+                "csrf": tamper(key, nonce),
+            },
+        )
+
+    assert resp.status_code == 200
+    assert "The form expired" in resp.text
+    svc_cls.assert_not_called()
+
+
+def test_a_share_refusal_logs_no_client_address(ctx: MagicMock) -> None:
+    """The refusal is logged as an owner-share refusal of ``login-csrf``,
+    without the client's address or its derived key."""
+    app = _share_app(ctx)
+    flooder = _client_at(app, FLOODER_IP)
+    ls = _signed_state(ctx)
+    client_key = _get_form(ctx, flooder)["csrf"].split(".")[0]
+    flooder.get("/login", params={"ls": ls})
+
+    with capture_logs() as logs:
+        _assert_capacity_refusal(flooder.get("/login", params={"ls": ls}))
+
+    refused = [e for e in logs if e["event"] == "shared_state_write_refused"]
+    assert refused and refused[0]["namespace"] == "login-csrf"
+    assert refused[0]["owner_share"] is True
+    for entry in logs:
+        assert FLOODER_IP not in str(entry)
+        assert client_key not in str(entry)

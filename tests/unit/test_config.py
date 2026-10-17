@@ -56,6 +56,7 @@ from jentic_one.shared.state import (
     BackendKind,
     MemoryBackendConfig,
     MemoryStateBackend,
+    NamespaceBudget,
     StateBackendConfig,
     build_state_backend,
 )
@@ -2098,6 +2099,23 @@ def test_an_idem_override_keeps_the_per_caller_share_unless_set():
     assert budgets["idem"].max_owner_share == 0.1
     assert budgets["idem-body"].max_owner_share == 1.0
     assert budgets["cb"].max_owner_share is None
+
+
+def test_login_csrf_has_a_per_client_share_sized_like_other_namespaces():
+    default = MemoryBackendConfig().budgets()["login-csrf"]
+    assert default.max_owner_share == 0.02
+    assert default.max_entries == 100_000
+    assert default.max_bytes == 16 * 1024 * 1024
+
+    # It follows the per-namespace defaults, and an override keeps the share.
+    resized = MemoryBackendConfig(max_entries_per_namespace=7, max_bytes_per_namespace=9_000)
+    assert resized.budgets()["login-csrf"] == NamespaceBudget(
+        max_entries=7, max_bytes=9_000, max_owner_share=0.02
+    )
+    overridden = MemoryBackendConfig.model_validate(
+        {"namespaces": {"login-csrf": {"max_entries": 10, "max_bytes": 10_000}}}
+    )
+    assert overridden.budgets()["login-csrf"].max_owner_share == 0.02
 
 
 @pytest.mark.parametrize(
