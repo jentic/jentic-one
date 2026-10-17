@@ -160,6 +160,11 @@ def test_normalize_drops_non_finite_or_non_numeric_scores(bad: object) -> None:
     assert result.dropped_invalid == 1
 
 
+def test_catalog_search_request_is_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        CatalogSearchRequest("pay", ())  # type: ignore[call-arg]
+
+
 def test_normalize_drops_rows_that_are_not_ranked_entries() -> None:
     a = _entry("a")
     result = normalize_ranking([("a", 1), object(), RankedEntry(a, 1)], [a])

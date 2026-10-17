@@ -19,6 +19,8 @@ from .conftest import SRC_ROOT, python_files_in
 _CATALOG = SRC_ROOT / "registry" / "services" / "catalog"
 _SEARCH = _CATALOG / "search.py"
 _MANIFEST_BUILDER = _CATALOG / "manifest_builder.py"
+#: The registration table and the per-config build cache behind it.
+_PRIVATE_TABLES = {"_STRATEGIES", "_BUILT"}
 
 
 def _names_used(tree: ast.AST) -> set[str]:
@@ -51,7 +53,7 @@ def test_token_scorer_is_only_called_through_the_strategy_seam() -> None:
 
 @pytest.mark.arch
 def test_catalog_strategy_table_is_private_to_the_seam() -> None:
-    """Only ``search.py`` touches its registry; everyone else uses the hooks."""
+    """Only ``search.py`` touches its registry and build cache; everyone else uses the hooks."""
     violations: list[str] = []
     for py_file in python_files_in(SRC_ROOT):
         if py_file == _SEARCH:
@@ -60,7 +62,7 @@ def test_catalog_strategy_table_is_private_to_the_seam() -> None:
         if "catalog.search" not in source and "catalog import search" not in source:
             continue
         tree = ast.parse(source, filename=str(py_file))
-        if "_STRATEGIES" in _names_used(tree):
+        if _PRIVATE_TABLES & _names_used(tree):
             violations.append(str(py_file.relative_to(SRC_ROOT)))
     assert not violations, (
         "Register catalog search strategies with register_catalog_search_strategy(), "

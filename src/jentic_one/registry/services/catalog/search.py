@@ -139,12 +139,12 @@ class RankedEntry:
     match: CatalogMatch | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CatalogSearchRequest:
     """Everything a strategy may use to rank one search page.
 
     Fields are only ever added (with defaults), so strategies keep working as
-    the request grows.
+    the request grows. Construct it with keyword arguments.
     """
 
     #: The search text; always has at least one catalog token.
