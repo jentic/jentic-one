@@ -3424,10 +3424,16 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nCA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. Your agent\nidentity (~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\nauthenticated; run `jentic reset` to remove it. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.\n\nAgent skills installed by `jentic skill init` live outside ~/.jentic\n(e.g. ~/.claude/skills/jentic, AGENTS.md managed blocks). By default\nuninstall leaves them in place and lists any that remain, with the\ncommand to remove them (`jentic skill remove --all`). --remove-skills\n(implied by --purge) removes them as part of the uninstall, using the\nsame path as `jentic skill remove --all`: manually edited skills are\nkept and reported. Project-scope installs are found relative to the\ncurrent directory. A skill-cleanup failure never fails the uninstall.",
-          "example": "  jenticctl uninstall\n  jenticctl uninstall --yes --keep-data\n  jenticctl uninstall --yes --remove-skills\n  jenticctl uninstall --yes --purge",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nCA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. Your agent\nidentity (~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\nauthenticated; run `jentic reset` to remove it. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.\n\nAgent skills installed by `jentic skill init` live outside ~/.jentic\n(e.g. ~/.claude/skills/jentic, AGENTS.md managed blocks). By default\nuninstall leaves them in place and lists any that remain, with the\ncommand to remove them (`jentic skill remove --all`).\n--remove-skills (implied by --purge) also removes the user-scope\ninstalls under your home directory. Project-scope installs (./AGENTS.md\nblocks, ./.claude|.cursor|.hermes/skills/jentic) are found relative to\nthe current directory and are only removed with --remove-project-skills.\nUninstall lists the exact files first and asks before removing them\nunless --yes is given. Manually edited skills, and files at a skill path\nthat Jentic did not write, are kept and reported. --dry-run shows what\nwould be removed and changes nothing. If a skill cannot be removed,\nuninstall still finishes the teardown, reports the failure, and exits\nnon-zero.",
+          "example": "  jenticctl uninstall\n  jenticctl uninstall --dry-run --purge\n  jenticctl uninstall --yes --keep-data\n  jenticctl uninstall --yes --remove-skills\n  jenticctl uninstall --yes --remove-project-skills\n  jenticctl uninstall --yes --purge",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
+            {
+              "name": "dry-run",
+              "type": "bool",
+              "default": "false",
+              "usage": "list what uninstall would remove, including agent skills, and change nothing"
+            },
             {
               "name": "keep-data",
               "type": "bool",
@@ -3438,13 +3444,19 @@
               "name": "purge",
               "type": "bool",
               "default": "false",
-              "usage": "also remove the Docker stack's data volume (destroys the database) and the installed agent skills"
+              "usage": "also remove the Docker stack's data volume (destroys the database) and the user-scope Jentic agent skills (never touches the current directory)"
+            },
+            {
+              "name": "remove-project-skills",
+              "type": "bool",
+              "default": "false",
+              "usage": "also remove project-scope Jentic agent skills under the current directory (./AGENTS.md blocks, ./.claude|.cursor|.hermes/skills/jentic); implies --remove-skills"
             },
             {
               "name": "remove-skills",
               "type": "bool",
               "default": "false",
-              "usage": "also remove the installed Jentic agent skills (manually edited ones are kept)"
+              "usage": "also remove the user-scope Jentic agent skills under your home directory (manually edited ones are kept)"
             },
             {
               "name": "yes",

@@ -501,23 +501,56 @@ you. SQLite databases default to `~/.jentic/data/`.
 
 ### Uninstall (`jenticctl uninstall`)
 
-`jenticctl uninstall` wipes everything under `~/.jentic` (venv, source, data, logs,
-profiles) but **preserves your config**: each config file is renamed to a
-`-old` backup so you can restore it later. The `~/.jentic` directory itself is
-kept.
+`jenticctl uninstall` wipes everything under `~/.jentic` (venv, source, data, logs)
+but **preserves your config**: each config file is renamed to a `-old` backup so
+you can restore it later. Your agent identity (`~/.jentic/profiles`) and the
+`~/.jentic` directory itself are kept; run `jentic reset` to remove the identity.
 
 ```bash
-jenticctl uninstall          # prompts for confirmation
-jenticctl uninstall --yes    # skip the prompt
+jenticctl uninstall            # prompts for confirmation
+jenticctl uninstall --yes      # skip the prompt
+jenticctl uninstall --dry-run  # show what would be removed; change nothing
 ```
 
-After running, `~/.jentic` contains only the backups:
+After running, `~/.jentic` contains only the backups (plus `profiles/`):
 
 ```
 ~/.jentic/
 ├── jentic-one-old.yaml   # was jentic-one.yaml
 └── config-old.yaml       # was config.yaml
 ```
+
+#### Agent skills
+
+Skills written by `jentic skill init` / `jentic bootstrap` live outside
+`~/.jentic` (`~/.claude/skills/jentic/`, `~/.cursor/…`, `~/.hermes/…`,
+`~/.codex/AGENTS.md`, and project-scope `./AGENTS.md` blocks or
+`./.claude|.cursor|.hermes/skills/jentic/`). By default `uninstall` leaves them
+alone and lists the ones still installed, with the command to remove them.
+
+| Flag | Effect on skills |
+| ---- | ---------------- |
+| *(none)* | List remaining skills; change nothing |
+| `--remove-skills` | Also remove user-scope installs under your home directory |
+| `--purge` | Implies `--remove-skills` (user scope only), as well as deleting the Docker data volume |
+| `--remove-project-skills` | Also remove project-scope installs under the **current directory**; implies `--remove-skills` |
+| `--dry-run` | List what would be removed; change nothing |
+
+- `--purge` never touches the current directory. Project-scope installs are
+  found relative to the directory you run from, which may be a repo where the
+  skill is committed on purpose, so they need `--remove-project-skills`.
+- Uninstall lists the exact files before removing them, and asks first unless
+  `--yes` is given (including when `~/.jentic` is already gone).
+- Manually edited skills are kept and listed with a targeted
+  `jentic skill remove --operator <op> --skill <name> --scope <scope> --force`
+  command. A `SKILL.md` at a Jentic skill path that Jentic did not write (no
+  provenance) is labelled `(not written by Jentic)` and never removed.
+- A symlinked `AGENTS.md` is edited at the file it points to; the link stays.
+- Skills are removed only after the `~/.jentic` teardown succeeds. If a skill
+  cannot be removed, uninstall still finishes, reports it, and exits non-zero.
+- To clean up by hand at any time: `jentic skill remove --all` (add `--force`
+  for edited installs), run from the directory holding any project-scope
+  install.
 
 ### Reinstalling over existing data
 

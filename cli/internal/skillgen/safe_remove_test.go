@@ -174,7 +174,7 @@ func TestReferencesDirSymlinkEscapeRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
-	var victims []string
+	victims := make([]string, 0, len(renderedReferences("jentic")))
 	for _, ref := range renderedReferences("jentic") {
 		v := filepath.Join(outside, ref)
 		writeVictim(t, v)
@@ -188,7 +188,7 @@ func TestReferencesDirSymlinkEscapeRefused(t *testing.T) {
 		t.Error("apply must refuse to write through a references/ symlink that leaves the skill dir")
 	}
 	for _, v := range victims {
-		if data, _ := os.ReadFile(v); string(data) != "keep me\n" { //nolint:gosec // test temp path.
+		if data, _ := os.ReadFile(v); string(data) != "keep me\n" {
 			t.Errorf("apply wrote through the symlink into %s", v)
 		}
 	}
@@ -213,7 +213,7 @@ func TestValidReferenceName(t *testing.T) {
 // installSymlinkedAgents installs the jentic block for codex, then moves the
 // file into a "dotfiles" location with a user prefix and symlinks AGENTS.md
 // to it — the layout a dotfiles-managed AGENTS.md has.
-func installSymlinkedAgents(t *testing.T, prefix string) (env DetectEnv, ad Adapter, c Canonical, link, real string) {
+func installSymlinkedAgents(t *testing.T, prefix string) (env DetectEnv, ad Adapter, c Canonical, link, linked string) {
 	t.Helper()
 	skipNoSymlinks(t)
 	dir := t.TempDir()
@@ -225,21 +225,21 @@ func installSymlinkedAgents(t *testing.T, prefix string) (env DetectEnv, ad Adap
 		t.Fatal(err)
 	}
 	link = out.Path
-	data, err := os.ReadFile(link) //nolint:gosec // test temp path.
+	data, err := os.ReadFile(link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	real = filepath.Join(t.TempDir(), "dotfiles-AGENTS.md")
-	if err := os.WriteFile(real, append([]byte(prefix), data...), 0o600); err != nil {
+	linked = filepath.Join(t.TempDir(), "dotfiles-AGENTS.md")
+	if err := os.WriteFile(linked, append([]byte(prefix), data...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(linked, link); err != nil {
 		t.Fatal(err)
 	}
-	return env, ad, c, link, real
+	return env, ad, c, link, linked
 }
 
 func assertStillSymlink(t *testing.T, link string) {
@@ -251,42 +251,42 @@ func assertStillSymlink(t *testing.T, link string) {
 }
 
 // A symlinked AGENTS.md with user content is edited at its target: the link
-// survives and the real file loses the block but keeps the user's notes.
+// survives and the linked file loses the block but keeps the user's notes.
 func TestRemoveSymlinkedAgentsEditsTargetInPlace(t *testing.T) {
-	env, ad, c, link, real := installSymlinkedAgents(t, "# my notes\n\n")
+	env, ad, c, link, linked := installSymlinkedAgents(t, "# my notes\n\n")
 	if _, err := Remove(ad, c, env, RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertStillSymlink(t, link)
-	data, _ := os.ReadFile(real) //nolint:gosec // test temp path.
+	data, _ := os.ReadFile(linked)
 	if strings.Contains(string(data), "JENTIC MANAGED SKILL") {
-		t.Errorf("the real file must lose the managed block:\n%s", data)
+		t.Errorf("the linked file must lose the managed block:\n%s", data)
 	}
 	if !strings.Contains(string(data), "# my notes") {
 		t.Errorf("the user's content must survive:\n%s", data)
 	}
 }
 
-// With only the Jentic block, the link is kept and the real file is emptied —
+// With only the Jentic block, the link is kept and the linked file is emptied —
 // neither deleted (dangling the link) nor left holding the block.
 func TestRemoveSymlinkedAgentsOnlyBlockEmptiesTarget(t *testing.T) {
-	env, ad, c, link, real := installSymlinkedAgents(t, "")
+	env, ad, c, link, linked := installSymlinkedAgents(t, "")
 	if _, err := Remove(ad, c, env, RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertStillSymlink(t, link)
-	data, err := os.ReadFile(real) //nolint:gosec // test temp path.
+	data, err := os.ReadFile(linked)
 	if err != nil {
-		t.Fatalf("the real file must still exist: %v", err)
+		t.Fatalf("the linked file must still exist: %v", err)
 	}
 	if strings.Contains(string(data), "JENTIC MANAGED SKILL") {
-		t.Errorf("the real file must lose the managed block:\n%s", data)
+		t.Errorf("the linked file must lose the managed block:\n%s", data)
 	}
 }
 
-// Apply onto a symlinked AGENTS.md updates the real file, keeping the link.
+// Apply onto a symlinked AGENTS.md updates the linked file, keeping the link.
 func TestApplySymlinkedAgentsWritesTarget(t *testing.T) {
-	env, ad, _, link, real := installSymlinkedAgents(t, "# my notes\n\n")
+	env, ad, _, link, linked := installSymlinkedAgents(t, "# my notes\n\n")
 	c, err := Bundled("jentic", "http://other.test")
 	if err != nil {
 		t.Fatal(err)
@@ -295,9 +295,9 @@ func TestApplySymlinkedAgentsWritesTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStillSymlink(t, link)
-	data, _ := os.ReadFile(real) //nolint:gosec // test temp path.
+	data, _ := os.ReadFile(linked)
 	if !strings.Contains(string(data), "http://other.test") || !strings.Contains(string(data), "# my notes") {
-		t.Errorf("the real file must carry the refreshed block and the user's notes:\n%s", data)
+		t.Errorf("the linked file must carry the refreshed block and the user's notes:\n%s", data)
 	}
 }
 

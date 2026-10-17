@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
-	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
@@ -74,14 +73,14 @@ func TestUninstall_DefaultListsRemainingSkills(t *testing.T) {
 		t.Fatal("default uninstall must leave installed skills in place")
 	}
 	s := out.String()
-	for _, want := range []string{"still installed", "claude/jentic", "codex/jentic", "jentic skill remove --all"} {
+	for _, want := range []string{"still installed", "claude/jentic", "codex+generic/jentic", "jentic skill remove --all"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("output missing %q:\n%s", want, s)
 		}
 	}
 	// codex and generic share the project AGENTS.md: list that block once.
-	if strings.Contains(s, "generic/jentic") {
-		t.Errorf("shared AGENTS.md block listed twice:\n%s", s)
+	if strings.Contains(s, "  generic/jentic") || strings.Count(s, "AGENTS.md") != 1 {
+		t.Errorf("shared AGENTS.md block must be listed once:\n%s", s)
 	}
 }
 
@@ -96,14 +95,14 @@ func TestUninstall_NoSkillsNoHint(t *testing.T) {
 	}
 }
 
-// --purge removes unmodified skill installs through the `skill remove --all`
-// path, keeps (and reports) manually edited ones, and still completes the
-// uninstall.
-func TestUninstall_PurgeRemovesSkillsButKeepsEdited(t *testing.T) {
+// --purge removes unmodified user-scope skill installs, keeps (and reports)
+// manually edited ones with a targeted --force command, leaves project-scope
+// installs under the cwd alone, and still completes the uninstall.
+func TestUninstall_PurgeRemovesUserSkillsOnly(t *testing.T) {
 	a, out, home, cwd := skillUninstallApp(t)
 	claude := installSkill(t, home, cwd, "claude")
 	cursor := installSkill(t, home, cwd, "cursor")
-	agents := installSkill(t, home, cwd, "codex")
+	agents := installSkill(t, home, cwd, "codex") // project scope: ./AGENTS.md
 	if err := os.WriteFile(cursor, []byte("my own notes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -112,22 +111,45 @@ func TestUninstall_PurgeRemovesSkillsButKeepsEdited(t *testing.T) {
 		t.Fatalf("uninstall --purge: %v", err)
 	}
 	if exists(claude) {
-		t.Error("--purge must remove the unmodified claude skill")
+		t.Error("--purge must remove the unmodified user-scope claude skill")
 	}
-	if data, err := os.ReadFile(agents); err == nil && strings.Contains(string(data), "jentic") {
-		t.Errorf("--purge must strip the managed AGENTS.md block, got:\n%s", data)
+	if data, err := os.ReadFile(agents); err != nil || !strings.Contains(string(data), "JENTIC MANAGED SKILL") {
+		t.Errorf("--purge must not touch project-scope installs under the cwd (err=%v):\n%s", err, data)
 	}
 	if !exists(cursor) {
 		t.Fatal("--purge must never delete a manually edited skill")
 	}
 	s := out.String()
-	for _, want := range []string{"manual edits detected", "cursor/jentic", "(manually edited)", "jentic skill remove --all --force"} {
+	for _, want := range []string{
+		"Uninstall will remove", "Removed 1 Jentic skill install(s)", "cursor/jentic", "(manually edited)",
+		"jentic skill remove --operator cursor --skill jentic --scope user --force", "--remove-project-skills",
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("output missing %q:\n%s", want, s)
 		}
 	}
+	if strings.Contains(s, "re-run with --force") || strings.Contains(s, "Re-run with --force") {
+		t.Errorf("the engine's generic --force hint must not leak into uninstall output:\n%s", s)
+	}
 	if exists(filepath.Join(a.Paths.Dir(), "venv")) {
 		t.Error("the filesystem teardown must still run")
+	}
+}
+
+// --remove-project-skills also strips the project-scope installs.
+func TestUninstall_RemoveProjectSkills(t *testing.T) {
+	a, out, home, cwd := skillUninstallApp(t)
+	claude := installSkill(t, home, cwd, "claude")
+	agents := installSkill(t, home, cwd, "codex")
+
+	if err := a.uninstallE(&uninstallOptions{yes: true, removeProjectSkills: true}); err != nil {
+		t.Fatalf("uninstall --remove-project-skills: %v", err)
+	}
+	if exists(claude) || exists(agents) {
+		t.Errorf("both scopes must be removed:\n%s", out.String())
+	}
+	if s := out.String(); strings.Contains(s, "still installed") {
+		t.Errorf("nothing should remain:\n%s", s)
 	}
 }
 
@@ -164,68 +186,95 @@ func TestUninstall_RemoveSkillsWithNothingInstalled(t *testing.T) {
 	}
 }
 
-// failingSkillCleanup simulates a skill engine that cannot probe or remove.
-type failingSkillCleanup struct{ detectErr, removeErr error }
-
-func (f failingSkillCleanup) InstalledSkills() ([]localagentcmd.InstalledSkill, error) {
-	if f.detectErr != nil {
-		return nil, f.detectErr
+// Without --yes, the skills-only path (no ~/.jentic) previews and asks; a
+// declined prompt removes nothing.
+func TestUninstall_SkillsOnlyAsksWithoutYes(t *testing.T) {
+	a, out, home, cwd := skillUninstallApp(t)
+	if err := os.RemoveAll(a.Paths.Dir()); err != nil {
+		t.Fatal(err)
 	}
-	return []localagentcmd.InstalledSkill{{Operator: "claude", Skill: "jentic", Scope: "user", Display: "~/.claude/skills/jentic/SKILL.md"}}, nil
+	claude := installSkill(t, home, cwd, "claude")
+	asked := 0
+	orig := askSkillRemoval
+	askSkillRemoval = func(n int) (bool, error) { asked = n; return false, nil }
+	t.Cleanup(func() { askSkillRemoval = orig })
+
+	if err := a.uninstallE(&uninstallOptions{removeSkills: true}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if asked != 1 {
+		t.Fatalf("expected one prompt for 1 skill, got %d", asked)
+	}
+	if !exists(claude) {
+		t.Fatal("a declined prompt must remove nothing")
+	}
+	s := out.String()
+	if !strings.Contains(s, "Uninstall will remove") || !strings.Contains(s, "skill removal cancelled") {
+		t.Errorf("expected the preview and a cancel line:\n%s", s)
+	}
 }
 
-func (f failingSkillCleanup) SkillRemoveAll() error { return f.removeErr }
+// --dry-run lists what would go, removes nothing, and skips the teardown.
+func TestUninstall_DryRun(t *testing.T) {
+	a, out, home, cwd := skillUninstallApp(t)
+	claude := installSkill(t, home, cwd, "claude")
+	agents := installSkill(t, home, cwd, "codex")
 
-// A skill-cleanup failure (detection or removal) is warned, never fatal: the
-// uninstall itself must still succeed and finish its teardown.
-func TestUninstall_SkillCleanupFailureDoesNotFailUninstall(t *testing.T) {
-	for name, fake := range map[string]failingSkillCleanup{
-		"detect": {detectErr: errors.New("probe exploded")},
-		"remove": {removeErr: errors.New("remove exploded")},
+	if err := a.uninstallE(&uninstallOptions{dryRun: true, purge: true}); err != nil {
+		t.Fatalf("uninstall --dry-run: %v", err)
+	}
+	if !exists(claude) || !exists(agents) || !exists(filepath.Join(a.Paths.Dir(), "venv")) {
+		t.Fatal("--dry-run must change nothing")
+	}
+	s := out.String()
+	for _, want := range []string{"Would remove these Jentic skill installs", "claude/jentic", "would stay installed", "codex+generic/jentic", "Dry run"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
+	}
+}
+
+// A detection failure never stops the teardown. Without a removal flag it is
+// only a warning; with one, uninstall finishes and exits non-zero, since the
+// skills it was asked to remove are still there.
+func TestUninstall_DetectEnvError(t *testing.T) {
+	for name, opts := range map[string]uninstallOptions{
+		"report only": {yes: true},
+		"remove":      {yes: true, removeSkills: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			orig := newSkillCleanup
-			newSkillCleanup = func(*app) skillCleanup { return fake }
-			t.Cleanup(func() { newSkillCleanup = orig })
-
 			a, out, _, _ := skillUninstallApp(t)
-			if err := a.uninstallE(&uninstallOptions{yes: true, purge: true}); err != nil {
-				t.Fatalf("skill cleanup failure must not fail uninstall: %v", err)
+			a.DetectEnv = func() (skillgen.DetectEnv, error) { return skillgen.DetectEnv{}, errors.New("no home") }
+
+			err := a.uninstallE(&opts)
+			if opts.removeSkills != (err != nil) {
+				t.Fatalf("removeSkills=%v but err=%v", opts.removeSkills, err)
 			}
 			s := out.String()
-			if !strings.Contains(s, "exploded") || !strings.Contains(s, "continuing") {
-				t.Errorf("expected a continuing warning, got:\n%s", s)
+			if strings.Count(s, "could not detect installed skills") != 1 {
+				t.Errorf("detection warning must print exactly once:\n%s", s)
 			}
-			if !strings.Contains(s, "jentic skill remove --all") {
-				t.Errorf("expected the manual removal hint, got:\n%s", s)
+			if !strings.Contains(s, "no home") || !strings.Contains(s, "jentic skill remove --all") {
+				t.Errorf("expected warning + generic hint, got:\n%s", s)
 			}
 			if exists(filepath.Join(a.Paths.Dir(), "venv")) {
-				t.Error("the filesystem teardown must still run after a skill-cleanup failure")
+				t.Error("the filesystem teardown must still run")
 			}
 		})
 	}
 }
 
-// A detection environment that cannot resolve (no home dir) degrades to the
-// generic hint rather than failing the uninstall.
-func TestUninstall_DetectEnvErrorDegradesToHint(t *testing.T) {
-	a, out, _, _ := skillUninstallApp(t)
-	a.DetectEnv = func() (skillgen.DetectEnv, error) { return skillgen.DetectEnv{}, errors.New("no home") }
-
-	if err := a.uninstallE(&uninstallOptions{yes: true, removeSkills: true}); err != nil {
-		t.Fatalf("uninstall: %v", err)
-	}
-	if s := out.String(); !strings.Contains(s, "no home") || !strings.Contains(s, "jentic skill remove --all") {
-		t.Errorf("expected warning + generic hint, got:\n%s", s)
-	}
-}
-
 func TestUninstallHelpDescribesSkillCleanup(t *testing.T) {
 	cmd := newUninstallCmd(testApp(t))
-	if cmd.Flags().Lookup("remove-skills") == nil {
-		t.Fatal("uninstall command missing --remove-skills flag")
+	for _, flag := range []string{"remove-skills", "remove-project-skills", "dry-run"} {
+		if cmd.Flags().Lookup(flag) == nil {
+			t.Fatalf("uninstall command missing --%s flag", flag)
+		}
 	}
-	for _, want := range []string{"jentic skill remove --all", "--remove-skills", "implied by --purge", "manually edited"} {
+	for _, want := range []string{
+		"jentic skill remove --all", "--remove-skills", "implied by --purge",
+		"--remove-project-skills", "--dry-run", "Manually edited", "exits\nnon-zero",
+	} {
 		if !strings.Contains(cmd.Long, want) {
 			t.Errorf("uninstall Long help missing %q", want)
 		}

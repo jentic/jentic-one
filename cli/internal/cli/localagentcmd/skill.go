@@ -687,57 +687,6 @@ func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 	return nil
 }
 
-// InstalledSkill is one shipped skill found on disk at one operator target.
-type InstalledSkill struct {
-	Operator  string
-	Skill     string
-	Scope     string
-	Path      string
-	Display   string // Path shortened to a ~-relative form for output
-	UserEdits bool   // the installed content no longer matches its recorded hash
-}
-
-// InstalledSkills reports every shipped skill installed at any scope of any
-// supported operator — the same probe `jentic skill list` and `skill remove`
-// use. Project scope resolves against the current working directory. Operators
-// that share a target (codex and generic both splice into the project
-// AGENTS.md) are reported once per (path, skill), attributed to the first
-// operator in registry order.
-func (a *Cmd) InstalledSkills() ([]InstalledSkill, error) {
-	env, err := a.detectEnv()
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var out []InstalledSkill
-	for _, ad := range skillgen.DefaultRegistry().Adapters() {
-		for _, st := range skillgen.InstallStatesForSkills(ad, skillgen.BundledNames(), env) {
-			key := st.Path + "\x00" + st.Skill
-			if !st.Installed || seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, InstalledSkill{
-				Operator:  string(ad.Operator()),
-				Skill:     st.Skill,
-				Scope:     string(st.Scope),
-				Path:      st.Path,
-				Display:   prettyPath(st.Path),
-				UserEdits: st.UserEdits,
-			})
-		}
-	}
-	return out, nil
-}
-
-// SkillRemoveAll runs `jentic skill remove --all` (every operator, every
-// shipped skill, every installed scope) with the user-edit guard on: manually
-// edited content is reported and left in place. The ctl tree calls it from
-// `jenticctl uninstall --purge` so there is exactly one removal implementation.
-func (a *Cmd) SkillRemoveAll() error {
-	return a.skillRemove(nil, &skillOptions{all: true})
-}
-
 func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 	scope, err := resolveScope(opts.scope)
 	if err != nil {
