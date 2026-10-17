@@ -256,6 +256,19 @@ backend.
 - **The built-in `redis` backend is deprecated.** It still works this
   release and logs a `state_backend_deprecated` WARNING at startup; it is
   removed in a later release (see Deprecations).
+- **JWT-bearer `jti` replay records move to the admin database.** An admin
+  migration adds the `assertion_jtis` table, applied with the release's other
+  migrations (the Helm migration hook, or the usual upgrade step on Docker). A
+  `jti` is now single-use per agent across every auth replica, where before
+  each replica (and each restart) had its own in-memory record. Nothing to
+  configure; the table holds one small row per live assertion and prunes
+  itself.
+- **The remaining in-process counters use the shared-state backend.** The
+  broker's auth-failure event counters, the circuit-open event dedupe and
+  the MCP session-event dedupe and per-client caps now live on
+  `state.backend` instead of module globals, so on a registered shared
+  backend they are deployment-wide. On `memory` they stay per process, as
+  before.
 
 ## Upgrading to 0.42.3
 

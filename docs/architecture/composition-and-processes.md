@@ -124,8 +124,17 @@ section (`Context.state_backend`) while its app is assembled, so an unknown
 names. Every surface the process serves shares it — in the combined app the
 auth limiters and single-use markers and the control connect limiters; in a
 broker process the rate limiter, circuit breaker and idempotency store (and
-the auth verifier's limiters). The app lifespan closes it once, after every
-surface teardown.
+the auth verifier's limiters). The broker's auth-failure counters, the
+circuit-open event dedupe and the MCP session-event dedupe and per-client
+caps live on it too, so no surface keeps cross-request state in a module
+global. A surface whose limiter or backend was not wired at assembly fails
+with a `RuntimeError` naming the missing wiring rather than building a
+private in-memory one. The app lifespan closes it once, after every surface
+teardown.
+
+The JWT-bearer `jti` replay records are the exception: they live in the
+admin database (`assertion_jtis`), so a replayed assertion is refused by
+every auth process sharing it, whatever the state backend.
 
 ## The memory shared-state backend is bounded
 
