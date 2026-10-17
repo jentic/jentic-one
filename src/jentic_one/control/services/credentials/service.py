@@ -1161,7 +1161,7 @@ class CredentialService:
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
         """Update/rotate a credential."""
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
@@ -1344,7 +1344,7 @@ class CredentialService:
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
         """Delete a credential by ID (cascade removes siblings)."""
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             existing = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
