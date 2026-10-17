@@ -44,13 +44,21 @@ sequenceDiagram
 
 Route discovery (step 4) is served from a short-TTL, per-process cache
 ([`broker/core/discovery_cache.py`](../../src/jentic_one/broker/core/discovery_cache.py)) keyed on the method, the URL's
-scheme, host and path, and any pinned revision. A promote, archive, import or
-delete committed in the same process invalidates it at once; other processes
-pick the change up within `broker.discovery_cache_ttl_s` (default 3 s, `0`
-disables the cache). An unmatched URL is not cached unless
-`broker.discovery_cache_negative_ttl_s` is set. The cache holds only the
-route: revision-pin rights, credential bindings, permission rules and egress
-checks are evaluated on every call.
+scheme, host and path, and any pinned revision. The broker always runs as its
+own process, and every registry routing write (promote, archive, overlay
+rollback, import, delete) commits in the registry surface or the jobs worker,
+so `broker.discovery_cache_ttl_s` (default 3 s, at most 300 s, `0` disables the
+cache) is the only freshness bound a deployed broker has. Until it lapses the
+broker can keep routing to the previous operation, and injecting that API's
+bound credentials, even after the API is deleted or archived — set the TTL to
+`0` where a delete must cut traffic off immediately. Invalidation on commit
+applies only when the write and the broker share a process (tests, embedded
+use). An unmatched URL is not cached unless
+`broker.discovery_cache_negative_ttl_s` is set (it must not exceed the TTL).
+The cache holds only the route: revision-pin rights, credential bindings,
+permission rules and egress checks are evaluated on every call. It is shared
+by every caller in the process, so hit/miss timing can reveal that some caller
+requested the same METHOD+URL within the TTL.
 
 ## One pipeline, two callers — and a streaming fast path
 

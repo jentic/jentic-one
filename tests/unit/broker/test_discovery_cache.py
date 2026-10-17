@@ -159,9 +159,9 @@ async def test_miss_is_not_cached_by_default() -> None:
     assert len(cache) == 0
 
 
-async def test_negative_ttl_is_capped_at_the_positive_ttl() -> None:
+async def test_negative_ttl_bounds_a_cached_miss() -> None:
     now = [1000.0]
-    cache, _ = _cache(ttl_s=2.0, negative_ttl_s=30.0, clock=lambda: now[0])
+    cache, _ = _cache(ttl_s=30.0, negative_ttl_s=2.0, clock=lambda: now[0])
     load, calls = _counting_loader(None)
 
     await cache.resolve(method="GET", url=URL, revision_id=None, load=load)
@@ -210,6 +210,104 @@ async def test_concurrent_misses_share_one_lookup() -> None:
 
     assert len(calls) == 1
     assert all(r == _result() for r in results)
+
+
+async def test_lookup_after_a_generation_bump_never_joins_an_older_flight() -> None:
+    """A lookup that starts after a routing commit reads post-commit state itself."""
+    cache, generation = _cache()
+    release = asyncio.Event()
+
+    async def stale() -> ResolveResult | None:
+        await release.wait()
+        return _result("op_stale")
+
+    async def fresh() -> ResolveResult | None:
+        return _result("op_fresh")
+
+    before = asyncio.create_task(cache.resolve(method="GET", url=URL, revision_id=None, load=stale))
+    await asyncio.sleep(0)  # the pre-commit lookup is in flight
+    generation.value += 1
+    after = await cache.resolve(method="GET", url=URL, revision_id=None, load=fresh)
+    release.set()
+    stale_result = await before
+
+    assert after is not None and after.operation.id == "op_fresh"
+    assert stale_result is not None and stale_result.operation.id == "op_stale"
+    # Only the post-commit read is stored; the racing pre-commit one is dropped.
+    load, calls = _counting_loader(_result("op_other"))
+    cached = await cache.resolve(method="GET", url=URL, revision_id=None, load=load)
+    assert cached is not None and cached.operation.id == "op_fresh"
+    assert calls == []
+
+
+async def test_cancelled_leader_stores_nothing_and_a_waiter_reruns_once() -> None:
+    cache, _ = _cache()
+    leader_started = asyncio.Event()
+    calls: list[str] = []
+
+    async def hangs() -> ResolveResult | None:
+        calls.append("leader")
+        leader_started.set()
+        await asyncio.Event().wait()
+        return _result("op_never")
+
+    async def answers() -> ResolveResult | None:
+        calls.append("waiter")
+        return _result("op_waiter")
+
+    leader = asyncio.create_task(cache.resolve(method="GET", url=URL, revision_id=None, load=hangs))
+    await leader_started.wait()
+    waiter = asyncio.create_task(
+        cache.resolve(method="GET", url=URL, revision_id=None, load=answers)
+    )
+    await asyncio.sleep(0)  # the waiter joins the leader's flight
+    assert len(cache) == 0
+    leader.cancel()
+
+    result = await waiter
+    with pytest.raises(asyncio.CancelledError):
+        await leader
+    assert result is not None and result.operation.id == "op_waiter"
+    assert calls == ["leader", "waiter"]
+    assert len(cache) == 1
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "https://API.Acme.COM/v1/pets/42",
+        "HTTPS://api.acme.com/v1/pets/42",
+        "https://api.acme.com:443/v1/pets/42",
+    ],
+)
+async def test_scheme_host_case_and_default_port_share_an_entry(variant: str) -> None:
+    """The key normalises exactly what the lookup normalises (case, default port)."""
+    cache, _ = _cache()
+    load, calls = _counting_loader(_result())
+
+    await cache.resolve(method="GET", url=URL, revision_id=None, load=load)
+    await cache.resolve(method="GET", url=variant, revision_id=None, load=load)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "http://api.acme.com:443/v1/pets/42",  # 443 is not http's default port
+        "https://api.acme.com:4430/v1/pets/42",
+        "https://user@api.acme.com/v1/pets/42",
+        "https://api.acme.com/V1/pets/42",  # the path is case-sensitive
+    ],
+)
+async def test_non_default_authority_or_path_case_keeps_its_own_entry(variant: str) -> None:
+    cache, _ = _cache()
+    load, calls = _counting_loader(_result())
+
+    await cache.resolve(method="GET", url=URL, revision_id=None, load=load)
+    await cache.resolve(method="GET", url=variant, revision_id=None, load=load)
+
+    assert len(calls) == 2
 
 
 async def test_lru_bound_evicts_least_recently_used() -> None:
@@ -266,7 +364,15 @@ def test_build_discovery_cache_ttl_zero_disables_it() -> None:
 
 @pytest.mark.parametrize(
     ("ttl_s", "negative_ttl_s", "max_entries"),
-    [(0.0, 0.0, 1), (1.0, -1.0, 1), (1.0, 0.0, 0)],
+    [
+        (0.0, 0.0, 1),
+        (float("inf"), 0.0, 1),
+        (float("nan"), 0.0, 1),
+        (1.0, -1.0, 1),
+        (1.0, 2.0, 1),  # a miss may not outlive a hit
+        (1.0, float("nan"), 1),
+        (1.0, 0.0, 0),
+    ],
 )
 def test_invalid_parameters_rejected(ttl_s: float, negative_ttl_s: float, max_entries: int) -> None:
     with pytest.raises(ValueError):

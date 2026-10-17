@@ -7,27 +7,43 @@ serves repeat lookups from memory:
 
 - **Key.** Everything the lookup reads from the request: the upper-cased
   method, the URL's scheme, authority and path, and the pinned ``revision_id``
-  (``None`` means "the API's live revision"). The query string and fragment
-  are left out because a resolution never depends on them. The key is a
-  ``sha256`` digest, so no request URL is held as a key. The lookup takes no
-  caller identity, so its answer is the same for every caller; the caller's
-  pin rights (``resolve_revision_pin``), authorization and egress checks run
-  on every request, outside this cache, whether or not it hits.
-- **Freshness.** A hit is served only while its TTL holds *and* the process's
-  routing generation (``jentic_one.shared.broker.route_generation``) still
-  equals the one read before the lookup ran, so a promote, archive, rollback,
-  import or delete committed in this process invalidates every entry at once.
-  Other processes see such a write once the TTL lapses.
+  (``None`` means "the API's live revision"). The scheme and host are
+  lower-cased and a default port (``:80`` for http, ``:443`` for https) is
+  dropped, exactly as the lookup normalises them; the query string and fragment
+  are left out because a resolution never depends on them. Keys are ``sha256``
+  digests; values hold the matched operation, including its path parameters
+  (raw URL path segments).
+- **Freshness.** The TTL is the freshness bound. A hit is served only while its
+  TTL holds *and* the process's routing generation
+  (``jentic_one.shared.broker.route_generation``) still equals the one read
+  before the lookup ran. A routing write advances that generation only in the
+  process that commits it, and the broker always runs as its own process, so a
+  deployed broker sees a promote, archive, rollback, import or delete only once
+  the TTL lapses. Until then it keeps routing to the previous operation — and
+  injecting that API's bound credentials — even if the API has been deleted or
+  archived.
 - **Misses.** A ``None`` (unmatched URL) is cached only for the shorter
   ``negative_ttl_s`` (``0`` disables it), so a newly imported API becomes
   reachable quickly. Exceptions are never cached.
-- **Memory.** An LRU bound of ``max_entries``; concurrent misses for one key
-  share a single lookup (:class:`SingleFlight`).
+- **Memory.** An LRU bound of ``max_entries``; each entry's size is bounded only
+  by the request URL's length. Concurrent misses for one key share a single
+  lookup (:class:`SingleFlight`).
+
+**Tenancy.** The lookup takes no caller identity, so its answer is the same for
+every caller, and one cache is shared by every identity in the process. The
+caller's pin rights (``resolve_revision_pin``), authorization and egress checks
+run on every request, outside this cache, whether or not it hits. The shared
+cache does expose a timing signal: a hit is faster than a miss, so a caller can
+tell whether *some* caller in the same process requested the exact METHOD+URL
+(path parameters included) within the last TTL. That is accepted — the caller
+must guess the exact URL and the window is the TTL — and is what the cache
+trades for sharing one lookup across identities.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 import uuid
 from collections import OrderedDict
@@ -47,10 +63,16 @@ _cache_hits = _meter.create_counter(
 _cache_misses = _meter.create_counter(
     "broker.discovery_cache.misses", description="Route-discovery cache misses"
 )
+_cache_evictions = _meter.create_counter(
+    "broker.discovery_cache.evictions",
+    description="Route-discovery cache entries evicted by the LRU bound",
+)
 
 #: LRU bound on cached routes. Distinct path-parameter values each take an entry,
 #: so the bound (not the TTL) is what caps memory under a spray of unique URLs.
 DEFAULT_MAX_ENTRIES = 10_000
+
+_DEFAULT_PORT_SUFFIX = {"http": ":80", "https": ":443"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,16 +94,16 @@ class DiscoveryCache:
         generation: Callable[[], int] = route_generation,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        if ttl_s <= 0:
-            raise ValueError("ttl_s must be > 0 (build no cache to disable it)")
-        if negative_ttl_s < 0:
-            raise ValueError("negative_ttl_s must be >= 0")
+        if not math.isfinite(ttl_s) or ttl_s <= 0:
+            raise ValueError("ttl_s must be finite and > 0 (build no cache to disable it)")
+        # A miss never outlives a hit: a negative entry is the riskier one to
+        # serve stale (it hides a route that has just gone live).
+        if not math.isfinite(negative_ttl_s) or not 0 <= negative_ttl_s <= ttl_s:
+            raise ValueError("negative_ttl_s must be finite, >= 0 and <= ttl_s")
         if max_entries < 1:
             raise ValueError("max_entries must be >= 1")
         self._ttl_s = ttl_s
-        # A miss never outlives a hit: a negative entry is the riskier one to
-        # serve stale (it hides a route that has just gone live).
-        self._negative_ttl_s = min(negative_ttl_s, ttl_s)
+        self._negative_ttl_s = negative_ttl_s
         self._max_entries = max_entries
         self._generation = generation
         self._clock = clock
@@ -133,19 +155,22 @@ class DiscoveryCache:
         self._entries.move_to_end(key)
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)
-
-    def clear(self) -> None:
-        """Drop every cached route."""
-        self._entries.clear()
+            _cache_evictions.add(1)
 
 
 def _cache_key(*, method: str, url: str, revision_id: uuid.UUID | None) -> str:
     parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    userinfo, at, hostport = parts.netloc.rpartition("@")
+    hostport = hostport.lower()
+    default_port = _DEFAULT_PORT_SUFFIX.get(scheme)
+    if default_port is not None and hostport.endswith(default_port):
+        hostport = hostport.removesuffix(default_port)
     raw = "\x00".join(
         (
             method.upper(),
-            parts.scheme,
-            parts.netloc,
+            scheme,
+            f"{userinfo}{at}{hostport}",
             parts.path,
             revision_id.hex if revision_id is not None else "",
         )
