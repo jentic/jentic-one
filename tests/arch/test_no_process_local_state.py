@@ -6,6 +6,12 @@ counters must be shared by every process serving the deployment: the
 backend (``Context.state_backend``). A module-level ``dict``/``set``/cache in
 these modules would be per-process again and silently diverge once more than
 one replica runs. This test fails if one creeps back in.
+
+Two scopes: the modules this state moved out of are checked strictly (any
+module-level mutable binding); the surrounding packages are checked for
+lower-case module-level mutables, since an UPPER_CASE binding is by
+convention a read-only lookup table. Anything genuinely process-local is
+allowlisted below with the reason.
 """
 
 from __future__ import annotations
@@ -25,6 +31,15 @@ GUARDED_MODULES: tuple[Path, ...] = (
     SRC_ROOT / "shared" / "resilience" / "circuit.py",
     SRC_ROOT / "shared" / "events" / "mcp_session.py",
     SRC_ROOT / "mcp" / "app.py",
+)
+
+#: Packages scanned for lower-case module-level mutables.
+GUARDED_PACKAGES: tuple[Path, ...] = (
+    SRC_ROOT / "auth" / "services",
+    SRC_ROOT / "broker",
+    SRC_ROOT / "mcp",
+    SRC_ROOT / "shared" / "events",
+    SRC_ROOT / "shared" / "resilience",
 )
 
 # Constructors that build a mutable container or an in-process cache.
@@ -48,13 +63,18 @@ _MUTABLE_FACTORIES = frozenset(
 )
 
 
-# Process-local by nature, not cross-request state: strong references to this
-# process's running asyncio tasks (the event loop holds only weak ones). A task
-# runs where it was created, so sharing it is meaningless.
+#: Process-local by nature, not cross-request state.
 ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
+        # Strong references to this process's running asyncio tasks (the event
+        # loop holds only weak ones); a task runs where it was created.
         ("shared/events/mcp_session.py", "_background_tasks"),
         ("broker/web/deps.py", "_background_tasks"),
+        # asyncio locks serialising token refreshes on SQLite, which is
+        # single-process by construction (PostgreSQL uses row locks instead).
+        ("broker/services/credentials/refresh.py", "_sqlite_locks"),
+        # Throttles a log line; log output is per process.
+        ("broker/services/execution/authorization.py", "_divergence_last_logged"),
     },
 )
 
@@ -115,6 +135,25 @@ def test_no_module_level_mutable_state(path: Path) -> None:
     assert not offenders, (
         "Module-level mutable state is per-process; keep it on Context.state_backend "
         f"or in the database instead: {offenders}"
+    )
+
+
+def _package_files() -> list[Path]:
+    return sorted(f for pkg in GUARDED_PACKAGES for f in pkg.rglob("*.py"))
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("path", _package_files(), ids=lambda p: str(p.relative_to(SRC_ROOT)))
+def test_no_lower_case_module_level_mutables(path: Path) -> None:
+    offenders = [
+        entry
+        for entry in _module_level_mutables(path)
+        if not entry.rsplit(" ", 1)[1].isupper() or " global " in entry
+    ]
+    assert not offenders, (
+        "Lower-case module-level mutable state is a per-process cache; keep "
+        "cross-request state on Context.state_backend or in the database, or "
+        f"allowlist it here with the reason it is process-local: {offenders}"
     )
 
 
