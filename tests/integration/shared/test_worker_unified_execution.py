@@ -24,6 +24,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
     InjectedAuth,
     QueuedExecutionRequest,
     QueuedExecutionVerdict,
@@ -77,6 +78,13 @@ class _StaticAuthorizer:
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         return self._verdict
+
+
+class _ActiveActor:
+    """Stands in for the broker's live actor read: active, holding the execute permission."""
+
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        return ActorAuthority(active=True, holds_permission=True)
 
 
 def _registry(handler: Any) -> JobHandlerRegistry:
@@ -143,6 +151,7 @@ async def test_async_job_dispatches_through_executor(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
         execution_authorizer=_StaticAuthorizer(QueuedExecutionVerdict(allowed=True)),
+        actor_status=_ActiveActor(),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 
@@ -225,6 +234,7 @@ async def test_async_job_denied_at_run_time_records_failed_result(
         execution_authorizer=_StaticAuthorizer(
             QueuedExecutionVerdict(allowed=False, problem=problem)
         ),
+        actor_status=_ActiveActor(),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 

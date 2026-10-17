@@ -23,6 +23,7 @@ from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredenti
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
@@ -30,7 +31,11 @@ from jentic_one.broker.services.execution import authorization
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
-from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
+from jentic_one.shared.auth.permission_catalog import (
+    APIS_READ,
+    BROKER_EXECUTE_PERMISSION,
+    ORG_ADMIN,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
@@ -273,22 +278,62 @@ async def test_rule_changed_after_enqueue_is_denied(
 async def test_actor_status_resolver_reads_user_and_agent_rows(
     integration_context: Context, clean_tables: None
 ) -> None:
+    """One read per actor answers liveness and the execute permission.
+
+    Agents hold it by exact grant; users by the implication-expanded set of
+    their live ``user_permission_grants`` (``org:admin`` implies it)."""
     ctx = integration_context
     agent_id, _ = await _seed_bound_agent(ctx)
-    user = User(email="queued@example.com", first_name="Q", last_name="User", active=False)
+    users = {
+        "direct": (True, {BROKER_EXECUTE_PERMISSION}),
+        "admin": (True, {ORG_ADMIN}),
+        "revoked": (True, {APIS_READ}),
+        "ungranted": (True, set()),
+        "disabled": (False, {BROKER_EXECUTE_PERMISSION}),
+    }
+    user_ids: dict[str, str] = {}
     async with ctx.admin_db.session() as session:
-        session.add(user)
+        for label, (active, permissions) in users.items():
+            user = User(
+                email=f"queued-{label}@example.com", first_name="Q", last_name=label, active=active
+            )
+            session.add(user)
+            await session.flush()
+            user_ids[label] = user.id
+            for permission in permissions:
+                session.add(UserPermissionGrant(user_id=user.id, permission=permission))
         await session.commit()
-        user_id = user.id
     resolver = ActorStatusResolver(ctx.admin_db)
+
+    async def authority(actor_id: str, actor_type: str) -> tuple[bool, bool]:
+        result = await resolver.authority(
+            actor_id=actor_id, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
+        )
+        return result.active, result.holds_permission
+
     try:
-        assert await resolver.is_active(actor_id=agent_id, actor_type="agent") is True
-        assert await resolver.is_active(actor_id=user_id, actor_type="user") is False
-        assert await resolver.is_active(actor_id="agt_missing", actor_type="agent") is False
-        assert await resolver.is_active(actor_id=agent_id, actor_type="toolkit") is False
+        assert await authority(agent_id, "agent") == (True, True)
+        assert await authority(user_ids["direct"], "user") == (True, True)
+        assert await authority(user_ids["admin"], "user") == (True, True)
+        assert await authority(user_ids["revoked"], "user") == (True, False)
+        assert await authority(user_ids["ungranted"], "user") == (True, False)
+        assert await authority(user_ids["disabled"], "user") == (False, True)
+        assert await authority("agt_missing", "agent") == (False, False)
+        assert await authority("usr_missing", "user") == (False, False)
+        assert await authority(agent_id, "toolkit") == (False, False)
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id == agent_id)
+            )
+            await session.commit()
+        assert await authority(agent_id, "agent") == (True, False)
     finally:
         async with ctx.admin_db.session() as session:
-            await session.execute(delete(User).where(User.id == user_id))
+            ids = list(user_ids.values())
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(ids))
+            )
+            await session.execute(delete(User).where(User.id.in_(ids)))
             await session.commit()
 
 
@@ -309,10 +354,11 @@ async def test_actor_status_resolver_refuses_retired_service_account_actors(
         )
         await session.commit()
     resolver = ActorStatusResolver(ctx.admin_db)
-    assert await resolver.is_active(actor_id="sva_queued", actor_type="service_account") is False
-    assert not await resolver.holds_permission(
+    authority = await resolver.authority(
         actor_id="sva_queued", actor_type="service_account", permission=BROKER_EXECUTE_PERMISSION
     )
+    assert authority.active is False
+    assert authority.holds_permission is False
 
 
 async def _set_rule(ctx: Context, agent_id: str, *, path: str, match_mode: str) -> None:
