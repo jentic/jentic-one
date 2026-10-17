@@ -132,9 +132,13 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 	if page.HasMore {
 		nextCursor = page.NextCursor
 	}
+	entries := make([]mcpCatalogEntry, 0, len(page.Data))
+	for _, e := range page.Data {
+		entries = append(entries, toMCPCatalogEntry(e))
+	}
 	payload := map[string]any{
 		"schema_version":                 mcpSchemaVersion,
-		"data":                           page.Data,
+		"data":                           entries,
 		"catalog_total":                  page.CatalogTotal,
 		"registered_count":               page.RegisteredCount,
 		"outdated_count":                 page.OutdatedCount,
@@ -145,6 +149,61 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 		payload["next_cursor"] = nextCursor
 	}
 	return s.result(cctx, payload), nil
+}
+
+// mcpCatalogLinks / mcpCatalogEntry are the search_catalog hit, key for key
+// what the HTTP mount's search_catalog emits (the cross-surface parity test
+// pins it). The tool surface is narrower than `jentic catalog --json`: no
+// top-level tags or human_url; the human page rides `_links.human`, omitted
+// when the entry has none, and `_links.alternates` appears only when entries
+// were collapsed into this one.
+type mcpCatalogLinks struct {
+	Self       string   `json:"self"`
+	Operations string   `json:"operations"`
+	Import     string   `json:"import"`
+	Human      string   `json:"human,omitempty"`
+	Alternates []string `json:"alternates,omitempty"`
+}
+
+type mcpCatalogEntry struct {
+	EntryID         string          `json:"entry_id"`
+	SourceSlug      string          `json:"source_slug"`
+	CatalogAPIID    string          `json:"catalog_api_id"`
+	Vendor          *string         `json:"vendor"`
+	DisplayVendor   *string         `json:"display_vendor"`
+	Title           *string         `json:"title"`
+	Version         *string         `json:"version"`
+	HasSpec         bool            `json:"has_spec"`
+	Registered      bool            `json:"registered"`
+	UpdateAvailable bool            `json:"update_available"`
+	Alternates      int             `json:"alternates"`
+	Links           mcpCatalogLinks `json:"_links"`
+}
+
+func toMCPCatalogEntry(e catalogEntry) mcpCatalogEntry {
+	links := mcpCatalogLinks{
+		Self:       e.Links.Self,
+		Operations: e.Links.Operations,
+		Import:     e.Links.Import,
+		Human:      e.Links.Human,
+	}
+	if e.Alternates > 0 {
+		links.Alternates = e.Links.Alternates
+	}
+	return mcpCatalogEntry{
+		EntryID:         e.EntryID,
+		SourceSlug:      e.SourceSlug,
+		CatalogAPIID:    e.CatalogAPIID,
+		Vendor:          e.Vendor,
+		DisplayVendor:   e.DisplayVendor,
+		Title:           e.Title,
+		Version:         e.Version,
+		HasSpec:         e.HasSpec,
+		Registered:      e.Registered,
+		UpdateAvailable: e.UpdateAvailable,
+		Alternates:      e.Alternates,
+		Links:           links,
+	}
 }
 
 // ── import_api ────────────────────────────────────────────────────────────────
@@ -174,6 +233,10 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	}
 	jobID, err := client.Import(cctx, entryID)
 	if err != nil {
+		if perr := importAPINotFound(entryID, err); perr != nil {
+			s.logger.Warn("import_api: unknown catalog entry", "entry_id", entryID)
+			return nil, perr
+		}
 		return s.importAPIError(cctx, entryID, err), nil
 	}
 
@@ -269,41 +332,52 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 	}
 }
 
-// importAPIError maps the import-specific failures: a 404 is an unknown (or
-// hidden — the server answers both alike) catalog entry: rediscover via
-// search_catalog, or, when the server's 404 names a did_you_mean (the caller
-// sent an old-style catalog_api_id such as "stripe.com"), retry with that
-// entry_id. A control-plane 403 on THIS route is a missing catalog:import
-// permission, and the recovery is asking the operator to grant the permission
-// (skill wording), not get_started.
+// importAPINotFound maps a 404 on the import route to invalid_params: an
+// unknown (or hidden — the server answers both alike) entry_id is a
+// correctable caller error, like a malformed one. The text is the HTTP
+// mount's, byte for byte, and carries the server's did_you_mean (validated by
+// didYouMean) when a visible entry matches an old-style id such as
+// "stripe.com". Any other failure returns nil.
+func importAPINotFound(entryID string, err error) error {
+	var he *HTTPError
+	if !errors.As(err, &he) || he.StatusCode != http.StatusNotFound {
+		return nil
+	}
+	hint := ""
+	if suggestion := didYouMean(he); suggestion != "" {
+		hint = " — did you mean " + pyRepr(suggestion) + "?"
+	}
+	return invalidParams(fmt.Errorf("catalog entry %s not found%s; call search_catalog with a keyword "+
+		"for the API you need and pass the entry_id of one of its hits verbatim", pyRepr(entryID), hint))
+}
+
+// pyRepr quotes s the way the HTTP mount's Python repr() does for a printable
+// id: single quotes, unless s contains one and no double quote, with "\"
+// doubled. Keeps the two surfaces' invalid_params text identical for every
+// printable entry_id (repr also escapes non-printable characters such as C1
+// controls, which this doesn't reproduce).
+func pyRepr(s string) string {
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"`
+	}
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", `\'`) + "'"
+}
+
+// importAPIError maps the remaining import-specific failures (a 404 is
+// importAPINotFound's): a control-plane 403 on THIS route is a missing
+// catalog:import permission, and the recovery is asking the operator to grant
+// the permission (skill wording), not get_started.
 func (s *mcpServer) importAPIError(ctx context.Context, entryID string, err error) *mcp.CallToolResult {
 	s.logger.Warn("import_api failed", "entry_id", entryID, "error", redactedErr(err))
 	var he *HTTPError
-	if errors.As(err, &he) {
-		switch he.StatusCode {
-		case http.StatusNotFound:
-			coded := &ux.CodedError{
-				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("catalog entry %q not found", entryID),
-				Actionable: "Call search_catalog with a keyword for the API you need and pass the " +
-					"entry_id of one of its hits verbatim.",
-			}
-			if suggestion := didYouMean(he); suggestion != "" {
-				coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
-				coded.Actionable = fmt.Sprintf("Call import_api again with entry_id %q.", suggestion)
-				coded.Details = map[string]any{"did_you_mean": suggestion}
-				return s.softError(ctx, coded)
-			}
-			return s.softErrorNext(ctx, coded, "search_catalog")
-		case http.StatusForbidden:
-			return s.softError(ctx, &ux.CodedError{
-				Code: ux.CodeBrokerDenied,
-				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
-				Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
-					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-					"so the next call mints a token carrying the permission, then retry import_api.",
-			})
-		}
+	if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
+		return s.softError(ctx, &ux.CodedError{
+			Code: ux.CodeBrokerDenied,
+			Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
+			Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
+				"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+				"so the next call mints a token carrying the permission, then retry import_api.",
+		})
 	}
 	return s.transportSoftError(ctx, err, nil)
 }

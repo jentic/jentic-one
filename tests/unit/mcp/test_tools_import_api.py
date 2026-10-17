@@ -722,8 +722,11 @@ async def test_unknown_catalog_entry_is_invalid_params(services: None) -> None:
     with pytest.raises(MCPError) as err:
         await dispatch_tool_call(env, "import_api", {"entry_id": "nope/nothing"})
     assert err.value.error.code == mcp_types.INVALID_PARAMS
-    assert "nope/nothing" in str(err.value)
-    assert "search_catalog" in str(err.value)
+    # Byte-identical to the stdio server's text (Go: importAPINotFound).
+    assert err.value.error.message == (
+        "catalog entry 'nope/nothing' not found; call search_catalog with a keyword "
+        "for the API you need and pass the entry_id of one of its hits verbatim"
+    )
 
 
 async def test_unknown_catalog_entry_carries_the_did_you_mean_hint(services: None) -> None:

@@ -8,6 +8,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -80,16 +82,16 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 		t.Errorf("entry = %v, want the catalog projection (entry_id, registered)", entry)
 	}
 	// The schema_version 2 entry: the HTTP mount's keys, and none of the
-	// retired ones.
+	// retired ones (nor the CLI-only tags/human_url).
 	for _, key := range []string{
 		"entry_id", "source_slug", "catalog_api_id", "vendor", "display_vendor", "title",
-		"version", "tags", "human_url", "has_spec", "registered", "update_available", "alternates", "_links",
+		"version", "has_spec", "registered", "update_available", "alternates", "_links",
 	} {
 		if _, ok := entry[key]; !ok {
 			t.Errorf("entry is missing %q: %v", key, entry)
 		}
 	}
-	for _, key := range []string{"api_id", "spec_url", "path", "github_url"} {
+	for _, key := range []string{"api_id", "spec_url", "path", "github_url", "tags", "human_url"} {
 		if _, ok := entry[key]; ok {
 			t.Errorf("entry carries the retired key %q: %v", key, entry)
 		}
@@ -98,8 +100,11 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 	if _, ok := links["github"]; ok {
 		t.Errorf("_links carries the retired github key: %v", links)
 	}
-	if alts, ok := links["alternates"].([]any); !ok || len(alts) != 0 {
-		t.Errorf("_links.alternates = %v, want an empty array", links["alternates"])
+	// Nothing collapsed and no human page: both links are omitted.
+	for _, key := range []string{"alternates", "human"} {
+		if _, ok := links[key]; ok {
+			t.Errorf("_links.%s = %v, want it omitted", key, links[key])
+		}
 	}
 	if _, ok := payload["oldest_source_sync_age_seconds"]; !ok {
 		t.Errorf("payload is missing oldest_source_sync_age_seconds: %v", payload)
@@ -326,7 +331,21 @@ func TestMCPImportAPI_FailedJobIsSoftError(t *testing.T) {
 	}
 }
 
-func TestMCPImportAPI_404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
+// requireImportInvalidParams asserts a JSON-RPC invalid_params protocol error
+// (no tool result) and returns its message.
+func requireImportInvalidParams(t *testing.T, res *mcp.CallToolResult, err error) string {
+	t.Helper()
+	if res != nil {
+		t.Fatalf("an unknown entry must be a protocol error, got a result: %s", toolResultText(res))
+	}
+	var rpcErr *jsonrpc.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != jsonrpc.CodeInvalidParams {
+		t.Fatalf("want invalid_params, got %v", err)
+	}
+	return rpcErr.Message
+}
+
+func TestMCPImportAPI_404IsInvalidParamsPointingAtSearchCatalog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"detail":"unknown api"}`))
@@ -335,18 +354,12 @@ func TestMCPImportAPI_404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
 
 	s := fastAccessServer(t)
 	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/nope/nothing"}`))
-	if err != nil {
-		t.Fatalf("a resolve failure must be a soft error: %v", err)
-	}
-	if !res.IsError {
-		t.Fatalf("want IsError result")
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["error_code"] != ux.CodeResolveFailed {
-		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
-	}
-	if payload["next_tool"] != "search_catalog" {
-		t.Errorf("next_tool = %v, want search_catalog (the id is wrong, not the identity)", payload["next_tool"])
+	msg := requireImportInvalidParams(t, res, err)
+	// Byte-identical to the HTTP mount's text for the same miss.
+	want := "catalog entry 'public/nope/nothing' not found; call search_catalog with a keyword " +
+		"for the API you need and pass the entry_id of one of its hits verbatim"
+	if msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
 	}
 }
 
@@ -568,22 +581,11 @@ func TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry(t *testing.T) {
 
 	s := fastAccessServer(t)
 	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"stripe.com"}`))
-	if err != nil {
-		t.Fatalf("a resolve failure must be a soft error: %v", err)
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["error_code"] != ux.CodeResolveFailed {
-		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
-	}
-	if msg, _ := payload["error"].(string); !strings.Contains(msg, `did you mean "internal/stripe.com"`) {
-		t.Errorf("error %q must name the server's did_you_mean", msg)
-	}
-	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "internal/stripe.com") {
-		t.Errorf("actionable_step %q must retry with the suggested entry_id", step)
-	}
-	details, _ := payload["details"].(map[string]any)
-	if details["did_you_mean"] != "internal/stripe.com" {
-		t.Errorf("details = %v, want did_you_mean carried", payload["details"])
+	msg := requireImportInvalidParams(t, res, err)
+	want := "catalog entry 'stripe.com' not found — did you mean 'internal/stripe.com'?; call search_catalog " +
+		"with a keyword for the API you need and pass the entry_id of one of its hits verbatim"
+	if msg != want {
+		t.Errorf("message = %q, want %q", msg, want)
 	}
 }
 
@@ -600,17 +602,21 @@ func TestMCPImportAPI_404DropsAMalformedDidYouMean(t *testing.T) {
 		s := fastAccessServer(t)
 		res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"stripe.com"}`))
 		srv.Close()
-		if err != nil {
-			t.Fatalf("%q: a resolve failure must be a soft error: %v", bad, err)
-		}
-		payload := decodeToolJSON(t, res)
-		if msg, _ := payload["error"].(string); strings.Contains(msg, "did you mean") {
+		if msg := requireImportInvalidParams(t, res, err); strings.Contains(msg, "did you mean") {
 			t.Errorf("%q: a malformed suggestion was relayed: %q", bad, msg)
 		}
-		if payload["details"] != nil {
-			if d, _ := payload["details"].(map[string]any); d["did_you_mean"] != nil {
-				t.Errorf("%q: details carry the malformed suggestion: %v", bad, d)
-			}
+	}
+}
+
+func TestPyRepr(t *testing.T) {
+	for in, want := range map[string]string{
+		"public/stripe.com": "'public/stripe.com'",
+		"o'brien.com":       `"o'brien.com"`,
+		`a'b"c`:             `'a\'b"c'`,
+		`a\b`:               `'a\\b'`,
+	} {
+		if got := pyRepr(in); got != want {
+			t.Errorf("pyRepr(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
