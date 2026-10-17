@@ -59,13 +59,16 @@ class ConnectService:
     ) -> ConnectChallenge:
         """Load the caller's credential, resolve provider, initiate connect flow.
 
-        Connecting writes tokens onto the credential, so it is scoped like any
-        other credential write: a credential the caller cannot see is a 404.
+        A credential the caller cannot see is a 404. Visibility includes owner
+        delegation (see the comment on the filter below).
 
         ``sole_agent_id`` marks a re-authorize that must stay sole-bound; it is
         only honoured from this keyword, never from ``request.extra``, so an
         HTTP caller cannot inject it through the request body.
         """
+        # Read filter on purpose, not ``for_write``: an agent holding
+        # ``owner:credentials:read`` may start a connect for its owner's
+        # credential, which the provider's authorization step then completes.
         access_filters = build_access_filters(identity, Credential)
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(

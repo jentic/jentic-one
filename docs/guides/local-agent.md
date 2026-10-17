@@ -377,10 +377,68 @@ confirmation. To remove a single context or identity instead of everything, use
 - **`jentic skill`** — writes the "how to use Jentic" skill set into your agent
   runtime's native layout (`skill init` / `list` / `update` / `remove`), so the
   launched agent knows how to drive the CLI. `jentic setup` runs it for you.
+  See [Skill commands: output and freshness](#skill-commands-output-and-freshness).
 - **`jentic doctor`** — read-only self-check, including whether the agent would
-  run as the same uid as you.
+  run as the same uid as you, and whether any installed skill is older than
+  the copy bundled in this CLI.
 - **`jenticctl wizard`** — the installer-side onboarding; its agent-isolation
   step is the same setup flow described here.
+
+### Skill commands: output and freshness
+
+`skill init`, `skill update` and `skill remove` print one JSON document on
+stdout when stdout is not a terminal, in agent mode, or with `--json`
+(`--mode human` keeps the prose). Side reports go to stderr. `--json` changes
+only the output shape: on a terminal the pickers still run, on stderr. Agent
+mode never prompts; with no `--operator`/`--all`, `skill init` targets the
+detected operators.
+
+```json
+{
+  "schema_version": "1",
+  "results": [
+    {"operator": "claude", "skill": "jentic", "scope": "user",
+     "path": "/home/u/.claude/skills/jentic/SKILL.md",
+     "action": "created", "dry_run": false, "user_edits": false}
+  ],
+  "mcp": {
+    "results": [
+      {"runtime": "cursor", "path": "/home/u/.cursor/mcp.json",
+       "action": "created", "dry_run": false}
+    ]
+  }
+}
+```
+
+- `results` has one row per (operator, skill, scope) and is `[]` when nothing
+  was selected. `action` is one of `created`, `updated`, `unchanged`,
+  `removed`, `not_installed`, `user_edits` (manual edits, left alone without
+  `--force`), `skipped_newer` (the install records a newer version than this
+  CLI bundles; left alone without `--force`, with `installed_version` and
+  `available_version` on the row) or `error` (with `error`). With
+  `dry_run: true` the action names what a real run would do.
+- codex and generic both load the project `AGENTS.md`. The file is written or
+  removed once per run; the second operator's row repeats the outcome with
+  `applied_via` naming the operator that acted.
+- `mcp` appears on `skill init` only. Each row's `action` is `created`,
+  `updated`, `unchanged`, `planned` (dry run) or `error`. `path` is the config
+  file written; `claude-code` registers through its own CLI, so its row has no
+  `path` and instead carries `via: "claude mcp add --scope user"`.
+  `skipped_reason` says why
+  nothing was registered: `no_mcp_runtime`, `no_active_context`,
+  `binary_path_unresolved` or `env_unresolved`.
+- Per-target failures keep exit 0 and appear as `error` rows. Command-level
+  failures (unknown operator, bad `--scope`, nothing detected) exit non-zero
+  with the error envelope on stderr and nothing on stdout.
+
+Every install records the skill version it was rendered from. `jentic skill
+list` compares it with the bundled copy: each installed row carries
+`freshness` (`current`, `stale`, `newer` or `unknown`), `available_version`
+and, when the install records one, `installed_version`. The human view marks
+stale installs and ends with a nudge to run `jentic skill update`.
+`jentic doctor` adds one `Skills / freshness` row that warns (exit 0) when any
+install is stale. Installs made before versions were recorded show `unknown`
+until the next `skill init` or `skill update`.
 
 ## Further reading
 

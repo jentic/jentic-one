@@ -17,7 +17,6 @@ dependencies = [
     "opentelemetry-api>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-exporter-prometheus>=0.44b0",
-    "opentelemetry-instrumentation-asyncpg>=0.44b0",
     "opentelemetry-instrumentation-fastapi>=0.65b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.44b0",
     "opentelemetry-sdk>=1.20",
@@ -197,6 +196,17 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "cryptography.*"
 ignore_missing_imports = true
+
+# The perf suite's locustfile runs only inside the locustio/locust image; locust
+# is deliberately not a project dependency (it pins gevent), so it's untyped here.
+[[tool.mypy.overrides]]
+module = "locust.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.perf.locustfile"
+disallow_subclassing_any = false
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"

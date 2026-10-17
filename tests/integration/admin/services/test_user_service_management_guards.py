@@ -1,7 +1,8 @@
 """Integration tests for UserService guards on managing other users.
 
-Covers the scoping and manage ceiling on profile updates, the org:admin
-requirement on changing another user's email, the
+Covers the scoping and manage ceiling on profile updates, account status,
+re-invites, and permissions (a target outside the caller's ``User`` scope is
+not found), the org:admin requirement on changing another user's email, the
 privilege ceiling on changing another user's account status or permissions,
 the last-active-``org:admin`` guard (including its row locking under
 concurrent removals on Postgres), and the removal of external IdP identity
@@ -120,6 +121,22 @@ async def no_other_active_admins(integration_context: Context) -> AsyncGenerator
 def _identity(user_id: str, *permissions: str) -> Identity:
     """An identity whose token claims ``permissions``; the guards read stored grants."""
     return Identity(sub=user_id, email=f"{user_id}@test.local", permissions=list(permissions))
+
+
+def _admin(user_id: str) -> Identity:
+    """An identity claiming ``org:admin``, so every user is in its ``User`` scope."""
+    return _identity(user_id, "org:admin")
+
+
+async def _manage(ctx: Context, operation: str, user_id: str, identity: Identity) -> None:
+    """Run one manage operation (account status, re-invite, or permissions) on ``user_id``."""
+    if operation == "set_permissions":
+        await PermissionService(ctx).set_assigned(user_id, [], identity=identity)
+    else:
+        await getattr(UserService(ctx), operation)(user_id, identity=identity)
+
+
+_MANAGE_OPERATIONS = ["disable", "enable", "delete", "reissue_invite", "set_permissions"]
 
 
 async def _update_audit_count(ctx: Context, user_id: str) -> int:
@@ -263,10 +280,61 @@ async def test_org_admin_can_update_another_user(
     assert await _update_audit_count(ctx, target_id) == 1
 
 
-@pytest.mark.parametrize("operation", ["disable", "enable", "delete", "reissue_invite"])
-async def test_users_write_holder_cannot_manage_more_privileged_user(
+async def _invite_token_count(ctx: Context, user_id: str) -> int:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(select(InviteToken.id).where(InviteToken.user_id == user_id))
+        return len(result.scalars().all())
+
+
+async def _audit_count(ctx: Context, user_id: str) -> int:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(select(AuditEntry.id).where(AuditEntry.target_id == user_id))
+        return len(result.scalars().all())
+
+
+@pytest.mark.parametrize("invite_state", [InviteState.PENDING, InviteState.REDEEMED])
+@pytest.mark.parametrize("target_permissions", [{"org:admin"}, {"users:read"}, set()])
+@pytest.mark.parametrize("operation", _MANAGE_OPERATIONS)
+async def test_non_admin_cannot_manage_another_user(
+    integration_context: Context,
+    make_user: MakeUser,
+    operation: str,
+    target_permissions: set[str],
+    invite_state: InviteState,
+) -> None:
+    """Managing another user is scoped like GET: out of a non-admin's scope reads as 404.
+
+    Holds whatever the target holds (also when the caller outranks it) and
+    whatever its invite state (a redeemed target is not found, not a
+    conflict). Nothing is written: no status, email, permission, invite
+    token, or audit change.
+    """
+    ctx = integration_context
+    target_id = await make_user(
+        "guard-target-manage@test.local", target_permissions, invite_state=invite_state
+    )
+    manager_id = await make_user("guard-manager-manage@test.local", {"users:read", "users:write"})
+    tokens_before = await _invite_token_count(ctx, target_id)
+
+    with pytest.raises(UserNotFoundError):
+        await _manage(ctx, operation, target_id, _identity(manager_id, "users:read", "users:write"))
+
+    user = await _get_user(ctx, target_id)
+    assert (user.active, user.email) == (True, "guard-target-manage@test.local")
+    assert await _assigned(ctx, target_id) == target_permissions
+    assert await _invite_token_count(ctx, target_id) == tokens_before
+    assert await _audit_count(ctx, target_id) == 0
+
+
+@pytest.mark.parametrize("operation", _MANAGE_OPERATIONS)
+async def test_stale_admin_claim_cannot_manage_more_privileged_user(
     integration_context: Context, make_user: MakeUser, operation: str
 ) -> None:
+    """The manage ceiling runs on the caller's stored grants, not the token claim.
+
+    A token still claiming ``org:admin`` puts the target in scope, but the
+    caller's stored grants do not outrank it, so the change is refused.
+    """
     ctx = integration_context
     admin_id = await make_user(
         f"guard-admin-{operation}@test.local", {"org:admin"}, invite_state=InviteState.PENDING
@@ -274,11 +342,12 @@ async def test_users_write_holder_cannot_manage_more_privileged_user(
     manager_id = await make_user(f"guard-manager-{operation}@test.local", {"users:write"})
 
     with pytest.raises(UserManagementForbiddenError):
-        await getattr(UserService(ctx), operation)(admin_id, identity=_identity(manager_id))
+        await _manage(ctx, operation, admin_id, _admin(manager_id))
 
     user = await _get_user(ctx, admin_id)
     assert user.active is True
     assert user.email == f"guard-admin-{operation}@test.local"
+    assert await _assigned(ctx, admin_id) == {"org:admin"}
 
 
 async def test_caller_must_hold_all_target_permissions(
@@ -290,17 +359,17 @@ async def test_caller_must_hold_all_target_permissions(
     manager_id = await make_user("guard-manager-ceiling@test.local", {"users:write"})
 
     with pytest.raises(UserManagementForbiddenError):
-        await UserService(ctx).disable(target_id, identity=_identity(manager_id))
+        await UserService(ctx).disable(target_id, identity=_admin(manager_id))
 
 
-async def test_users_write_holder_can_manage_less_privileged_user(
+async def test_in_scope_caller_can_manage_less_privileged_user(
     integration_context: Context, make_user: MakeUser
 ) -> None:
     ctx = integration_context
     service = UserService(ctx)
     target_id = await make_user("guard-target-ok@test.local", {"users:read"})
     manager_id = await make_user("guard-manager-ok@test.local", {"users:write"})
-    identity = _identity(manager_id)
+    identity = _admin(manager_id)
 
     await service.disable(target_id, identity=identity)
     assert (await _get_user(ctx, target_id)).active is False
@@ -308,6 +377,31 @@ async def test_users_write_holder_can_manage_less_privileged_user(
     assert (await _get_user(ctx, target_id)).active is True
     await service.delete(target_id, identity=identity)
     assert (await _get_user(ctx, target_id)).active is False
+
+
+async def test_users_write_holder_can_manage_self(
+    integration_context: Context, make_user: MakeUser
+) -> None:
+    """A non-admin stays in scope for their own account."""
+    ctx = integration_context
+    service = UserService(ctx)
+    self_id = await make_user(
+        "guard-manager-self@test.local", {"users:write"}, invite_state=InviteState.PENDING
+    )
+    identity = _identity(self_id, "users:write")
+
+    invite = await service.reissue_invite(self_id, identity=identity)
+    assert invite.token.startswith("inv_")
+    await PermissionService(ctx).set_assigned(
+        self_id, ["users:read", "users:write"], identity=identity
+    )
+    assert await _assigned(ctx, self_id) == {"users:read", "users:write"}
+    await service.disable(self_id, identity=identity)
+    assert (await _get_user(ctx, self_id)).active is False
+    await service.enable(self_id, identity=identity)
+    assert (await _get_user(ctx, self_id)).active is True
+    await service.delete(self_id, identity=identity)
+    assert (await _get_user(ctx, self_id)).active is False
 
 
 async def test_users_write_holder_can_update_self(
@@ -369,7 +463,7 @@ async def test_delete_removes_external_identity_links(
     target_id = await make_user("guard-linked-del@test.local", {"users:read"})
     await _add_link(ctx, target_id, "ext-guard-linked-del")
 
-    await UserService(ctx).delete(target_id, identity=_identity(admin_id))
+    await UserService(ctx).delete(target_id, identity=_admin(admin_id))
     assert await _link_count(ctx, target_id) == 0
 
 
@@ -390,7 +484,7 @@ async def test_last_active_admin_cannot_be_deactivated(
 
     # With a second active admin the same operation is allowed.
     second_id = await make_user(f"guard-second-admin-{operation}@test.local", {"org:admin"})
-    await getattr(service, operation)(admin_id, identity=_identity(second_id))
+    await getattr(service, operation)(admin_id, identity=_admin(second_id))
     assert (await _get_user(ctx, admin_id)).active is False
 
     # The remaining admin is now the last one.
@@ -404,7 +498,7 @@ async def _assigned(ctx: Context, user_id: str) -> set[str]:
     return sets[user_id]
 
 
-async def test_users_write_holder_cannot_change_admin_permissions(
+async def test_stale_admin_claim_cannot_change_admin_permissions(
     integration_context: Context, make_user: MakeUser
 ) -> None:
     ctx = integration_context
@@ -413,7 +507,7 @@ async def test_users_write_holder_cannot_change_admin_permissions(
 
     with pytest.raises(UserManagementForbiddenError):
         await PermissionService(ctx).set_assigned(
-            admin_id, ["users:read"], identity=_identity(manager_id)
+            admin_id, ["users:read"], identity=_admin(manager_id)
         )
     assert await _assigned(ctx, admin_id) == {"org:admin"}
 
@@ -427,11 +521,11 @@ async def test_permission_change_requires_holding_all_target_permissions(
     manager_id = await make_user("guard-manager-perms2@test.local", {"users:write"})
 
     with pytest.raises(UserManagementForbiddenError):
-        await PermissionService(ctx).set_assigned(target_id, [], identity=_identity(manager_id))
+        await PermissionService(ctx).set_assigned(target_id, [], identity=_admin(manager_id))
     assert await _assigned(ctx, target_id) == {"agents:write", "users:read"}
 
 
-async def test_users_write_holder_can_change_less_privileged_permissions(
+async def test_in_scope_caller_can_change_less_privileged_permissions(
     integration_context: Context, make_user: MakeUser
 ) -> None:
     ctx = integration_context
@@ -439,7 +533,7 @@ async def test_users_write_holder_can_change_less_privileged_permissions(
     manager_id = await make_user("guard-manager-perms-ok@test.local", {"users:write"})
 
     await PermissionService(ctx).set_assigned(
-        target_id, ["users:write"], identity=_identity(manager_id)
+        target_id, ["users:write"], identity=_admin(manager_id)
     )
     assert await _assigned(ctx, target_id) == {"users:write"}
 
@@ -452,7 +546,7 @@ async def test_set_permissions_unknown_user(
 
     with pytest.raises(UserNotFoundError):
         await PermissionService(ctx).set_assigned(
-            "usr_does_not_exist", ["users:read"], identity=_identity(admin_id)
+            "usr_does_not_exist", ["users:read"], identity=_admin(admin_id)
         )
 
 
@@ -472,7 +566,7 @@ async def test_last_active_admin_cannot_lose_org_admin(
 
     # With a second active admin, org:admin can be removed.
     second_id = await make_user("guard-second-admin-perms@test.local", {"org:admin"})
-    await service.set_assigned(admin_id, ["users:write"], identity=_identity(second_id))
+    await service.set_assigned(admin_id, ["users:write"], identity=_admin(second_id))
     assert await _assigned(ctx, admin_id) == {"users:write"}
 
     # An inactive org:admin does not count as a remaining admin.
@@ -503,9 +597,9 @@ async def test_concurrent_admin_removal_is_serialised(
 
     async def _second() -> None:
         if second_operation == "disable":
-            await UserService(ctx).disable(second_id, identity=_identity(first_id))
+            await UserService(ctx).disable(second_id, identity=_admin(first_id))
         else:
-            await PermissionService(ctx).set_assigned(second_id, [], identity=_identity(first_id))
+            await PermissionService(ctx).set_assigned(second_id, [], identity=_admin(first_id))
 
     async with ctx.admin_db.transaction() as session:
         await ensure_not_last_active_admin(session, first_id)

@@ -15,7 +15,6 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
-from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from starlette.routing import Route
 
@@ -34,6 +33,7 @@ from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
 from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
 from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
@@ -44,6 +44,7 @@ from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.errors import (
     request_validation_error_handler,
+    state_backend_capacity_error_handler,
     unhandled_exception_handler,
 )
 from jentic_one.shared.web.health import RootHealthResponse
@@ -157,25 +158,35 @@ def attach_http_observability(app: FastAPI, *, mount_metrics: bool = True) -> No
 
 
 def instrument_databases(ctx: Context) -> None:
-    """Instrument SQLAlchemy + asyncpg using engines from the live Context.
+    """Instrument the SQLAlchemy engines from the live Context.
 
     Must be called after `ctx.startup()` so engines exist. Idempotent across
-    the whole process: the underlying instrumentors are global and only the
-    first call wires them up.
+    the whole process: the underlying instrumentor is global and only the
+    first call wires it up.
+
+    SQLAlchemy is the one DB instrumentor: it traces each statement, with the
+    engine's pool context, plus a ``connect`` span per checkout. Transaction
+    control (COMMIT/ROLLBACK) and pool pre-ping round trips are not traced —
+    SQLAlchemy's tracer hooks only cursor execution, and pre-ping time sits
+    inside the ``connect`` span. The asyncpg driver is not instrumented: that
+    would add a second span beneath every SQLAlchemy statement span to recover
+    those round trips.
     """
     global _db_instrumented
     if _db_instrumented:
         return
     _db_instrumented = True
 
-    AsyncPGInstrumentor().instrument()  # type: ignore[no-untyped-call]
-
-    sqlalchemy_instrumentor = SQLAlchemyInstrumentor()
-    for name in ("registry", "admin", "control"):
-        if not ctx.has_db(name):
-            continue
-        db = getattr(ctx, f"{name}_db")
-        sqlalchemy_instrumentor.instrument(engine=db.engine.sync_engine)
+    # One call for every plane: the instrumentor is a process-wide singleton,
+    # so a second ``instrument()`` is ignored and would leave that engine
+    # untraced.
+    engines = [
+        getattr(ctx, f"{name}_db").engine.sync_engine
+        for name in ("registry", "admin", "control")
+        if ctx.has_db(name)
+    ]
+    if engines:
+        SQLAlchemyInstrumentor().instrument(engines=engines)
 
 
 def _start_worker(
@@ -660,6 +671,7 @@ def create_surface_app(
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
     attach_http_observability(app, mount_metrics=False)
     install_openapi_metadata(app)
@@ -733,6 +745,7 @@ def create_combined_app(
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
     root.add_exception_handler(Exception, unhandled_exception_handler)
 
     @root.get(
