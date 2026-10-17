@@ -208,6 +208,10 @@ async def test_broker_resolve_operation_reads_without_begin_or_rollback(
         result = await resolver.resolve_operation(method="GET", url=url)
 
     assert (result is not None) == url.startswith("https://api.acme.com")
+    if url.startswith("https://api.acme.com"):
+        assert len(trace.statements) == 1, trace.statements
+    else:
+        assert len(trace.statements) >= 2, trace.statements
     trace.assert_no_begin_or_rollback()
 
 
