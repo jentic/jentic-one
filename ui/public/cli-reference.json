@@ -2341,7 +2341,7 @@
               "path": "jentic skill init",
               "use": "init",
               "short": "Generate the Jentic skill set for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, agent mode, pipes, agent sessions) it\ndefaults to the detected operators, echoing each resolved path before\nwriting.\n\nWith --json (the default off-TTY and in agent mode) stdout carries one\n{schema_version, results, mcp} document with a per-(operator, skill,\nscope) outcome and the MCP registration outcome; side reports go to\nstderr. --json changes only the output shape: on a terminal the\npickers still run (on stderr).\n\nAn install recording a newer skill version than this CLI bundles is\nleft alone (skipped_newer) unless --force.",
               "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --skill jentic --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
@@ -2370,7 +2370,13 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite content you have manually edited"
+                  "usage": "overwrite content you have manually edited, or downgrade an install newer than this CLI's copy"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "force the JSON outcome envelope (default when stdout is not a TTY or in agent mode)"
                 },
                 {
                   "name": "mode",
@@ -2413,6 +2419,7 @@
               "path": "jentic skill list",
               "use": "list",
               "short": "Show supported operators and where each skill is installed",
+              "long": "list reports, per operator, whether its runtime is detected and where each\nshipped skill is installed (user and project scope), whether it has\nmanual edits, and whether it is older than the copy bundled in this CLI\n(stale: vX installed, vY available). Refresh stale installs with\n`jentic skill update`.",
               "flags": [
                 {
                   "name": "context",
@@ -2442,7 +2449,7 @@
               "path": "jentic skill update",
               "use": "update",
               "short": "Re-render installed skills with the current base URL",
-              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent is reported and left alone unless --force.",
+              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent, and installs recording a newer skill version than this CLI\nbundles, are reported and left alone unless --force.",
               "example": "  jentic skill update\n  jentic skill update --operator claude\n  jentic skill update --skill jentic --force",
               "flags": [
                 {
@@ -2465,7 +2472,13 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite content you have manually edited"
+                  "usage": "overwrite content you have manually edited, or downgrade an install newer than this CLI's copy"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "force the JSON outcome envelope (default when stdout is not a TTY or in agent mode)"
                 },
                 {
                   "name": "mode",
@@ -2524,6 +2537,12 @@
                   "type": "bool",
                   "default": "false",
                   "usage": "remove even content you have manually edited"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "force the JSON outcome envelope (default when stdout is not a TTY or in agent mode)"
                 },
                 {
                   "name": "mode",
@@ -2682,7 +2701,7 @@
           "path": "jentic doctor",
           "use": "doctor",
           "short": "Diagnose this agent's local jentic setup (read-only)",
-          "long": "doctor is the agent-side self-check. It verifies the things an agent needs to\nwork — its config/state directories, a resolvable identity, a usable token or\nAPI key, control-plane reachability, and local clock skew — and prints a\npass/warn/fail report. It is read-only (never mints tokens or writes config)\nand, unlike `jenticctl doctor`, needs no operator tooling, so it runs where an\nagent actually lives. It exits non-zero when any check fails (warnings keep a\nzero exit), so it is safe to wire into a health probe.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly).",
+          "long": "doctor is the agent-side self-check. It verifies the things an agent needs to\nwork — its config/state directories, a resolvable identity, a usable token or\nAPI key, control-plane reachability, local clock skew, and whether any\ninstalled skill is older than the bundled copy — and prints a\npass/warn/fail report. It is read-only (never mints tokens or writes config)\nand, unlike `jenticctl doctor`, needs no operator tooling, so it runs where an\nagent actually lives. It exits non-zero when any check fails (warnings keep a\nzero exit), so it is safe to wire into a health probe.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly).",
           "group_title": "Local agent client",
           "flags": [
             {
