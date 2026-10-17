@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
+from jentic_one.admin.repos.assertion_jti_repo import AssertionJtiRepository
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
@@ -16,6 +20,7 @@ from jentic_one.shared.auth import resolve_agent_key
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.models import ActorStatus, ActorType
 
 _INVALID = "Assertion is invalid"
@@ -28,40 +33,23 @@ _INVALID = "Assertion is invalid"
 # contact on self-hosted backends, which mint no claim tokens by default.
 _PENDING = "Agent is not active yet (pending approval)"
 
-_DEFAULT_MAX_TTL = 300
+#: Seconds a ``jti`` record outlives its assertion's ``exp``. The record's
+#: lifetime runs on the admin database's clock while ``exp`` is checked on
+#: each auth process's own clock, so a process whose clock lags the database
+#: by up to this much still finds the record while it could accept the
+#: assertion. Keep auth hosts on NTP; a lag beyond the grace re-opens a replay
+#: window of that excess.
+JTI_CLOCK_SKEW_GRACE_S = 120
+
+#: Most expired ``jti`` records one exchange deletes. Each accepted exchange
+#: adds one record, so pruning up to this many per exchange keeps the table
+#: at its live set without one exchange paying for a large backlog.
+JTI_PRUNE_BATCH = 50
 
 
-class _JTICache:
-    """In-process JTI replay cache with lazy TTL eviction."""
-
-    def __init__(self, max_ttl: int) -> None:
-        self._max_ttl = max_ttl
-        self._seen: dict[str, float] = {}
-
-    def check_and_insert(self, jti: str) -> bool:
-        """Return True if jti is new (not replayed). Inserts it for future checks."""
-        now = time.time()
-        self._evict(now)
-        if jti in self._seen:
-            return False
-        self._seen[jti] = now + self._max_ttl
-        return True
-
-    def _evict(self, now: float) -> None:
-        expired = [k for k, exp in self._seen.items() if exp <= now]
-        for k in expired:
-            del self._seen[k]
-
-
-# Module-level singleton — survives across requests for actual replay protection.
-_jti_cache: _JTICache | None = None
-
-
-def _get_jti_cache(max_ttl: int) -> _JTICache:
-    global _jti_cache
-    if _jti_cache is None or _jti_cache._max_ttl != max_ttl:
-        _jti_cache = _JTICache(max_ttl)
-    return _jti_cache
+def jti_digest(jti: str) -> str:
+    """Hex SHA-256 of a ``jti`` claim: what the replay record stores instead of the claim."""
+    return hashlib.sha256(jti.encode()).hexdigest()
 
 
 class AssertionService:
@@ -69,7 +57,6 @@ class AssertionService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
-        self._jti_cache = _get_jti_cache(ctx.config.auth.assertion_max_ttl_seconds)
 
     async def verify_and_exchange(
         self, assertion: str, *, request_base_url: str | None = None
@@ -148,9 +135,9 @@ class AssertionService:
             # deliberately generic: they are terminal, not waitable, and get
             # no dedicated probe signal.
             #
-            # Checked BEFORE the jti replay cache so approval polling (a fresh
-            # jti per attempt) never populates the cache for exchanges that
-            # cannot succeed.
+            # Checked BEFORE the jti replay record so approval polling (a fresh
+            # jti per attempt) never writes records for exchanges that cannot
+            # succeed.
             if agent.status == ActorStatus.PENDING:
                 raise InvalidGrantError(_PENDING)
             if agent.status != ActorStatus.ACTIVE:
@@ -164,7 +151,9 @@ class AssertionService:
                 raise InvalidGrantError(_INVALID)
 
             jti = payload.get("jti")
-            if not jti or not self._jti_cache.check_and_insert(jti):
+            if not jti or not isinstance(jti, str):
+                raise InvalidGrantError(_INVALID)
+            if not await self._claim_jti(session, issuer=agent.id, jti=jti, exp=payload["exp"]):
                 raise InvalidGrantError(_INVALID)
 
             grants = await ActorPermissionGrantRepository.list_for_actor(
@@ -189,6 +178,25 @@ class AssertionService:
         access_token, refresh_token = await token_svc.issue_pair(agent.id, ActorType.AGENT, scopes)
 
         return access_token, refresh_token, scopes
+
+    @staticmethod
+    async def _claim_jti(session: AsyncSession, *, issuer: str, jti: str, exp: float) -> bool:
+        """Record the assertion's ``jti`` as used for ``issuer``; ``False`` on a replay.
+
+        Shared by every auth process through the admin database. The record
+        is written in the verifying transaction, so a rejected exchange (the
+        transaction rolls back) leaves no record. It lives until ``exp`` plus
+        :data:`JTI_CLOCK_SKEW_GRACE_S` on the database clock; after that the
+        assertion fails the ``exp`` check everywhere, and a new assertion
+        reusing the ``jti`` takes the record over. Expired records are pruned
+        here in batches of :data:`JTI_PRUNE_BATCH`.
+        """
+        now = await db_now(session)
+        await AssertionJtiRepository.delete_expired(session, now=now, limit=JTI_PRUNE_BATCH)
+        expires_at = datetime.fromtimestamp(exp, UTC) + timedelta(seconds=JTI_CLOCK_SKEW_GRACE_S)
+        return await AssertionJtiRepository.claim(
+            session, issuer=issuer, jti_digest=jti_digest(jti), expires_at=expires_at, now=now
+        )
 
     def _expected_audiences(self, request_base_url: str | None) -> list[str]:
         # Normalized like deployment_base_url so a trailing slash in a
