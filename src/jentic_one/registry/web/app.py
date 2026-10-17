@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI
 
-from jentic_one.registry.services.catalog.search import validate_catalog_search_config
 from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.registry.web.errors import service_error_handler
 from jentic_one.registry.web.routers import (
@@ -53,20 +52,8 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
-def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Combined-mode assembly hook: validate the catalog search configuration.
-
-    ``catalog.search_strategy`` must name a registered catalog search strategy;
-    an unknown name raises ``ConfigError`` here, at app assembly, instead of
-    every search silently falling back to ``token``. Strategies therefore
-    register at import time, before the app is built.
-    """
-    validate_catalog_search_config(ctx.config)
-
-
 def create_app(ctx: Context) -> FastAPI:
     """Create the registry FastAPI application for standalone deployment."""
-    validate_catalog_search_config(ctx.config)
     app = create_surface_app(
         ctx, title="jentic-one-registry", routers=get_routers(), enabled_apps={"registry"}
     )

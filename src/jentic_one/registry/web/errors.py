@@ -117,19 +117,27 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # make_service_error_handler).
 _SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseConsistencyError: "An unexpected error occurred",
-    **DB_UNAVAILABLE_SAFE_DETAILS,
+    # Generic on purpose: the raw message names the internal ranking strategy.
+    CatalogSearchUnavailableError: (
+        "Catalog search is temporarily unavailable; retry or restart the search without a cursor"
+    ),
 }
 
+#: Seconds a client should wait before retrying a 503 ``catalog_search_unavailable``.
+_CATALOG_SEARCH_RETRY_AFTER_S = 1
 
-def _add_allow_header(
+
+def _response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
-    """Add Allow header for 405 responses when the exception carries allowed_methods."""
+    """Add ``Allow`` to 405s carrying ``allowed_methods`` and ``Retry-After`` to catalog 503s."""
     if status_code == 405 and hasattr(exc, "allowed_methods"):
         response.headers["Allow"] = ", ".join(exc.allowed_methods)
+    if isinstance(exc, CatalogSearchUnavailableError):
+        response.headers["Retry-After"] = str(_CATALOG_SEARCH_RETRY_AFTER_S)
     return response
 
 
 service_error_handler = make_service_error_handler(
-    _ERROR_MAP, response_hook=_add_allow_header, safe_details=_SAFE_DETAILS
+    _ERROR_MAP, response_hook=_response_hook, safe_details=_SAFE_DETAILS
 )

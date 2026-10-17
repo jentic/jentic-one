@@ -25,7 +25,6 @@ from jentic_one.control.services.rule_base_path_rewrite import RuleBasePathRewri
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.registry.services.api_path_shapes import RegistryApiPathShapeReader
-from jentic_one.registry.services.catalog.search import validate_catalog_search_config
 from jentic_one.shared.config import (
     AppConfig,
     broker_links_root_on_broker,
@@ -117,11 +116,6 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
     """Build the appropriate FastAPI application based on enabled surfaces."""
     if "broker" in apps and len(apps) > 1:
         raise RuntimeError("broker must run as the sole surface; do not bundle it with others")
-    # Any process that can read the registry DB may serve catalog searches
-    # (the registry surface, or control's /mcp search_catalog tool), so an
-    # unregistered catalog.search_strategy fails the boot here.
-    if ctx.is_db_allowed("registry"):
-        validate_catalog_search_config(ctx.config)
     container = build_default_container(ctx)
     if len(apps) == 1:
         surface = apps[0]
