@@ -63,8 +63,10 @@ export class ActorsService {
      * Agents resolve when visible to the caller: itself, its own agents, its
      * owner's agents with `owner:agents:read`, or every agent for `org:admin`.
      * Users resolve when the caller can already see them by id: itself, the
-     * owner or approver of an agent it can see, the actor on an event or audit
-     * entry it can see, or the creator of a credential it can read. `org:admin`
+     * owner or approver of an agent it can see (with `agents:read`), the actor
+     * on an event it can see (with `events:read`), or the creator of a
+     * credential it can read (with `credentials:read` or
+     * `owner:credentials:read`). `org:admin`
      * resolves every user. Ids that match no visible actor are silently left
      * out, exactly like unknown ids. Listing the whole directory needs
      * `users:read` on `GET /actors`.
