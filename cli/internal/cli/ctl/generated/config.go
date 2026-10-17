@@ -508,7 +508,8 @@ type CatalogSourceConfig struct {
 	// The removal ratio only trips above this many removals.
 	MinRemovalCount int `json:"min_removal_count,omitempty,omitzero" yaml:"min_removal_count,omitempty" mapstructure:"min_removal_count,omitempty"`
 
-	// Precedence corresponds to the JSON schema field "precedence".
+	// Rank when two sources list the same catalog_api_id (higher wins). An untrusted
+	// source may not rank above any enabled curated source (startup fails).
 	Precedence int `json:"precedence,omitempty,omitzero" yaml:"precedence,omitempty" mapstructure:"precedence,omitempty"`
 
 	// Reader ACL; required for restricted sources only.

@@ -2183,7 +2183,14 @@ class CatalogSourceConfig(BaseModel):
         default="untrusted",
         description="curated sources own the catalog_api_ids they list.",
     )
-    precedence: int = 0
+    precedence: int = Field(
+        default=0,
+        description=(
+            "Rank when two sources list the same catalog_api_id (higher wins). An "
+            "untrusted source may not rank above any enabled curated source "
+            "(startup fails)."
+        ),
+    )
     max_age_seconds: int = Field(
         default=86400,
         ge=0,
