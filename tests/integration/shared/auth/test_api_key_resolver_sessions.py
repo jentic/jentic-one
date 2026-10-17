@@ -181,7 +181,7 @@ async def test_resolve_key_follows_owner_status_with_one_admin_session(
     assert checkouts[0] == 1
     owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
     assert len(owner_inactive) == 1
-    assert owner_inactive[0]["log_level"] == "warning"
+    assert owner_inactive[0]["log_level"] == "info"
     assert owner_inactive[0]["agent_id"] == _AGENT
     assert owner_inactive[0]["owner_id"] == _OWNER
     # The owner refusal is not reported as an inactive successor.

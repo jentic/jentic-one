@@ -240,10 +240,16 @@ class AgentRepository:
     ) -> tuple[Agent, bool] | None:
         """The agent and whether its owner may currently act, in one statement.
 
-        The owner flag is ``True`` for an ownerless agent; for an owned agent it
-        is the owner's ``users.active`` (delete leaves it ``False``), and
-        ``False`` when the owner row is missing. ``for_update`` locks only the
-        agent row, never the owner's.
+        The owner flag is:
+
+        - ``True`` for an ownerless agent;
+        - the owner's ``users.active`` for an owned agent (a soft-deleted user
+          has ``active`` false, so delete reads ``False``);
+        - ``False`` when the owner row is missing, so callers that gate on the
+          flag fail closed.
+
+        ``None`` means the agent row itself is missing. ``for_update`` locks
+        only the agent row, never the owner's.
         """
         stmt = (
             select(Agent, User.active)

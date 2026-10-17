@@ -612,7 +612,8 @@ async def test_owned_agent_follows_owner_status_on_both_broker_arms(
             await validator.validate(api_key)
     owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
     assert [log["agent_id"] for log in owner_inactive] == [_OWNED_AGENT, _OWNED_AGENT]
-    assert all(log["log_level"] == "warning" for log in owner_inactive)
+    assert all(log["log_level"] == "info" for log in owner_inactive)
+    assert all(log["owner_id"] == _OWNER for log in owner_inactive)
 
     await _set_user_row(admin_db, _OWNER, active=True)
     await asyncio.sleep(_VERDICT_TTL + 0.01)

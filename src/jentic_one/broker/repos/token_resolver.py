@@ -6,15 +6,13 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-import structlog
 from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
-
-logger = structlog.get_logger(__name__)
 
 ACCESS_TOKEN_PREFIX = "at_"
 #: ``actor_status`` of an active, owned agent whose owner is not active.
@@ -61,9 +59,10 @@ class InProcessTokenResolver:
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
             # An owned agent follows its owner's account status: while the
-            # owner is disabled or deleted (delete leaves users.active false)
-            # the agent reads 'owner_inactive'. Ownerless agents depend on
-            # their own status alone. One PK probe on agents, one on users.
+            # owner is disabled or deleted the agent reads 'owner_inactive'.
+            # A soft-deleted user has users.active false, so the o.active
+            # probe covers delete too. Ownerless agents depend on their own
+            # status alone. One PK probe on agents, one on users.
             "   (SELECT CASE"
             "     WHEN a.status <> 'active' THEN a.status"
             "     WHEN a.owner_id IS NULL THEN 'active'"
@@ -86,6 +85,9 @@ class InProcessTokenResolver:
             # gate, so a NULL/missing row just degrades to the id.
             " (SELECT a.name FROM agents a WHERE a.id = t.actor_id"
             "   AND t.actor_type = 'agent') AS actor_name,"
+            # Only read to name the owner in the ``agent_owner_inactive`` log.
+            " (SELECT a.owner_id FROM agents a WHERE a.id = t.actor_id"
+            "   AND t.actor_type = 'agent') AS actor_owner_id,"
             " (SELECT c.active FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_active,"
             " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
@@ -159,17 +161,8 @@ class InProcessTokenResolver:
             return None
 
         if row.actor_status == _OWNER_INACTIVE:
-            # WARNING: a client-side 401, but one an operator can act on. Logged
-            # once per verdict-cache miss, not per request.
-            logger.warning(
-                "agent_owner_inactive",
-                agent_id=row.actor_id,
-                actionable_step=(
-                    "This agent's owner is disabled or deleted, so the agent cannot "
-                    "authenticate. Re-enable the owner, or transfer the agent to an "
-                    "active owner."
-                ),
-            )
+            # Logged once per verdict-cache miss, not per request.
+            log_agent_owner_inactive(row.actor_id, row.actor_owner_id)
 
         active = (
             revoked_at is None
