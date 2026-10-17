@@ -52,7 +52,6 @@ class ExecutionView(BaseModel):
 class ExecutionFilter(BaseModel):
     """Filter parameters for listing executions."""
 
-    toolkit_id: str | None = None
     trace_id: str | None = None
     status: list[str] | None = None
     from_: datetime | None = None
