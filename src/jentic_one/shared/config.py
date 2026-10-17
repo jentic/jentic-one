@@ -31,6 +31,12 @@ from pydantic import (
     model_validator,
 )
 
+from jentic_one.shared.catalog.source_types import (
+    DEFAULT_PUBLIC_MANIFEST_URL,
+    DEFAULT_PUBLIC_SOURCE_SLUG,
+    CatalogTrust,
+    CatalogVisibility,
+)
 from jentic_one.shared.state.factory import BackendKind, StateBackendConfig
 from jentic_one.shared.url import (
     is_loopback_host,
@@ -1898,22 +1904,157 @@ class IngestConfig(BaseModel):
     egress: EgressConfig = Field(default_factory=EgressConfig)
 
 
+_CATALOG_SOURCE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+
+class SourceAuthConfig(BaseModel):
+    """How a catalog source authenticates its requests.
+
+    Only ``none`` is built in; other resolver types are registered by extensions.
+    The secret itself never appears here: ``env`` names the variable holding it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = "none"
+    env: str | None = None
+    header: str | None = None
+
+
+class SourceReadersConfig(BaseModel):
+    """Reader ACL of a ``restricted`` catalog source (any one match admits)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    permissions: list[str] = Field(default_factory=list)
+    actor_ids: list[str] = Field(default_factory=list)
+
+
+def _default_public_source_settings() -> dict[str, object]:
+    return {"url": DEFAULT_PUBLIC_MANIFEST_URL}
+
+
+class CatalogSourceConfig(BaseModel):
+    """One catalog source: where entries come from and how they are synced.
+
+    ``settings`` is kind-specific and validated against the kind's own model at
+    registry startup. This block is configuration only; sync state lives in the
+    registry database.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str = Field(
+        description="Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$."
+    )
+    kind: str = Field(description="Registered source kind, e.g. git-manifest.")
+    enabled: bool = Field(
+        default=True,
+        description="Disabled sources are never synced (kill switch for this source).",
+    )
+    visibility: CatalogVisibility = "public"
+    trust: CatalogTrust = Field(
+        default="untrusted",
+        description="curated sources own the catalog_api_ids they list.",
+    )
+    precedence: int = 0
+    max_age_seconds: int = Field(
+        default=86400,
+        ge=0,
+        description=(
+            "Background sync interval. 0 disables automatic sync and background "
+            "egress for this source; a manual refresh still syncs it."
+        ),
+    )
+    max_removal_ratio: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Mass-removal guard: a sync removing more than this share is held.",
+    )
+    min_removal_count: int = Field(
+        default=5,
+        ge=0,
+        description="The removal ratio only trips above this many removals.",
+    )
+    sync_lease_seconds: int = Field(
+        default=60,
+        ge=3,
+        description="Cross-process sync lease, renewed every third of it.",
+    )
+    auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)
+    readers: SourceReadersConfig | None = Field(
+        default=None, description="Reader ACL; required for restricted sources only."
+    )
+    settings: dict[str, Any] = Field(default_factory=dict, description="Kind-specific settings.")
+
+    @field_validator("slug")
+    @classmethod
+    def _check_slug(cls, value: str) -> str:
+        if not _CATALOG_SOURCE_SLUG_RE.match(value):
+            raise ValueError(f"catalog source slug {value!r} must match ^[a-z][a-z0-9-]{{0,31}}$")
+        return value
+
+
+def _default_catalog_sources() -> list[CatalogSourceConfig]:
+    return [
+        CatalogSourceConfig(
+            slug=DEFAULT_PUBLIC_SOURCE_SLUG,
+            kind="git-manifest",
+            visibility="public",
+            trust="curated",
+            precedence=10,
+            settings=_default_public_source_settings(),
+        )
+    ]
+
+
+class CatalogApiIdMappingConfig(BaseModel):
+    """Lets one non-curated entry claim a curated source's ``catalog_api_id``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    external_id: str
+    catalog_api_id: str
+
+
 class CatalogConfig(BaseModel):
-    """Public API catalog settings (manifest source + staleness)."""
+    """Public API catalog settings (sources, staleness, update notify)."""
 
     manifest_url: str = Field(
-        default=(
-            "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
-        ),
+        default=DEFAULT_PUBLIC_MANIFEST_URL,
         description=(
-            "Manifest source for the public API catalog. Full default: "
+            "Deprecated alias for the legacy source's settings.url "
+            "(catalog.sources[slug=legacy_source_slug]). Full default: "
             "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/"
             "apis/openapi/apis.json"
         ),
     )
-    # Lazy refresh-on-read: a manifest older than this is refreshed on the next
-    # list()/get(). Zero disables auto-refresh (manual :refresh only).
-    manifest_max_age_seconds: int = 86400
+    # Deprecated alias for the legacy source's ``max_age_seconds``. Zero disables
+    # auto-refresh (manual :refresh only).
+    manifest_max_age_seconds: int = Field(
+        default=86400,
+        description="Deprecated alias for the legacy source's max_age_seconds.",
+    )
+    sources: list[CatalogSourceConfig] = Field(
+        default_factory=_default_catalog_sources,
+        description="Catalog sources. The default is the curated public-apis manifest.",
+    )
+    catalog_api_id_mappings: list[CatalogApiIdMappingConfig] = Field(
+        default_factory=list,
+        description=(
+            "Rows letting a non-curated entry claim a curated catalog_api_id; "
+            "matched case-insensitively and applied in the curated casing."
+        ),
+    )
+    legacy_source_slug: str = Field(
+        default=DEFAULT_PUBLIC_SOURCE_SLUG,
+        description=(
+            "The git-manifest source the deprecated manifest_* keys map onto and "
+            "that pre-existing catalog imports are reconciled against."
+        ),
+    )
     # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
     # app_factory when both the registry + admin DBs are present) runs one sweep per
     # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
@@ -1938,6 +2079,58 @@ class CatalogConfig(BaseModel):
     # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
     # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+
+    def deprecated_keys_set(self) -> list[str]:
+        """The deprecated ``manifest_*`` keys the operator set explicitly."""
+        return [
+            key
+            for key in ("manifest_url", "manifest_max_age_seconds")
+            if key in self.model_fields_set
+        ]
+
+    def effective_sources(self) -> list[CatalogSourceConfig]:
+        """``sources`` with the deprecated ``manifest_*`` keys mapped onto the legacy source.
+
+        Each deprecated key, when set explicitly, overrides the legacy source's
+        value (``manifest_url`` -> ``settings.url``, ``manifest_max_age_seconds``
+        -> ``max_age_seconds``). Computed per call so a key assigned after load is
+        honoured too.
+        """
+        fields_set = self.model_fields_set
+        out: list[CatalogSourceConfig] = []
+        for source in self.sources:
+            if source.slug == self.legacy_source_slug:
+                update: dict[str, Any] = {}
+                if "manifest_url" in fields_set:
+                    update["settings"] = {**source.settings, "url": self.manifest_url}
+                if "manifest_max_age_seconds" in fields_set:
+                    update["max_age_seconds"] = max(0, self.manifest_max_age_seconds)
+                if update:
+                    source = source.model_copy(update=update)
+            out.append(source)
+        return out
+
+    def legacy_source(self) -> CatalogSourceConfig | None:
+        """The effective ``legacy_source_slug`` source, if configured."""
+        return next(
+            (s for s in self.effective_sources() if s.slug == self.legacy_source_slug), None
+        )
+
+    def legacy_manifest_url(self) -> str:
+        """The manifest URL the snapshot refresh fetches (the legacy source's ``url``)."""
+        legacy = self.legacy_source()
+        if legacy is not None:
+            url = legacy.settings.get("url")
+            if isinstance(url, str) and url:
+                return url
+        return self.manifest_url
+
+    def legacy_max_age_seconds(self) -> int:
+        """Snapshot staleness gate (the legacy source's ``max_age_seconds``; 0 = manual)."""
+        legacy = self.legacy_source()
+        if legacy is not None:
+            return legacy.max_age_seconds if legacy.enabled else 0
+        return self.manifest_max_age_seconds
 
 
 class McpOAuthConfig(BaseModel):
