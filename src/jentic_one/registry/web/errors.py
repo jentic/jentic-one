@@ -100,13 +100,16 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # escaping as an opaque traceback. See #642.
     DatabaseConsistencyError: (500, "internal_error"),
     # A transient DB failure (e.g. a pooled connection lost with pre-ping off)
-    # is a retryable 503, matching the control/admin/auth surfaces.
+    # is a 503, matching the control/admin/auth surfaces. Its subclass for a
+    # connection lost at commit is a 503 too, but its detail asks the client to
+    # check whether the write landed before retrying.
     DatabaseUnavailableError: (503, "database_unavailable"),
 }
 
 # Never surface raw SQLAlchemy internals (SQL, state, connection details) to the
-# client for the defensively-mapped DB errors; the raw message is still logged
-# server-side (see make_service_error_handler).
+# client for the defensively-mapped DB errors. Server-side, a consistency error
+# logs its raw message and an unavailable error its SQL-free detail (see
+# make_service_error_handler).
 _SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseConsistencyError: "An unexpected error occurred",
     **DB_UNAVAILABLE_SAFE_DETAILS,
