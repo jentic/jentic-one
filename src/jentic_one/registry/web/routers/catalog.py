@@ -302,6 +302,8 @@ async def preview_catalog_operations(
             description=preview.info.description,
         ),
         security_schemes=preview.security_schemes,
+        server_variables=preview.server_variables,
+        required_schemes=preview.required_schemes,
     )
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 

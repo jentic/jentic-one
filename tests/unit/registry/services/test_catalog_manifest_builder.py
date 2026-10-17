@@ -582,3 +582,83 @@ def test_score_tokens_joined_form_matches_per_token_substrings() -> None:
     for t in ("str", "ipe", "co", "api", "pis", "x", "comx"):
         expected = mb.score_tokens(names, frozenset(names), [t])
         assert mb.score_tokens(names, frozenset(names), [t], " ".join(names)) == expected
+
+
+# ── preview: what the credential picker reads ──────────────────────────────
+
+
+def _picker_doc() -> dict[str, object]:
+    paths: dict[str, object] = {
+        f"/open/{i}": {"get": {"security": [], "responses": {}}} for i in range(250)
+    }
+    paths["/tickets"] = {"get": {"security": [{"OAuth": ["read"]}], "responses": {}}}
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "Zendesk", "version": "2"},
+        "servers": [
+            {
+                "url": "https://{subdomain}.zendesk.com/api/v2",
+                "variables": {
+                    "subdomain": {"default": "acme", "description": "Your subdomain"},
+                    "region": {"default": "us", "enum": ["us", "eu", 3]},
+                    "bad": "not-an-object",
+                },
+            },
+            {"url": "https://ignored.example", "variables": {"other": {"default": "x"}}},
+        ],
+        "paths": paths,
+        "components": {
+            "securitySchemes": {
+                "OAuth": {
+                    "type": "oauth2",
+                    "flows": {
+                        "authorizationCode": {
+                            "authorizationUrl": "https://{subdomain}.zendesk.com/oauth/new",
+                            "tokenUrl": "https://{subdomain}.zendesk.com/oauth/tokens",
+                            "refreshUrl": "https://{subdomain}.zendesk.com/oauth/refresh",
+                            "scopes": {"read": "Read", "write": "Write"},
+                        },
+                        "clientCredentials": {"tokenUrl": 42, "scopes": {}},
+                    },
+                }
+            }
+        },
+    }
+
+
+def test_preview_carries_oauth_flow_urls_and_scopes() -> None:
+    scheme = mb.project_preview(_picker_doc()).security_schemes["OAuth"]
+    assert scheme["flows"] == ["authorizationCode", "clientCredentials"]
+    assert scheme["flow_details"] == {
+        "authorizationCode": {
+            "authorizationUrl": "https://{subdomain}.zendesk.com/oauth/new",
+            "tokenUrl": "https://{subdomain}.zendesk.com/oauth/tokens",
+            "refreshUrl": "https://{subdomain}.zendesk.com/oauth/refresh",
+            "scopes": {"read": "Read", "write": "Write"},
+        },
+        # A non-string URL is dropped rather than passed through.
+        "clientCredentials": {"scopes": {}},
+    }
+
+
+def test_preview_carries_the_first_servers_variables() -> None:
+    assert mb.project_preview(_picker_doc()).server_variables == {
+        "subdomain": {"default": "acme", "description": "Your subdomain"},
+        "region": {"default": "us", "enum": ["us", "eu"]},
+    }
+
+
+def test_preview_required_schemes_cover_every_operation_regardless_of_filter() -> None:
+    # The only OAuth operation sorts after the first 200 and is filtered out by q.
+    proj = mb.project_preview(_picker_doc(), q="/open/")
+    assert all(op.security == [] for op in proj.operations)
+    assert proj.required_schemes == ["OAuth"]
+
+
+def test_preview_required_schemes_inherit_document_security() -> None:
+    doc = {
+        "security": [{"Key": []}],
+        "paths": {"/a": {"get": {}}, "/b": {"post": {"security": [{"Basic": []}]}}},
+    }
+    assert mb.project_preview(doc).required_schemes == ["Key", "Basic"]
+    assert mb.project_preview({"paths": {}}).server_variables == {}

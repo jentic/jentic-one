@@ -203,6 +203,8 @@ class CatalogPreviewView:
     truncated: bool
     info: mb.PreviewInfo
     security_schemes: dict[str, dict[str, object]]
+    server_variables: dict[str, dict[str, object]]
+    required_schemes: list[str]
 
 
 @dataclass(frozen=True)
@@ -1012,6 +1014,8 @@ class CatalogService:
             truncated=start + len(window) < total,
             info=projection.info,
             security_schemes=projection.security_schemes,
+            server_variables=projection.server_variables,
+            required_schemes=projection.required_schemes,
         )
 
     # ── import ───────────────────────────────────────────────────────────────

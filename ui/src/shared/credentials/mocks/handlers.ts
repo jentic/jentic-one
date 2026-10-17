@@ -280,8 +280,9 @@ type MockSpecSchemes = Record<string, Record<string, unknown>>;
 /**
  * The `GET /catalog/{entry_id}/operations` body the server builds from `spec`:
  * one row per operation with the scheme names it requires (op-level security
- * overrides the document's), plus the slim `security_schemes` projection
- * (OAuth2 flows listed by name only).
+ * overrides the document's), the slim `security_schemes` projection (OAuth2
+ * flows listed by name, their URLs and scopes under `flow_details`),
+ * `servers[0].variables` and the spec-wide `required_schemes`.
  */
 export function catalogPreviewOf(spec: Record<string, unknown>, title = 'mock'): object {
 	const raw =
@@ -291,7 +292,11 @@ export function catalogPreviewOf(spec: Record<string, unknown>, title = 'mock'):
 		Object.entries(raw).map(([name, scheme]) => [
 			name,
 			scheme.type === 'oauth2'
-				? { ...scheme, flows: Object.keys((scheme.flows as object | undefined) ?? {}) }
+				? {
+						...scheme,
+						flows: Object.keys((scheme.flows as object | undefined) ?? {}),
+						flow_details: (scheme.flows as object | undefined) ?? {},
+					}
 				: scheme,
 		]),
 	);
@@ -319,6 +324,9 @@ export function catalogPreviewOf(spec: Record<string, unknown>, title = 'mock'):
 		truncated: false,
 		info: { title, version: null, description: null },
 		security_schemes: securitySchemes,
+		server_variables:
+			(spec.servers as Array<{ variables?: object }> | undefined)?.[0]?.variables ?? {},
+		required_schemes: [...new Set(data.flatMap((op) => op.security))],
 	};
 }
 
