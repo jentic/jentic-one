@@ -50,6 +50,8 @@ _MEMBER_PERMISSIONS = ("agents:read", "oauth-clients:read")
 class _World:
     member_id: str
     other_owner_id: str
+    #: the member's active agent, which filed the member's held execution
+    member_agent_id: str
     #: relation -> (user named on an object the member sees, same on one it does not)
     users: dict[str, tuple[str, str]]
 
@@ -90,6 +92,7 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
         for rel in _RELATIONS
     }
     agent_ids: list[str] = []
+    filers: list[str] = []
     job_ids: list[str] = []
     grant_ids: list[str] = []
     client_ids: list[str] = []
@@ -113,6 +116,7 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
             )
             denied.denied_by = users["denied_by"][seen]
             agent_ids += [registered.id, denied.id]
+            filers.append(registered.id)
 
             job = Job(
                 kind=JobKind.EXECUTION,
@@ -162,7 +166,12 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
         client_ids.append(client.id)
         await session.commit()
 
-    yield _World(member_id=member_id, other_owner_id=other_owner_id, users=users)
+    yield _World(
+        member_id=member_id,
+        other_owner_id=other_owner_id,
+        member_agent_id=filers[0],
+        users=users,
+    )
 
     all_users = [member_id, other_owner_id, *(u for pair in users.values() for u in pair)]
     async with ctx.admin_db.session() as session:
@@ -175,15 +184,24 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
         await session.commit()
 
 
-def _headers(ctx: Context, user_id: str, permissions: tuple[str, ...]) -> dict[str, str]:
+def _headers(
+    ctx: Context,
+    user_id: str,
+    permissions: tuple[str, ...],
+    *,
+    agent_of: str | None = None,
+) -> dict[str, str]:
+    """Bearer header for a user, or for an agent of ``agent_of`` when given."""
     config = ctx.config.admin.auth
-    claims = {
+    claims: dict[str, object] = {
         "sub": user_id,
-        "email": "lookup-rel-member@test.local",
-        "actor_type": "user",
+        "email": "" if agent_of else "lookup-rel-member@test.local",
+        "actor_type": "agent" if agent_of else "user",
         "permissions": list(permissions),
         "must_change_password": False,
     }
+    if agent_of:
+        claims["parent_actor_id"] = agent_of
     token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
     return {"Authorization": f"Bearer {token}"}
 
@@ -269,3 +287,18 @@ def test_other_owner_resolves_its_own_relations_only(
         world.users[rel][1] for rel in ("registered_by", "denied_by", "decided_by", "consented_by")
     }
     assert {e["id"] for e in resp.json()["data"]} == expected
+
+
+def test_agent_resolves_the_decider_of_a_hold_it_filed(
+    unauthed_client: TestClient, web_context: Context, world: _World
+) -> None:
+    """An agent sees the holds it filed itself, so it labels their decider."""
+    headers = _headers(web_context, world.member_agent_id, (), agent_of=world.member_id)
+    seen, hidden = world.users["decided_by"]
+    resp = unauthed_client.get("/actors/lookup", params={"id": seen}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert [e["id"] for e in resp.json()["data"]] == [seen]
+    # Another owner's agent filed the other hold: invisible, so like an unknown id.
+    assert _lookup(unauthed_client, headers, hidden) == _lookup(
+        unauthed_client, headers, _UNKNOWN_USER
+    )
