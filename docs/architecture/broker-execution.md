@@ -155,14 +155,27 @@ one place a secret meets a request:
 On the sync execute path, step 1 picks the credential from a short-lived,
 per-process cache of the vendor's **non-secret** credential headers
 ([`shared/credential_selection_cache.py`](../../src/jentic_one/shared/credential_selection_cache.py),
-`broker.credential_cache_ttl_s`, default 3 s, `0` disables it). The cache is
+`broker.credential_cache_ttl_s`, default 3 s, at most 60 s, `0` disables it;
+`broker.credential_cache_max_headers` bounds its size). The cache is
 the same for every caller: the binding boundary, coverage and
 disambiguation run on each request, and the winner's secret material is read
 from the control DB every time, along with its current header, so a deleted or
-disabled credential's secret is never injected. A credential write served by the same
-process clears the cache when its transaction ends; a write served by another
-process takes effect within the TTL. Queued executions resolve without the
-cache.
+disabled credential's secret is never injected. A selection that fails on
+cached headers (424, unknown `Jentic-Credential-Id` or name, 409) is re-run on
+a fresh read before it is returned, so "connect, then retry" works across
+processes. A credential write served by the same process clears the cache
+when its transaction ends. For a write served by another process, for up to
+the TTL:
+
+- a newly created or re-enabled credential may not yet win over the cached
+  winner (a more specific pin), or make the call ambiguous (a same-specificity
+  sibling);
+- a `NO_AUTH` winner, which has no material to read, keeps its cached header:
+  a disable, re-type or `server_variables` edit (which drives host/region
+  templating) is not seen.
+
+Both select a credential the caller is bound to right now; neither injects a
+secret that is gone or disabled. Queued executions resolve without the cache.
 
 Before any of that, the binding deriver
 ([`broker/repos/credential_binding_resolver.py`](../../src/jentic_one/broker/repos/credential_binding_resolver.py), wrapped by the

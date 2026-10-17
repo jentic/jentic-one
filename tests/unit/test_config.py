@@ -1203,12 +1203,23 @@ def test_broker_credential_cache_ttl_default_and_env_override(config_file: Path)
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.broker.credential_cache_ttl_s == 0.0
+    assert config.broker.credential_cache_max_headers == 10_000
 
 
-def test_broker_credential_cache_ttl_rejects_negative(
-    tmp_path: Path, sample_config_dict: dict[str, Any]
+@pytest.mark.parametrize(
+    "broker",
+    [
+        {"credential_cache_ttl_s": -1},
+        # Bounded: a write served by another process may go unseen for the TTL.
+        {"credential_cache_ttl_s": 60.5},
+        {"credential_cache_max_headers": 0},
+    ],
+    ids=["negative_ttl", "ttl_above_60", "zero_max_headers"],
+)
+def test_broker_credential_cache_rejects_out_of_range(
+    tmp_path: Path, sample_config_dict: dict[str, Any], broker: dict[str, Any]
 ) -> None:
-    sample_config_dict["broker"] = {"credential_cache_ttl_s": -1}
+    sample_config_dict["broker"] = broker
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(sample_config_dict))
     with pytest.raises(ConfigError):

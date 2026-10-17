@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.credential_selection_cache import mark_credentials_changed
+
 #: Connect sessions that target the agent or that the agent opened.
 _AGENT_SESSIONS = "(agent_id = :agent_id OR initiator_actor_id = :agent_id)"
 
@@ -50,6 +52,9 @@ class AgentControlPurgeRepository:
         their ids returned, so the caller can record them.
         """
         params = {"agent_id": agent_id}
+        # Raw SQL is invisible to the ORM write events: drop the broker's
+        # credential-header cache explicitly when this transaction ends.
+        mark_credentials_changed(session)
         pending = await session.execute(
             text(
                 "DELETE FROM credentials WHERE state = 'pending' AND id IN "

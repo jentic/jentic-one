@@ -40,6 +40,7 @@ def _make_credential(
     cred.api_name = api_name
     cred.api_version = api_version
     cred.active = active
+    cred.state = "connected"
     cred.provider = provider
     cred.created_by = created_by
     cred.server_variables = server_variables
