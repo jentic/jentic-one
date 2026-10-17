@@ -92,7 +92,7 @@ async def test_list_with_type_filter(integration_context: Context, clean_events:
 async def test_get_by_id(integration_context: Context, clean_events: None) -> None:
     ctx = integration_context
     async with ctx.admin_db.session() as session:
-        event = await EventRepository.create(
+        event_id = await EventRepository.create(
             session,
             type="toolkit.error",
             severity="error",
@@ -101,7 +101,6 @@ async def test_get_by_id(integration_context: Context, clean_events: None) -> No
             created_by="usr_test",
         )
         await session.commit()
-    event_id = event.id
 
     service = EventService(ctx)
     view = await service.get_by_id(event_id, identity=_ADMIN)

@@ -476,8 +476,9 @@ later rollback still decrypts what was written under the new key)
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The combined app runs up to three such
-> backends (auth, broker, control) in one process.
+> chart's 512Mi memory limit holds. The broker always runs as its own
+> process; the combined app holds one such backend each for the auth and
+> control surfaces.
 >
 > The local login page stores one CSRF nonce per page load in `login-csrf`
 > (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
