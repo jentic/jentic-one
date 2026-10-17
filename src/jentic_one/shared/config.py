@@ -1936,7 +1936,8 @@ class CatalogConfig(BaseModel):
     # the triggering read (fire-and-forget), but it still probes N registered specs
     # over the network, so bound the batch: stop after this many wall-clock seconds
     # and run at most this many probes concurrently. Concurrency is kept below the
-    # registry DB pool so the sweep never starves live request traffic.
+    # registry DB pool so the sweep never starves live request traffic; the sweep
+    # also holds one more registry connection for its single-flight advisory lock.
     update_sweep_deadline_seconds: int = 300
     update_sweep_max_concurrency: int = 4
     # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
