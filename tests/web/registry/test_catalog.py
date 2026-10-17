@@ -24,7 +24,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, text
 
+import jentic_one.mcp.tools as tools_mod
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.mcp.tools import CallEnv
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
@@ -212,9 +214,18 @@ def _ids(body: dict[str, Any]) -> list[str]:
 
 
 async def _register(
-    ctx: Context, entry_id: str, *, vendor: str, name: str, spec_url: str, catalog_api_id: str
+    ctx: Context,
+    entry_id: str | None,
+    *,
+    vendor: str,
+    name: str,
+    spec_url: str,
+    catalog_api_id: str,
 ) -> None:
-    """A local API imported from ``entry_id`` with one draft revision (as an import leaves it)."""
+    """A local API imported from ``entry_id`` with one draft revision (as an import leaves it).
+
+    ``entry_id=None`` is an API imported before entry ids were recorded.
+    """
     async with ctx.registry_db.session() as session:
         api = Api(
             vendor=vendor,
@@ -230,7 +241,7 @@ async def _register(
             ApiRevision(
                 api_id=api.id,
                 state="draft",
-                spec_digest=f"sha256:{entry_id}",
+                spec_digest=f"sha256:{entry_id or catalog_api_id}",
                 source_type="url",
                 source_url=spec_url,
             )
@@ -1054,6 +1065,98 @@ async def test_source_switch_is_an_explicit_credentials_write_opt_in(
         else:
             # The distinct-name path: the existing API is left alone.
             assert source["api_name"] == "public~stripe.com"
+
+
+async def _unrecorded_stripe(ctx: Context) -> None:
+    """A ``stripe.com`` API imported before entry ids were recorded (legacy source)."""
+    await _register(
+        ctx,
+        None,
+        vendor="stripe-com",
+        name="stripe-com",
+        spec_url=_spec_url(_MANIFEST_BASE, "stripe.com"),
+        catalog_api_id="stripe.com",
+    )
+
+
+def _mcp_env(ctx: Context, permissions: Sequence[str]) -> CallEnv:
+    return CallEnv(
+        ctx=ctx,
+        identity=Identity(
+            sub="agnt_mcp",
+            email="agnt_mcp@test.local",
+            permissions=list(permissions),
+            actor_type=ActorType.AGENT,
+        ),
+        credential="jak_test",
+        base_url="http://testserver",
+        session_id=None,
+    )
+
+
+@pytest.mark.parametrize("surface", ["rest", "mcp"])
+async def test_unrecorded_holder_is_not_adopted_by_another_source(
+    web_config: AppConfig, surface: str
+) -> None:
+    """An API with no recorded entry came from the legacy source: a mapped org entry
+    sharing its ``catalog_api_id`` takes a distinct name instead of switching it."""
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        await _unrecorded_stripe(ctx)
+        permissions = ["catalog:import", "catalog:org:read"]
+        if surface == "rest":
+            with _client(ctx, permissions) as tc:
+                r = tc.post("/catalog/corp/stripe.com:import")
+            assert r.status_code == 202
+            job_id = r.json()["job_id"]
+        else:
+            job_id = await tools_mod._file_import(_mcp_env(ctx, permissions), "corp/stripe.com")
+        source = await _job_source(ctx, job_id)
+        assert source["catalog_entry_id"] == "corp/stripe.com"
+        assert source["api_name"] == "corp~stripe.com"
+        async with ctx.registry_db.session() as session:
+            api = (await session.execute(select(Api))).scalar_one()
+        assert (api.vendor, api.name, api.catalog_entry_id) == ("stripe-com", "stripe-com", None)
+
+
+async def test_unrecorded_holder_is_adopted_by_the_legacy_source(web_config: AppConfig) -> None:
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        await _unrecorded_stripe(ctx)
+        with _client(ctx, ["catalog:import"]) as tc:
+            r = tc.post("/catalog/public/stripe.com:import")
+        assert r.status_code == 202
+        source = await _job_source(ctx, r.json()["job_id"])
+        assert (source["vendor"], source["api_name"]) == ("stripe-com", "stripe-com")
+
+
+async def test_unrecorded_holder_switches_only_with_credentials_write(
+    web_config: AppConfig,
+) -> None:
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        await _unrecorded_stripe(ctx)
+        url = "/catalog/corp/stripe.com:import"
+        with _client(ctx, ["catalog:import", "catalog:org:read"]) as tc:
+            denied = tc.post(url, params={"switch_source": "true"})
+        assert denied.status_code == 403
+        with _client(ctx, ["org:admin"]) as tc:
+            switched = tc.post(url, params={"switch_source": "true"})
+        assert switched.status_code == 202
+        source = await _job_source(ctx, switched.json()["job_id"])
+        assert (source["vendor"], source["api_name"]) == ("stripe-com", "stripe-com")
 
 
 async def test_switch_source_without_a_conflict_is_a_no_op(admin_client: TestClient) -> None:
