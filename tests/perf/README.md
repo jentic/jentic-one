@@ -178,7 +178,7 @@ for Locust set them before `make perf-up` (or `docker compose up -d broker`).
 | `PERF_BREAKER` | `true` | `broker.resilience.circuit_breaker.enabled` |
 | `PERF_RATE_LIMIT` | `false` | `broker.resilience.rate_limit.enabled` |
 | `PERF_MAX_IN_FLIGHT` | `200` | `broker.resilience.max_in_flight` |
-| `PERF_RESOLVE_TTL` / `PERF_TOOLKIT_TTL` / `PERF_RULE_TTL` | `3.0` | broker cache TTLs |
+| `PERF_RESOLVE_TTL` / `PERF_TOOLKIT_TTL` / `PERF_RULE_TTL` / `PERF_CREDENTIAL_TTL` | `3.0` | broker cache TTLs |
 | `PERF_ADMIN_POOL` / `PERF_CONTROL_POOL` / `PERF_REGISTRY_POOL` | `10` | `databases.<plane>.pool_max` |
 | `PERF_TRACING` | `none` | `observability.tracing.exporter` |
 | `PERF_WORKERS` | `1` | uvicorn workers (>1 uses the `--factory` path) |

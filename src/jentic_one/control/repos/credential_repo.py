@@ -161,6 +161,50 @@ class CredentialRepository:
                     set_committed_value(child, back, owner)
 
     @staticmethod
+    def material_relationship(stored_type: str) -> str | None:
+        """The secret-material child relationship read for ``stored_type`` (``None``: none)."""
+        return _MATERIAL_RELATIONSHIP.get(stored_type)
+
+    @staticmethod
+    async def get_active_material(
+        session: AsyncSession, credential_id: str, stored_type: str
+    ) -> tuple[Credential, Any | None] | None:
+        """One active credential's header and material child, in a single statement.
+
+        The header, which must be active and of ``stored_type``, outer-joined
+        to its type's material child; the header's own secret-material
+        relationships stay unloaded. The child is ``None`` when the credential
+        has no material row, which is a valid state (a managed-provider OAuth
+        credential keeps no token row) that resolution from the vendor's
+        headers handles the same way. Returns ``None`` only when the
+        credential is gone, disabled or re-typed, or ``stored_type`` has no
+        material relationship.
+        """
+        rel = _MATERIAL_RELATIONSHIP.get(stored_type)
+        if rel is None:
+            return None
+        prop = Credential.__mapper__.relationships[rel]
+        child_cls: Any = prop.mapper.class_
+        stmt = (
+            select(Credential, child_cls)
+            .outerjoin(child_cls, child_cls.credential_id == Credential.id)
+            .where(
+                Credential.id == credential_id,
+                Credential.active.is_(True),
+                Credential.type == stored_type,
+            )
+            .options(*(raiseload(getattr(Credential, r)) for r in _CHILD_RELATIONSHIPS))
+            .limit(1)
+        )
+        if prop.back_populates:
+            stmt = stmt.options(lazyload(getattr(child_cls, prop.back_populates)))
+        row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        credential, child = row
+        return credential, child
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,
