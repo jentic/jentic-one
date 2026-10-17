@@ -113,8 +113,8 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 				return nil, invalidParams(errors.New(
 					"invalid pagination cursor: call search_catalog again without a cursor to restart the search"))
 			case http.StatusServiceUnavailable:
-				// 503 catalog_search_unavailable: the walk's ranking can't serve
-				// this page right now (it failed, or this replica lacks it). Same
+				// 503 catalog_search_unavailable: the walk's ranking strategy
+				// failed on this page (error, timeout, no valid rows). Same
 				// retryable TRANSPORT_ERROR and wording as the Python /mcp handler
 				// (mcp/tools.py handle_search_catalog), without the get_started
 				// pointer — the identity and connection are fine.

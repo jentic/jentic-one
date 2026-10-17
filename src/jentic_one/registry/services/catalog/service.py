@@ -775,9 +775,10 @@ class CatalogService:
         the configured one: no ``st`` means ``token`` (always served); any other
         ``st`` must equal ``catalog.search_strategy``, else
         ``StaleCatalogCursorError`` (400, restart the search). A failure of the
-        cursor's strategy — including it not being registered in this process,
-        e.g. mid rolling deploy — is ``CatalogSearchUnavailableError`` (503)
-        rather than a silent switch that would reorder the walk mid-scroll.
+        cursor's strategy is ``CatalogSearchUnavailableError`` (503) rather than
+        a silent switch that would reorder the walk mid-scroll. The strategy not
+        being registered in this process also answers 503, as a defensive case
+        only: app assembly refuses a configured strategy that isn't registered.
         """
         first_page = cursor is None
         configured = self._cfg.search_strategy

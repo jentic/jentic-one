@@ -150,7 +150,9 @@ The contract:
   it) and the instance is shared across requests. App assembly fails with a
   `ConfigError` when `catalog.search_strategy` is not registered or can't be
   built. `rank` must be `async`. A name can't be re-registered by a different
-  object.
+  object. `from_config` runs synchronously while the app is assembled, before
+  the event loop serves requests: create network clients (HTTP sessions,
+  connection pools) lazily on the first `rank()` call.
 - **Input.** `rank()` only sees searches (queries with at least one token);
   `request.entries` is already filtered. Return the **full** ranked list — never
   apply a limit. `request.options` is empty today; new request fields are added
@@ -162,8 +164,12 @@ The contract:
   slugs (`^[a-z][a-z0-9_-]{0,31}$`, at most 8); others are dropped.
 - **Stability.** Each page re-ranks and resumes after the cursor's exact
   `(score, api_id)`, so scores must be identical across calls for the same
-  request. `rank()` runs once per page: cache per `(q, request.manifest_revision)`
-  if ranking is expensive.
+  request. `rank()` runs once per page. If ranking is expensive, cache
+  **per-entry scores** keyed by `(q, request.manifest_revision, api_id)` and
+  rank `request.entries` from that map. Never cache the ranked list:
+  `request.entries` also depends on the list filters and on which APIs are
+  registered or outdated, so two requests with the same `q` and revision can
+  carry different candidates.
 - **Deadline.** `catalog.search_deadline_ms` (default 300) bounds each call;
   cancellation only interrupts an `await`, so offload CPU-bound work (for
   example `asyncio.to_thread`). Set the deadline well above the strategy's tail
@@ -172,14 +178,25 @@ The contract:
   (logged and counted). On a later page the response is 503
   `catalog_search_unavailable` with `Retry-After: 1`: the client retries the
   page, or restarts the search without a cursor.
-- **Cursors.** A cursor records its walk's strategy (key `st`, which may gain a
-  version suffix later). A later page is served only while that strategy is the
-  configured one: any other strategy in the cursor answers 400 (restart the
-  search). A cursor naming the configured strategy on a process where it isn't
-  registered answers 503, so a rolling deploy recovers on retry.
-- **Rollout.** Register the strategy on every replica before selecting it, and
-  set `catalog.search_strategy` back to `token` before downgrading to a build
-  without it.
+- **Cursors.** A cursor records its walk's strategy (key `st`). A later page is
+  served only while that strategy is the configured one: any other strategy in
+  the cursor answers 400 (restart the search). A version suffix on `st` is not
+  defined yet; a build that predates one would answer such a cursor with 400,
+  so clients restart the search.
+- **Rollout.** App assembly refuses a configured strategy that isn't
+  registered, so roll out in two steps:
+  1. Ship a build that registers the strategy on every replica while
+     `catalog.search_strategy` stays `token`.
+  2. Set `catalog.search_strategy` to the new name. While that config change
+     rolls out, replicas still configured with `token` answer 400 to cursors
+     from the new strategy and clients restart the search; `token` cursors
+     keep working everywhere.
+
+  To go back, reverse the order: set `catalog.search_strategy` to `token`
+  first (open walks get a 400 and restart), then deploy a build without the
+  strategy. A 503 means the configured strategy failed on a later page; the
+  503 for a strategy that isn't registered in the process is a safety net that
+  the boot check normally makes unreachable.
 - **Tests.** Use the `registered_catalog_search_strategy(strategy)` context
   manager to register a strategy for one test without leaking it.
 
