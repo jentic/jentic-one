@@ -92,6 +92,7 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -101,6 +102,11 @@ export class JobsService {
     /**
      * Get Job Result
      * Get the result of a completed job — polymorphic by kind.
+     *
+     * Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+     * running, failed or cancelled), and ``410`` once an
+     * approved execution's result is past
+     * ``held_executions.result_retention_seconds``.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -122,6 +128,9 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
+                410: `Gone`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
