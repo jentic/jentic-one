@@ -1,15 +1,42 @@
 exit: 0
 --- stdout ---
 {
-  "data": [],
+  "data": [
+    {
+      "_links": {
+        "alternates": [
+          "/catalog/internal/stripe.com"
+        ],
+        "human": "https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com",
+        "import": "/catalog/public/stripe.com:import",
+        "operations": "/catalog/public/stripe.com/operations",
+        "self": "/catalog/public/stripe.com"
+      },
+      "alternates": 1,
+      "catalog_api_id": "stripe.com",
+      "display_vendor": "stripe.com",
+      "entry_id": "public/stripe.com",
+      "has_spec": true,
+      "human_url": "https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com",
+      "registered": false,
+      "source_slug": "public",
+      "tags": [
+        "payments"
+      ],
+      "title": "Stripe API",
+      "update_available": false,
+      "vendor": "stripe.com",
+      "version": "2024-06-20"
+    }
+  ],
   "has_more": false,
   "meta": {
-    "catalog_total": 0,
-    "manifest_age_seconds": null,
+    "catalog_total": 1,
+    "oldest_source_sync_age_seconds": 42,
     "outdated_count": 0,
     "registered_count": 0
   },
-  "schema_version": "1"
+  "schema_version": "2"
 }
 --- stderr ---
 

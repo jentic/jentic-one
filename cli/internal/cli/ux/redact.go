@@ -445,8 +445,12 @@ func WriteJSONLine(w io.Writer, v any) error {
 	return err
 }
 
-// currentSchemaVersion pins the machine-contract envelope shape (13 §2/§6).
-const currentSchemaVersion = "1"
+// currentSchemaVersion pins the machine-contract envelope shape.
+// Version "2" is the contract whose catalog entries are keyed by entry_id
+// (with source_slug, catalog_api_id, title, display_vendor, human_url,
+// has_spec and alternates). It moves in lockstep with apiEnvelopeSchemaVersion
+// and mcpSchemaVersion, and only in an explicitly flagged breaking release.
+const currentSchemaVersion = "2"
 
 func marshalRedacted(data any, indent bool) []byte {
 	// Envelope defaulting: Result/Page carry schema_version (13 §2/§6). Call sites

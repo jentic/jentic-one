@@ -43,7 +43,7 @@ func registryFakeServer(t *testing.T) *httptest.Server {
 		case strings.HasPrefix(p, "/apis/"):
 			_, _ = w.Write([]byte(`{"api":{"vendor":"stripe.com","name":"api","version":"v1"},"display_name":"Stripe","current_revision_id":"r1","operation_count":1}`))
 		case p == "/catalog":
-			_, _ = w.Write([]byte(`{"data":[{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"_links":{}}],"catalog_total":1,"registered_count":1,"manifest_age_seconds":5,"has_more":false,"next_cursor":""}`))
+			_, _ = w.Write([]byte(`{"data":[{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com","registered":true,"_links":{"self":"/catalog/public/stripe.com","operations":"/catalog/public/stripe.com/operations","import":"/catalog/public/stripe.com:import"}}],"catalog_total":1,"registered_count":1,"oldest_source_sync_age_seconds":5,"has_more":false,"next_cursor":""}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, ":import"):
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"job_id":"job_1"}`))
@@ -55,7 +55,7 @@ func registryFakeServer(t *testing.T) *httptest.Server {
 		case strings.HasPrefix(p, "/catalog/") && strings.HasSuffix(p, "/operations"):
 			_, _ = w.Write([]byte(`{"data":[{"method":"GET","path":"/v1/charges","summary":"List charges"}],"total":1,"offset":0,"truncated":false,"info":{"title":"Stripe","version":"2024"}}`))
 		case strings.HasPrefix(p, "/catalog/"):
-			_, _ = w.Write([]byte(`{"api_id":"stripe.com","vendor":"stripe.com","spec_url":"https://spec","registered":true,"_links":{}}`))
+			_, _ = w.Write([]byte(`{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com","registered":true,"_links":{"self":"/catalog/public/stripe.com","operations":"/catalog/public/stripe.com/operations","import":"/catalog/public/stripe.com:import"}}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, p)
 			w.WriteHeader(http.StatusNotFound)
@@ -127,9 +127,9 @@ func TestRegistryCommandsEmitJSONInAgentMode(t *testing.T) {
 		{"catalog list", []string{"catalog", "list"}, "data"},
 		{"catalog search", []string{"catalog", "search", "stripe"}, "data"},
 		{"catalog outdated", []string{"catalog", "outdated"}, "data"},
-		{"catalog show", []string{"catalog", "show", "stripe.com"}, "entry"},
-		{"catalog import", []string{"catalog", "import", "stripe.com", "--timeout", "5s"}, "revisions"},
-		{"catalog import --no-wait", []string{"catalog", "import", "stripe.com", "--no-wait"}, "job_id"},
+		{"catalog show", []string{"catalog", "show", "public/stripe.com"}, "entry"},
+		{"catalog import", []string{"catalog", "import", "public/stripe.com", "--timeout", "5s"}, "revisions"},
+		{"catalog import --no-wait", []string{"catalog", "import", "public/stripe.com", "--no-wait"}, "job_id"},
 		{"catalog refresh", []string{"catalog", "refresh"}, "status"},
 		{"endpoints", []string{"endpoints"}, "data"},
 	} {
@@ -148,8 +148,8 @@ func TestRegistryCommandsEmitJSONInAgentMode(t *testing.T) {
 			}
 			// apis inspect relays the server's document verbatim; every
 			// CLI-built envelope carries schema_version.
-			if tc.name != "apis inspect" && doc["schema_version"] != "1" {
-				t.Errorf("schema_version = %v, want \"1\": %v", doc["schema_version"], doc)
+			if tc.name != "apis inspect" && doc["schema_version"] != "2" {
+				t.Errorf("schema_version = %v, want \"2\": %v", doc["schema_version"], doc)
 			}
 		})
 	}

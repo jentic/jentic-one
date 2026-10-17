@@ -52,18 +52,18 @@ function toDiscoverError(error: unknown, fallback: string): DiscoverApiError {
 export interface CatalogPage {
 	/** This page's entries, already adapted to the UI shape. */
 	entities: DiscoveryEntity[];
-	/** Whole-manifest size (stable across pages — drives the status row). */
+	/** Whole-catalog size (stable across pages — drives the status row). */
 	catalogTotal: number;
-	/** How many of the whole manifest are imported locally (stable across pages). */
+	/** How many of the whole catalog are imported locally (stable across pages). */
 	registeredCount: number;
 	/**
-	 * How many of the whole manifest are registered *and* have an upstream update
+	 * How many of the whole catalog are registered *and* have an upstream update
 	 * available (stable across pages — drives the status row's "N update(s)
 	 * available" line).
 	 */
 	outdatedCount: number;
-	/** Manifest freshness; null = never fetched / no snapshot yet. */
-	manifestAgeSeconds: number | null;
+	/** Age of the least recently synced visible source; null = none has synced yet. */
+	oldestSourceSyncAgeSeconds: number | null;
 	/** Whether another keyset page follows. */
 	hasMore: boolean;
 	/** Opaque cursor to fetch the next page; null when `hasMore` is false. */
@@ -71,20 +71,20 @@ export interface CatalogPage {
 }
 
 /**
- * A browse-order cursor positioned just after `apiId`: the next page starts
- * at the first entry sorting strictly after it (plain codepoint `api_id`
- * order), e.g. `y` → the first `y…` vendor.
+ * A browse-order cursor positioned just after `entryId`: the next page starts
+ * at the first entry sorting strictly after it (plain codepoint `entry_id`
+ * order), e.g. `public/y` → the first `y…` vendor of the `public` source.
  *
  * Built byte-for-byte like the backend's keyset token
  * (`encode_catalog_cursor` in `src/jentic_one/shared/pagination.py`: base64 of
- * Python's `json.dumps({"id": api_id})` — `": "` separator, non-ASCII escaped as
+ * Python's `json.dumps({"id": entry_id})` — `": "` separator, non-ASCII escaped as
  * `\uXXXX`), pinned by a contract test. The escaping also keeps the payload
  * ASCII, so `btoa` (Latin-1 only) can't throw on an international id. Returns
  * null if it can't be built; callers then page forward instead, as they do
  * when the server rejects the token (400 invalid cursor).
  */
-export function catalogCursorAfter(apiId: string): string | null {
-	const id = JSON.stringify(apiId).replace(
+export function catalogCursorAfter(entryId: string): string | null {
+	const id = JSON.stringify(entryId).replace(
 		/[\u0080-\uffff]/g,
 		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
 	);
@@ -96,7 +96,7 @@ export function catalogCursorAfter(apiId: string): string | null {
 }
 
 /**
- * One keyset page of the public catalog (`GET /catalog`).
+ * One keyset page of the catalog (`GET /catalog`).
  *
  * Paging echoes back the last `next_cursor`. The one exception is
  * `catalogCursorAfter`, which builds a browse cursor to START at a position
@@ -126,7 +126,7 @@ export async function listCatalog(params: {
 			catalogTotal: res.catalog_total,
 			registeredCount: res.registered_count,
 			outdatedCount: res.outdated_count ?? 0,
-			manifestAgeSeconds: res.oldest_source_sync_age_seconds ?? null,
+			oldestSourceSyncAgeSeconds: res.oldest_source_sync_age_seconds ?? null,
 			hasMore: res.has_more ?? false,
 			nextCursor: res.next_cursor ?? null,
 		};
@@ -174,10 +174,10 @@ export async function importCatalogEntry(entryId: string): Promise<ApiImportResp
 }
 
 /**
- * Force the backend to rebuild its catalog snapshot from the upstream manifest
- * (`POST /catalog:refresh`, org:admin). Unlike a client refetch this resets the
- * manifest's freshness — `manifest_age_seconds` returns to ~0 on the next
- * `GET /catalog`, which is what makes the "updated …" line move.
+ * Force the backend to re-sync its catalog sources (`POST /catalog:refresh`,
+ * org:admin). Unlike a client refetch this resets their freshness —
+ * `oldest_source_sync_age_seconds` returns to ~0 on the next `GET /catalog`,
+ * which is what makes the "updated …" line move.
  */
 export async function refreshCatalog(): Promise<CatalogRefreshResponse> {
 	try {

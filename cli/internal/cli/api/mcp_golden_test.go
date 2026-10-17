@@ -192,3 +192,71 @@ func TestMCPExecute_PayloadIsEnvelopePlusStampOnly(t *testing.T) {
 		}
 	}
 }
+
+// mcpSearchCatalogGolden is the shared search_catalog payload both MCP
+// surfaces must emit for the same two entries: tests/unit/mcp/
+// test_execute_golden.py replays it against the HTTP mount (testdata/mcp/
+// under tests/golden). Regenerate with
+// UPDATE_MCP_GOLDEN=1 go test ./internal/cli/api -run SearchCatalogMatchesSharedGolden.
+const mcpSearchCatalogGolden = "mcp_search_catalog_json"
+
+// mcpSearchCatalogREST is the GET /catalog page behind the golden: one entry
+// with a human page and a collapsed alternate, one with neither (links are
+// absolute, as REST builds them, on the base the Python replay uses).
+const mcpSearchCatalogREST = `{"data":[` +
+	`{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com",` +
+	`"display_vendor":"stripe.com","title":"Stripe API","version":"2024-06-20","tags":["payments"],` +
+	`"human_url":"https://github.com/jentic/catalog/stripe.com","has_spec":true,"registered":false,` +
+	`"update_available":false,"alternates":1,"_links":{"self":"https://auth.example.com/catalog/public/stripe.com",` +
+	`"operations":"https://auth.example.com/catalog/public/stripe.com/operations",` +
+	`"import":"https://auth.example.com/catalog/public/stripe.com:import",` +
+	`"human":"https://github.com/jentic/catalog/stripe.com",` +
+	`"alternates":["https://auth.example.com/catalog/internal/stripe.com"]}},` +
+	`{"entry_id":"internal/acme.com","source_slug":"internal","catalog_api_id":"acme.com","vendor":"acme.com",` +
+	`"display_vendor":"acme.com","title":null,"version":null,"tags":[],"human_url":null,"has_spec":false,` +
+	`"registered":true,"update_available":true,"alternates":0,` +
+	`"_links":{"self":"https://auth.example.com/catalog/internal/acme.com",` +
+	`"operations":"https://auth.example.com/catalog/internal/acme.com/operations",` +
+	`"import":"https://auth.example.com/catalog/internal/acme.com:import","human":null,"alternates":[]}}` +
+	`],"catalog_total":2,"registered_count":1,"outdated_count":1,"oldest_source_sync_age_seconds":42,` +
+	`"has_more":false,"next_cursor":null}`
+
+// TestMCPSearchCatalog_MatchesSharedGolden pins the stdio search_catalog
+// payload to the golden the HTTP mount replays: the two surfaces emit the
+// same keys, the same values and the same omissions (no top-level tags or
+// human_url; _links.human and _links.alternates only when set).
+func TestMCPSearchCatalog_MatchesSharedGolden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(mcpSearchCatalogREST))
+	}))
+	t.Cleanup(srv.Close)
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleSearchCatalog(activeCtx(srv.URL), callToolRequest("search_catalog", `{"query":"pay"}`))
+	if err != nil {
+		t.Fatalf("handleSearchCatalog: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
+	}
+	got := envelopeWithoutStamp(t, decodeToolJSON(t, res))
+	// Not a CLI-invocation golden, so it lives beside the suite's v2 dir
+	// (whose orphan guard owns only CLI cases).
+	path := filepath.Join("..", "..", "..", "tests", "golden", "testdata", "mcp", mcpSearchCatalogGolden+".json")
+	if os.Getenv("UPDATE_MCP_GOLDEN") == "1" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o600); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shared golden: %v", err)
+	}
+	if want := string(raw); got != want {
+		t.Errorf("search_catalog payload diverged from the shared golden.\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+}

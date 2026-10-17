@@ -12,6 +12,11 @@ const ADYEN: DiscoveryEntity = {
 	id: 'adyen.com',
 	entryId: 'public/adyen.com',
 	apiId: 'adyen.com',
+	sourceSlug: 'public',
+	browseKey: 'adyen.com',
+	displayVendor: 'adyen.com',
+	alternates: 0,
+	hasSpec: true,
 	summary: 'adyen.com',
 	registered: false,
 	updateAvailable: false,
@@ -19,7 +24,7 @@ const ADYEN: DiscoveryEntity = {
 	version: '71',
 };
 
-function renderSheet(entity: DiscoveryEntity, title?: string) {
+function renderSheet(entity: DiscoveryEntity, title?: string, showSource?: boolean) {
 	return renderWithProviders(
 		<ApiDetailSheet
 			entity={entity}
@@ -28,6 +33,7 @@ function renderSheet(entity: DiscoveryEntity, title?: string) {
 			onImport={() => {}}
 			importPending={false}
 			title={title}
+			showSource={showSource}
 		/>,
 	);
 }
@@ -58,5 +64,33 @@ describe('ApiDetailSheet subtitle', () => {
 
 		await screen.findByRole('heading', { level: 2, name: 'GitHub' });
 		expect(screen.getByTestId('sheet-subtitle')).toHaveTextContent(/^github\.com · v71$/);
+	});
+});
+
+describe('ApiDetailSheet source', () => {
+	it('tags the source only when the loaded entries mix sources', async () => {
+		const { unmount } = renderSheet(ADYEN);
+		await screen.findByRole('heading', { level: 2, name: 'adyen.com' });
+		expect(screen.queryByTestId('sheet-source')).toBeNull();
+		unmount();
+
+		renderSheet(
+			{ ...ADYEN, sourceSlug: 'internal', entryId: 'internal/adyen.com' },
+			undefined,
+			true,
+		);
+		await screen.findByRole('heading', { level: 2, name: 'adyen.com' });
+		expect(screen.getByTestId('sheet-source')).toHaveTextContent('internal');
+		expect(screen.getByTestId('sheet-entry-id')).toHaveTextContent('internal/adyen.com');
+	});
+
+	it('notes collapsed alternates with the explaining tooltip', async () => {
+		renderSheet({ ...ADYEN, alternates: 1 });
+		const note = await screen.findByTestId('sheet-alternates');
+		expect(note).toHaveTextContent('+1 other source');
+		expect(note).toHaveAttribute(
+			'title',
+			'Another catalog source lists this API too; this entry is the one shown.',
+		);
 	});
 });

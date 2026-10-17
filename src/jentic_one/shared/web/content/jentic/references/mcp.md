@@ -117,9 +117,14 @@ The same order as the doctrine, tool for tool — `search_catalog` →
 
 ```
 search_catalog {"query": "spreadsheets", "limit": 10}
-import_api {"api_id": "googleapis.com/sheets"}
+import_api {"entry_id": "public/googleapis.com/sheets"}
 search_apis {"query": "get values from a spreadsheet range", "limit": 10}
 ```
+
+Pass each `search_catalog` hit's `entry_id` (`{source}/{id}`) to `import_api`
+verbatim — never rebuild it from `catalog_api_id`. An unknown `entry_id` is
+an `invalid_params` error; when its message says `did you mean '<entry_id>'?`,
+retry with exactly that `entry_id`, otherwise search the catalog again.
 
 `import_api` runs the import as a job and tracks it in-process: on
 completion it returns `{job_id, status, revisions, promoted}` with the

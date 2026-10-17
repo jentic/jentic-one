@@ -791,16 +791,16 @@ describe('LibraryPage', () => {
 		let pollsAfterImport = 0;
 		restorePollInterval = setImportPollIntervalForTests(100);
 		const row = (apiId: string, registered: boolean) => ({
-			entry_id: apiId,
+			entry_id: `public/${apiId}`,
 			source_slug: 'public',
 			catalog_api_id: apiId,
 			vendor: apiId,
 			has_spec: true,
 			registered,
 			_links: {
-				self: `/catalog/${apiId}`,
-				operations: `/catalog/${apiId}/operations`,
-				import: `/catalog/${apiId}:import`,
+				self: `/catalog/public/${apiId}`,
+				operations: `/catalog/public/${apiId}/operations`,
+				import: `/catalog/public/${apiId}:import`,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -827,7 +827,8 @@ describe('LibraryPage', () => {
 				// `acme.com` sits at the frontier, so it's held back; `abc.com` shows.
 				if (after == null)
 					return page([row('abc.com', false), row('acme.com', false)], true);
-				if (after === 'z') return page([row('zoom.us', imported)]);
+				// A jump cursor is scoped to the source: `{source_slug}/{letter}`.
+				if (after === 'public/z') return page([row('zoom.us', imported)]);
 				// The head's own next page: never answers (keeps zoom.us out of it).
 				await delay('infinite');
 				return page([]);
@@ -996,16 +997,16 @@ describe('LibraryPage', () => {
 		// just before the previous jump's range. The landing must re-pin to the
 		// clicked letter through that reflow. Guards the Y→G→A overshoot.
 		const row = (apiId: string) => ({
-			entry_id: apiId,
+			entry_id: `public/${apiId}`,
 			source_slug: 'public',
 			catalog_api_id: apiId,
 			vendor: apiId,
 			has_spec: true,
 			registered: false,
 			_links: {
-				self: `/catalog/${apiId}`,
-				operations: `/catalog/${apiId}/operations`,
-				import: `/catalog/${apiId}:import`,
+				self: `/catalog/public/${apiId}`,
+				operations: `/catalog/public/${apiId}/operations`,
+				import: `/catalog/public/${apiId}:import`,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -1023,7 +1024,7 @@ describe('LibraryPage', () => {
 					: null,
 			});
 		// Each letter's jump range is keyed by the keyset start the rail builds
-		// for it (`jumpStartKey`: the lowercased letter). Each range is a tall
+		// for it (`{source_slug}/` + `jumpStartKey`, the lowercased letter). Each range is a tall
 		// block of single-API vendors, so jumping back to A inserts enough rows
 		// above the (scrolled-to-G) viewport to shift it — the condition that
 		// clamps a landing a letter short.
@@ -1032,9 +1033,9 @@ describe('LibraryPage', () => {
 				row(`${c}${String(i).padStart(2, '0')}vendor.com`),
 			);
 		const RANGES: Record<string, ReturnType<typeof row>[]> = {
-			a: block('a'),
-			g: block('g'),
-			y: block('y'),
+			'public/a': block('a'),
+			'public/g': block('g'),
+			'public/y': block('y'),
 		};
 		worker.use(
 			http.get('/catalog', async ({ request }) => {
@@ -1097,5 +1098,84 @@ describe('LibraryPage', () => {
 		await waitFor(() => expect(document.getElementById('catalog-letter-A')).not.toBeNull());
 		await waitFor(() => expect(landedLetter()).toBe('A'));
 		expect(document.activeElement).toBe(document.getElementById('catalog-letter-A'));
+	});
+
+	it('reports the oldest source sync age in the status row', async () => {
+		let age: number | null = 7200;
+		worker.use(
+			http.get('/catalog', ({ request }) => {
+				if (new URL(request.url).searchParams.get('registered_only') === 'true')
+					return undefined;
+				return HttpResponse.json({
+					data: [],
+					catalog_total: 0,
+					registered_count: 0,
+					outdated_count: 0,
+					oldest_source_sync_age_seconds: age,
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		const { unmount } = renderWithProviders(<LibraryPage />);
+		expect(await screen.findByTestId('discover-status-age')).toHaveTextContent(
+			'updated 2h ago',
+		);
+		unmount();
+
+		age = null;
+		renderWithProviders(<LibraryPage />);
+		expect(await screen.findByTestId('discover-status-age')).toHaveTextContent(
+			'never refreshed',
+		);
+	});
+
+	it("builds a rail jump cursor inside the head feed's own source (not public)", async () => {
+		// An install whose only source is `internal`: the jump cursor is
+		// `internal/<letter>`, never a hard-coded `public/`.
+		const row = (id: string) => ({
+			entry_id: `internal/${id}`,
+			source_slug: 'internal',
+			catalog_api_id: id,
+			vendor: id,
+			has_spec: true,
+			registered: false,
+			_links: {
+				self: `/catalog/internal/${id}`,
+				operations: `/catalog/internal/${id}/operations`,
+				import: `/catalog/internal/${id}:import`,
+			},
+		});
+		const cursors: (string | null)[] = [];
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const url = new URL(request.url);
+				const empty = { catalog_total: 3, registered_count: 0, outdated_count: 0 };
+				if (url.searchParams.get('registered_only') === 'true')
+					return HttpResponse.json({ data: [], ...empty, has_more: false });
+				const cursor = url.searchParams.get('cursor');
+				const after = cursor ? (JSON.parse(atob(cursor)) as { id: string }).id : null;
+				cursors.push(after);
+				if (after === 'internal/z')
+					return HttpResponse.json({ data: [row('zoom.us')], ...empty, has_more: false });
+				if (after == null)
+					return HttpResponse.json({
+						data: [row('abc.com'), row('acme.com')],
+						...empty,
+						has_more: true,
+						next_cursor: btoa(JSON.stringify({ id: 'internal/acme.com' })),
+					});
+				await delay('infinite');
+				return HttpResponse.json({ data: [], ...empty, has_more: false });
+			}),
+		);
+
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('abc.com');
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
+		fireEvent.click(within(rail).getByRole('button', { name: /^Z — / }));
+		expect(await screen.findByRole('button', { name: 'View zoom.us' })).toBeInTheDocument();
+		expect(cursors).toContain('internal/z');
+		expect(cursors.some((c) => c?.startsWith('public/'))).toBe(false);
 	});
 });

@@ -18,7 +18,7 @@ exit: 2
     "Jentic-Error-Origin": "broker"
   },
   "held_execution_id": "held_held1",
-  "schema_version": "1",
+  "schema_version": "2",
   "status": 403
 }
 --- stderr ---
@@ -32,4 +32,4 @@ Denied by a reviewer — the call never ran.
   A reviewer denied this held execution: not today
   Tell the user it was denied; do not re-send it unless they ask you to.
   held execution: held_held1
-{"details":{"held_execution_id":"held_held1","http_status":403,"problem_type":"approval_denied"},"error":"held execution held_held1 never ran (approval_denied)","error_code":"BROKER_DENIED","schema_version":"1"}
+{"details":{"held_execution_id":"held_held1","http_status":403,"problem_type":"approval_denied"},"error":"held execution held_held1 never ran (approval_denied)","error_code":"BROKER_DENIED","schema_version":"2"}

@@ -87,7 +87,7 @@ API's OpenAPI `components.securitySchemes` collects the secret.
 
 ### Submit path
 
-1. **Catalog + un-registered** → fire `POST /catalog/{api_id}:import` first.
+1. **Catalog + un-registered** → fire `POST /catalog/{entry_id}:import` first.
    The import is async, but the backend resolves the `{vendor,name,version}`
    triple at create time so we don't have to wait for the import worker.
 2. **Always** → `POST /credentials` with the discriminated body built by

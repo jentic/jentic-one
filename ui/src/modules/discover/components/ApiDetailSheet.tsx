@@ -2,9 +2,10 @@
  * ApiDetailSheet — slide-over detail for a Discover API entity.
  *
  * Two views inside one sheet:
- *   - summary: API identity (vendor icon, name, workspace pill, api id), the
- *     markdown `info.description`, how the API authenticates, and the
- *     filterable operations list; the footer holds the GitHub link and CTA.
+ *   - summary: API identity (vendor icon, name, workspace pill, source,
+ *     `entry_id`), the markdown `info.description`, how the API
+ *     authenticates, and the filterable operations list; the footer holds the
+ *     link to the entry's page at its source and the CTA.
  *   - operation: a drill-down for one clicked operation (method/path, summary,
  *     description, parameters + auth tables), reached via the list rows and
  *     dismissed with a Back button.
@@ -12,13 +13,13 @@
  * For directory (un-imported) entities the summary view offers a primary
  * "Add to workspace" action. This is a read/peek surface, not a form —
  * there's no draft to preserve. The operations query is
- * keyed by the open entity's catalog id and disabled when the sheet is closed
- * (apiId = null), so closing and reopening a different API refetches cleanly.
+ * keyed by the open entity's `entry_id` and disabled when the sheet is closed
+ * (null), so closing and reopening a different API refetches cleanly.
  * The selected operation resets whenever the open entity changes.
  */
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ChevronLeft, Plus, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ExternalLink, Plus, X } from 'lucide-react';
 import {
 	AppLink,
 	Button,
@@ -28,11 +29,17 @@ import {
 	SheetFooter,
 	SheetHeader,
 	SheetPrimitive,
+	Tag,
 	VendorIcon,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { ApiAuthRow, ApiSummary } from '@/modules/discover/components/ApiSummary';
-import { versionLabel } from '@/modules/discover/lib/catalogSpec';
+import {
+	alternatesHint,
+	alternatesLabel,
+	isGitHubUrl,
+	versionLabel,
+} from '@/modules/discover/lib/catalogSpec';
 import { OperationPreviewList, opKey } from '@/modules/discover/components/OperationPreviewList';
 import { OperationDetail } from '@/modules/discover/components/OperationDetail';
 import { useDebouncedValue } from '@/shared/hooks';
@@ -59,6 +66,11 @@ interface ApiDetailSheetProps {
 	 * else the workspace view. Omitted ⇒ no link.
 	 */
 	workspaceHref?: string | null;
+	/**
+	 * Show the entry's source tag: only while the loaded entries span more
+	 * than one source (`spansSources`), like the ledger's row badges.
+	 */
+	showSource?: boolean;
 }
 
 export function ApiDetailSheet({
@@ -70,6 +82,7 @@ export function ApiDetailSheet({
 	title,
 	icon,
 	workspaceHref,
+	showSource = false,
 }: ApiDetailSheetProps) {
 	const titleId = useId();
 	const [selectedOp, setSelectedOp] = useState<string | null>(null);
@@ -209,10 +222,30 @@ export function ApiDetailSheet({
 										</SoftPill>
 									)
 								)}
-								<span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-[11.5px]">
-									<span className="truncate">{entity.apiId}</span>
+								{showSource && (
+									<Tag
+										data-testid="sheet-source"
+										title={`From the ${entity.sourceSlug} catalog source`}
+									>
+										{entity.sourceSlug}
+									</Tag>
+								)}
+								{entity.alternates > 0 && (
+									<span
+										className="text-muted-foreground text-[12px]"
+										data-testid="sheet-alternates"
+										title={alternatesHint(entity.alternates)}
+									>
+										{alternatesLabel(entity.alternates)}
+									</span>
+								)}
+								<span
+									className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-[11.5px]"
+									data-testid="sheet-entry-id"
+								>
+									<span className="truncate">{entity.entryId}</span>
 									<CopyButton
-										value={entity.apiId}
+										value={entity.entryId}
 										variant="ghost"
 										size="icon"
 										className="hover:bg-tint-2 hover:text-foreground h-[22px] w-[22px] rounded-[7px] p-0 [&_svg]:h-3 [&_svg]:w-3"
@@ -283,16 +316,27 @@ export function ApiDetailSheet({
 					</SheetBody>
 
 					<SheetFooter>
-						{entity.githubUrl && (
-							<AppLink
-								href={entity.githubUrl}
-								className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors"
-								aria-label={`View ${displayTitle} on GitHub`}
-							>
-								<GitHubMark size={14} />
-								GitHub
-							</AppLink>
-						)}
+						{entity.humanUrl &&
+							(isGitHubUrl(entity.humanUrl) ? (
+								<AppLink
+									href={entity.humanUrl}
+									className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors"
+									aria-label={`View ${displayTitle} on GitHub`}
+								>
+									<GitHubMark size={14} />
+									GitHub
+								</AppLink>
+							) : (
+								<AppLink
+									href={entity.humanUrl}
+									className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors"
+									aria-label={`View ${displayTitle} at its source`}
+									data-testid="sheet-human-link"
+								>
+									<ExternalLink size={14} aria-hidden="true" />
+									Source
+								</AppLink>
+							))}
 						{entity.registered && workspaceHref && (
 							<AppLink
 								href={workspaceHref}

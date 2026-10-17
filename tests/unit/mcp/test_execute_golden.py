@@ -26,6 +26,7 @@ import pytest
 import jentic_one.mcp.execute as ex
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
+from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogListView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
 from jentic_one.shared.models import ActorType
@@ -198,7 +199,7 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
 
     payload = decode_tool_json(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["agent_directive"] == directive
     assert payload["actionable_step"] == directive["human_readable_instruction"]
     assert payload["details"] == {"http_status": 403}
@@ -933,3 +934,72 @@ async def test_non_broker_5xx_still_passes_through(broker, status, origin) -> No
     result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
     assert not result.is_error
     assert decode_tool_json(result)["status"] == status
+
+
+async def test_search_catalog_matches_the_shared_golden(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The HTTP mount's search_catalog emits the stdio server's payload byte for
+    byte (Go: ``TestMCPSearchCatalog_MatchesSharedGolden``): same keys, values
+    and omissions — no top-level tags/human_url, ``_links.human`` and
+    ``_links.alternates`` only when set."""
+    page = CatalogListView(
+        data=[
+            CatalogEntryView(
+                entry_id="public/stripe.com",
+                source_slug="public",
+                catalog_api_id="stripe.com",
+                vendor="stripe.com",
+                display_vendor="stripe.com",
+                title="Stripe API",
+                version="2024-06-20",
+                tags=("payments",),
+                human_url="https://github.com/jentic/catalog/stripe.com",
+                has_spec=True,
+                registered=False,
+                alternate_ids=("internal/stripe.com",),
+            ),
+            CatalogEntryView(
+                entry_id="internal/acme.com",
+                source_slug="internal",
+                catalog_api_id="acme.com",
+                vendor="acme.com",
+                display_vendor="acme.com",
+                title=None,
+                version=None,
+                tags=(),
+                human_url=None,
+                has_spec=False,
+                registered=True,
+                update_available=True,
+            ),
+        ],
+        catalog_total=2,
+        registered_count=1,
+        oldest_source_sync_age_seconds=42,
+        has_more=False,
+        next_cursor=None,
+        outdated_count=1,
+    )
+
+    class _Catalog:
+        def __init__(self, _ctx: Any) -> None: ...
+
+        async def list_all(self, **_kwargs: Any) -> CatalogListView:
+            return page
+
+    monkeypatch.setattr(tools_mod, "CatalogService", _Catalog)
+    env = make_env("https://broker.example.com")
+    env = CallEnv(
+        ctx=env.ctx,
+        identity=Identity(
+            sub="agnt_1", permissions=["capabilities:read"], actor_type=ActorType.AGENT
+        ),
+        credential=env.credential,
+        base_url=env.base_url,
+        session_id=None,
+    )
+    result = await dispatch_tool_call(env, "search_catalog", {"query": "pay"})
+    assert not result.is_error
+    payload = decode_tool_json(result)
+    payload.setdefault("instance", None)
+    golden = _GOLDEN_DIR.parent.parent / "mcp" / "mcp_search_catalog_json.json"
+    assert envelope_without_stamp(payload) == golden.read_text("utf-8")

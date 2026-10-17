@@ -9,19 +9,19 @@ import (
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
-// catalogsvc.go is the ARCH-21 A4 adapter that keeps the catalog command group
-// (catalog.go + the TUI catalog_browser.go) on stable CLI-owned view types while
-// the wire calls go through the generated control SDK. A single catalogClient
-// wrapper mirrors the old internal/catalogclient method surface
-// (List/Get/Preview/Import/Job/JobResult/Promote/Refresh) so the consumers
-// change only their type/import names, and the JSON envelope the agent parses is
-// byte-identical (the view structs carry the pre-migration json tags).
+// catalog_client.go is the ARCH-21 A4 adapter that keeps the catalog command
+// group (catalog.go + the TUI catalog_tui.go) and the stdio MCP catalog tools
+// on stable CLI-owned view types while the wire calls go through the generated
+// control SDK. A single catalogClient wrapper exposes
+// List/Get/Preview/Import/Job/JobResult/Promote/Refresh, and the view structs
+// pin the JSON the agent parses (agent contract schema_version "2").
 //
 // Two SDK-specific hazards are absorbed here:
-//   - Umbrella api_ids (e.g. "googleapis.com/admin") carry a literal "/". The
-//     generated request builders url.PathEscape the api_id path param, turning
-//     "/" into "%2F", which does NOT match the backend's Starlette {api_id:path}
-//     route. rawPathEditor rewrites the request back to a literal-slash path.
+//   - Every entry_id ("public/stripe.com", "public/googleapis.com/admin")
+//     carries a literal "/". The generated request builders url.PathEscape the
+//     entry_id path param, turning "/" into "%2F", which does NOT match the
+//     backend's Starlette {entry_id:path} route. rawPathEditor rewrites the
+//     request back to a literal-slash path.
 //   - GET /jobs/{id}/result has an untyped ({}) body in the spec, so the
 //     generated JSON200 is *interface{}; JobResult decodes resp.Body itself.
 
@@ -36,31 +36,46 @@ const (
 
 // ── CLI-side view types (stable json shape) ──────────────────────────────────
 
+// catalogEntryLinks mirrors the REST entry's `_links`. `human` is the
+// source's human-facing page ("" when the source has none) and `alternates`
+// the URLs of the visible entries collapsed into this one (never null).
 type catalogEntryLinks struct {
-	Self       string `json:"self"`
-	Operations string `json:"operations"`
-	Import     string `json:"import"`
-	Github     string `json:"github"`
+	Self       string   `json:"self"`
+	Operations string   `json:"operations"`
+	Import     string   `json:"import"`
+	Human      string   `json:"human"`
+	Alternates []string `json:"alternates"`
 }
 
+// catalogEntry is one catalog entry as the CLI and the stdio MCP server emit
+// it — the same keys, in the same nullability, as the HTTP MCP mount's
+// search_catalog entries. EntryID is the id every catalog route and import_api
+// take; CatalogAPIID is the cross-source API identity credentials match on.
 type catalogEntry struct {
-	APIID           string            `json:"api_id"`
-	Vendor          string            `json:"vendor"`
-	Path            string            `json:"path"`
-	SpecURL         string            `json:"spec_url"`
+	EntryID         string            `json:"entry_id"`
+	SourceSlug      string            `json:"source_slug"`
+	CatalogAPIID    string            `json:"catalog_api_id"`
+	Vendor          *string           `json:"vendor"`
+	DisplayVendor   *string           `json:"display_vendor"`
+	Title           *string           `json:"title"`
+	Version         *string           `json:"version"`
+	Tags            []string          `json:"tags"`
+	HumanURL        *string           `json:"human_url"`
+	HasSpec         bool              `json:"has_spec"`
 	Registered      bool              `json:"registered"`
 	UpdateAvailable bool              `json:"update_available"`
+	Alternates      int               `json:"alternates"`
 	Links           catalogEntryLinks `json:"_links"`
 }
 
 type catalogListResult struct {
-	Data               []catalogEntry `json:"data"`
-	CatalogTotal       int            `json:"catalog_total"`
-	RegisteredCount    int            `json:"registered_count"`
-	OutdatedCount      int            `json:"outdated_count"`
-	ManifestAgeSeconds *int           `json:"manifest_age_seconds"`
-	HasMore            bool           `json:"has_more"`
-	NextCursor         string         `json:"next_cursor"`
+	Data                       []catalogEntry `json:"data"`
+	CatalogTotal               int            `json:"catalog_total"`
+	RegisteredCount            int            `json:"registered_count"`
+	OutdatedCount              int            `json:"outdated_count"`
+	OldestSourceSyncAgeSeconds *int           `json:"oldest_source_sync_age_seconds"`
+	HasMore                    bool           `json:"has_more"`
+	NextCursor                 string         `json:"next_cursor"`
 }
 
 type catalogPreviewParam struct {
@@ -87,6 +102,11 @@ type catalogPreviewInfo struct {
 	Description string `json:"description"`
 }
 
+// catalogPreview mirrors GET /catalog/{entry_id}/operations. security_schemes
+// passes through whole (an oauth2 scheme's flow_details included);
+// server_variables are the first server's URL variables and required_schemes
+// every scheme the spec's operations require, over the whole spec. Both are
+// never null, so an agent reads them without a presence check.
 type catalogPreview struct {
 	Data            []catalogPreviewOp        `json:"data"`
 	Total           int                       `json:"total"`
@@ -94,6 +114,8 @@ type catalogPreview struct {
 	Truncated       bool                      `json:"truncated"`
 	Info            catalogPreviewInfo        `json:"info"`
 	SecuritySchemes map[string]map[string]any `json:"security_schemes"`
+	ServerVariables map[string]map[string]any `json:"server_variables"`
+	RequiredSchemes []string                  `json:"required_schemes"`
 }
 
 type catalogJob struct {
@@ -135,24 +157,39 @@ type catalogListParams struct {
 
 type catalogClient struct {
 	sdk *control.ClientWithResponses
+	// baseURL and verifyShape carry the gate's fallback: when /health didn't
+	// report a parseable version, List and Get check the entries they decode
+	// carry an entry_id (verifyCatalogShape) before handing them out.
+	baseURL     string
+	verifyShape bool
 }
 
-// catalogSession resolves the generated control client for the active context
-// and wraps it (ARCH-21 A4, migrated off internal/catalogclient).
+// catalogSession resolves the generated control client for the active context,
+// refuses a server too old to serve the catalog by entry_id
+// (checkCatalogServer), and wraps the client (ARCH-21 A4). When the server
+// doesn't report its version, the client checks the shape of what it reads.
 func (a *app) catalogSession(ctx context.Context) (*catalogClient, error) {
 	sdk, err := a.controlClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &catalogClient{sdk: sdk}, nil
+	st, err := a.requireState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	verdict, err := checkCatalogServer(ctx, st.BaseURL, sdk)
+	if err != nil {
+		return nil, err
+	}
+	return &catalogClient{sdk: sdk, baseURL: st.BaseURL, verifyShape: verdict == catalogServerUnknown}, nil
 }
 
 // rawPathEditor forces the request path to be emitted with literal slashes,
-// undoing the generated builder's url.PathEscape of an umbrella api_id (so
-// "googleapis.com/admin" hits the backend's {api_id:path} route). Clearing
-// RawPath makes net/http re-derive the escaped path from URL.Path (which holds
-// the decoded, literal-slash value), and EscapedPath does not percent-encode
-// path separators.
+// undoing the generated builder's url.PathEscape of an entry_id (so
+// "public/googleapis.com/admin" hits the backend's {entry_id:path} route).
+// Clearing RawPath makes net/http re-derive the escaped path from URL.Path
+// (which holds the decoded, literal-slash value), and EscapedPath does not
+// percent-encode path separators.
 func rawPathEditor(_ context.Context, req *http.Request) error {
 	req.URL.RawPath = ""
 	return nil
@@ -188,22 +225,36 @@ func (c *catalogClient) List(ctx context.Context, p catalogListParams) (*catalog
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
 	}
+	if c.verifyShape {
+		ids := make([]string, 0, len(resp.JSON200.Data))
+		for _, e := range resp.JSON200.Data {
+			ids = append(ids, e.EntryId)
+		}
+		if err := verifyCatalogShape(c.baseURL, ids...); err != nil {
+			return nil, err
+		}
+	}
 	return toCatalogListResult(resp.JSON200), nil
 }
 
-func (c *catalogClient) Get(ctx context.Context, apiID string) (*catalogEntry, error) {
-	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, apiID, rawPathEditor)
+func (c *catalogClient) Get(ctx context.Context, entryID string) (*catalogEntry, error) {
+	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, entryID, rawPathEditor)
 	if err := apiErrorFor(resp, err); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
 	}
+	if c.verifyShape {
+		if err := verifyCatalogShape(c.baseURL, resp.JSON200.EntryId); err != nil {
+			return nil, err
+		}
+	}
 	e := toCatalogEntry(*resp.JSON200)
 	return &e, nil
 }
 
-func (c *catalogClient) Preview(ctx context.Context, apiID string, offset, limit int, tag string) (*catalogPreview, error) {
+func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, limit int, tag string) (*catalogPreview, error) {
 	params := &control.PreviewCatalogOperationsParams{}
 	if offset > 0 {
 		params.Offset = ptr(offset)
@@ -214,7 +265,7 @@ func (c *catalogClient) Preview(ctx context.Context, apiID string, offset, limit
 	if tag != "" {
 		params.Tag = ptr(tag)
 	}
-	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, apiID, params, rawPathEditor)
+	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, entryID, params, rawPathEditor)
 	if err := apiErrorFor(resp, err); err != nil {
 		return nil, err
 	}
@@ -224,8 +275,8 @@ func (c *catalogClient) Preview(ctx context.Context, apiID string, offset, limit
 	return toCatalogPreview(resp.JSON200), nil
 }
 
-func (c *catalogClient) Import(ctx context.Context, apiID string) (string, error) {
-	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, apiID, nil, rawPathEditor)
+func (c *catalogClient) Import(ctx context.Context, entryID string) (string, error) {
+	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, entryID, nil, rawPathEditor)
 	if err := apiErrorFor(resp, err); err != nil {
 		return "", err
 	}
@@ -282,34 +333,56 @@ func (c *catalogClient) Refresh(ctx context.Context) (int, error) {
 
 // ── projections (generated -> CLI view, preserving json shape) ────────────────
 
-// toCatalogEntry keeps the CLI's existing json shape over the entry_id wire
-// model: `api_id` carries the entry_id (the id every catalog route takes, so a
-// listed id round-trips into get/preview/import), `github` carries the human
-// link, and `path`/`spec_url` stay empty because the server no longer sends them.
+// toCatalogEntry projects the wire entry onto the CLI view. Absent optional
+// members collapse to the shapes the HTTP MCP mount emits: has_spec defaults
+// to true (the server's default), tags and _links.alternates to empty arrays,
+// and _links.human to "".
 func toCatalogEntry(e control.CatalogEntryResponse) catalogEntry {
+	hasSpec := true
+	if e.HasSpec != nil {
+		hasSpec = *e.HasSpec
+	}
+	tags := []string{}
+	if e.Tags != nil {
+		tags = append(tags, *e.Tags...)
+	}
+	alternateLinks := []string{}
+	if e.UnderscoreLinks.Alternates != nil {
+		alternateLinks = append(alternateLinks, *e.UnderscoreLinks.Alternates...)
+	}
 	return catalogEntry{
-		APIID:           e.EntryId,
-		Vendor:          deref(e.Vendor),
+		EntryID:         e.EntryId,
+		SourceSlug:      e.SourceSlug,
+		CatalogAPIID:    e.CatalogApiId,
+		Vendor:          e.Vendor,
+		DisplayVendor:   e.DisplayVendor,
+		Title:           e.Title,
+		Version:         e.Version,
+		Tags:            tags,
+		HumanURL:        e.HumanUrl,
+		HasSpec:         hasSpec,
 		Registered:      e.Registered,
 		UpdateAvailable: deref(e.UpdateAvailable),
+		Alternates:      deref(e.Alternates),
 		Links: catalogEntryLinks{
 			Self:       e.UnderscoreLinks.Self,
 			Operations: e.UnderscoreLinks.Operations,
 			Import:     e.UnderscoreLinks.Import,
-			Github:     deref(e.UnderscoreLinks.Human),
+			Human:      deref(e.UnderscoreLinks.Human),
+			Alternates: alternateLinks,
 		},
 	}
 }
 
 func toCatalogListResult(r *control.CatalogListResponse) *catalogListResult {
 	out := &catalogListResult{
-		Data:               make([]catalogEntry, 0, len(r.Data)),
-		CatalogTotal:       r.CatalogTotal,
-		RegisteredCount:    r.RegisteredCount,
-		OutdatedCount:      deref(r.OutdatedCount),
-		ManifestAgeSeconds: r.OldestSourceSyncAgeSeconds,
-		HasMore:            deref(r.HasMore),
-		NextCursor:         deref(r.NextCursor),
+		Data:                       make([]catalogEntry, 0, len(r.Data)),
+		CatalogTotal:               r.CatalogTotal,
+		RegisteredCount:            r.RegisteredCount,
+		OutdatedCount:              deref(r.OutdatedCount),
+		OldestSourceSyncAgeSeconds: r.OldestSourceSyncAgeSeconds,
+		HasMore:                    deref(r.HasMore),
+		NextCursor:                 deref(r.NextCursor),
 	}
 	for _, e := range r.Data {
 		out.Data = append(out.Data, toCatalogEntry(e))
@@ -329,6 +402,14 @@ func toCatalogPreview(p *control.OperationPreviewListResponse) *catalogPreview {
 			Description: deref(p.Info.Description),
 		},
 		SecuritySchemes: p.SecuritySchemes,
+		ServerVariables: map[string]map[string]any{},
+		RequiredSchemes: []string{},
+	}
+	if p.ServerVariables != nil {
+		out.ServerVariables = *p.ServerVariables
+	}
+	if p.RequiredSchemes != nil {
+		out.RequiredSchemes = append(out.RequiredSchemes, *p.RequiredSchemes...)
 	}
 	for _, op := range p.Data {
 		params := make([]catalogPreviewParam, 0, len(op.Parameters))

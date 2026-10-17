@@ -205,16 +205,46 @@ export async function deleteApi(key: ApiKey): Promise<void> {
 	}
 }
 
+/** Syntactic shape of an `entry_id` (the REST router's rule), so a hint is never followed blind. */
+function isEntryId(id: string): boolean {
+	if (id.length === 0 || [...id].length > 320) return false;
+	// eslint-disable-next-line no-control-regex
+	if (/[\u0000-\u001f\u007f]/.test(id)) return false;
+	return id.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
 /**
- * Run a catalog call keyed by the API's `catalog_api_id`, following the 404's
- * `did_you_mean` once. The catalog routes take an `entry_id`; an id without a
- * visible source prefix misses with a hint naming the visible entry for it,
- * which is the entry the API was imported from when that one is registered.
+ * The `entry_id` of the registered catalog entry for `catalogApiId` — the one
+ * the API was imported from — read off `GET /catalog?registered_only=true`.
+ * `null` when no registered entry carries exactly that `catalog_api_id`.
+ */
+async function registeredEntryIdFor(catalogApiId: string): Promise<string | null> {
+	try {
+		const page = await CatalogService.listCatalog({
+			q: catalogApiId,
+			registeredOnly: true,
+			limit: 50,
+		});
+		return page.data.find((e) => e.catalog_api_id === catalogApiId)?.entry_id ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Run a catalog call for the API's `catalog_api_id`. The catalog routes take
+ * an `entry_id`, which the APIs response no longer carries, so it is resolved:
+ * the registered entry for that `catalog_api_id` when the catalog lists one;
+ * otherwise the call goes out with the `catalog_api_id` and follows the 404's
+ * `did_you_mean` (the visible entry for it) once, when that is a well-formed
+ * entry_id.
  */
 async function withCatalogEntry<T>(
 	catalogApiId: string,
 	call: (entryId: string) => Promise<T>,
 ): Promise<T> {
+	const registered = await registeredEntryIdFor(catalogApiId);
+	if (registered) return call(registered);
 	try {
 		return await call(catalogApiId);
 	} catch (error) {
@@ -222,7 +252,7 @@ async function withCatalogEntry<T>(
 			error instanceof ApiError && error.status === 404
 				? (error.body as { did_you_mean?: unknown } | null)?.did_you_mean
 				: undefined;
-		if (typeof hint === 'string' && hint && hint !== catalogApiId) {
+		if (typeof hint === 'string' && hint !== catalogApiId && isEntryId(hint)) {
 			return call(hint);
 		}
 		throw error;

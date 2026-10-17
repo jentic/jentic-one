@@ -1,7 +1,7 @@
 ---
 name: jentic
 description: Calls third-party APIs through a Jentic One instance — governed, credential-managed access where the agent searches for an operation, inspects it, and executes it through an audited broker that holds the credentials (identity → discover → check access → execute). Applies when the user asks to call an external API or use a connected service — e.g. "find the vessel-tracking API and add it", "get rows from this Google Sheet", connect Slack, import/search/discover an API, integrate or automate a SaaS, pull data from a service, or call an external endpoint. Works over whichever Jentic surface the session has, the `jentic` MCP tools or the `jentic` CLI. Not for local-only work (editing code, finding files, adding a package/dependency, or questions with no external API call).
-version: 7
+version: 8
 ---
 
 # Using Jentic

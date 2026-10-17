@@ -24,8 +24,24 @@ func mockControl(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"data":[` +
 				`{"api":{"vendor":"stripe.com","name":"api","version":"v1"},"current_revision_id":"r1","operation_count":12}` +
 				`],"has_more":false,"next_cursor":""}`))
-		case r.URL.Path == "/catalog" || strings.HasPrefix(r.URL.Path, "/catalog"):
-			_, _ = w.Write([]byte(`{"data":[],"has_more":false,"next_cursor":""}`))
+		case r.URL.Path == "/catalog":
+			_, _ = w.Write([]byte(`{"data":[` +
+				`{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com",` +
+				`"display_vendor":"stripe.com","title":"Stripe API","version":"2024-06-20","tags":["payments"],` +
+				`"human_url":"https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com","has_spec":true,` +
+				`"registered":false,"update_available":false,"alternates":1,` +
+				`"_links":{"self":"/catalog/public/stripe.com","operations":"/catalog/public/stripe.com/operations",` +
+				`"import":"/catalog/public/stripe.com:import","human":"https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com",` +
+				`"alternates":["/catalog/internal/stripe.com"]}}` +
+				`],"catalog_total":1,"registered_count":0,"outdated_count":0,"oldest_source_sync_age_seconds":42,` +
+				`"has_more":false,"next_cursor":""}`))
+		case strings.HasPrefix(r.URL.Path, "/catalog/"):
+			// An old-style (pre-entry_id) id: the server names the caller's
+			// visible entry in the problem body.
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,` +
+				`"detail":"catalog entry not found","did_you_mean":"public/stripe.com"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"detail":"not found"}`))
@@ -74,6 +90,13 @@ func TestGolden_AgentContract(t *testing.T) {
 			seed: true,
 		},
 		{
+			// An old-style id against the multi-source catalog: the coded
+			// RESOLVE_FAILED envelope carries the server's did_you_mean.
+			name: "catalog_show_did_you_mean_json",
+			args: []string{"catalog", "show", "stripe.com", "--json"},
+			seed: true,
+		},
+		{
 			// Unknown command: stable usage-error contract (exit + stderr form).
 			name: "unknown_command",
 			args: []string{"definitely-not-a-command"},
@@ -103,7 +126,7 @@ func TestGolden_AgentContract(t *testing.T) {
 			// schema_version so an agent can detect the envelope version. The
 			// success cases are the seeded list commands; the error/usage cases
 			// carry it via the AgentError envelope (asserted by the golden itself).
-			if tc.seed && strings.Contains(strings.Join(tc.args, " "), "--json") {
+			if tc.seed && got.exitCode == 0 && strings.Contains(strings.Join(tc.args, " "), "--json") {
 				if !strings.Contains(got.stdout, `"schema_version"`) {
 					t.Errorf("%s: --json success output missing schema_version:\n%s", tc.name, got.stdout)
 				}

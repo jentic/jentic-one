@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
@@ -17,9 +18,12 @@ import (
 func newCatalogCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "catalog",
-		Short: "Browse, search, and import APIs from the public catalog",
-		Long: "catalog explores the Jentic public API catalog and imports specs into\n" +
-			"this deployment's local registry. Run bare on a terminal to open an\n" +
+		Short: "Browse, search, and import APIs from the API catalog",
+		Long: "catalog explores the Jentic API catalog (the public catalog plus any other\n" +
+			"catalog sources this deployment reads) and imports specs into this\n" +
+			"deployment's local registry. Entries are addressed by their entry_id,\n" +
+			"`{source}/{id}` (e.g. public/stripe.com): pass the entry_id from\n" +
+			"`catalog list`/`catalog search` verbatim. Run bare on a terminal to open an\n" +
 			"interactive browser (search, preview operations, import in place); the\n" +
 			"subcommands (list/search/show/import/outdated/refresh) are script-friendly.\n" +
 			"Requires a registered agent (run `jentic register` first).",
@@ -77,9 +81,11 @@ func newCatalogSearchCmd(app *app) *cobra.Command {
 func newCatalogShowCmd(app *app) *cobra.Command {
 	o := &catalogShowOptions{}
 	cmd := &cobra.Command{
-		Use:   "show <api_id>",
+		Use:   "show <entry_id>",
 		Short: "Show a catalog entry and preview its operations",
-		Args:  cobra.ExactArgs(1),
+		Long: "show prints one catalog entry and a preview of its operations. Pass the\n" +
+			"entry_id from `catalog list`/`catalog search` verbatim (e.g. public/stripe.com).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogShow(cmd.Context(), o, args[0])
@@ -94,9 +100,12 @@ func newCatalogShowCmd(app *app) *cobra.Command {
 func newCatalogImportCmd(app *app) *cobra.Command {
 	o := &catalogImportOptions{}
 	cmd := &cobra.Command{
-		Use:   "import <api_id>",
+		Use:   "import <entry_id>",
 		Short: "Import a catalog entry into the local registry (auto-promotes to live)",
-		Args:  cobra.ExactArgs(1),
+		Long: "import files an import of one catalog entry and, by default, waits for it\n" +
+			"and promotes the imported revisions live. Pass the entry_id from\n" +
+			"`catalog list`/`catalog search` verbatim (e.g. public/stripe.com).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.json = cmdcore.JSONOrPretty(cmd, o.json)
 			return app.catalogImport(cmd.Context(), o, args[0])
@@ -243,10 +252,10 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 
 	if o.json {
 		return cmdcore.WriteList(a.Out, entries, nextCursor, map[string]any{
-			"catalog_total":        first.CatalogTotal,
-			"registered_count":     first.RegisteredCount,
-			"outdated_count":       first.OutdatedCount,
-			"manifest_age_seconds": first.ManifestAgeSeconds,
+			"catalog_total":                  first.CatalogTotal,
+			"registered_count":               first.RegisteredCount,
+			"outdated_count":                 first.OutdatedCount,
+			"oldest_source_sync_age_seconds": first.OldestSourceSyncAgeSeconds,
 		})
 	}
 	a.printCatalogList(ctx, entries, first)
@@ -255,20 +264,23 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 
 // ── show ─────────────────────────────────────────────────────────────────────
 
-func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID string) error {
+func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, entryID string) error {
+	if err := validateEntryID(entryID); err != nil {
+		return err
+	}
 	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
-	entry, err := client.Get(ctx, apiID)
+	entry, err := client.Get(ctx, entryID)
 	if err != nil {
-		return catalogEntryErr(err, apiID)
+		return catalogEntryErr(err, entryID, "show")
 	}
 	limit := o.limit
 	if limit <= 0 {
 		limit = 200
 	}
-	preview, perr := client.Preview(ctx, apiID, 0, limit, o.tag)
+	preview, perr := client.Preview(ctx, entryID, 0, limit, o.tag)
 
 	if o.json {
 		out := map[string]any{"schema_version": apiEnvelopeSchemaVersion, "entry": entry}
@@ -290,14 +302,17 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 
 // ── import ───────────────────────────────────────────────────────────────────
 
-func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID string) error {
+func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, entryID string) error {
+	if err := validateEntryID(entryID); err != nil {
+		return err
+	}
 	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
-	jobID, err := client.Import(ctx, apiID)
+	jobID, err := client.Import(ctx, entryID)
 	if err != nil {
-		return catalogEntryErr(err, apiID)
+		return catalogEntryErr(err, entryID, "import")
 	}
 
 	if o.noWait {
@@ -312,7 +327,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 	}
 
 	if !o.json {
-		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Infof("Importing %s …", apiID))
+		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Infof("Importing %s …", entryID))
 	}
 	job, err := a.pollImportJob(ctx, client, jobID, o.timeout)
 	if err != nil {
@@ -464,11 +479,50 @@ func catalogListErr(err error) error {
 	return err
 }
 
-// catalogEntryErr maps a 404 to a clear "entry not found" message.
-func catalogEntryErr(err error, apiID string) error {
+// catalogEntryErr maps a 404 to a RESOLVE_FAILED "entry not found". A hidden
+// entry and a missing one get the same 404 from the server; when the id isn't
+// in entry_id form (an old-style "stripe.com"), the 404 body's did_you_mean
+// names the caller's visible entry for it, and the hint re-runs the same
+// subcommand with that entry_id. The CLI never guesses a source prefix itself.
+func catalogEntryErr(err error, entryID, subcommand string) error {
 	var he *HTTPError
-	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("catalog entry %q not found", apiID)
+	if !errors.As(err, &he) || he.StatusCode != http.StatusNotFound {
+		return err
 	}
-	return err
+	suggestion := didYouMean(he)
+	coded := &ux.CodedError{
+		Code:       ux.CodeResolveFailed,
+		Msg:        fmt.Sprintf("catalog entry %q not found", entryID),
+		Actionable: "Find the entry with `jentic catalog search <keyword>` and pass its entry_id verbatim.",
+	}
+	if suggestion != "" {
+		coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
+		coded.Actionable = fmt.Sprintf("jentic catalog %s %s", subcommand, shellQuote(suggestion))
+		coded.Details = map[string]any{"did_you_mean": suggestion}
+	}
+	return coded
+}
+
+// didYouMean reads the catalog 404 body's did_you_mean (the visible entry_id
+// for an id given in the old catalog_api_id form), or "" when absent. A
+// suggestion that isn't a well-formed entry_id (checkEntryID) is dropped: it
+// is relayed into a runnable hint, so only an id that can name an entry is.
+func didYouMean(he *HTTPError) string {
+	s, _ := he.Fields()["did_you_mean"].(string)
+	s = strings.TrimSpace(s)
+	if s == "" || checkEntryID(s) != nil {
+		return ""
+	}
+	return s
+}
+
+// shellQuote renders s as one POSIX shell word: bare when it holds only
+// characters no shell treats specially, else single-quoted ('\” for a quote).
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("/._-:@+=,", r)
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

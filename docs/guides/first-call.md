@@ -56,8 +56,8 @@ Pull an API description into your local registry from the public
 [Jentic API Directory](https://github.com/jentic/jentic-public-apis):
 
 ```bash
-jentic catalog search httpbin               # find the API used in step 6
-jentic catalog import httpbin.org/httpbin   # import it (auto-promotes to live)
+jentic catalog search httpbin                      # find the API used in step 6
+jentic catalog import public/httpbin.org/httpbin   # import it by entry_id (auto-promotes to live)
 ```
 
 `jentic catalog` run bare opens an interactive browser; `jentic apis` manages

@@ -65,3 +65,42 @@ func TestProbeEmptyBaseURL(t *testing.T) {
 		t.Errorf("Probe.Running = true for empty base URL, want false")
 	}
 }
+
+func TestAtLeast(t *testing.T) {
+	for _, tc := range []struct {
+		version, minimum string
+		want             bool
+	}{
+		{"0.44.0", "0.44.0", true},
+		{"v0.44.0", "0.44.0", true},
+		{"0.44.1", "0.44.0", true},
+		{"0.45.0", "0.44.0", true},
+		{"1.0.0", "0.44.0", true},
+		{"0.44.0rc1", "0.44.0", true},
+		{"0.44.0+local.1", "0.44.0", true},
+		{"0.44", "0.44.0", true},
+		{"0.43.9", "0.44.0", false},
+		{"0.9.0", "0.44.0", false},
+		{"", "0.44.0", false},
+		{"dev", "0.44.0", false},
+		{"0", "0.44.0", false},
+		{"0.x.0", "0.44.0", false},
+		{"0.44.0", "", false},
+		{"9999999999.0.0", "0.44.0", false},
+	} {
+		if got := AtLeast(tc.version, tc.minimum); got != tc.want {
+			t.Errorf("AtLeast(%q, %q) = %v, want %v", tc.version, tc.minimum, got, tc.want)
+		}
+	}
+}
+
+func TestParses(t *testing.T) {
+	for v, want := range map[string]bool{
+		"0.44.0": true, "v0.44.0": true, "0.44": true, "0.44.0rc1": true, "0.44.0-rc.1": true,
+		"": false, "dev": false, "main": false, "0": false, "v": false,
+	} {
+		if got := Parses(v); got != want {
+			t.Errorf("Parses(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
