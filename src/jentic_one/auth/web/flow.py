@@ -100,7 +100,7 @@ async def check_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) ->
     plain IP otherwise (the local-login routes — their client_id rides inside
     the signed state, not the query string).
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     client_id = request.query_params.get("client_id")
     ip = client_ip(request, trusted)
     key = f"{client_id}:{ip}" if client_id else ip
@@ -139,7 +139,7 @@ async def check_approval_status_rate_limit(
     and a self-chosen key component would let one host sidestep the bucket by
     re-minting blobs (every /authorize render hands out a fresh one).
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_approval_status_limiter(request, ctx)
     outcome = await limiter.acquire(ip)
