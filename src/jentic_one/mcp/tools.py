@@ -589,8 +589,6 @@ async def handle_search_catalog(
                 "display_vendor": view.display_vendor,
                 "title": view.title,
                 "version": view.version,
-                "tags": list(view.tags),
-                "human_url": view.human_url,
                 "has_spec": view.has_spec,
                 "registered": view.registered,
                 "update_available": view.update_available,
@@ -599,7 +597,7 @@ async def handle_search_catalog(
                     "self": self_link,
                     "operations": f"{self_link}/operations",
                     "import": f"{self_link}:import",
-                    "human": view.human_url or "",
+                    **({"human": view.human_url} if view.human_url else {}),
                     "alternates": [f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids],
                 },
             }
