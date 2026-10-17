@@ -171,8 +171,18 @@ func ClaudeCodeSteps(claudePath string, entry Entry, entryExists bool) []ExecSte
 			BestEffort: true,
 		})
 	}
+	argv := append(ClaudeCodeAddCommand(claudePath), ServerName, "--", entry.Command)
 	return append(steps, ExecStep{
 		What: "register the jentic MCP entry",
-		Argv: append([]string{claudePath, "mcp", "add", "--scope", "user", ServerName, "--", entry.Command}, entry.Args...),
+		Argv: append(argv, entry.Args...),
 	})
+}
+
+// ClaudeCodeAddCommand is the `claude mcp add` invocation, up to but not
+// including the server name, that ClaudeCodeSteps registers the entry with.
+// Callers that report the registration route derive it from here so the
+// reported command cannot drift from the one executed. Each call returns a
+// fresh slice.
+func ClaudeCodeAddCommand(claudePath string) []string {
+	return []string{claudePath, "mcp", "add", "--scope", "user"}
 }

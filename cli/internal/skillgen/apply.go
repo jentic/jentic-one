@@ -18,12 +18,21 @@ type Outcome struct {
 	Changed   bool // the skill content was written/updated
 	Skipped   bool // nothing to do (already up to date)
 	UserEdits bool // an existing install had manual edits (needs --force)
+	// NewerInstalled reports that the existing install records a content
+	// version above the one being applied (written by a newer CLI); it was
+	// left alone, since rewriting it would downgrade it (needs --force).
+	NewerInstalled bool
+	// InstalledVersion and AppliedVersion are the version the existing
+	// install records and the one being applied, set alongside
+	// NewerInstalled so callers can name both.
+	InstalledVersion string
+	AppliedVersion   string
 }
 
 // ApplyOptions controls how Apply writes a skill.
 type ApplyOptions struct {
 	Scope  Scope // user vs project; zero value uses the adapter default
-	Force  bool  // overwrite a user-edited install
+	Force  bool  // overwrite a user-edited install, or downgrade a newer one
 	DryRun bool  // compute the outcome and target but write nothing
 }
 
@@ -31,7 +40,8 @@ type ApplyOptions struct {
 // target, idempotently. For a shared AGENTS.md it splices only that skill's
 // named block, leaving user content and sibling blocks intact; for an
 // owned-file SKILL.md it writes a clean spec file plus a provenance sidecar. It
-// refuses to overwrite a manually-edited install unless Force.
+// refuses to overwrite a manually-edited install, or one recording a newer
+// content version than c (an older CLI must not downgrade it), unless Force.
 func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, error) {
 	scope := opts.Scope
 	if scope == "" {
@@ -51,6 +61,18 @@ func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, e
 	}
 	out.Created = os.IsNotExist(err)
 	norm := []byte(normalizeNewlines(string(existing)))
+
+	if !out.Created && !opts.Force {
+		// The user-edit guard reports first: an edited install needs --force
+		// whatever its version, so it keeps the more specific signal.
+		if installed, edited, v := probeInstall(a, target, norm, c.Name); installed && !edited &&
+			CompareVersions(v, versionToken(c.Version)) == FreshnessNewer {
+			out.NewerInstalled = true
+			out.InstalledVersion = v
+			out.AppliedVersion = versionToken(c.Version)
+			return out, nil
+		}
+	}
 
 	if a.OwnsWholeFile() {
 		return applyOwnedFile(a, c, target, norm, out, opts)
@@ -131,6 +153,15 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// time, so a shipped-set rename cannot strand the old file.
 	prior, _ := readSidecar(target)
 	recorded := prior.References
+	// A recorded version that differs from the content being applied is a
+	// pending write even when the rendered bytes are identical (claude/cursor
+	// frontmatter carries no version): the sidecar stamp is what staleness
+	// detection reads, so refreshing it is a real change.
+	versionDrift := prior.BodyHash != "" && prior.Version != versionToken(c.Version)
+	if versionDrift {
+		out.Changed = true
+		out.Skipped = false
+	}
 
 	if opts.DryRun {
 		// A dry run must report the same Changed a real apply would, so
@@ -162,7 +193,9 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	// predating the field). An install with NO sidecar and an unchanged body
 	// deliberately gains none here — that shape is user content force-applied
 	// over; stamping provenance onto it would claim a file we did not write.
-	if changed || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
+	// A version-only bump (same rendered bytes) refreshes the recorded version
+	// the same way, so staleness clears once the install is re-applied.
+	if changed || versionDrift || (prior.BodyHash != "" && !slices.Equal(prior.References, renderedReferences(c.Name))) {
 		if err := writeSidecar(target, c, newBytes); err != nil {
 			return out, err
 		}
@@ -282,6 +315,7 @@ func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 		Source:     string(c.source()),
 		BaseURL:    c.BaseURL,
 		References: renderedReferences(c.Name),
+		Version:    versionToken(c.Version),
 	}
 	data, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {

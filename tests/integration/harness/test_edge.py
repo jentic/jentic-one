@@ -63,5 +63,10 @@ async def test_multipart_echoes_fields_and_files(smoke_client: AsyncClient) -> N
     body = response.json()
     assert body["fields"] == {"description": "an upload"}
     assert body["files"] == [
-        {"field": "document", "filename": "report.txt", "size": len(file_bytes)}
+        {
+            "field": "document",
+            "filename": "report.txt",
+            "size": len(file_bytes),
+            "sha256": hashlib.sha256(file_bytes).hexdigest(),
+        }
     ]
