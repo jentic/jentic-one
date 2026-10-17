@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest
+import structlog.testing
 from sqlalchemy import event, text
 
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
@@ -65,7 +66,9 @@ async def clean_tables(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     await _cleanup()
 
 
-async def _seed_agent(admin_db: DatabaseSession, *, plaintext: str, status: str) -> None:
+async def _seed_agent(
+    admin_db: DatabaseSession, *, plaintext: str, status: str, owned: bool = True
+) -> None:
     """An agent holding ``plaintext``'s digest and the broker execute permission."""
     async with admin_db.session() as session:
         await session.execute(
@@ -80,7 +83,7 @@ async def _seed_agent(admin_db: DatabaseSession, *, plaintext: str, status: str)
                 "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
                 "VALUES (:id, 'akrs-bot', :owner, 'system:test', :status, 'system:test')"
             ),
-            {"id": _AGENT, "owner": _OWNER, "status": status},
+            {"id": _AGENT, "owner": _OWNER if owned else None, "status": status},
         )
         await session.execute(
             text(
@@ -148,3 +151,67 @@ async def test_resolve_unknown_key_rejected_with_one_admin_session(
 
     assert identity is None
     assert checkouts[0] == 1
+
+
+async def _set_owner_active(admin_db: DatabaseSession, *, active: bool) -> None:
+    async with admin_db.session() as session:
+        await session.execute(
+            text("UPDATE users SET active = :active WHERE id = :id"),
+            {"active": active, "id": _OWNER},
+        )
+        await session.commit()
+
+
+@pytest.mark.parametrize("prefix", ["jak_", "jntc_live_"])
+async def test_resolve_key_follows_owner_status_with_one_admin_session(
+    admin_db: DatabaseSession, clean_tables: None, prefix: str
+) -> None:
+    """An active agent's key stops resolving while its owner is inactive, at
+    the same one-connection cost, and resolves again once the owner is
+    re-enabled. The agent's own status is never changed."""
+    plaintext = f"{prefix}{secrets.token_hex(16)}"
+    await _seed_agent(admin_db, plaintext=plaintext, status="active")
+    resolver = ApiKeyResolver(admin_db)
+
+    await _set_owner_active(admin_db, active=False)
+    with structlog.testing.capture_logs() as logs, _count_checkouts(admin_db) as checkouts:
+        identity = await resolver.resolve(plaintext)
+
+    assert identity is None
+    assert checkouts[0] == 1
+    owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
+    assert len(owner_inactive) == 1
+    assert owner_inactive[0]["log_level"] == "warning"
+    assert owner_inactive[0]["agent_id"] == _AGENT
+    assert owner_inactive[0]["owner_id"] == _OWNER
+    # The owner refusal is not reported as an inactive successor.
+    assert not [log for log in logs if log["event"] == "migrated_key_fail_closed"]
+
+    await _set_owner_active(admin_db, active=True)
+    identity = await resolver.resolve(plaintext)
+    assert identity is not None and identity.sub == _AGENT and identity.active is True
+
+    async with admin_db.session() as session:
+        status = (
+            await session.execute(text("SELECT status FROM agents WHERE id = :id"), {"id": _AGENT})
+        ).scalar_one()
+    assert status == "active"
+
+
+async def test_resolve_ownerless_agent_key_is_unaffected(
+    admin_db: DatabaseSession, clean_tables: None
+) -> None:
+    """An agent with no owner authenticates on its own status alone."""
+    plaintext = f"jak_{secrets.token_hex(16)}"
+    await _seed_agent(admin_db, plaintext=plaintext, status="active", owned=False)
+    # Another user's status has no bearing on an ownerless agent.
+    await _set_owner_active(admin_db, active=False)
+
+    with _count_checkouts(admin_db) as checkouts:
+        identity = await ApiKeyResolver(admin_db).resolve(plaintext)
+
+    assert checkouts[0] == 1
+    assert identity is not None
+    assert identity.sub == _AGENT
+    assert identity.parent_actor_id is None
+    assert identity.active is True
