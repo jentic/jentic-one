@@ -148,8 +148,8 @@ flowchart TB
 > nonces: twice what the default authorize rate limit lets one IP request in
 > that time. A client flooding the page gets 503 with `Retry-After` while
 > other clients still sign in; a flood spread over about 50 or more networks
-> at once can still fill it, which the redis backend or a larger budget
-> absorbs. Behind a reverse proxy, list it in
+> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which the
+> redis backend or a larger budget absorbs. Behind a reverse proxy, list it in
 > `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
 > proxy's address and its share.
 >

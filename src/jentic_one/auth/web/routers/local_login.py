@@ -39,8 +39,8 @@ re-renders one generic message (no user-enumeration *response* oracle, same
 posture as ``POST /auth/login``); each client network (IPv4 address or IPv6
 /64) may hold only a share of the live CSRF nonces, so one client flooding the
 form is answered 503 without refusing anyone else's login; accounts flagged
-``must_change_password``
-authenticate but cannot rejoin the flow until they rotate via the UI; the
+``must_change_password`` authenticate but cannot rejoin the flow until they
+rotate via the UI; the
 password only ever transits the system browser → server hop, never a native
 app.
 
