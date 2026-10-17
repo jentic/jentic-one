@@ -14,6 +14,7 @@ only the router's own logic.
 from __future__ import annotations
 
 import datetime as dt
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -50,6 +51,7 @@ from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
 )
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
@@ -88,6 +90,8 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[get_connect_session_service] = lambda: svc
     app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
+    # The connect limiters production installs on the shared-state backend.
+    install_connect_limiters(app, SimpleNamespace(state_backend=MemoryStateBackend()))  # type: ignore[arg-type]
     return app
 
 

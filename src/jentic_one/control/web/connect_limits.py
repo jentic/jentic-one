@@ -19,14 +19,11 @@ shared backend.
 
 from __future__ import annotations
 
-import structlog
 from fastapi import FastAPI
 
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state import MemoryStateBackend, RateLimitStore
-
-_logger = structlog.get_logger(__name__)
+from jentic_one.shared.state import RateLimitStore
 
 CONNECT_RPM = 30
 CONNECT_BURST = 10
@@ -59,15 +56,19 @@ def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
 def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
     """Return the installed limiter ``attr`` from ``app.state``.
 
-    An app assembled without :func:`install_connect_limiters` (a bare test app)
-    gets an in-process limiter, cached on the app so its buckets persist.
+    Raises:
+        RuntimeError: The app was assembled without
+            :func:`install_connect_limiters`. A private in-process limiter
+            would silently not share its buckets with the process's
+            shared-state backend, so a missing one is a wiring error.
     """
     limiter: RateLimiter | None = getattr(app.state, attr, None)
-    if limiter is not None:
-        return limiter
-    _logger.warning("control_connect_limiter_missing_using_in_memory_fallback", limiter=attr)
-    limiter = _limiter(MemoryStateBackend(), _NAMESPACES[attr])
-    setattr(app.state, attr, limiter)
+    if limiter is None:
+        raise RuntimeError(
+            f"the control connect limiter {attr!r} is not installed on this app; "
+            "assemble it with install_connect_limiters(app, ctx), which builds it on "
+            "the process's shared-state backend (Context.state_backend)"
+        )
     return limiter
 
 
