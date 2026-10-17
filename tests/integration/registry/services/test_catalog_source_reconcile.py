@@ -129,6 +129,33 @@ async def test_reconcile_seeds_entries_and_backfills_offline(catalog_ctx: CtxFac
         assert len(runs) == 1
 
 
+async def test_reconcile_counts_only_rows_it_could_have_mapped(catalog_ctx: CtxFactory) -> None:
+    async with catalog_ctx() as ctx:
+        await _seed(ctx, _blob("stripe.com", "acme.io"))
+        async with ctx.registry_db.transaction() as session:
+            manual = Api(vendor="sync-test.io", name="manual", version="v1")
+            stray = Api(vendor="sync-test.io", name="stray", version="v1")
+            session.add_all([manual, stray])
+            await session.flush()
+            session.add(
+                ApiRevision(
+                    api_id=stray.id,
+                    state="published",
+                    spec_digest="sha256:x",
+                    source_type="url",
+                    source_url="https://elsewhere.example/a.json",
+                    origin="catalog",
+                )
+            )
+        sync = CatalogSourceSync(ctx, deps_factory=_offline)
+        await sync.register_sources()
+        outcome = await reconcile_legacy_source(sync)
+        # "orphan" (an unknown catalog_api_id) and "stray" (an unknown spec URL)
+        # could have matched; "manual" has nothing to match and is not counted.
+        assert (outcome.backfilled, outcome.unmapped) == (2, 2)
+        assert (await _entry_ids(ctx))["manual"] is None
+
+
 async def test_reconcile_runs_on_exactly_one_of_two_replicas(catalog_ctx: CtxFactory) -> None:
     async with catalog_ctx() as ctx:
         await _seed(ctx, _blob("stripe.com", "acme.io"))
