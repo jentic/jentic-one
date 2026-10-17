@@ -57,7 +57,7 @@ async def test_credential_name_none_when_header_absent(monkeypatch: pytest.Monke
         )
     )
 
-    def fake_resolver(ctx: Any) -> MagicMock:
+    def fake_resolver(ctx: Any, *, cache: Any = None) -> MagicMock:
         async def _resolve(
             *,
             api: Any,
@@ -116,7 +116,7 @@ async def test_credential_name_forwarded_when_header_present(
         )
     )
 
-    def fake_resolver(ctx: Any) -> MagicMock:
+    def fake_resolver(ctx: Any, *, cache: Any = None) -> MagicMock:
         async def _resolve(
             *,
             api: Any,
@@ -173,7 +173,7 @@ async def test_ambiguous_response_contains_candidates(monkeypatch: pytest.Monkey
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
-        lambda ctx: MagicMock(resolve=resolve),
+        lambda ctx, *, cache=None: MagicMock(resolve=resolve),
     )
 
     with pytest.raises(AmbiguousMatchError) as raised:
@@ -208,7 +208,7 @@ async def test_invalid_credential_name_response_contains_candidates(
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
-        lambda ctx: MagicMock(resolve=resolve),
+        lambda ctx, *, cache=None: MagicMock(resolve=resolve),
     )
 
     with pytest.raises(InvalidCredentialNameError) as raised:

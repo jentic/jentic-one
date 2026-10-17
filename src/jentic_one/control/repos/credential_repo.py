@@ -165,6 +165,47 @@ class CredentialRepository:
                     set_committed_value(child, back, owner)
 
     @staticmethod
+    def material_relationship(stored_type: str) -> str | None:
+        """The secret-material child relationship read for ``stored_type`` (``None``: none)."""
+        return _MATERIAL_RELATIONSHIP.get(stored_type)
+
+    @staticmethod
+    async def get_active_material(
+        session: AsyncSession, credential_id: str, stored_type: str
+    ) -> tuple[Credential, Any] | None:
+        """One active credential's header and material child, in a single statement.
+
+        The child row joined to its header, which must be active and of
+        ``stored_type``; the header's own secret-material relationships stay
+        unloaded. ``None`` when the type has no material, the credential is
+        gone, disabled or re-typed, or it has no child row; the caller cannot
+        tell these apart and must re-resolve from the vendor's headers.
+        """
+        rel = _MATERIAL_RELATIONSHIP.get(stored_type)
+        if rel is None:
+            return None
+        prop = Credential.__mapper__.relationships[rel]
+        child_cls: Any = prop.mapper.class_
+        stmt = (
+            select(child_cls, Credential)
+            .join(Credential, Credential.id == child_cls.credential_id)
+            .where(
+                child_cls.credential_id == credential_id,
+                Credential.active.is_(True),
+                Credential.type == stored_type,
+            )
+            .options(*(raiseload(getattr(Credential, r)) for r in _CHILD_RELATIONSHIPS))
+            .limit(1)
+        )
+        if prop.back_populates:
+            stmt = stmt.options(lazyload(getattr(child_cls, prop.back_populates)))
+        row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        child, credential = row
+        return credential, child
+
+    @staticmethod
     async def list_all(
         session: AsyncSession,
         *,

@@ -158,7 +158,7 @@ def _patch_refresher(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
 def _patch_resolved(monkeypatch: pytest.MonkeyPatch, resolved: ResolvedCredential) -> None:
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
-        lambda ctx: MagicMock(resolve=AsyncMock(return_value=resolved)),
+        lambda ctx, *, cache=None: MagicMock(resolve=AsyncMock(return_value=resolved)),
     )
 
 
@@ -166,7 +166,7 @@ def _patch_resolver(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
     resolve = AsyncMock(side_effect=exc)
     monkeypatch.setattr(
         "jentic_one.broker.services.credentials.orchestrator.CredentialResolver",
-        lambda ctx: MagicMock(resolve=resolve),
+        lambda ctx, *, cache=None: MagicMock(resolve=resolve),
     )
 
 

@@ -155,6 +155,13 @@
     "BrokerConfig": {
       "description": "Broker surface configuration.",
       "properties": {
+        "credential_cache_ttl_s": {
+          "default": 3.0,
+          "description": "TTL (seconds) of the per-process cache of a vendor's non-secret credential headers that sync execute requests select from. Secret material, the caller's bindings and the audit event are never cached. A credential write served by this process clears the cache immediately; one served by another process takes effect within the TTL. 0 disables the cache.",
+          "minimum": 0.0,
+          "title": "Credential Cache Ttl S",
+          "type": "number"
+        },
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },
