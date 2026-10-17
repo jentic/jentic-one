@@ -119,7 +119,13 @@ global:
       enabled: false
       image: otel/opentelemetry-collector-contrib:latest
       endpoint: ""
-      samplingRatio: "1.0"
+      # Maps to the application's `observability.tracing.sample_ratio`
+      # (JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO): the fraction of traces
+      # recorded and exported, including requests that arrive with a sampled
+      # `traceparent`. Empty = the application's own default (1.0) and no env
+      # var rendered, which leaves `sample_ratio` in a mounted config file
+      # effective.
+      samplingRatio: ""
       tls:
         insecure: true
     logging:

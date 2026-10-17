@@ -158,14 +158,25 @@ def test_check_fresh_refuses_a_caller_that_expires_mid_run() -> None:
         env.check_fresh(callers=["at"], run_s=1700, now=now)
 
 
-def test_check_fresh_says_split_the_run_when_it_outlasts_the_token_lifetime() -> None:
+@pytest.mark.parametrize(
+    ("shorten", "hint"),
+    [(None, "shorten the run"), ("lower --duration", "lower --duration")],
+    ids=["default", "caller-specific"],
+)
+def test_check_fresh_says_split_the_run_when_it_outlasts_the_token_lifetime(
+    shorten: str | None, hint: str
+) -> None:
     now = 1_000_000.0
     env = _env(at=Caller("at", "at_x", "ag", expires_at=now + 3600, issued_at=now))
     with pytest.raises(common.TokenLifetimeTooShortError) as exc:
-        env.check_fresh(callers=["at"], run_s=2 * 3600, now=now)
+        if shorten is None:
+            env.check_fresh(callers=["at"], run_s=2 * 3600, now=now)
+        else:
+            env.check_fresh(callers=["at"], run_s=2 * 3600, now=now, shorten=shorten)
     assert isinstance(exc.value, SystemExit)
     assert "make perf-provision" not in str(exc.value)
-    assert "--only" in str(exc.value)
+    assert f"— {hint} (or raise the TTLs" in str(exc.value)
+    assert "--only" not in str(exc.value)
 
 
 def test_check_fresh_says_reprovision_when_a_fresh_token_would_fit() -> None:

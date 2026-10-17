@@ -1015,6 +1015,34 @@ def test_render_dead_logging_values_are_gone() -> None:
 
 
 @pytest.mark.smoke
+def test_render_sampling_ratio_reaches_the_app_and_is_opt_in() -> None:
+    """`global.observability.otel.samplingRatio` sets the app's
+    `observability.tracing.sample_ratio`, on every first-party service, only
+    when set — an always-on env var would outrank a mounted config file. The
+    collector sidecar gets no sampling env: its config never reads one."""
+    for doc in _manifests(*_ALL_SURFACES_ON, "--set", "global.observability.otel.enabled=true"):
+        if doc.get("kind") != "Deployment":
+            continue
+        for container in doc["spec"]["template"]["spec"]["containers"]:
+            names = _env_names(container)
+            assert "JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO" not in names
+            assert "OTEL_SAMPLING_RATIO" not in names
+    # An integer 0 from --set is falsy in Go templates; it must still render.
+    deployments = {
+        doc["metadata"]["name"]: doc
+        for doc in _manifests(
+            *_ALL_SURFACES_ON, "--set", "global.observability.otel.samplingRatio=0"
+        )
+        if doc.get("kind") == "Deployment"
+    }
+    assert set(deployments) >= {f"jentic-{name}" for name in _SUBCHART_APPS} | {"jentic-app"}
+    for name, doc in deployments.items():
+        assert {"name": "JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO", "value": "0"} in _env(
+            doc["spec"]["template"]["spec"]["containers"][0]
+        ), name
+
+
+@pytest.mark.smoke
 def test_render_migrate_job_extra_args() -> None:
     """migrate.extraArgs reaches the runner; by default the Job passes none.
 

@@ -159,12 +159,26 @@ def record(args: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(["docker", "exec", PYSPY_CONTAINER, "py-spy", "record", *args.split()])
 
 
+def raw_lines(raw: Path) -> list[str]:
+    """Lines of a py-spy ``--format raw`` profile, decoded leniently.
+
+    py-spy copies frame names out of the target's memory as raw bytes; a sample
+    torn mid-update can carry invalid UTF-8. Replacement only touches the torn
+    name: the ``;`` separators and the trailing count are ASCII and survive.
+    Lines split on ``\\n`` only: ``str.splitlines`` also breaks on control
+    characters (``\\x0b``, ``\\x1c``…, ``\\u2028``) that a torn name can carry,
+    which would orphan the sample count.
+    """
+    text = raw.read_text(encoding="utf-8", errors="replace")
+    return [line.rstrip("\r") for line in text.split("\n") if line]
+
+
 def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
     total = 0
     buckets: collections.Counter[str] = collections.Counter()
     leaves: collections.Counter[str] = collections.Counter()
     probes: collections.Counter[str] = collections.Counter()
-    for line in raw.read_text().splitlines():
+    for line in raw_lines(raw):
         stack, _, count = line.rpartition(" ")
         n = int(count)
         total += n
@@ -244,6 +258,73 @@ def discard_on_failure(stem: str) -> Iterator[None]:
         raise
 
 
+def capture(
+    *,
+    vendor: str,
+    caller: str,
+    concurrency: int,
+    duration: int,
+    rate: int,
+    min_ok: float = DEFAULT_MIN_OK,
+) -> tuple[str, dict[str, Any]]:
+    """Record ``duration`` s of py-spy under load; returns (stem, oha summary).
+
+    Raises ``LoadError`` unless the load ran for the whole window with at least
+    ``min_ok`` 200s. Any failure (rejected load, py-spy timeout or failure,
+    Ctrl-C) deletes that run's flamegraph and raw stacks first, so callers never
+    analyse (or keep) a profile of an idle broker. Callers that analyse the
+    returned stem wrap that in ``discard_on_failure`` too.
+    """
+    env = PerfEnv.load()
+    url = f"{env.broker_url}/{upstream_base(env.vendors[vendor]['alias'])}{ECHO_PATH}"
+    token = env.caller(caller).token
+    stem = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{vendor}-c{concurrency}"
+    # Raw (for the bucket table) and SVG recorded concurrently over the same
+    # window; --nonblocking samplers only read memory, so they don't stack up
+    # pauses on the broker.
+    warm_s, load_s = 5, 5 + duration + 5
+    # Sidecar start (pip install) + the load window.
+    env.check_fresh(callers=[caller], run_s=load_s + 120, shorten="lower --duration")
+    result: dict[str, Any] = {}
+    errors: list[BaseException] = []
+
+    def load() -> None:
+        try:
+            a = oha_args(
+                url, Case("profile"), token, n=None, conns=concurrency, rate=None,
+                duration_s=load_s,
+            )  # fmt: skip
+            result.update(summarise(run_oha(a), 200))
+        except BaseException as exc:
+            errors.append(exc)
+
+    # restore_on_exit sits inside discard_on_failure, so the sidecars are gone
+    # (and py-spy can't write any more) before a failed run's files are deleted.
+    with (
+        exclusive_run("pyspy_profile"),
+        discard_on_failure(stem),
+        restore_on_exit(("remove oha sidecar", stop_oha), ("remove py-spy sidecar", stop_pyspy)),
+    ):
+        cid = broker_container()
+        print(f"starting py-spy sidecar (pip install py-spy=={PYSPY_VERSION}) ...", flush=True)
+        start_pyspy(cid)
+        start_oha()
+        loader = threading.Thread(target=load, daemon=True)
+        loader.start()
+        time.sleep(warm_s)
+        common = f"--pid 1 --subprocesses --nonblocking --duration {duration} --rate {rate}"
+        procs = [
+            record(f"{common} --format raw --output /out/{stem}.txt"),
+            record(f"{common} --output /out/{stem}.svg"),
+        ]
+        codes = [proc.wait(timeout=duration + 60) for proc in procs]
+        if any(codes):
+            raise RuntimeError(f"py-spy record failed: exit codes {codes}")
+        loader.join(timeout=load_s + 30)
+        check_load_or_discard(stem, result, errors, loader.is_alive(), min_ok)
+    return stem, result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="py-spy the broker under closed-loop load")
     parser.add_argument("--vendor", default="perf-noauth")
@@ -259,59 +340,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    env = PerfEnv.load()
-    url = f"{env.broker_url}/{upstream_base(env.vendors[args.vendor]['alias'])}{ECHO_PATH}"
-    token = env.caller(args.caller).token
-    stem = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{args.vendor}-c{args.concurrency}"
-    # Raw (for the bucket table) and SVG recorded concurrently over the same
-    # window; --nonblocking samplers only read memory, so they don't stack up
-    # pauses on the broker.
-    warm_s, load_s = 5, 5 + args.duration + 5
-    # Sidecar start (pip install) + the load window.
-    env.check_fresh(callers=[args.caller], run_s=load_s + 120)
-    result: dict[str, Any] = {}
-    errors: list[BaseException] = []
-
-    def load() -> None:
-        try:
-            a = oha_args(
-                url, Case("profile"), token, n=None, conns=args.concurrency, rate=None,
-                duration_s=load_s,
-            )  # fmt: skip
-            result.update(summarise(run_oha(a), 200))
-        except BaseException as exc:
-            errors.append(exc)
-
-    with (
-        exclusive_run("pyspy_profile"),
-        discard_on_failure(stem),
-    ):
-        # Inside discard_on_failure, so the sidecars are gone (and py-spy can't
-        # write any more) before a failed run's files are deleted.
-        with restore_on_exit(
-            ("remove oha sidecar", stop_oha), ("remove py-spy sidecar", stop_pyspy)
-        ):
-            cid = broker_container()
-            print(f"starting py-spy sidecar (pip install py-spy=={PYSPY_VERSION}) ...", flush=True)
-            start_pyspy(cid)
-            start_oha()
-            loader = threading.Thread(target=load, daemon=True)
-            loader.start()
-            time.sleep(warm_s)
-            common = (
-                f"--pid 1 --subprocesses --nonblocking --duration {args.duration} "
-                f"--rate {args.rate}"
-            )
-            procs = [
-                record(f"{common} --format raw --output /out/{stem}.txt"),
-                record(f"{common} --output /out/{stem}.svg"),
-            ]
-            codes = [proc.wait(timeout=args.duration + 60) for proc in procs]
-            if any(codes):
-                raise RuntimeError(f"py-spy record failed: exit codes {codes}")
-            loader.join(timeout=load_s + 30)
-            check_load_or_discard(stem, result, errors, loader.is_alive(), args.min_ok)
-
+    stem, result = capture(
+        vendor=args.vendor,
+        caller=args.caller,
+        concurrency=args.concurrency,
+        duration=args.duration,
+        rate=args.rate,
+        min_ok=args.min_ok,
+    )
+    with discard_on_failure(stem):
         summary = analyse(OUT_DIR / f"{stem}.txt")
         print(f"load: {result['rps']:.1f} rps  p50={result['p50_ms']:.1f}ms")
         for name, share in summary["buckets"].items():
