@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -110,3 +111,35 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
         return [or_(*conditions)]
 
     raise ValueError(f"Unknown model for access scoping: {model.__name__}")
+
+
+def build_lookup_user_filters(
+    identity: Identity, *, extra_user_ids: Collection[str] = ()
+) -> list[ColumnElement[bool]]:
+    """Filter the ``users`` rows an actor lookup may label for the caller.
+
+    ``org:admin`` -> no restriction. Anyone else may label the users it can
+    already see by id elsewhere: itself, the owner or approver of an agent it
+    can see (the ``Agent`` filter), the actor of an event or audit entry it can
+    see (the ``Event`` and ``AuditEntry`` filters), and ``extra_user_ids``, the
+    ids the caller resolved from other surfaces (the creators of credentials it
+    can read). Each arm is a correlated ``EXISTS`` probed per looked-up user,
+    so the cost is bounded by the ids being looked up, not by how many rows
+    the caller can see.
+    """
+    if ORG_ADMIN in identity.permissions:
+        return []
+
+    agent_filters = build_access_filters(identity, Agent)
+    event_filters = build_access_filters(identity, Event)
+    audit_filters = build_access_filters(identity, AuditEntry)
+    conditions: list[ColumnElement[bool]] = [
+        *build_access_filters(identity, User),
+        exists().where(Agent.owner_id == User.id, *agent_filters),
+        exists().where(Agent.approved_by == User.id, *agent_filters),
+        exists().where(Event.actor_id == User.id, *event_filters),
+        exists().where(AuditEntry.actor_id == User.id, *audit_filters),
+    ]
+    if extra_user_ids:
+        conditions.append(User.id.in_(list(extra_user_ids)))
+    return [or_(*conditions)]

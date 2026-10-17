@@ -498,6 +498,30 @@ class CredentialService:
             )
             return self._to_redacted(credential, registration_names=names)
 
+    async def visible_creator_ids(
+        self, actor_ids: Sequence[str], *, identity: Identity
+    ) -> set[str]:
+        """Return the ids in ``actor_ids`` that created a credential the caller can read.
+
+        Uses the same read filters as :meth:`get`, extension-registered
+        visibility (``include_shared``) included, so a credential shared with
+        the caller names its creator too. The credential read is one query,
+        bounded by ``actor_ids``.
+        """
+        if not actor_ids:
+            return set()
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            return await CredentialRepository.get_creators_among(
+                session, actor_ids, filters=access_filters
+            )
+
     async def list_agents(
         self,
         credential_id: str,

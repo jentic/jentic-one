@@ -19125,7 +19125,7 @@
     "/actors/lookup": {
       "description": "`GET`: Resolve actor names by id.",
       "get": {
-        "description": "Resolve user and agent ids to display names.\n\nPass each id as a repeated `id` parameter. Returns `id`, `actor_type`,\n`name` and `active` for each id the caller may see. Any signed-in caller\nmay call it, so a UI can label the owners, approvers and actors it\nalready holds by id without `users:read`.\n\nUsers resolve for every caller. Agents resolve only when visible to the\ncaller: itself, its own agents, its owner's agents with\n`owner:agents:read`, or every agent for `org:admin`. Ids that match no\nvisible actor are silently left out rather than reported as errors.\nListing the whole directory needs `users:read` on `GET /actors`.",
+        "description": "Resolve user and agent ids to display names.\n\nPass each id as a repeated `id` parameter. Returns `id`, `actor_type`,\n`name` and `active` for each id the caller may see. Any signed-in caller\nmay call it, so a UI can label the owners, approvers and actors it\nalready holds by id without `users:read`.\n\nAgents resolve when visible to the caller: itself, its own agents, its\nowner's agents with `owner:agents:read`, or every agent for `org:admin`.\nUsers resolve when the caller can already see them by id: itself, the\nowner or approver of an agent it can see, the actor on an event or audit\nentry it can see, or the creator of a credential it can read. `org:admin`\nresolves every user. Ids that match no visible actor are silently left\nout, exactly like unknown ids. Listing the whole directory needs\n`users:read` on `GET /actors`.",
         "operationId": "lookupActors",
         "parameters": [
           {

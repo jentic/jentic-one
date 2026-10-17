@@ -9571,11 +9571,14 @@ type ClientInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself, the
+	// owner or approver of an agent it can see, the actor on an event or audit
+	// entry it can see, or the creator of a credential it can read. `org:admin`
+	// resolves every user. Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12350,11 +12353,14 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself, the
+// owner or approver of an agent it can see, the actor on an event or audit
+// entry it can see, or the creator of a credential it can read. `org:admin`
+// resolves every user. Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -25891,11 +25897,14 @@ type ClientWithResponsesInterface interface {
 	// may call it, so a UI can label the owners, approvers and actors it
 	// already holds by id without `users:read`.
 	//
-	// Users resolve for every caller. Agents resolve only when visible to the
-	// caller: itself, its own agents, its owner's agents with
-	// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-	// visible actor are silently left out rather than reported as errors.
-	// Listing the whole directory needs `users:read` on `GET /actors`.
+	// Agents resolve when visible to the caller: itself, its own agents, its
+	// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+	// Users resolve when the caller can already see them by id: itself, the
+	// owner or approver of an agent it can see, the actor on an event or audit
+	// entry it can see, or the creator of a credential it can read. `org:admin`
+	// resolves every user. Ids that match no visible actor are silently left
+	// out, exactly like unknown ids. Listing the whole directory needs
+	// `users:read` on `GET /actors`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -43638,11 +43647,14 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 // may call it, so a UI can label the owners, approvers and actors it
 // already holds by id without `users:read`.
 //
-// Users resolve for every caller. Agents resolve only when visible to the
-// caller: itself, its own agents, its owner's agents with
-// `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-// visible actor are silently left out rather than reported as errors.
-// Listing the whole directory needs `users:read` on `GET /actors`.
+// Agents resolve when visible to the caller: itself, its own agents, its
+// owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+// Users resolve when the caller can already see them by id: itself, the
+// owner or approver of an agent it can see, the actor on an event or audit
+// entry it can see, or the creator of a credential it can read. `org:admin`
+// resolves every user. Ids that match no visible actor are silently left
+// out, exactly like unknown ids. Listing the whole directory needs
+// `users:read` on `GET /actors`.
 //
 // Returns a wrapper object for the known response body format(s).
 //

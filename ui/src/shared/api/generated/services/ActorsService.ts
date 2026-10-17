@@ -60,11 +60,14 @@ export class ActorsService {
      * may call it, so a UI can label the owners, approvers and actors it
      * already holds by id without `users:read`.
      *
-     * Users resolve for every caller. Agents resolve only when visible to the
-     * caller: itself, its own agents, its owner's agents with
-     * `owner:agents:read`, or every agent for `org:admin`. Ids that match no
-     * visible actor are silently left out rather than reported as errors.
-     * Listing the whole directory needs `users:read` on `GET /actors`.
+     * Agents resolve when visible to the caller: itself, its own agents, its
+     * owner's agents with `owner:agents:read`, or every agent for `org:admin`.
+     * Users resolve when the caller can already see them by id: itself, the
+     * owner or approver of an agent it can see, the actor on an event or audit
+     * entry it can see, or the creator of a credential it can read. `org:admin`
+     * resolves every user. Ids that match no visible actor are silently left
+     * out, exactly like unknown ids. Listing the whole directory needs
+     * `users:read` on `GET /actors`.
      * @returns ActorLookupResponse Successful Response
      * @throws ApiError
      */
