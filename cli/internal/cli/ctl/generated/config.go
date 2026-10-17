@@ -1368,9 +1368,9 @@ type IdempotencyConfig struct {
 	PendingTtlS float64 `json:"pending_ttl_s,omitempty,omitzero" yaml:"pending_ttl_s,omitempty" mapstructure:"pending_ttl_s,omitempty"`
 
 	// Replay window of a completed Idempotency-Key record, in seconds. Unset, it is
-	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other. On
-	// memory, every record is held in process for this long, so the TTL divides the
-	// sustained idempotent request rate the idem budget can hold.
+	// 3600 (1 h) on the memory shared-state backend and 86400 (24 h) on any other
+	// backend. On memory, every record is held in process for this long, so the TTL
+	// divides the sustained idempotent request rate the idem budget can hold.
 	TtlS interface{} `json:"ttl_s,omitempty,omitzero" yaml:"ttl_s,omitempty" mapstructure:"ttl_s,omitempty"`
 }
 

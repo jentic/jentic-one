@@ -82,18 +82,20 @@ def install_on_app(app: FastAPI, ctx: Context) -> None:
     get the same chain and an injected installer's replacement is never
     clobbered by a later surface hook.
     """
-    # The process's one backend (closed last by the app lifespan, via
-    # ctx.close_state_backend()), shared with every
-    # other surface this process serves.
+    # The process's one backend, shared with every other surface this process
+    # serves; the app lifespan closes it last (ctx.close_state_backend()).
     app.state.auth_state_backend = ctx.state_backend
     if ctx.config.state.backend == MEMORY_BACKEND:
         # Rate limiters and consent-handle state live per-process on this
         # backend, so a second worker or replica of this surface gets
         # independent buckets and loses the anti-replay guarantee across them.
         logger.warning(
-            "auth_state_backend_memory_selected — rate limits and consent "
-            "handles are per-process; run one process per surface, or select a "
-            "shared backend registered with register_state_backend",
+            "auth_state_backend_memory_selected",
+            detail="rate limits and consent handles are per-process",
+            actionable_step=(
+                "Run one process per surface, or select a shared backend "
+                "registered with register_state_backend."
+            ),
         )
 
 

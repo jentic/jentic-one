@@ -2752,6 +2752,21 @@ def test_conflicting_old_and_new_sections_fail_to_load(
 
 
 @pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_an_invalid_deprecated_value_under_a_valid_state_value_is_a_conflict(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """A key set under both, valid only under ``state``, must not be silently dropped."""
+    sample_config_dict["state"] = {"memory": {"max_total_bytes": 4096}}
+    path = _write(tmp_path, sample_config_dict)
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "0"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"broker\.resilience\.backend both set memory"),
+    ):
+        load_config(path)
+
+
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
 def test_the_deprecated_section_may_be_a_model_instance(sample_config_dict: dict[str, Any]):
     """A programmatic caller passing a StateBackendConfig keeps working."""
     sample_config_dict["broker"] = {

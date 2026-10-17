@@ -187,9 +187,9 @@ credentials:
 # name, with its settings under state.options. The built-in redis backend is
 # deprecated and will be removed; it needs the optional redis extra
 # (pip install jentic-one[redis]), which is NOT in the published container
-# image. This section was broker.resilience.backend before; that path (and its
-# JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read for one
-# release, with a deprecation warning.
+# image. The deprecated broker.resilience.backend path (and its
+# JENTIC__BROKER__RESILIENCE__BACKEND__* env vars) is still read into this
+# section for one release, with a deprecation warning.
 state:
   backend: memory
   # backend: my-registered-backend

@@ -1262,21 +1262,25 @@ def _install_notes(*args: str) -> str:
 
 @pytest.mark.smoke
 @pytest.mark.parametrize(
-    ("overrides", "warned"),
+    ("values", "overrides", "warned"),
     [
-        ((), None),
-        (("--set", "gateway.replicas=3"), None),
-        (("--set", "app.replicas=2"), "app.replicas=2"),
-        (("--set", "broker.replicas=3", "--set", "registry.replicas=2"), "registry.replicas=2"),
+        ("local-combined.yaml", (), None),
+        # The parts shape enables the gateway, so its exemption is exercised.
+        ("local-parts.yaml", ("--set", "gateway.replicas=3"), None),
+        # A disabled surface's replicas never render a pod, so it never warns.
+        ("local-combined.yaml", ("--set", "control.replicas=2"), None),
+        ("local-combined.yaml", ("--set", "app.replicas=2"), "app.replicas=2"),
+        (
+            "local-parts.yaml",
+            ("--set", "broker.replicas=3", "--set", "registry.replicas=2"),
+            "registry.replicas=2, broker.replicas=3",
+        ),
     ],
 )
 def test_notes_warn_when_a_stateful_surface_runs_more_than_one_replica(
-    overrides: tuple[str, ...], warned: str | None
+    values: str, overrides: tuple[str, ...], warned: str | None
 ) -> None:
     """One process per surface: >1 replica warns (gateway exempt) and never fails."""
-    values = (
-        "local-combined.yaml" if not any("registry" in o for o in overrides) else "local-parts.yaml"
-    )
     notes = _install_notes("-f", str(VALUES_DIR / values), *overrides)
     if warned is None:
         assert "WARNING" not in notes

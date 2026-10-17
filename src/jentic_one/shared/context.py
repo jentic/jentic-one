@@ -316,12 +316,25 @@ class Context:
                 await db.close()
 
     async def close_state_backend(self) -> None:
-        """Close the process's shared-state backend, if built. Idempotent."""
+        """Close the process's shared-state backend, if built. Idempotent.
+
+        Best-effort, like the other shutdown steps: a failing ``aclose()`` is
+        logged, not raised, so it never masks the error that ended a lifespan
+        (a failed startup, say). The closed instance stays in place; the
+        process does not build a second one.
+        """
         backend = self._state_backend
         if backend is None or self._state_backend_closed:
             return
         self._state_backend_closed = True
-        await backend.aclose()
+        try:
+            await backend.aclose()
+        except Exception:
+            logger.warning(
+                "state_backend_close_failed",
+                backend=self._config.state.backend,
+                exc_info=True,
+            )
 
     async def __aenter__(self) -> Context:
         await self.startup()

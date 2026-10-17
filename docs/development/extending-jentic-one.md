@@ -139,7 +139,10 @@ register_state_backend("my-cluster", build_cluster_backend)
 ```
 
 Operators select it with `state.backend: my-cluster` (settings under
-`state.options`, or `JENTIC__STATE__OPTIONS__URL`). The backend must implement
+`state.options`, or `JENTIC__STATE__OPTIONS__URL`). `state.options` is a plain
+mapping, so the config never redacts it: type a credential in it as
+`SecretStr` in your options model and keep it out of committed config files
+(set it with a `JENTIC__STATE__OPTIONS__*` env var). The backend must implement
 every `SharedStateBackend` method atomically across processes; subclass
 `BaseStateBackendContract` (step 3) to prove it.
 
@@ -284,6 +287,8 @@ expire. `BaseStateBackendContract` runs it against a fresh backend per test
 (its tests are `async def`, so run them under pytest-asyncio):
 
 ```python
+import uuid
+
 from jentic_one.shared.state import SharedStateBackend
 from jentic_one.testing import BaseStateBackendContract
 

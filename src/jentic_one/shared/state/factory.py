@@ -9,7 +9,11 @@ Backends are looked up by name in a registry. ``memory`` (the in-process
 default) and ``redis`` (deprecated) are built in; an extension adds its own
 with :func:`register_state_backend` before the app is built::
 
-    from jentic_one.shared.state import StateBackendBuildContext, register_state_backend
+    from jentic_one.shared.state import (
+        SharedStateBackend,
+        StateBackendBuildContext,
+        register_state_backend,
+    )
 
     def build_cluster(ctx: StateBackendBuildContext) -> SharedStateBackend:
         opts = ClusterOptions.model_validate(ctx.config.options)
@@ -299,10 +303,13 @@ def _build_redis(ctx: StateBackendBuildContext) -> SharedStateBackend:
     )
     if cfg.redis_key_prefix == _DEFAULT_REDIS_KEY_PREFIX:
         _logger.warning(
-            "redis state backend using the default key prefix; set a "
-            "per-environment redis_key_prefix to avoid cross-deployment "
-            "key collisions on a shared Redis cluster",
+            "state_backend_default_redis_key_prefix",
             redis_key_prefix=cfg.redis_key_prefix,
+            detail="the redis state backend is using the default key prefix",
+            actionable_step=(
+                "Set a per-environment state.redis_key_prefix to avoid "
+                "cross-deployment key collisions on a shared Redis."
+            ),
         )
     # Imported lazily so the default memory path needs no ``redis`` dependency.
     # ``redis`` ships as an optional extra (``pip install jentic-one[redis]``),
