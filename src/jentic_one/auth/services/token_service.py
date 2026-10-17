@@ -137,6 +137,24 @@ async def _resolve_grant_gate(
     return True, frozenset(grant.scopes)
 
 
+def log_agent_owner_inactive(agent_id: str, owner_id: str | None) -> None:
+    """Log the refusal of an active agent whose owner is disabled or deleted.
+
+    WARNING: the caller gets a client-side refusal, but one an operator can
+    act on (re-enable the owner, or move the agent to an active owner).
+    """
+    logger.warning(
+        "agent_owner_inactive",
+        agent_id=agent_id,
+        owner_id=owner_id,
+        actionable_step=(
+            "This agent's owner is disabled or deleted, so the agent cannot "
+            "authenticate. Re-enable the owner, or transfer the agent to an "
+            "active owner."
+        ),
+    )
+
+
 async def _agent_may_act(session: AsyncSession, agent_id: str) -> tuple[Agent | None, bool]:
     """The agent row and whether it may authenticate, from one statement.
 
@@ -153,17 +171,7 @@ async def _agent_may_act(session: AsyncSession, agent_id: str) -> tuple[Agent | 
     if agent.status != ActorStatus.ACTIVE:
         return agent, False
     if not owner_active:
-        # WARNING: a client-side 401, but one an operator can act on.
-        logger.warning(
-            "agent_owner_inactive",
-            agent_id=agent.id,
-            owner_id=agent.owner_id,
-            actionable_step=(
-                "This agent's owner is disabled or deleted, so the agent cannot "
-                "authenticate. Re-enable the owner, or transfer the agent to an "
-                "active owner."
-            ),
-        )
+        log_agent_owner_inactive(agent.id, agent.owner_id)
         return agent, False
     return agent, True
 

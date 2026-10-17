@@ -23,6 +23,7 @@ from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentRepository,
@@ -512,6 +513,64 @@ async def test_kill_radius_agent_disable(integration_context: Context, clean_gra
     assert broker_resolved is not None and broker_resolved.active is False
     with pytest.raises(InvalidGrantError, match="not active"):
         await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+
+
+async def _set_user_active(ctx: Context, user_id: str, *, active: bool) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(update(User).where(User.id == user_id).values(active=active))
+        await session.commit()
+
+
+async def test_kill_radius_owner_disable(integration_context: Context, clean_grants: None) -> None:
+    """Disabling the agent's owner makes grant-channel tokens inactive on both
+    resolvers and refuses refresh and new code exchanges; re-enabling the
+    owner restores them. The agent's own status is untouched."""
+    user_id = await _seed_user(integration_context, "usr_g_kill4")
+    agent_id = await _seed_agent(integration_context, owner_id=user_id, scopes=["apis:read"])
+    await _seed_client(integration_context, allowed_scopes=["apis:read"])
+    grant_id, access, refresh, _ = await _mint_grant_channel_tokens(
+        integration_context, user_id=user_id, agent_id=agent_id, grant_scopes=["apis:read"]
+    )
+    token_svc = TokenService(integration_context)
+    broker = InProcessTokenResolver(integration_context.admin_db)
+    authorize_svc = AuthorizeService(integration_context)
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=_CLIENT_ID,
+        redirect_uri=_REDIRECT_URI,
+        code_challenge=_code_challenge(_CODE_VERIFIER),
+        scopes="apis:read",
+        grant_id=grant_id,
+    )
+
+    await _set_user_active(integration_context, user_id, active=False)
+
+    resolved = await token_svc.resolve_access_token(access)
+    assert resolved is not None and resolved.active is False
+    broker_resolved = await broker.resolve_access_token(access)
+    assert broker_resolved is not None and broker_resolved.active is False
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+    with pytest.raises(InvalidGrantError, match="granted agent is not active"):
+        await authorize_svc.exchange_code(
+            code=code,
+            code_verifier=_CODE_VERIFIER,
+            redirect_uri=_REDIRECT_URI,
+            client_id=_CLIENT_ID,
+            oauth_client_id=_CLIENT_ID,
+        )
+
+    await _set_user_active(integration_context, user_id, active=True)
+
+    resolved = await token_svc.resolve_access_token(access)
+    assert resolved is not None and resolved.active is True
+    broker_resolved = await broker.resolve_access_token(access)
+    assert broker_resolved is not None and broker_resolved.active is True
+    rotated, _rt, _scopes = await token_svc.refresh(refresh, client_id=_CLIENT_ID)
+    assert rotated.startswith("at_")
+    async with integration_context.admin_db.session() as session:
+        agent = await AgentRepository.get_by_id(session, agent_id)
+        assert agent is not None and agent.status == ActorStatus.ACTIVE
 
 
 # --- refresh re-check + revoke authorization --------------------------------
