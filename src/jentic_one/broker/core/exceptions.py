@@ -683,3 +683,61 @@ def approval_pending_limit_directive(*, pending: int, limit: int) -> AgentDirect
             "send the call again once one is decided."
         ),
     )
+
+
+def draft_revision_directive(
+    *,
+    vendor: str,
+    name: str,
+    version: str,
+    revision_id: str,
+    promote_path: str,
+    pin_header: str | None,
+) -> AgentDirective:
+    """Directive for an ``operation_not_found`` 404 that only a draft revision serves.
+
+    The URL is registered — in a ``draft`` revision nobody promoted — so
+    re-importing the spec or searching for another operation will not help.
+    ``pin_header`` is the ``Jentic-Revision`` value that routes the call through
+    the draft (it keeps any pins the request already carried), set when the
+    registry's pin rule accepts the caller's pin: the agent resends once with
+    ``parameters.headers``. ``None`` means the draft's server hosts need
+    operator review (``credentials:write``) before anyone without that scope
+    may pin or promote it, so the strategy is ``prompt_human``.
+    ``promote_path`` is a control API path, not a broker one.
+    """
+    api = f"{vendor}/{name}/{version}"
+    command = f"jentic apis promote {api} {revision_id}"
+    parameters: dict[str, Any] = {
+        "api": {"vendor": vendor, "name": name, "version": version},
+        "revision_id": revision_id,
+        "promote_path": promote_path,
+        "suggested_command": command,
+    }
+    lead = (
+        f"This URL is served only by draft revision {revision_id} of '{api}', which has "
+        "not been promoted, so unpinned calls do not reach it. Do not re-import the spec "
+        "or search for another operation — it is already registered."
+    )
+    if pin_header is not None:
+        parameters["headers"] = {"Jentic-Revision": pin_header}
+        return AgentDirective(
+            strategy="modify_headers",
+            parameters=parameters,
+            human_readable_instruction=(
+                f"{lead} Resend the same request once with the Jentic-Revision header in "
+                "parameters.headers to call the draft. For unpinned calls to reach it, it "
+                f"must be promoted (`{command}`, needs apis:write, and credentials:write "
+                "if it changes the server hosts of an API with bound credentials)."
+            ),
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters=parameters,
+        human_readable_instruction=(
+            f"{lead} Its server hosts differ from the hosts the API's bound credentials "
+            "are sent to, so only an operator holding credentials:write may pin or "
+            f"promote it. Ask your operator to review and promote it (`{command}`, "
+            "needs apis:write and credentials:write), then retry this call."
+        ),
+    )

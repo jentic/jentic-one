@@ -51,6 +51,7 @@ from jentic_one.broker.core.exceptions import OperationNotFoundError
 from jentic_one.broker.web.routers.execute import _handle, _handle_unregistered_url
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
+    DraftRevisionMatch,
     ResolveResult,
     RevisionPinOutcome,
     RevisionPinResult,
@@ -371,6 +372,16 @@ class _MissResolver:
     ) -> ResolveResult | None:
         return None
 
+    async def resolve_revision_pin(
+        self, *, vendor: str, name: str, version: str, rev_label: str, identity: Identity
+    ) -> RevisionPinResult:
+        return RevisionPinResult(outcome=RevisionPinOutcome.UNKNOWN)
+
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        return None
+
 
 class _PinnedMissResolver:
     """Discovery hits, the pin resolves, the pinned re-resolve misses.
@@ -394,6 +405,11 @@ class _PinnedMissResolver:
         self, *, vendor: str, name: str, version: str, rev_label: str, identity: Identity
     ) -> RevisionPinResult:
         return RevisionPinResult(outcome=RevisionPinOutcome.RESOLVED, revision_id=uuid.uuid4())
+
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        return None
 
 
 def _asgi_request(

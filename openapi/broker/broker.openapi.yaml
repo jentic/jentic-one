@@ -1361,6 +1361,19 @@ components:
         the path component refers to a resource the upstream itself
         doesn't recognise. Body is RFC 9457
         `application/problem+json`.
+
+        When no live revision serves the URL but a `draft` (unpromoted)
+        revision does, and the caller submitted that draft or may pin it,
+        the problem keeps `type: operation_not_found` and status 404 but
+        names the draft in `detail` and in a `draft_revision` member
+        (`api`, `revision_id`, `state`, `promoted: false`, and
+        `promote_path`, a control API path — not a Broker one), with an
+        `agent_directive`: `modify_headers` carrying a ready-to-send
+        `Jentic-Revision` value (it keeps the request's other pins) when
+        the registry would accept the caller's pin, otherwise
+        `prompt_human` to ask an operator holding `credentials:write` to
+        review and promote it. A draft another principal submitted is
+        never named: the caller gets the generic body.
       content:
         application/problem+json:
           schema:
@@ -1375,6 +1388,106 @@ components:
                 detail: Operation not found — unregistered upstream URL.
                 error_origin: broker
                 instance: /api.example.com/v1/unknown
+            operation_not_found_draft_only:
+              summary: >-
+                Only a draft (unpromoted) revision the caller submitted serves the
+                upstream URL; the caller may pin it.
+              value:
+                type: operation_not_found
+                title: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                status: 404
+                detail: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                draft_revision:
+                  api:
+                    vendor: api.example.com
+                    name: main
+                    version: "1.0.0"
+                  revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                  state: draft
+                  promoted: false
+                  promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                agent_directive:
+                  strategy: modify_headers
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                    revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                    promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                    suggested_command: jentic apis promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                    headers:
+                      Jentic-Revision: api.example.com:main:1.0.0=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c
+                  human_readable_instruction: >-
+                    This URL is served only by draft revision
+                    3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of 'api.example.com/main/1.0.0',
+                    which has not been promoted, so unpinned calls do not reach it.
+                    Do not re-import the spec or search for another operation — it is
+                    already registered. Resend the same request once with the
+                    Jentic-Revision header in parameters.headers to call the draft.
+                    For unpinned calls to reach it, it must be promoted (`jentic apis
+                    promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c`,
+                    needs apis:write, and credentials:write if it changes the server
+                    hosts of an API with bound credentials).
+            operation_not_found_draft_needs_operator:
+              summary: >-
+                Only a draft the caller submitted serves the upstream URL, but its
+                server hosts need operator review before it can be pinned or promoted.
+              value:
+                type: operation_not_found
+                title: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                status: 404
+                detail: >-
+                  Operation not found — no live revision serves this URL; it
+                  matches revision 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of API
+                  'api.example.com/main/1.0.0', which is a draft and has not
+                  been promoted
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                draft_revision:
+                  api:
+                    vendor: api.example.com
+                    name: main
+                    version: "1.0.0"
+                  revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                  state: draft
+                  promoted: false
+                  promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                    revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                    promote_path: /apis/api.example.com/main/1.0.0/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c:promote
+                    suggested_command: jentic apis promote api.example.com/main/1.0.0 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+                  human_readable_instruction: >-
+                    This URL is served only by draft revision
+                    3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c of 'api.example.com/main/1.0.0',
+                    which has not been promoted, so unpinned calls do not reach it.
+                    Do not re-import the spec or search for another operation — it is
+                    already registered. Its server hosts differ from the hosts the
+                    API's bound credentials are sent to, so only an operator holding
+                    credentials:write may pin or promote it. Ask your operator to
+                    review and promote it (`jentic apis promote api.example.com/main/1.0.0
+                    3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c`, needs apis:write and
+                    credentials:write), then retry this call.
     Conflict:
       description: |
         Conflict (RFC 9457 `application/problem+json`), distinguished by

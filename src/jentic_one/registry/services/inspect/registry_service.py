@@ -26,13 +26,14 @@ from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
+    DraftRevisionMatch,
     ResolveResult,
     RevisionPinOutcome,
     RevisionPinResult,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ApiRevisionState
-from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 # A ``Jentic-Revision`` value carries the revision id as ``rev_<uuid.hex>`` (the
 # 32-char hyphen-free hex form, which is what the spec ``rev_[A-Za-z0-9]+``
@@ -80,6 +81,100 @@ class RegistryService:
             server_variables_unresolved=hit.server_variables_unresolved,
         )
 
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        """Name the best ``draft`` revision serving METHOD+URL that the caller may know of.
+
+        Candidates come best first from
+        :meth:`URLLookupService.find_draft_candidates`, which reads only the
+        caller's own drafts and — for a caller with ``credentials:write`` —
+        drafts held for server-host review, so other principals' drafts
+        neither appear nor count toward its cap. Each is classified with
+        :meth:`draft_pin_outcome` — the rule :meth:`resolve_revision_pin`
+        applies, and the authority on what is disclosed — and the first one
+        the caller submitted, or whose pin would resolve for it, is returned
+        with that outcome. Any other principal's draft is passed over, so its
+        existence is never disclosed.
+        """
+        candidates = await URLLookupService(self._session).find_draft_candidates(
+            method=method,
+            url=url,
+            submitted_by=identity.sub,
+            include_origin_drafts=may_approve_host_change(identity.permissions),
+        )
+        for candidate in candidates:
+            outcome = await self.draft_pin_outcome(
+                api_id=candidate.api_id,
+                revision_id=candidate.row.revision_id,
+                origin=candidate.origin,
+                submitted_by=candidate.submitted_by,
+                vendor=candidate.vendor,
+                name=candidate.name,
+                version=candidate.version,
+                identity=identity,
+            )
+            if outcome is not RevisionPinOutcome.RESOLVED and not _submitted_by_caller(
+                candidate.submitted_by, identity
+            ):
+                continue
+            return DraftRevisionMatch(
+                api=APIReference(
+                    vendor=candidate.vendor, name=candidate.name, version=candidate.version
+                ),
+                revision_id=candidate.row.revision_id,
+                pin_outcome=outcome,
+            )
+        return None
+
+    async def draft_pin_outcome(
+        self,
+        *,
+        api_id: uuid.UUID,
+        revision_id: uuid.UUID,
+        origin: str | None,
+        submitted_by: str | None,
+        vendor: str,
+        name: str,
+        version: str,
+        identity: Identity,
+    ) -> RevisionPinOutcome:
+        """Whether ``identity`` may pin a ``draft`` revision (``Jentic-Revision``).
+
+        The single pin rule for drafts, shared by :meth:`resolve_revision_pin`
+        and :meth:`find_draft_match`:
+
+        - a draft with an ``origin`` is an import held for server-host review
+          (``registry/ingest/host_change_guard.py``): only an operator who could
+          promote it may route through it, not the agent that submitted it —
+          ``RESOLVED`` with ``credentials:write``, else ``FORBIDDEN``;
+        - any other draft is pinnable only by its submitter (``FORBIDDEN``
+          otherwise), and only while its server hosts need no operator: when
+          they differ from the API's live ones on an API with bound
+          credentials, a submitter without ``credentials:write`` gets
+          ``HOST_CHANGE_HELD``.
+        """
+        if origin is not None:
+            if may_approve_host_change(identity.permissions):
+                return RevisionPinOutcome.RESOLVED
+            return RevisionPinOutcome.FORBIDDEN
+        if not _submitted_by_caller(submitted_by, identity):
+            return RevisionPinOutcome.FORBIDDEN
+        if may_approve_host_change(identity.permissions):
+            return RevisionPinOutcome.RESOLVED
+        held = await pending_host_change(
+            self._ctx,
+            self._session,
+            api_id=api_id,
+            revision_id=revision_id,
+            vendor=vendor,
+            name=name,
+            version=version,
+        )
+        if held is not None:
+            return RevisionPinOutcome.HOST_CHANGE_HELD
+        return RevisionPinOutcome.RESOLVED
+
     async def resolve_revision_pin(
         self,
         *,
@@ -106,8 +201,8 @@ class RegistryService:
           promoting it would refuse (``registry/ingest/host_change_guard.py``),
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
-        Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
-        the only ownership signal the revision carries today.
+        The ``draft`` arms are :meth:`draft_pin_outcome`, which also decides
+        what the unregistered-URL hint (:meth:`find_draft_match`) offers.
         """
         revision_id = _parse_rev_label(rev_label)
         if revision_id is None:
@@ -125,30 +220,27 @@ class RegistryService:
             return RevisionPinResult(RevisionPinOutcome.ARCHIVED)
 
         if revision.state == ApiRevisionState.DRAFT:
-            # A draft with an origin is an import held for server-host review
-            # (``registry/ingest/host_change_guard.py``): only an operator who could
-            # promote it may route through it, not the agent that submitted it.
-            if revision.origin is not None:
-                if not may_approve_host_change(identity.permissions):
-                    return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
-            elif revision.submitted_by != identity.sub:
-                return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
-            elif not may_approve_host_change(identity.permissions):
-                held = await pending_host_change(
-                    self._ctx,
-                    self._session,
-                    api_id=api.id,
-                    revision_id=revision_id,
-                    vendor=vendor,
-                    name=name,
-                    version=version,
-                )
-                if held is not None:
-                    return RevisionPinResult(
-                        RevisionPinOutcome.HOST_CHANGE_HELD, revision_id=revision_id
-                    )
+            outcome = await self.draft_pin_outcome(
+                api_id=api.id,
+                revision_id=revision_id,
+                origin=revision.origin,
+                submitted_by=revision.submitted_by,
+                vendor=vendor,
+                name=name,
+                version=version,
+                identity=identity,
+            )
+            if outcome is RevisionPinOutcome.FORBIDDEN:
+                return RevisionPinResult(outcome)
+            if outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
+                return RevisionPinResult(outcome, revision_id=revision_id)
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)
+
+
+def _submitted_by_caller(submitted_by: str | None, identity: Identity) -> bool:
+    """Draft ownership: ``submitted_by == identity.sub``, the only signal a revision carries."""
+    return submitted_by is not None and submitted_by == identity.sub
 
 
 def _parse_rev_label(rev_label: str) -> uuid.UUID | None:

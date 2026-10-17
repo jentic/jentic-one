@@ -101,6 +101,16 @@ export class JobsService {
     /**
      * Get Job Result
      * Get the result of a completed job — polymorphic by kind.
+     *
+     * A `kind=import` job returns `{"revisions": [...]}`, one entry per imported
+     * revision with `api`, `revision_id` and `state`. `promoted` says whether the
+     * revision is the one the API serves: an inline or URL import lands as a
+     * `draft` (`promoted: false`) that unpinned Broker calls do not reach — they
+     * answer `404 operation_not_found` — until it is promoted; the entry then also
+     * carries `promote_path` (the control API `POST` that promotes it) and a
+     * human-readable `promote_hint`. A catalog import goes live directly
+     * (`promoted: true`) unless it is held for server-host review
+     * (`held_for_review: true`), which makes it a draft (`promoted: false`).
      * @returns any Successful Response
      * @throws ApiError
      */

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
@@ -70,6 +71,25 @@ class RevisionPinResult:
     revision_id: uuid.UUID | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DraftRevisionMatch:
+    """A ``draft`` revision that serves a METHOD+URL no live revision serves.
+
+    Read only on the broker's unregistered-URL 404 path, to explain the miss.
+    The resolver returns a match only for a draft the caller submitted or may
+    pin. ``pin_outcome`` is what a ``Jentic-Revision`` pin to it would resolve
+    to for the caller — the registry's pin rule, not a broker copy of it:
+    ``RESOLVED`` (the pin routes the call), ``HOST_CHANGE_HELD`` (the caller's
+    draft changes the hosts of a credential-bound API, so only an operator may
+    pin or promote it) or ``FORBIDDEN`` (the caller's draft is held for
+    server-host review, so only an operator may pin or promote it).
+    """
+
+    api: APIReference
+    revision_id: uuid.UUID
+    pin_outcome: RevisionPinOutcome
+
+
 @runtime_checkable
 class RegistryResolverProtocol(Protocol):
     """Resolves a METHOD+URL to an operation + API identity against the registry.
@@ -100,6 +120,77 @@ class RegistryResolverProtocol(Protocol):
         (``UNKNOWN``/``ARCHIVED`` → 422, ``FORBIDDEN``/``HOST_CHANGE_HELD`` → 403).
         """
         ...
+
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        """Name a ``draft`` revision the caller may know of that serves METHOD+URL.
+
+        Uses the same host/path/method matching as a pinned lookup, but
+        searches ``draft`` revisions only, in one bounded statement (plus the
+        pin rule's server-host check when the match is the caller's own draft).
+        Only a draft the caller submitted, or one its pin would resolve, is
+        returned — another principal's draft is ``None``, exactly as if nothing
+        served the URL. The broker calls it only after an unpinned lookup
+        matched nothing, so a successful call never pays for it; it never raises
+        the lookup errors (ambiguity, too many candidates) — it either names a
+        draft or not.
+        """
+        ...
+
+
+def require_registry_resolver(resolver: object) -> RegistryResolverProtocol:
+    """Return ``resolver`` if it implements every :class:`RegistryResolverProtocol` method.
+
+    Called once when the resolver is injected, so a resolver missing a method,
+    or whose method is not async or cannot take the protocol's arguments,
+    fails at startup with ``TypeError`` instead of on the first request that
+    reaches it — callers of the best-effort methods (``find_draft_match``)
+    then need not tell a wiring bug from a failed lookup.
+    """
+    problems = [
+        problem
+        for name in _REGISTRY_RESOLVER_METHODS
+        if (problem := _protocol_method_problem(resolver, name)) is not None
+    ]
+    if problems:
+        raise TypeError(
+            f"{type(resolver).__name__} does not implement RegistryResolverProtocol: "
+            f"{'; '.join(problems)}"
+        )
+    return cast(RegistryResolverProtocol, resolver)
+
+
+def _protocol_method_problem(resolver: object, name: str) -> str | None:
+    """Why ``resolver.<name>`` cannot stand in for the protocol method, or ``None``."""
+    method = getattr(resolver, name, None)
+    if not callable(method):
+        return f"missing {name}"
+    declared = getattr(RegistryResolverProtocol, name)
+    if inspect.iscoroutinefunction(declared) and not inspect.iscoroutinefunction(method):
+        return f"{name} is not async"
+    try:
+        actual = inspect.signature(method)
+    except (TypeError, ValueError):  # no introspectable signature; trust the caller
+        return None
+    # Every call the protocol allows must bind: all its parameters given, and
+    # only its required ones given (so the implementation requires no more).
+    params = list(inspect.signature(declared).parameters.values())[1:]  # drop ``self``
+    for call in (params, [p for p in params if p.default is inspect.Parameter.empty]):
+        args = [p.name for p in call if p.kind is not inspect.Parameter.KEYWORD_ONLY]
+        kwargs = {p.name: p.name for p in call if p.kind is inspect.Parameter.KEYWORD_ONLY}
+        try:
+            actual.bind(*args, **kwargs)
+        except TypeError as exc:
+            return f"{name} cannot take the protocol's arguments ({exc})"
+    return None
+
+
+_REGISTRY_RESOLVER_METHODS = tuple(
+    name
+    for name, member in vars(RegistryResolverProtocol).items()
+    if not name.startswith("_") and callable(member)
+)
 
 
 @runtime_checkable

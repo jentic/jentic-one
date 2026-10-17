@@ -39,7 +39,12 @@ from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
+from jentic_one.shared.broker.protocols import (
+    DraftRevisionMatch,
+    ResolveResult,
+    RevisionPinResult,
+    require_registry_resolver,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.actors import actor_type_from_id
@@ -88,10 +93,24 @@ class InProcessRegistryResolver:
                 identity=identity,
             )
 
+    async def find_draft_match(
+        self, *, method: str, url: str, identity: Identity
+    ) -> DraftRevisionMatch | None:
+        async with self._registry_db.session() as session:
+            return await RegistryService(session, ctx=self._ctx).find_draft_match(
+                method=method, url=url, identity=identity
+            )
+
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
-    """Inject the in-process registry resolver onto the broker app state."""
-    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
+    """Inject the in-process registry resolver onto the broker app state.
+
+    The resolver is checked against ``RegistryResolverProtocol`` here, once, so
+    the broker's per-request calls can treat any failure as a failed lookup.
+    """
+    app.state.broker_registry_resolver = require_registry_resolver(
+        InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
+    )
 
 
 class InProcessCatalogAutoImporter:

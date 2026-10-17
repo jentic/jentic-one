@@ -70,6 +70,7 @@ from jentic_one.broker.services.discovery import (
     discover,
     discover_via_pins,
     resolve_pin_for_api,
+    unregistered_operation_error,
 )
 from jentic_one.broker.services.execution.authorization import (
     ExecutionAuthorization,
@@ -548,9 +549,8 @@ async def _handle(
         )
         if handled is not None:
             return handled
-        raise OperationNotFoundError(
-            detail="Operation not found — unregistered upstream URL.",
-            type="operation_not_found",
+        raise await unregistered_operation_error(
+            resolver, method=method, url=upstream_url, identity=identity, pins=pins
         )
 
     # If a pin applies to the discovered API, translate it to a revision_id

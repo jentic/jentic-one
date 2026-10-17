@@ -42502,7 +42502,7 @@
     "/jobs/{job_id}/result": {
       "description": "`GET`: Get Job Result.",
       "get": {
-        "description": "Get the result of a completed job — polymorphic by kind.",
+        "description": "Get the result of a completed job — polymorphic by kind.\n\nA `kind=import` job returns `{\"revisions\": [...]}`, one entry per imported\nrevision with `api`, `revision_id` and `state`. `promoted` says whether the\nrevision is the one the API serves: an inline or URL import lands as a\n`draft` (`promoted: false`) that unpinned Broker calls do not reach — they\nanswer `404 operation_not_found` — until it is promoted; the entry then also\ncarries `promote_path` (the control API `POST` that promotes it) and a\nhuman-readable `promote_hint`. A catalog import goes live directly\n(`promoted: true`) unless it is held for server-host review\n(`held_for_review: true`), which makes it a draft (`promoted: false`).",
         "operationId": "getJobResult",
         "parameters": [
           {

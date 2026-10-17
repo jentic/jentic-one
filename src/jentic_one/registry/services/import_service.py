@@ -17,6 +17,7 @@ from structlog.contextvars import bind_contextvars, unbind_contextvars
 from jentic_one.registry.ingest.exc import BaseIngestError, DuplicateRevisionError, IngestJobError
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
+from jentic_one.registry.ingest.schemas import IngestResult
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import (
@@ -35,6 +36,7 @@ from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
     ORIGIN_OVERLAY,
     ActorType,
+    ApiRevisionState,
     OverlayDeprecationReason,
     OverlayStatus,
 )
@@ -76,6 +78,37 @@ def _readable_source_error(exc: Exception) -> str:
     if isinstance(exc, BaseIngestError | RegistryServiceError | ValidationError):
         return str(exc)
     return _UNEXPECTED_SOURCE_ERROR
+
+
+def _promotion_fields(result: IngestResult) -> dict[str, Any]:
+    """Whether the imported revision is the one the API serves, and how to make it so.
+
+    An origin-bearing import (catalog, overlay) goes live as ``imported``; every
+    other import — inline, URL, or a catalog revision held for host review —
+    lands as a ``draft`` that the broker does not route unpinned calls to until
+    it is promoted. A draft carries the promote path and a one-line hint.
+    """
+    if result.state != ApiRevisionState.DRAFT:
+        return {"promoted": True}
+    api = f"{result.api_vendor}/{result.api_name}/{result.api_version}"
+    promote_path = f"/apis/{api}/revisions/{result.revision_id}:promote"
+    scope = (
+        "apis:write and credentials:write"
+        if result.held_host_change is not None
+        else (
+            "apis:write (and credentials:write if it changes the server hosts of an API "
+            "with bound credentials)"
+        )
+    )
+    return {
+        "promoted": False,
+        "promote_path": promote_path,
+        "promote_hint": (
+            "This revision is a draft: unpinned broker calls do not reach it until it is "
+            f"promoted with POST {promote_path} (or `jentic apis promote {api} "
+            f"{result.revision_id}`), which needs {scope}."
+        ),
+    }
 
 
 class ImportHandler:
@@ -131,6 +164,7 @@ class ImportHandler:
                                 else None
                             ),
                             "state": result.state,
+                            **_promotion_fields(result),
                         }
                     )
                     held = result.held_host_change
