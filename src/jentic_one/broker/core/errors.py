@@ -135,7 +135,17 @@ class UnauthorizedRevisionPinError(BrokerError):
 
 
 class CircuitOpenError(BrokerError):
-    """The circuit breaker is open for the target upstream (503)."""
+    """The circuit breaker is open for the target upstream (503).
+
+    ``report`` says whether this refusal is the one that reports the open
+    circuit (the ``upstream.circuit_open`` event). The breaker sets it for
+    one refusal per host per open period, shared across processes through
+    the state backend; a raise site without a breaker leaves it ``True``.
+    """
+
+    def __init__(self, detail: str, *, report: bool = True, **kwargs: Any) -> None:
+        super().__init__(detail, **kwargs)
+        self.report = report
 
 
 class RateLimitExceededError(BrokerError):
