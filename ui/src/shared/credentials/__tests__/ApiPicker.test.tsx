@@ -65,7 +65,7 @@ describe('ApiPicker', () => {
 		// vendor is the canonical `github`, not `github.com`.
 		expect(selected.vendor).toBe('github');
 		expect(selected.apiId).toBe('github.com');
-		expect(selected.specUrl).toContain('mock-spec.test');
+		expect(selected.entryId).toBe('public/github.com');
 	});
 
 	it('locks the saved credential name to the friendly label after a catalog pick', async () => {

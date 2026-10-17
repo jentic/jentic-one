@@ -183,11 +183,10 @@ describe('LibraryPage', () => {
 		expect(rows[0].querySelector('mark')).toHaveTextContent('nyt');
 	});
 
-	it('shows the spec version parsed from a jentic-public-apis spec_url on catalog rows', async () => {
+	it("shows each catalog row's spec version", async () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 		const versions = screen.getAllByTestId('catalog-row-version').map((el) => el.textContent);
-		// Every mock entry uses the real layout: `…/{domain}/{sub}/{version}/openapi.json`.
 		expect(versions).toEqual(
 			expect.arrayContaining(['v2024-01-01', 'v1.1.4', 'v1.0.0', 'v2.0.0', 'v3.0.0']),
 		);
@@ -449,7 +448,7 @@ describe('LibraryPage', () => {
 			}));
 		const ALL = makeOps(60);
 		worker.use(
-			http.get('/catalog/:apiId/operations', ({ request }) => {
+			http.get('/catalog/*/operations', ({ request }) => {
 				const url = new URL(request.url);
 				const offset = Number(url.searchParams.get('offset') ?? 0);
 				const limit = Number(url.searchParams.get('limit') ?? 200);
@@ -503,7 +502,7 @@ describe('LibraryPage', () => {
 			tags: ['things'],
 		}));
 		worker.use(
-			http.get('/catalog/:apiId/operations', ({ request }) => {
+			http.get('/catalog/*/operations', ({ request }) => {
 				const url = new URL(request.url);
 				const offset = Number(url.searchParams.get('offset') ?? 0);
 				const limit = Number(url.searchParams.get('limit') ?? 200);
@@ -645,16 +644,16 @@ describe('LibraryPage', () => {
 				if (imported) pollsAfterImport += 1;
 				const data = [
 					{
-						api_id: 'github.com',
+						entry_id: 'public/github.com',
+						source_slug: 'public',
+						catalog_api_id: 'github.com',
 						vendor: 'github',
-						path: 'apis/github.com/openapi.json',
-						spec_url: 'https://example.com/github.json',
+						has_spec: true,
 						registered: imported,
 						_links: {
-							self: '/catalog/github.com',
-							operations: '/catalog/github.com/operations',
-							import: '/catalog/github.com:import',
-							github: null,
+							self: '/catalog/public/github.com',
+							operations: '/catalog/public/github.com/operations',
+							import: '/catalog/public/github.com:import',
 						},
 					},
 				];
@@ -662,7 +661,7 @@ describe('LibraryPage', () => {
 					data,
 					catalog_total: 1,
 					registered_count: imported ? 1 : 0,
-					manifest_age_seconds: 5,
+					oldest_source_sync_age_seconds: 5,
 					has_more: false,
 					next_cursor: null,
 				});
@@ -716,16 +715,16 @@ describe('LibraryPage', () => {
 				if (imported) pollsAfterImport += 1;
 				const data = [
 					{
-						api_id: 'github.com',
+						entry_id: 'public/github.com',
+						source_slug: 'public',
+						catalog_api_id: 'github.com',
 						vendor: 'github',
-						path: 'apis/github.com/openapi.json',
-						spec_url: 'https://example.com/github.json',
+						has_spec: true,
 						registered: imported,
 						_links: {
-							self: '/catalog/github.com',
-							operations: '/catalog/github.com/operations',
-							import: '/catalog/github.com:import',
-							github: null,
+							self: '/catalog/public/github.com',
+							operations: '/catalog/public/github.com/operations',
+							import: '/catalog/public/github.com:import',
 						},
 					},
 				];
@@ -733,7 +732,7 @@ describe('LibraryPage', () => {
 					data,
 					catalog_total: 1,
 					registered_count: imported ? 1 : 0,
-					manifest_age_seconds: 5,
+					oldest_source_sync_age_seconds: 5,
 					has_more: false,
 					next_cursor: null,
 				});
@@ -792,16 +791,16 @@ describe('LibraryPage', () => {
 		let pollsAfterImport = 0;
 		restorePollInterval = setImportPollIntervalForTests(100);
 		const row = (apiId: string, registered: boolean) => ({
-			api_id: apiId,
+			entry_id: apiId,
+			source_slug: 'public',
+			catalog_api_id: apiId,
 			vendor: apiId,
-			path: `apis/${apiId}`,
-			spec_url: `https://example.com/${apiId}.json`,
+			has_spec: true,
 			registered,
 			_links: {
 				self: `/catalog/${apiId}`,
 				operations: `/catalog/${apiId}/operations`,
 				import: `/catalog/${apiId}:import`,
-				github: null,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -811,10 +810,10 @@ describe('LibraryPage', () => {
 				data,
 				catalog_total: 3,
 				registered_count: imported ? 1 : 0,
-				manifest_age_seconds: 5,
+				oldest_source_sync_age_seconds: 5,
 				has_more: more,
 				next_cursor: more
-					? btoa(JSON.stringify({ id: data[data.length - 1].api_id }))
+					? btoa(JSON.stringify({ id: data[data.length - 1].entry_id }))
 					: null,
 			});
 		worker.use(
@@ -965,16 +964,15 @@ describe('LibraryPage', () => {
 				if (params.get('cursor')) await delay('infinite');
 				return HttpResponse.json({
 					data: ['acme.com', 'beta.io/a', 'beta.io/b'].map((id) => ({
-						api_id: id,
-						summary: id,
-						spec_url: `https://example.com/${id}.json`,
+						entry_id: id,
+						catalog_api_id: id,
 						registered: false,
 						_links: {},
 					})),
 					catalog_total: 6345,
 					registered_count: 0,
 					outdated_count: 0,
-					manifest_age_seconds: 60,
+					oldest_source_sync_age_seconds: 60,
 					has_more: true,
 					next_cursor: 'eyJpZCI6ICJiZXRhLmlvL2IifQ==',
 				});
@@ -998,16 +996,16 @@ describe('LibraryPage', () => {
 		// just before the previous jump's range. The landing must re-pin to the
 		// clicked letter through that reflow. Guards the Y→G→A overshoot.
 		const row = (apiId: string) => ({
-			api_id: apiId,
+			entry_id: apiId,
+			source_slug: 'public',
+			catalog_api_id: apiId,
 			vendor: apiId,
-			path: `apis/${apiId}`,
-			spec_url: `https://example.com/${apiId}.json`,
+			has_spec: true,
 			registered: false,
 			_links: {
 				self: `/catalog/${apiId}`,
 				operations: `/catalog/${apiId}/operations`,
 				import: `/catalog/${apiId}:import`,
-				github: null,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -1018,10 +1016,10 @@ describe('LibraryPage', () => {
 				catalog_total: 999,
 				registered_count: 0,
 				outdated_count: 0,
-				manifest_age_seconds: 5,
+				oldest_source_sync_age_seconds: 5,
 				has_more: more,
 				next_cursor: more
-					? btoa(JSON.stringify({ id: data[data.length - 1]!.api_id }))
+					? btoa(JSON.stringify({ id: data[data.length - 1]!.entry_id }))
 					: null,
 			});
 		// Each letter's jump range is keyed by the keyset start the rail builds

@@ -203,6 +203,7 @@ describe('workspaceHrefFor', () => {
 describe('entityDisplay', () => {
 	const entity = (over: Partial<DiscoveryEntity> = {}): DiscoveryEntity => ({
 		id: 'github.com',
+		entryId: 'public/github.com',
 		apiId: 'github.com',
 		summary: 'github.com',
 		registered: true,

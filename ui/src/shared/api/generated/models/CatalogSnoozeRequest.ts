@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Body for ``POST /catalog/{api_id}:snooze`` (C1, #925).
+ * Body for ``POST /catalog/{entry_id}:snooze``.
  *
  * ``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary
  * per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
