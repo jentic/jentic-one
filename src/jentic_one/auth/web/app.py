@@ -82,7 +82,8 @@ def install_on_app(app: FastAPI, ctx: Context) -> None:
     get the same chain and an injected installer's replacement is never
     clobbered by a later surface hook.
     """
-    # The process's one backend (closed by ctx.shutdown()), shared with every
+    # The process's one backend (closed last by the app lifespan, via
+    # ctx.close_state_backend()), shared with every
     # other surface this process serves.
     app.state.auth_state_backend = ctx.state_backend
     if ctx.config.state.backend == MEMORY_BACKEND:

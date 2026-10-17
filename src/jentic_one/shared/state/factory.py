@@ -254,8 +254,9 @@ class StateBackendBuildContext:
         config: The resolved ``state:`` section. A registered backend reads
             its settings from ``config.options``.
         apps: The surfaces the process serves (for example
-            ``frozenset({"broker"})``), so a builder can derive a key prefix
-            or pool size per process shape.
+            ``frozenset({"broker"})``), so a builder can size a pool or label
+            its metrics per process shape. Do not derive key prefixes from
+            it: every process serving a surface must see the same keys.
     """
 
     config: StateBackendConfig

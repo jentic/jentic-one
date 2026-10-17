@@ -96,8 +96,8 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         )
 
         # The process's one shared-state backend powers the rate limiter, the
-        # circuit breaker and the idempotency store. ``ctx.shutdown()`` closes
-        # it, after the worker has drained.
+        # circuit breaker and the idempotency store. The app lifespan closes
+        # it last (``ctx.close_state_backend()``), after the worker has drained.
         state = shared_state
         app.state.broker_state_backend = state
 
