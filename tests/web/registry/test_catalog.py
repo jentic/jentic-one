@@ -11,22 +11,30 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
+import secrets
 import sys
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from mcp import types as mcp_types
+from mcp.shared.exceptions import MCPError
 from sqlalchemy import delete, select, text
 
+import jentic_one.mcp.envelopes as mcp_envelopes
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.repos import AccessTokenRepository
+from jentic_one.auth.services.token_service import _hash_token
+from jentic_one.auth.web.app import make_superset_verifier
 from jentic_one.mcp.tools import CallEnv
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -41,11 +49,15 @@ from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.snapshot import clear_snapshots
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
+from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.web.app import create_app
+from jentic_one.shared.auth.api_key_resolver import AGENT_API_KEY_PREFIX
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig, CatalogConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.api_identity import canonical_credential_scope, credential_covers
 from jentic_one.shared.pagination import encode_catalog_cursor
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
@@ -976,16 +988,42 @@ def _paths_for_byte_identity() -> list[tuple[str, str]]:
         ("POST", "/catalog/corp/never.example:import"),
         ("POST", "/catalog/corp/stripe.com:snooze"),
         ("POST", "/catalog/corp/never.example:snooze"),
+        ("POST", "/catalog/corp/stripe.com:unsnooze"),
+        ("POST", "/catalog/corp/never.example:unsnooze"),
         ("GET", "/catalog/stripe.com"),
     ]
 
 
+#: MCP tool calls whose answers must not reveal a hidden source.
+_MCP_CALLS: list[tuple[str, dict[str, Any]]] = [
+    ("search_catalog", {}),
+    ("search_catalog", {"query": "stripe"}),
+    ("search_catalog", {"limit": 1}),
+    ("import_api", {"api_id": "corp/stripe.com"}),
+    ("import_api", {"api_id": "corp/never.example"}),
+    ("import_api", {"api_id": "corp/corp-only.example"}),
+]
+
+_BYTE_IDENTITY_PERMISSIONS = ["capabilities:read", "catalog:import", "events:write", "jobs:read"]
+
+
+async def _mcp_answer(ctx: Context, tool: str, arguments: dict[str, Any]) -> tuple[int, bytes]:
+    env = _mcp_env(ctx, _BYTE_IDENTITY_PERMISSIONS)
+    try:
+        result = await tools_mod.dispatch_tool_call(env, tool, arguments)
+    except MCPError as exc:
+        return exc.error.code, exc.error.message.encode()
+    return 0, result.model_dump_json().encode()
+
+
 async def _responses(ctx: Context) -> list[tuple[int, bytes]]:
     out: list[tuple[int, bytes]] = []
-    with _client(ctx, ["capabilities:read", "catalog:import", "events:write"]) as tc:
+    with _client(ctx, _BYTE_IDENTITY_PERMISSIONS) as tc:
         for method, path in _paths_for_byte_identity():
             r = tc.request(method, path)
             out.append((r.status_code, r.content))
+    for tool, arguments in _MCP_CALLS:
+        out.append(await _mcp_answer(ctx, tool, arguments))
     return out
 
 
@@ -1009,14 +1047,25 @@ async def test_hidden_source_is_byte_identical_to_its_absence(
     assert [s for s, _ in with_org] == [s for s, _ in without_org]
     assert with_org == without_org
     paths = [p for _, p in _paths_for_byte_identity()]
-    statuses = dict(zip(paths, [s for s, _ in with_org], strict=True))
+    statuses = dict(zip(paths, [s for s, _ in with_org[: len(paths)]], strict=True))
     assert statuses["/catalog/corp/stripe.com"] == 404
     assert statuses["/catalog/corp/stripe.com:import"] == 404
+    assert statuses["/catalog/corp/stripe.com:unsnooze"] == 404
+    mcp = with_org[len(paths) :]
+    assert [code for code, _ in mcp[3:]] == [mcp_types.INVALID_PARAMS] * 3
+    assert b"corp" not in b"".join(body for _, body in mcp[:3])
 
 
 def _pin_sync_times(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
-    """Freeze the clock the listing ages against, so two deployments compare byte-for-byte."""
+    """Freeze the clocks the listing ages and the MCP stamp read, so two deployments
+    compare byte-for-byte."""
     monkeypatch.setattr(service_module, "utcnow", lambda: now)
+    stamp = mcp_envelopes.instance_stamp
+
+    def _frozen_stamp(ctx: Context) -> dict[str, Any]:
+        return {**stamp(ctx), "fetched_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+    monkeypatch.setattr(mcp_envelopes, "instance_stamp", _frozen_stamp)
 
 
 async def _truncate_all(web_config: AppConfig) -> None:
@@ -1220,6 +1269,27 @@ async def test_source_switch_is_an_explicit_credentials_write_opt_in(
             assert source["api_name"] == "public~stripe.com"
 
 
+async def test_mcp_import_never_switches_source(web_config: AppConfig) -> None:
+    """``import_api`` has no switch opt-in: even an ``org:admin`` agent importing an
+    entry whose id another entry's API holds gets the distinct-name path."""
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        await _conflict(ctx)
+        job_id = await tools_mod._file_import(
+            _mcp_env(ctx, ["org:admin", "credentials:write"]), "public/stripe.com"
+        )
+        source = await _job_source(ctx, job_id)
+        assert source["catalog_entry_id"] == "public/stripe.com"
+        assert source["api_name"] == "public~stripe.com"
+        async with ctx.registry_db.session() as session:
+            api = (await session.execute(select(Api))).scalar_one()
+        assert (api.name, api.catalog_entry_id) == ("stripe-com", "corp/stripe.com")
+
+
 async def _unrecorded_stripe(ctx: Context) -> None:
     """A ``stripe.com`` API imported before entry ids were recorded (legacy source)."""
     await _register(
@@ -1415,3 +1485,193 @@ async def test_public_winner_reads_the_snapshot_without_syncing_or_flagging(
         # A regular read of the same catalog does flag the stale sources.
         await svc.list_all(permissions=frozenset())
         assert calls and calls[0].startswith("flag:")
+
+
+# ── visibility through the real credential verifiers ─────────────────────────
+
+_PARITY_AGENT = "agnt_vault"
+_PARITY_OWNER = "usr_catalog_parity_owner"
+
+
+async def _clear_parity_agent(ctx: Context) -> None:
+    async with ctx.admin_db.transaction() as session:
+        for table, column in (
+            ("access_tokens", "actor_id"),
+            ("agent_credentials", "agent_id"),
+            ("actor_permission_grants", "actor_id"),
+            ("agents", "id"),
+        ):
+            await session.execute(
+                text(f"DELETE FROM {table} WHERE {column} = :id"),
+                {"id": _PARITY_AGENT},
+            )
+        await session.execute(text("DELETE FROM users WHERE id = :id"), {"id": _PARITY_OWNER})
+
+
+async def _seed_parity_agent(ctx: Context, grants: Sequence[str]) -> tuple[str, str]:
+    """An active agent holding ``grants``, with a ``jak_`` key and an ``at_`` token."""
+    api_key = f"{AGENT_API_KEY_PREFIX}{secrets.token_hex(16)}"
+    access_token = f"at_{secrets.token_hex(16)}"
+    await _clear_parity_agent(ctx)
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, email, first_name, last_name) "
+                "VALUES (:id, 'catalog-parity@test.local', 'Cat', 'P')"
+            ),
+            {"id": _PARITY_OWNER},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
+                "VALUES (:id, 'parity-bot', :owner, 'system:test', 'active', 'system:test')"
+            ),
+            {"id": _PARITY_AGENT, "owner": _PARITY_OWNER},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agent_credentials (id, agent_id, api_key_hash, created_by) "
+                "VALUES (:id, :agent_id, :hash, 'system:test')"
+            ),
+            {
+                "id": f"agc_{_PARITY_AGENT}",
+                "agent_id": _PARITY_AGENT,
+                "hash": hashlib.sha256(api_key.encode()).hexdigest(),
+            },
+        )
+        for i, permission in enumerate(grants):
+            await session.execute(
+                text(
+                    "INSERT INTO actor_permission_grants "
+                    "(id, actor_id, actor_type, permission, created_by) "
+                    "VALUES (:id, :actor_id, 'agent', :permission, 'system:test')"
+                ),
+                {"id": f"asg_parity_{i}", "actor_id": _PARITY_AGENT, "permission": permission},
+            )
+        await AccessTokenRepository.create(
+            session,
+            token_hash=_hash_token(access_token),
+            actor_id=_PARITY_AGENT,
+            actor_type="agent",
+            scopes=list(grants),
+            token_family_id="tfam_catalog_parity",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            created_by="system:test",
+        )
+    return api_key, access_token
+
+
+@pytest.mark.parametrize(
+    ("grants", "expected"),
+    [
+        (["org:admin"], {"public", "corp", "vault"}),
+        (["capabilities:read", "catalog:org:read"], {"public", "corp"}),
+        (["capabilities:read", "catalog:restricted:read"], {"public", "vault"}),
+        (["capabilities:read"], {"public"}),
+    ],
+)
+async def test_api_key_and_access_token_see_the_same_catalog(
+    web_config: AppConfig, grants: list[str], expected: set[str]
+) -> None:
+    """The visibility set comes from the verifier's effective permissions, so an agent's
+    ``jak_`` key and its ``at_`` token answer every catalog read byte-for-byte alike."""
+    async with _deployment(web_config, _three_sources()) as ctx:
+        api_key, access_token = await _seed_parity_agent(ctx, grants)
+        try:
+            app = create_app(ctx)
+            app.router.lifespan_context = noop_lifespan
+            app.state.verify_token = make_superset_verifier(ctx)
+            answers: dict[str, list[tuple[int, bytes]]] = {}
+            with TestClient(app) as tc:
+                for name, credential in (("key", api_key), ("token", access_token)):
+                    headers = {"Authorization": f"Bearer {credential}"}
+                    answers[name] = [
+                        (r.status_code, r.content)
+                        for r in (
+                            tc.get(path, headers=headers)
+                            for path in (
+                                "/catalog",
+                                "/catalog?include_alternates=true",
+                                "/catalog/corp/corp-billing.example",
+                                "/catalog/vault/vault-keys.example",
+                            )
+                        )
+                    ]
+            assert answers["key"] == answers["token"]
+            status, body = answers["key"][0]
+            assert status == 200
+            assert {e["source_slug"] for e in json.loads(body)["data"]} == expected
+        finally:
+            await _clear_parity_agent(ctx)
+
+
+# ── identity vendor: credential coverage (§11.1 #7) ──────────────────────────
+
+_STRIPE_WIDE = canonical_credential_scope(vendor="stripe.com", name=None, version=None)
+
+
+async def _import_and_ingest(ctx: Context, entry_id: str) -> Api:
+    """Import ``entry_id`` over REST, run the queued job, return the API it landed on."""
+    with _client(ctx, ["org:admin"]) as tc:
+        r = tc.post(f"/catalog/{entry_id}:import")
+    assert r.status_code == 202, r.text
+    source = await _job_source(ctx, r.json()["job_id"])
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", httpx.AsyncClient):
+        await ImportHandler(ctx).execute(
+            job_id=generate_ksuid("job"),
+            session=None,
+            payload={"sources": [source]},
+            created_by="t",
+        )
+    async with ctx.registry_db.session() as session:
+        return (
+            await session.execute(select(Api).where(Api.catalog_entry_id == entry_id))
+        ).scalar_one()
+
+
+async def test_vendor_wide_credential_never_covers_a_namespaced_entry(
+    web_config: AppConfig,
+) -> None:
+    """An internal source's ``stripe.com``, ``stripe.com/payments`` and ``api.stripe.com``
+    resolve to namespaced ids, and none of their imported APIs is covered by a
+    vendor-wide Stripe credential."""
+    _LISTINGS[_MANIFEST_URL] = ["stripe.com"]
+    _LISTINGS[_CORP_URL] = ["stripe.com", "stripe.com/payments", "api.stripe.com"]
+    async with _deployment(web_config, [_public_source(), _corp_source()]) as ctx:
+        with _client(ctx, ["capabilities:read", "catalog:org:read"]) as tc:
+            corp = {
+                e["entry_id"]: e
+                for e in tc.get("/catalog", params={"include_alternates": True}).json()["data"]
+                if e["source_slug"] == "corp"
+            }
+        assert {e["catalog_api_id"] for e in corp.values()} == {
+            "corp~stripe.com",
+            "corp~stripe.com/payments",
+            "corp~api.stripe.com",
+        }
+        for entry_id in sorted(corp):
+            api = await _import_and_ingest(ctx, entry_id)
+            assert api.vendor.startswith("corp-"), (entry_id, api.vendor)
+            assert not credential_covers(
+                _STRIPE_WIDE, vendor=api.vendor, name=api.name, version=api.version
+            ), (entry_id, api.vendor, api.name)
+
+
+async def test_a_mapped_entry_is_covered_by_the_vendor_wide_credential(
+    web_config: AppConfig,
+) -> None:
+    _LISTINGS[_MANIFEST_URL] = ["stripe.com"]
+    _LISTINGS[_CORP_URL] = ["stripe.com", "stripe.com/payments"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        mapped = await _import_and_ingest(ctx, "corp/stripe.com")
+        assert credential_covers(
+            _STRIPE_WIDE, vendor=mapped.vendor, name=mapped.name, version=mapped.version
+        )
+        unmapped = await _import_and_ingest(ctx, "corp/stripe.com/payments")
+        assert not credential_covers(
+            _STRIPE_WIDE, vendor=unmapped.vendor, name=unmapped.name, version=unmapped.version
+        )
