@@ -164,7 +164,9 @@ def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
     buckets: collections.Counter[str] = collections.Counter()
     leaves: collections.Counter[str] = collections.Counter()
     probes: collections.Counter[str] = collections.Counter()
-    for line in raw.read_text().splitlines():
+    # py-spy copies frame names out of the target's memory as raw bytes; a sample
+    # torn mid-update can carry invalid UTF-8, so decode leniently.
+    for line in raw.read_text(errors="replace").splitlines():
         stack, _, count = line.rpartition(" ")
         n = int(count)
         total += n
