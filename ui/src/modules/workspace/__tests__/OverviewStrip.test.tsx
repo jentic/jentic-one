@@ -94,7 +94,8 @@ describe('OverviewStrip — update-available re-import', () => {
 
 		// Confirming triggers the re-import.
 		await user.click(confirm);
-		await waitFor(() => expect(importedApiId).toBe('stripe.com'));
+		// Resolved to the registered catalog entry's entry_id.
+		await waitFor(() => expect(importedApiId).toBe('public/stripe.com'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
 		// Await the async poll's completion toast so the state update settles inside act().
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
@@ -129,7 +130,7 @@ describe('OverviewStrip — update-available re-import', () => {
 		);
 
 		await user.click(screen.getByTestId('workspace-snooze'));
-		await waitFor(() => expect(snoozedApiId).toBe('stripe.com'));
+		await waitFor(() => expect(snoozedApiId).toBe('public/stripe.com'));
 		expect(await screen.findByText('Updates muted')).toBeInTheDocument();
 	});
 
@@ -162,8 +163,8 @@ describe('OverviewStrip — update-available re-import', () => {
 
 		await user.click(screen.getByTestId('workspace-reimport'));
 
-		// The catalog api_id threaded is the API's vendor (manifest domain).
-		await waitFor(() => expect(importedApiId).toBe('stripe.com'));
+		// The registered catalog entry for the API's catalog_api_id.
+		await waitFor(() => expect(importedApiId).toBe('public/stripe.com'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
@@ -215,10 +216,70 @@ describe('OverviewStrip — update-available re-import', () => {
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
+	it('re-imports the registered entry of a non-public source, found on GET /catalog', async () => {
+		const user = userEvent.setup();
+		const imported: string[] = [];
+		worker.use(
+			http.get('/catalog', () =>
+				HttpResponse.json({
+					data: [
+						{
+							entry_id: 'internal/stripe.com',
+							source_slug: 'internal',
+							catalog_api_id: 'stripe.com',
+							vendor: 'stripe.com',
+							registered: true,
+							_links: {},
+						},
+					],
+					catalog_total: 1,
+					registered_count: 1,
+					has_more: false,
+				}),
+			),
+			http.post('/catalog/*', ({ request }) => {
+				imported.push(
+					decodeURIComponent(
+						new URL(request.url).pathname.replace(/^\/catalog\//, ''),
+					).replace(/:import$/, ''),
+				);
+				return HttpResponse.json(
+					{ job_id: 'job_reimport', status: 'queued' },
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+		await user.click(screen.getByTestId('workspace-reimport'));
+		await waitFor(() => expect(imported).toEqual(['internal/stripe.com']));
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
+	});
+
 	it('follows the catalog did_you_mean hint to the entry_id on re-import', async () => {
 		const user = userEvent.setup();
 		const imported: string[] = [];
 		worker.use(
+			// No registered entry carries the catalog_api_id: fall back to the hint.
+			http.get('/catalog', () =>
+				HttpResponse.json({
+					data: [],
+					catalog_total: 0,
+					registered_count: 0,
+					has_more: false,
+				}),
+			),
 			http.post('/catalog/*', ({ request }) => {
 				const id = decodeURIComponent(
 					new URL(request.url).pathname.replace(/^\/catalog\//, ''),

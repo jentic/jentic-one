@@ -206,38 +206,46 @@ export async function deleteApi(key: ApiKey): Promise<void> {
 	}
 }
 
-/**
- * The catalog entry a workspace API's Update/Mute acts on: its own
- * `catalog_entry_id` from the APIs response (`null` when the backend withholds
- * it because the caller can't read the entry's source; `undefined` from a
- * backend that predates the field), plus its `catalog_api_id`.
- */
-export interface CatalogTarget {
-	entryId?: string | null;
-	catalogApiId: string;
+/** Syntactic shape of an `entry_id` (the REST router's rule), so a hint is never followed blind. */
+function isEntryId(id: string): boolean {
+	if (id.length === 0 || [...id].length > 320) return false;
+	// eslint-disable-next-line no-control-regex
+	if (/[\u0000-\u001f\u007f]/.test(id)) return false;
+	return id.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 }
 
 /**
- * Run a catalog call for a workspace API. With the API's own `entry_id` the call
- * goes straight to that entry — never to another entry sharing its
- * `catalog_api_id` — and a 404 (the entry is gone or its source hidden) is final.
- * A withheld entry (`null`) fails without a request: guessing would act on a
- * different entry. Only a backend that never sends the field (`undefined`) gets
- * the `catalog_api_id` call that follows the 404's `did_you_mean` once.
+ * The `entry_id` of the registered catalog entry for `catalogApiId` — the one
+ * the API was imported from — read off `GET /catalog?registered_only=true`.
+ * `null` when no registered entry carries exactly that `catalog_api_id`.
+ */
+async function registeredEntryIdFor(catalogApiId: string): Promise<string | null> {
+	try {
+		const page = await CatalogService.listCatalog({
+			q: catalogApiId,
+			registeredOnly: true,
+			limit: 50,
+		});
+		return page.data.find((e) => e.catalog_api_id === catalogApiId)?.entry_id ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Run a catalog call for the API's `catalog_api_id`. The catalog routes take
+ * an `entry_id`, which the APIs response no longer carries, so it is resolved:
+ * the registered entry for that `catalog_api_id` when the catalog lists one;
+ * otherwise the call goes out with the `catalog_api_id` and follows the 404's
+ * `did_you_mean` (the visible entry for it) once, when that is a well-formed
+ * entry_id.
  */
 async function withCatalogEntry<T>(
 	target: CatalogTarget,
 	call: (entryId: string) => Promise<T>,
 ): Promise<T> {
-	if (target.entryId) return call(target.entryId);
-	if (target.entryId === null) {
-		throw new WorkspaceApiError(
-			"This API's catalog source isn't visible to you, so it can't be updated or muted from here.",
-			404,
-			null,
-		);
-	}
-	const { catalogApiId } = target;
+	const registered = await registeredEntryIdFor(catalogApiId);
+	if (registered) return call(registered);
 	try {
 		return await call(catalogApiId);
 	} catch (error) {
@@ -245,7 +253,7 @@ async function withCatalogEntry<T>(
 			error instanceof ApiError && error.status === 404
 				? (error.body as { did_you_mean?: unknown } | null)?.did_you_mean
 				: undefined;
-		if (typeof hint === 'string' && hint && hint !== catalogApiId) {
+		if (typeof hint === 'string' && hint !== catalogApiId && isEntryId(hint)) {
 			return call(hint);
 		}
 		throw error;
