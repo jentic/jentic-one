@@ -323,7 +323,7 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.sources.<n>.enabled` | boolean | `true` | `JENTIC__CATALOG__SOURCES__<N>__ENABLED` | Disabled sources are never synced (kill switch for this source). |
 | `catalog.sources.<n>.visibility` | "public" \| "org" \| "restricted" | `"public"` | `JENTIC__CATALOG__SOURCES__<N>__VISIBILITY` |  |
 | `catalog.sources.<n>.trust` | "curated" \| "internal" \| "untrusted" | `"untrusted"` | `JENTIC__CATALOG__SOURCES__<N>__TRUST` | curated sources own the catalog_api_ids they list. |
-| `catalog.sources.<n>.precedence` | integer | `0` | `JENTIC__CATALOG__SOURCES__<N>__PRECEDENCE` |  |
+| `catalog.sources.<n>.precedence` | integer | `0` | `JENTIC__CATALOG__SOURCES__<N>__PRECEDENCE` | Rank when two sources list the same catalog_api_id (higher wins). An untrusted source may not rank above any enabled curated source (startup fails). |
 | `catalog.sources.<n>.max_age_seconds` | integer (>= 0) | `86400` | `JENTIC__CATALOG__SOURCES__<N>__MAX_AGE_SECONDS` | Background sync interval. 0 disables automatic sync and background egress for this source; a manual refresh still syncs it. |
 | `catalog.sources.<n>.max_removal_ratio` | number (>= 0.0, <= 1.0) | `0.2` | `JENTIC__CATALOG__SOURCES__<N>__MAX_REMOVAL_RATIO` | Mass-removal guard: a sync removing more than this share is held. |
 | `catalog.sources.<n>.min_removal_count` | integer (>= 0) | `5` | `JENTIC__CATALOG__SOURCES__<N>__MIN_REMOVAL_COUNT` | The removal ratio only trips above this many removals. |
