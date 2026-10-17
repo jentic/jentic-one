@@ -20,9 +20,12 @@ Consumers:
 - ``tools/endpoint_tree.py`` renders this to ``docs/reference/endpoints.{md,json}``.
   It introspects a freshly-built broker app for the broker surface.
 - ``GET /reference/endpoints.json`` serves :func:`build_reference_payload` live.
-  It is mounted only on the control-plane app (the broker runs as a separate
+  It is mounted only on control-plane apps (the broker runs as a separate
   process), so it cannot introspect the broker; the broker surface is supplied
-  declaratively by :func:`_declared_broker_endpoints` instead.
+  declaratively by :func:`_declared_broker_endpoints` instead. A process serving
+  only part of the control plane (a split deployment) introspects a route-only app
+  spanning every control-plane surface, so the payload does not depend on which
+  surfaces run in-process.
 
 Both paths therefore call :func:`build_reference_payload` over the same set of
 endpoints and serve byte-identical payloads. A drift test
