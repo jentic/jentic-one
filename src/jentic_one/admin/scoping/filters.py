@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -16,12 +16,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import (
-    AGENTS_READ,
-    EVENTS_READ,
-    OWNER_AGENTS_READ,
-    compute_effective,
-)
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 
 ORG_ADMIN = "org:admin"
 
@@ -115,48 +110,3 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
         return [or_(*conditions)]
 
     raise ValueError(f"Unknown model for access scoping: {model.__name__}")
-
-
-def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
-    """Filter the ``users`` rows an actor lookup may label for the caller.
-
-    ``org:admin`` -> no restriction. Anyone else may label the users it can
-    already see by id elsewhere, each relation gated on the read permission of
-    the route that shows it:
-
-    - itself, always;
-    - the owner or approver of an agent it can see (the ``Agent`` filter),
-      with ``agents:read`` (``GET /agents``);
-    - the actor of an event it can see, with ``events:read`` (``GET /events``).
-
-    The event relation is written out rather than reusing
-    ``build_access_filters(identity, Event)``: of that filter's branches only
-    ``created_by`` can match while ``actor_id`` is another user, so the arm is
-    ``actor_id == users.id`` with ``created_by`` the caller or one of the
-    caller's agents. Both halves are served by ``ix_events_created_by_actor``.
-    Audit entries add nothing: a non-admin sees only those whose actor is
-    itself or one of its agents, so no other user. Credential creators are
-    resolved by the control surface (see ``ActorService.lookup``).
-
-    Each arm is a correlated ``EXISTS`` probed per looked-up user, so the cost
-    is bounded by the ids being looked up, not by how many rows the caller
-    can see.
-    """
-    if ORG_ADMIN in identity.permissions:
-        return []
-
-    perms = compute_effective(set(identity.permissions))
-    conditions: list[ColumnElement[bool]] = [*build_access_filters(identity, User)]
-    if AGENTS_READ in perms:
-        agent_filters = build_access_filters(identity, Agent)
-        conditions.append(exists().where(Agent.owner_id == User.id, *agent_filters))
-        conditions.append(exists().where(Agent.approved_by == User.id, *agent_filters))
-    if EVENTS_READ in perms:
-        owned_agent_ids = select(Agent.id).where(Agent.owner_id == identity.sub)
-        conditions.append(
-            exists().where(Event.created_by == identity.sub, Event.actor_id == User.id)
-        )
-        conditions.append(
-            exists().where(Event.created_by.in_(owned_agent_ids), Event.actor_id == User.id)
-        )
-    return [or_(*conditions)]
