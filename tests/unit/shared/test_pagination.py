@@ -11,13 +11,13 @@ import pytest
 from jentic_one.shared.pagination import (
     InvalidCursorError,
     InvalidSearchCursorError,
-    decode_catalog_cursor,
     decode_cursor,
     decode_cursor_str,
     decode_search_cursor,
     encode_catalog_cursor,
     encode_cursor,
     encode_search_cursor,
+    parse_catalog_cursor,
 )
 
 
@@ -114,35 +114,35 @@ def test_search_cursor_error_is_subclass_of_invalid_cursor() -> None:
 
 def test_catalog_cursor_browse_round_trip() -> None:
     cursor = encode_catalog_cursor("googleapis.com/admin")
-    api_id, score = decode_catalog_cursor(cursor)
-    assert api_id == "googleapis.com/admin"
-    assert score is None
+    parsed = parse_catalog_cursor(cursor)
+    assert parsed.api_id == "googleapis.com/admin"
+    assert parsed.score is None
 
 
 def test_catalog_cursor_search_round_trip_carries_score() -> None:
     cursor = encode_catalog_cursor("stripe.com", 0.5)
-    api_id, score = decode_catalog_cursor(cursor)
-    assert api_id == "stripe.com"
-    assert score == pytest.approx(0.5)
+    parsed = parse_catalog_cursor(cursor)
+    assert parsed.api_id == "stripe.com"
+    assert parsed.score == pytest.approx(0.5)
 
 
 def test_catalog_cursor_malformed_raises_invalid_cursor() -> None:
     with pytest.raises(InvalidCursorError):
-        decode_catalog_cursor("garbage!!!")
+        parse_catalog_cursor("garbage!!!")
 
 
 def test_catalog_cursor_missing_id_raises_invalid_cursor() -> None:
     bad = base64.b64encode(json.dumps({"s": 0.1}).encode()).decode()
     with pytest.raises(InvalidCursorError):
-        decode_catalog_cursor(bad)
+        parse_catalog_cursor(bad)
 
 
 def test_catalog_cursor_non_numeric_score_raises_invalid_cursor() -> None:
-    # A list for "s" makes float() raise TypeError — must map to InvalidCursorError
+    # A list for "s" is not a score — must map to InvalidCursorError
     # (i.e. a 400 at the router), not escape as a 500.
     bad = base64.b64encode(json.dumps({"id": "x", "s": [1, 2]}).encode()).decode()
     with pytest.raises(InvalidCursorError):
-        decode_catalog_cursor(bad)
+        parse_catalog_cursor(bad)
 
 
 @pytest.mark.parametrize("raw_score", ["NaN", "Infinity", "-Infinity", '"nan"', '"inf"', "1e400"])
@@ -153,4 +153,4 @@ def test_catalog_cursor_non_finite_score_raises_invalid_cursor(raw_score: str) -
     # the decode boundary instead (400, not a silently weird page).
     bad = base64.b64encode(f'{{"id": "x", "s": {raw_score}}}'.encode()).decode()
     with pytest.raises(InvalidCursorError):
-        decode_catalog_cursor(bad)
+        parse_catalog_cursor(bad)

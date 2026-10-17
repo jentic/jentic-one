@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic.json_schema import SkipJsonSchema
 
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -71,6 +73,23 @@ class CatalogEntryLinksResponse(BaseModel):
     )
 
 
+class CatalogMatchResponse(BaseModel):
+    """Why a catalog entry matched a search, as reported by the ranking strategy."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"channels": ["alias"]}]})
+
+    channels: list[
+        Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,31}$", max_length=32)]
+    ] = Field(
+        max_length=8,
+        description=(
+            "Kinds of evidence behind the match, as short slugs (e.g. `alias`). An open "
+            "set: new values may appear, so clients must accept values they don't recognise."
+        ),
+        examples=[["alias"]],
+    )
+
+
 class CatalogEntryResponse(BaseModel):
     """A single browsable catalog entry."""
 
@@ -131,6 +150,18 @@ class CatalogEntryResponse(BaseModel):
         examples=[False],
     )
     links: CatalogEntryLinksResponse = Field(serialization_alias="_links")
+    # Optional, never null: omitted (not serialised as null) when absent, so
+    # entries without match evidence keep their exact bytes, and the schema
+    # publishes the object type only.
+    match: CatalogMatchResponse | SkipJsonSchema[None] = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description=(
+            "Why this entry matched the search `q`. Present only when the configured "
+            "ranking strategy reports match evidence; omitted for browse and for the "
+            "default ranking."
+        ),
+    )
 
 
 class CatalogListResponse(BaseModel):

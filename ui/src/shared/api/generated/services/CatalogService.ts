@@ -20,6 +20,11 @@ export class CatalogService {
      * ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
      * ``catalog_total``/``registered_count``/``outdated_count`` count the whole
      * manifest, not the page, so the Discover status row stays stable while scrolling.
+     *
+     * A search walk keeps the ranking that served its first page. A later page
+     * whose cursor names a ranking that is not the configured one answers 400
+     * (restart the search without a cursor); one whose ranking fails answers 503
+     * ``catalog_search_unavailable`` (retry the page, or restart the search).
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */
@@ -33,7 +38,7 @@ export class CatalogService {
         limit = 50,
     }: {
         /**
-         * Search text matched against entry IDs; results are ranked by match quality.
+         * Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).
          */
         q?: (string | null),
         /**
@@ -53,7 +58,7 @@ export class CatalogService {
          */
         includeSnoozed?: boolean,
         /**
-         * Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+         * Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.
          */
         cursor?: (string | null),
         /**

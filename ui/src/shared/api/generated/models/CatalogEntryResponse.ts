@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CatalogEntryLinksResponse } from './CatalogEntryLinksResponse';
+import type { CatalogMatchResponse } from './CatalogMatchResponse';
 /**
  * A single browsable catalog entry.
  */
@@ -12,6 +13,10 @@ export type CatalogEntryResponse = {
      * Catalog identity of the API (manifest domain, e.g. `stripe.com`).
      */
     api_id: string;
+    /**
+     * Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.
+     */
+    match?: CatalogMatchResponse;
     /**
      * Manifest path of the entry within the public-APIs repo.
      */

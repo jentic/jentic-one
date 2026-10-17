@@ -96,11 +96,13 @@ from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     InvalidApiFilterError,
     OperationNotFoundError,
     OverlaySupersedeForbiddenError,
     SearchUnavailableError,
+    StaleCatalogCursorError,
 )
 from jentic_one.registry.services.import_service import (
     ALL_SOURCES_FAILED_PREFIX_TEMPLATE,
@@ -125,7 +127,11 @@ from jentic_one.shared.jobs.hold import (
     review_page_path,
 )
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
+from jentic_one.shared.pagination import (
+    MAX_CATALOG_CURSOR_LENGTH,
+    InvalidCursorError,
+    InvalidSearchCursorError,
+)
 from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.resilience import RateLimiter
 
@@ -535,6 +541,15 @@ async def _inspect_document(env: CallEnv, target: str, revision: str) -> dict[st
 
 # ── search_catalog ────────────────────────────────────────────────────────────
 
+#: The soft error for a later search page whose ranking can't serve it right now
+#: (GET /catalog's 503 ``catalog_search_unavailable``). Kept word-for-word with
+#: the Go MCP handler (``cli/internal/cli/api/mcp_catalog.go``).
+CATALOG_SEARCH_UNAVAILABLE_MESSAGE = "catalog search is temporarily unavailable for this page"
+CATALOG_SEARCH_UNAVAILABLE_ACTIONABLE = (
+    "Retry search_catalog with the same cursor shortly, or call it again without a "
+    "cursor to restart the search."
+)
+
 _SEARCH_CATALOG_PARAMS = [
     ParamSpec("query", "string", ("q",)),
     ParamSpec("limit", "int"),
@@ -566,34 +581,53 @@ async def handle_search_catalog(
         ) from None
     _require_db(env.ctx, "registry", "the catalog")
 
+    cursor = args.get("cursor") or None
+    if cursor is not None and len(cursor) > MAX_CATALOG_CURSOR_LENGTH:
+        raise invalid_params("invalid pagination cursor")
     try:
         page = await CatalogService(env.ctx).list_all(
             q=args.get("query") or None,
-            cursor=args.get("cursor") or None,
+            cursor=cursor,
             limit=limit or 50,
         )
+    except StaleCatalogCursorError:
+        # Go twin: GET /catalog's 400 for a cursor whose ranking is not in use.
+        raise invalid_params(
+            "pagination cursor belongs to a search ranking that is not in use; "
+            "call search_catalog again without a cursor to restart the search"
+        ) from None
     except InvalidCursorError:
         raise invalid_params("invalid pagination cursor") from None
+    except CatalogSearchUnavailableError:
+        # Go twin: GET /catalog's 503 catalog_search_unavailable — the walk's
+        # ranking can't serve this page right now; retryable.
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            CATALOG_SEARCH_UNAVAILABLE_MESSAGE,
+            actionable=CATALOG_SEARCH_UNAVAILABLE_ACTIONABLE,
+            extra={"retryable": True},
+        ) from None
 
-    entries = []
+    entries: list[dict[str, Any]] = []
     for view in page.data:
         self_link = f"{env.base_url}/catalog/{view.api_id}"
-        entries.append(
-            {
-                "api_id": view.api_id,
-                "vendor": view.vendor,
-                "path": view.path,
-                "spec_url": view.spec_url,
-                "registered": view.registered,
-                "update_available": view.update_available,
-                "_links": {
-                    "self": self_link,
-                    "operations": f"{self_link}/operations",
-                    "import": f"{self_link}:import",
-                    "github": view.github_url or "",
-                },
-            }
-        )
+        entry: dict[str, Any] = {
+            "api_id": view.api_id,
+            "vendor": view.vendor,
+            "path": view.path,
+            "spec_url": view.spec_url,
+            "registered": view.registered,
+            "update_available": view.update_available,
+            "_links": {
+                "self": self_link,
+                "operations": f"{self_link}/operations",
+                "import": f"{self_link}:import",
+                "github": view.github_url or "",
+            },
+        }
+        if view.match is not None:
+            entry["match"] = {"channels": list(view.match.channels)}
+        entries.append(entry)
     next_cursor = (page.next_cursor or "") if page.has_more else ""
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

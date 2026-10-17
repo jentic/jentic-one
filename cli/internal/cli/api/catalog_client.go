@@ -43,6 +43,13 @@ type catalogEntryLinks struct {
 	Github     string `json:"github"`
 }
 
+// catalogMatch is the optional "why it matched" evidence a server-side
+// ranking strategy may attach to a search hit. Channels is an open set:
+// unknown values are passed through verbatim, never rejected.
+type catalogMatch struct {
+	Channels []string `json:"channels"`
+}
+
 type catalogEntry struct {
 	APIID           string            `json:"api_id"`
 	Vendor          string            `json:"vendor"`
@@ -51,6 +58,9 @@ type catalogEntry struct {
 	Registered      bool              `json:"registered"`
 	UpdateAvailable bool              `json:"update_available"`
 	Links           catalogEntryLinks `json:"_links"`
+	// Match is omitted when the server sends none (browse, default ranking),
+	// so those entries keep their exact JSON shape.
+	Match *catalogMatch `json:"match,omitempty"`
 }
 
 type catalogListResult struct {
@@ -295,7 +305,15 @@ func toCatalogEntry(e control.CatalogEntryResponse) catalogEntry {
 			Import:     e.UnderscoreLinks.Import,
 			Github:     deref(e.UnderscoreLinks.Github),
 		},
+		Match: toCatalogMatch(e.Match),
 	}
+}
+
+func toCatalogMatch(m *control.CatalogMatchResponse) *catalogMatch {
+	if m == nil {
+		return nil
+	}
+	return &catalogMatch{Channels: append([]string{}, m.Channels...)}
 }
 
 func toCatalogListResult(r *control.CatalogListResponse) *catalogListResult {

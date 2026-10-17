@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -42,12 +42,28 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_update_notified,
     record_update_snoozed,
 )
+from jentic_one.registry.services.catalog.search import (
+    TOKEN_STRATEGY_NAME,
+    CatalogMatch,
+    CatalogSearchRequest,
+    CatalogSearchStrategy,
+    RankedEntry,
+    UnknownCatalogSearchStrategyError,
+    normalize_ranking,
+    resolve_catalog_search_strategy,
+)
+from jentic_one.registry.services.catalog.search_metrics import (
+    FailureReason,
+    record_strategy_failure,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
     SnoozeForbiddenError,
+    StaleCatalogCursorError,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
@@ -61,7 +77,11 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.models.registry import ORIGIN_CATALOG, ORIGIN_OVERLAY
-from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
+from jentic_one.shared.pagination import (
+    CatalogCursor,
+    encode_catalog_cursor,
+    parse_catalog_cursor,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -72,6 +92,9 @@ logger = structlog.get_logger(__name__)
 #: discards on completion. Bounded in practice by the max-age + advisory-lock gates
 #: on the refresh that spawns them.
 _SWEEP_TASKS: set[asyncio.Task[None]] = set()
+
+#: Metric label for a cursor naming a strategy other than the configured one.
+_UNKNOWN_STRATEGY_LABEL = "unknown"
 
 #: Registry-DB advisory-lock key that single-flights the update-notify sweep across
 #: processes (scanner and request-triggered sweeps on every replica/worker).
@@ -110,6 +133,9 @@ class CatalogEntryView:
     #: update the local revision hasn't adopted yet (Flow-3). Always False for
     #: unregistered entries (nothing to update).
     update_available: bool = False
+    #: Why the entry matched a search, when the ranking strategy reports it.
+    #: ``None`` for browse and for the default ``token`` strategy.
+    match: CatalogMatch | None = None
 
 
 @dataclass(frozen=True)
@@ -638,21 +664,29 @@ class CatalogService:
     ) -> CatalogListView:
         """List a keyset page of catalog entries (optionally filtered/ranked).
 
-        Paging is an in-memory keyset over the cached snapshot blob: entries are
-        ordered (``api_id`` for browse, ``(-score, api_id)`` for search), the
-        registration filter is applied, then a ``limit``-sized window after the
+        Paging is an in-memory keyset over the cached snapshot blob: the list
+        filters (``registered_only``/``unregistered_only``/``outdated_only``) are
+        applied first, the remaining entries are ordered (``api_id`` for browse;
+        for a search, ranked by the walk's catalog search strategy and sorted by
+        ``(-score, api_id)``), then a ``limit``-sized window after the
         ``cursor`` position is returned. ``catalog_total``/``registered_count``
         always reflect the full manifest (pre-filter, pre-page) so the UI status
-        row is stable across pages. Raises ``InvalidCursorError`` on a bad cursor.
+        row is stable across pages.
+
+        Raises ``InvalidCursorError`` on a bad cursor — its subclass
+        ``StaleCatalogCursorError`` when the cursor's strategy is not the
+        configured one — and ``CatalogSearchUnavailableError`` when the cursor's
+        strategy can't serve a later page (see :meth:`_rank`).
 
         A cursor is only meaningful for the **same** ``(q, registered_only,
-        unregistered_only)`` it was issued under — it encodes a position in that
-        specific ordering, not the query — so callers must hold those constant
-        while paging (changing them mid-scroll yields a valid but meaningless
-        slice, never an error). Cursors are also relative to the snapshot at read
-        time: a refresh between pages may skip/repeat entries near the cursor
-        (the standard keyset-vs-mutating-snapshot trade-off), but never crashes
-        or loops. Refresh is rare (lazy, max-age gated), so this is acceptable.
+        unregistered_only, outdated_only)`` it was issued under — it encodes a
+        position in that specific ordering, not the query — so callers must hold
+        those constant while paging (changing them mid-scroll yields a valid but
+        meaningless slice, never an error). Cursors are also relative to the
+        snapshot at read time: a refresh between pages may skip/repeat entries
+        near the cursor (the standard keyset-vs-mutating-snapshot trade-off), but
+        never crashes or loops. Refresh is rare (lazy, max-age gated), so this is
+        acceptable.
         """
         raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot(
             include_snoozed=include_snoozed
@@ -674,21 +708,42 @@ class CatalogService:
             if mb.is_registered(e, registered_urls) and e.spec_url in outdated_urls
         )
 
-        scored = mb.score_entries(all_entries, q)
+        # Filters run before ranking, so a strategy only ever ranks (and the
+        # pager only ever walks) entries this request can return.
+        entries = all_entries
         if registered_only:
-            scored = [(e, s) for e, s in scored if mb.is_registered(e, registered_urls)]
+            entries = [e for e in entries if mb.is_registered(e, registered_urls)]
         elif unregistered_only:
-            scored = [(e, s) for e, s in scored if not mb.is_registered(e, registered_urls)]
+            entries = [e for e in entries if not mb.is_registered(e, registered_urls)]
         if outdated_only:
-            scored = [(e, s) for e, s in scored if e.spec_url in outdated_urls]
+            entries = [e for e in entries if e.spec_url in outdated_urls]
 
-        after_api_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
+        parsed = parse_catalog_cursor(cursor) if cursor else None
+        matches: dict[str, CatalogMatch] = {}
+        walk_strategy: str | None = None
+        scored: list[tuple[mb.ManifestEntry, int | float | None]]
+        if not q or not mb.has_query_tokens(q):
+            # Browse: api_id order, no scores, no strategy.
+            scored = [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
+        else:
+            revision = None if fetched_at is None else fetched_at.isoformat()
+            rows, served_by = await self._rank(q, entries, parsed, manifest_revision=revision)
+            scored = [(r.entry, r.score) for r in rows]
+            matches = {r.entry.api_id: r.match for r in rows if r.match is not None}
+            walk_strategy = None if served_by == TOKEN_STRATEGY_NAME else served_by
+
         page = mb.paginate_entries(
-            scored, after_api_id=after_api_id, after_score=after_score, limit=limit
+            scored,
+            after_api_id=parsed.api_id if parsed else None,
+            after_score=parsed.score if parsed else None,
+            limit=limit,
         )
-        views = [self._to_view(e, registered_urls, outdated_urls) for e in page.items]
+        views = [
+            self._to_view(e, registered_urls, outdated_urls, match=matches.get(e.api_id))
+            for e in page.items
+        ]
         next_cursor = (
-            encode_catalog_cursor(page.next_api_id, page.next_score)
+            encode_catalog_cursor(page.next_api_id, page.next_score, strategy=walk_strategy)
             if page.has_more and page.next_api_id is not None
             else None
         )
@@ -703,6 +758,135 @@ class CatalogService:
             next_cursor=next_cursor,
             outdated_count=outdated_count,
         )
+
+    async def _rank(
+        self,
+        q: str,
+        entries: list[mb.ManifestEntry],
+        cursor: CatalogCursor | None,
+        *,
+        manifest_revision: str | None,
+    ) -> tuple[list[RankedEntry], str]:
+        """Rank ``entries`` for a search page; return ``(rows, strategy that ranked)``.
+
+        The first page (no cursor) uses ``catalog.search_strategy``. If that
+        strategy is unregistered or can't be built, raises, misses
+        ``catalog.search_deadline_ms``, or returns rows none of which are valid,
+        the page is ranked by ``token`` — and, because the cursor records the
+        strategy that ranked, so is every later page of the walk.
+
+        A later page uses the strategy its cursor names, and only while that is
+        the configured one: no ``st`` means ``token`` (always served); any other
+        ``st`` must equal ``catalog.search_strategy``, else
+        ``StaleCatalogCursorError`` (400, restart the search). A failure of the
+        cursor's strategy is ``CatalogSearchUnavailableError`` (503) rather than
+        a silent switch that would reorder the walk mid-scroll. The strategy not
+        being registered in this process also answers 503, as a defensive case
+        only: app assembly refuses a configured strategy that isn't registered.
+        """
+        first_page = cursor is None
+        configured = self._cfg.search_strategy
+        name = configured if cursor is None else (cursor.strategy or TOKEN_STRATEGY_NAME)
+        if cursor is not None and name != TOKEN_STRATEGY_NAME and name != configured:
+            # Client-supplied: keep it out of metric labels (unbounded cardinality).
+            record_strategy_failure(
+                _UNKNOWN_STRATEGY_LABEL, reason="not_configured", outcome="rejected"
+            )
+            logger.debug("catalog_search_cursor_strategy_rejected", strategy=name)
+            raise StaleCatalogCursorError
+        request = CatalogSearchRequest(
+            q=q, entries=tuple(entries), manifest_revision=manifest_revision
+        )
+        if name == TOKEN_STRATEGY_NAME:
+            return await self._rank_token(request), TOKEN_STRATEGY_NAME
+
+        failure: Exception | None = None
+        try:
+            strategy = resolve_catalog_search_strategy(name, self._ctx.config)
+        except UnknownCatalogSearchStrategyError:
+            reason: FailureReason = "unregistered"
+        except Exception as exc:  # the strategy's construction failed
+            reason, failure = "error", exc
+        else:
+            deadline_ms = self._cfg.search_deadline_ms
+            request = replace(request, deadline_ms=deadline_ms)
+            outcome = await self._call_strategy(strategy, request, deadline_ms)
+            if isinstance(outcome, list):
+                return outcome, name
+            reason, failure = outcome
+
+        if first_page:
+            return await self._fall_back(request, name, reason=reason, exc=failure)
+        record_strategy_failure(name, reason=reason, outcome="unavailable")
+        logger.warning(
+            "catalog_search_strategy_unavailable",
+            strategy=name,
+            reason=reason,
+            error_type=type(failure).__name__ if failure is not None else None,
+        )
+        # ``from None``: the strategy's exception text may carry caller-supplied
+        # text, and the 5xx handler logs the chained traceback.
+        raise CatalogSearchUnavailableError(name, reason=reason) from None
+
+    async def _call_strategy(
+        self, strategy: CatalogSearchStrategy, request: CatalogSearchRequest, deadline_ms: int
+    ) -> list[RankedEntry] | tuple[FailureReason, Exception | None]:
+        """Run one ranking call under the deadline; rows, or why it failed.
+
+        Only the strategy's own work (``rank()`` and materialising its result)
+        sits inside the deadline and the catch-all, so a service bug in
+        normalisation surfaces as a server error rather than a strategy failure.
+        """
+        try:
+            async with asyncio.timeout(deadline_ms / 1000):
+                ranked = list(await strategy.rank(request))
+        except TimeoutError as exc:
+            return "timeout", exc
+        except Exception as exc:  # a strategy failure must never fail the search
+            return "error", exc
+        result = normalize_ranking(ranked, request.entries)
+        if result.dropped:
+            # Warning only when nothing usable is left (that is a strategy
+            # failure); a few dropped rows on an otherwise good page are debug
+            # noise that would otherwise repeat on every page of every walk.
+            log = logger.debug if result.rows else logger.warning
+            log(
+                "catalog_search_rows_dropped",
+                strategy=strategy.name,
+                invalid=result.dropped_invalid,
+                foreign=result.dropped_foreign,
+                duplicate=result.dropped_duplicate,
+            )
+        if ranked and not result.rows:
+            return "invalid", None
+        return result.rows
+
+    async def _rank_token(self, request: CatalogSearchRequest) -> list[RankedEntry]:
+        """Rank with the built-in ``token`` strategy (no deadline; it can't fail)."""
+        token = resolve_catalog_search_strategy(TOKEN_STRATEGY_NAME, self._ctx.config)
+        return normalize_ranking(await token.rank(request), request.entries).rows
+
+    async def _fall_back(
+        self,
+        request: CatalogSearchRequest,
+        name: str,
+        *,
+        reason: FailureReason,
+        exc: Exception | None,
+    ) -> tuple[list[RankedEntry], str]:
+        """Serve a first page with ``token`` (and so the whole walk) after ``name`` failed."""
+        record_strategy_failure(name, reason=reason, outcome="fallback")
+        # Neither the query nor the exception text is logged: either may carry
+        # caller-supplied text. The type is enough to tell failure modes apart.
+        logger.warning(
+            "catalog_search_strategy_fallback",
+            strategy=name,
+            fallback=TOKEN_STRATEGY_NAME,
+            reason=reason,
+            error_type=type(exc).__name__ if exc is not None else None,
+        )
+        token_request = replace(request, deadline_ms=None)
+        return await self._rank_token(token_request), TOKEN_STRATEGY_NAME
 
     async def get(self, api_id: str) -> CatalogEntryView:
         """Resolve a single catalog entry by api_id."""
@@ -721,6 +905,8 @@ class CatalogService:
         entry: mb.ManifestEntry,
         registered_spec_urls: set[str],
         outdated_spec_urls: set[str] | None = None,
+        *,
+        match: CatalogMatch | None = None,
     ) -> CatalogEntryView:
         registered = mb.is_registered(entry, registered_spec_urls)
         return CatalogEntryView(
@@ -735,6 +921,7 @@ class CatalogService:
                 and outdated_spec_urls is not None
                 and entry.spec_url in outdated_spec_urls
             ),
+            match=match,
         )
 
     # ── preview ──────────────────────────────────────────────────────────────

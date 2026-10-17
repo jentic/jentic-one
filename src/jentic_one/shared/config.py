@@ -1938,6 +1938,28 @@ class CatalogConfig(BaseModel):
     # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
     # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
     update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    search_strategy: str = Field(
+        default="token",
+        min_length=1,
+        description=(
+            "Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the "
+            "built-in token-overlap scorer; other names must be registered by an "
+            "extension (provisional extension seam; see the extending guide), or app "
+            "startup fails. Register a strategy on every replica before selecting it, "
+            "and switch back to `token` before downgrading."
+        ),
+    )
+    search_deadline_ms: int = Field(
+        default=300,
+        ge=1,
+        le=60_000,
+        description=(
+            "Time budget in milliseconds for one ranking call by a non-`token` search "
+            "strategy. On the first page of a walk a timeout falls back to `token` for "
+            "the whole walk; on a later page it answers 503. Every page re-ranks, so set "
+            "it well above the strategy's tail latency."
+        ),
+    )
 
 
 class McpOAuthConfig(BaseModel):

@@ -54,6 +54,7 @@ export type { Body_consentAgentCreate } from './models/Body_consentAgentCreate';
 export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksResponse';
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
+export type { CatalogMatchResponse } from './models/CatalogMatchResponse';
 export type { CatalogRefreshResponse } from './models/CatalogRefreshResponse';
 export type { CatalogSnoozeRequest } from './models/CatalogSnoozeRequest';
 export type { ChangePasswordRequest } from './models/ChangePasswordRequest';

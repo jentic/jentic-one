@@ -11,6 +11,7 @@ from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     GovernedHostsUnavailableError,
     HostChangeRequiresOperatorError,
@@ -93,6 +94,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # DB is misdeployed (SURFACE_DB_DEPS should have granted them) — 503 so
     # callers retry a healthy replica; never a bare 500, never an empty 200.
     GovernedHostsUnavailableError: (503, "governed_hosts_unavailable"),
+    # A search walk's ranking strategy failed after its first page. The walk's
+    # order can't be continued by another ranker, so 503 (retry the page, or
+    # restart the search without a cursor) rather than a silently reordered page.
+    CatalogSearchUnavailableError: (503, "catalog_search_unavailable"),
     # Belt-and-braces: an accidental async lazy load (e.g. on a stale, bulk-updated
     # ORM instance) raises sqlalchemy MissingGreenlet, which the DB transaction
     # wrapper maps to DatabaseConsistencyError. Map it to a known 500 with a
@@ -106,18 +111,31 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 # still logged server-side (see make_service_error_handler).
 _SAFE_DETAILS: dict[type[Exception], str] = {
     DatabaseConsistencyError: "An unexpected error occurred",
+    # Generic on purpose: the raw message names the internal ranking strategy.
+    CatalogSearchUnavailableError: (
+        "Catalog search is temporarily unavailable; retry or restart the search without a cursor"
+    ),
 }
 
+#: Seconds a client should wait before retrying a 503 ``catalog_search_unavailable``.
+_CATALOG_SEARCH_RETRY_AFTER_S = 1
 
-def _add_allow_header(
+
+def _response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
-    """Add Allow header for 405 responses when the exception carries allowed_methods."""
+    """Add ``Allow`` to 405s carrying ``allowed_methods`` and ``Retry-After`` to catalog 503s.
+
+    A catalog 503 for an ``invalid`` ranking gets no ``Retry-After``: the same
+    request produces the same ranking, so retrying soon doesn't help.
+    """
     if status_code == 405 and hasattr(exc, "allowed_methods"):
         response.headers["Allow"] = ", ".join(exc.allowed_methods)
+    if isinstance(exc, CatalogSearchUnavailableError) and exc.reason != "invalid":
+        response.headers["Retry-After"] = str(_CATALOG_SEARCH_RETRY_AFTER_S)
     return response
 
 
 service_error_handler = make_service_error_handler(
-    _ERROR_MAP, response_hook=_add_allow_header, safe_details=_SAFE_DETAILS
+    _ERROR_MAP, response_hook=_response_hook, safe_details=_SAFE_DETAILS
 )
