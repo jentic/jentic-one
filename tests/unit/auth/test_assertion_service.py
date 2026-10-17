@@ -80,7 +80,7 @@ async def test_verify_and_exchange_happy_path(
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     grant = MagicMock()
     grant.permission = "read"
@@ -113,7 +113,7 @@ async def test_verify_pending_agent_gets_distinct_pending_detail(
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
     agent.status = "pending"
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
@@ -131,7 +131,7 @@ async def test_verify_pending_agent_bad_signature_stays_generic(
     _, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
     agent.status = "pending"
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     other_private_key = Ed25519PrivateKey.generate()
     svc = AssertionService(ctx)
@@ -152,7 +152,7 @@ async def test_verify_terminal_statuses_stay_generic(
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
     agent.status = status
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
@@ -160,12 +160,31 @@ async def test_verify_terminal_statuses_stay_generic(
         await svc.verify_and_exchange(assertion)
 
 
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+async def test_verify_active_agent_with_inactive_owner_stays_generic(
+    mock_agent_repo: MagicMock, mock_token_svc_cls: MagicMock
+) -> None:
+    """An active agent whose owner is disabled or deleted mints no tokens and
+    gets the same generic rejection as a disabled agent."""
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    agent = _make_active_agent(jwks)
+    agent.owner_id = "usr_offboarded"
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, False))
+
+    svc = AssertionService(ctx)
+    with pytest.raises(InvalidGrantError, match="Assertion is invalid"):
+        await svc.verify_and_exchange(_make_assertion(private_key, jti="owner-off-jti"))
+    mock_token_svc_cls.return_value.issue_pair.assert_not_called()
+
+
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
 async def test_verify_rejects_bad_signature(mock_agent_repo: MagicMock) -> None:
     ctx = _make_ctx()
     _, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     other_private_key = Ed25519PrivateKey.generate()
     svc = AssertionService(ctx)
@@ -179,7 +198,7 @@ async def test_verify_rejects_expired_assertion(mock_agent_repo: MagicMock) -> N
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key, exp=time.time() - 10)
@@ -192,7 +211,7 @@ async def test_verify_rejects_wrong_audience(mock_agent_repo: MagicMock) -> None
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key, aud="https://wrong.example.com/oauth/token")
@@ -211,7 +230,7 @@ async def test_verify_rejects_replayed_jti(
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, True))
     mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
 
     token_svc_instance = MagicMock()
@@ -239,7 +258,7 @@ async def test_verify_rejects_non_eddsa_algorithm() -> None:
 async def test_verify_rejects_unknown_agent(mock_agent_repo: MagicMock) -> None:
     ctx = _make_ctx()
     private_key, _ = _generate_keypair()
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=None)
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=None)
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
@@ -278,7 +297,7 @@ async def test_verify_accepts_request_scoped_audience_zero_config(
     (request-scoped) and the bind-derived audience are both accepted."""
     ctx = _make_zero_config_ctx()
     private_key, jwks = _generate_keypair()
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(_make_active_agent(jwks), True))
     mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
     mock_token_svc_cls.return_value = MagicMock(issue_pair=AsyncMock(return_value=("at", "rt")))
 
@@ -296,7 +315,7 @@ async def test_verify_rejects_audience_not_matching_request_or_bind(
 ) -> None:
     ctx = _make_zero_config_ctx()
     private_key, jwks = _generate_keypair()
-    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(_make_active_agent(jwks), True))
 
     svc = AssertionService(ctx)
     with pytest.raises(InvalidGrantError, match="invalid"):
