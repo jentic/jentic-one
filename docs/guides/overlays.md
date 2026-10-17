@@ -88,7 +88,7 @@ operator — the fix is never silently discarded.
 ### Snoozing a known change
 
 An operator who has seen an upstream change and chosen not to adopt it can **snooze**
-the notification (`POST /catalog/{api_id}:snooze`, requires `events:write`). Snoozing
+the notification (`POST /catalog/{entry_id}:snooze`, requires `events:write`). Snoozing
 pins the accepted upstream digest; a *newer* upstream digest automatically re-lights
 the badge, so a real new change is never hidden. `jentic catalog outdated
 --include-snoozed` lists muted entries.

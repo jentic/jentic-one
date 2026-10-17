@@ -395,7 +395,7 @@ detected operators.
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "results": [
     {"operator": "claude", "skill": "jentic", "scope": "user",
      "path": "/home/u/.claude/skills/jentic/SKILL.md",

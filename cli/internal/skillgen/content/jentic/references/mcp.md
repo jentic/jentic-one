@@ -117,9 +117,13 @@ The same order as the doctrine, tool for tool — `search_catalog` →
 
 ```
 search_catalog {"query": "spreadsheets", "limit": 10}
-import_api {"api_id": "googleapis.com/sheets"}
+import_api {"entry_id": "public/googleapis.com/sheets"}
 search_apis {"query": "get values from a spreadsheet range", "limit": 10}
 ```
+
+Pass each `search_catalog` hit's `entry_id` (`{source}/{id}`) to `import_api`
+verbatim — never rebuild it from `catalog_api_id`. If an import answers
+`RESOLVE_FAILED` with a `did_you_mean`, retry with exactly that `entry_id`.
 
 `import_api` runs the import as a job and tracks it in-process: on
 completion it returns `{job_id, status, revisions, promoted}` with the
