@@ -432,7 +432,7 @@ async def _complete_oauth_callback(
             # Pass the raw state so ``complete_from_callback`` runs the
             # shared ``consume_callback_state`` prologue — never trust the
             # sid peeked above as a bypass around replay protection.
-            await session_svc.complete_from_callback(
+            result = await session_svc.complete_from_callback(
                 raw_state=raw_state, code=code, browser_binding=binding
             )
         except StateError as exc:
@@ -446,6 +446,15 @@ async def _complete_oauth_callback(
         except Exception as exc:
             _logger.warning(
                 "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
+            )
+            return _oauth_callback_error()
+        if result.status != "connected":
+            # The exchange failed or the session ended meanwhile.
+            _logger.warning(
+                "oauth_callback.connect_session.not_connected",
+                session_id=session_id,
+                status=result.status,
+                error_code=result.error_code,
             )
             return _oauth_callback_error()
         _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
