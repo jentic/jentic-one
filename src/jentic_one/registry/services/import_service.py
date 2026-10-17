@@ -26,6 +26,7 @@ from jentic_one.registry.repos.revision_repo import (
 from jentic_one.registry.services.catalog.flow3_metrics import (
     record_overlay_auto_deprecated,
 )
+from jentic_one.registry.services.catalog.spec_fetch import CatalogRefResolver
 from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
@@ -111,11 +112,14 @@ class ImportHandler:
             recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
+            catalog = CatalogRefResolver(self._ctx)
 
             for idx, src in enumerate(sources):
                 try:
                     source = _source_adapter.validate_python(src)
-                    spec = await load_specification(source, config=self._ctx.config.ingest)
+                    spec = await load_specification(
+                        source, config=self._ctx.config.ingest, catalog=catalog
+                    )
                     result = await Ingestor(self._ctx).ingest(spec, created_by=created_by)
                     revisions.append(
                         {
@@ -560,20 +564,28 @@ class ImportHandler:
         step. Returns ``None`` for a genuine failure (served revision is still the overlay,
         or identity can't be resolved).
 
-        Identity is resolved by the source's upstream ``url`` (the catalog ``spec_url``),
-        *not* the (vendor, name, version) triple: the production supersede source is a
-        ``type:"url"`` payload built by ``CatalogService._to_import_source`` that has no
-        ``version`` key (the version isn't known until the spec is fetched). Keying on the
-        served revision's ``source_url`` — the same provenance the enqueue-time gate uses
-        (``current_revision_for_source_url``) — is what lets this fire on the real path.
+        Identity is resolved by the source's catalog entry (``catalog_entry_id``) for a
+        ``type:"catalog"`` source, else by its upstream ``url``, *not* the
+        (vendor, name, version) triple: the supersede source built by
+        ``CatalogService.import_entry`` has no ``version`` key (the version isn't
+        known until the spec is fetched). Keying on the same provenance the
+        enqueue-time gate uses is what lets this fire on the real path.
         """
         src = source if isinstance(source, dict) else {}
+        entry_id = src.get("catalog_entry_id") if src.get("type") == "catalog" else None
         url = src.get("url")
-        if not isinstance(url, str):
-            return None
         try:
             async with self._ctx.registry_db.session() as session:
-                current = await ApiRevisionRepository.current_revision_for_source_url(session, url)
+                if isinstance(entry_id, str):
+                    current = await ApiRevisionRepository.current_revision_for_catalog_entry_id(
+                        session, entry_id
+                    )
+                elif isinstance(url, str):
+                    current = await ApiRevisionRepository.current_revision_for_source_url(
+                        session, url
+                    )
+                else:
+                    return None
                 if current is None:
                     return None
                 api_id, current_revision_id = current

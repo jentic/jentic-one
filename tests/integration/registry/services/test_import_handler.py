@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
@@ -19,9 +20,11 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.ingest.fetch import CatalogSpec
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.services.catalog.entries import CatalogEntry, build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.spec_fetch import CatalogRefResolver
 from jentic_one.registry.services.errors import (
     HostOwnedByOtherVendorError,
     OverlayStateConflictError,
@@ -1282,13 +1285,13 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
         )
         await session.commit()
 
-    # Faithfully mirror the PRODUCTION supersede source: a ``type:"url"`` payload with NO
-    # version key (CatalogService._to_import_source builds exactly this — the version isn't
-    # known until the spec is fetched). Mock the HTTP fetch to return the *identical* fresh
-    # upstream bytes so the re-ingest actually runs through load_specification/Ingestor and
-    # raises DuplicateRevisionError — the real trigger _recover_supersede handles. This proves
-    # _recover_supersede resolves identity by url (current_revision_for_source_url), not by a
-    # vendor/name/version triple the real path never carries.
+    # A supersede source with NO version key (a job enqueued before catalog imports
+    # carried an entry id: a ``type:"url"`` payload — the version isn't known until the
+    # spec is fetched). Mock the HTTP fetch to return the *identical* fresh upstream bytes
+    # so the re-ingest actually runs through load_specification/Ingestor and raises
+    # DuplicateRevisionError — the real trigger _recover_supersede handles. This proves
+    # _recover_supersede resolves identity by url (current_revision_for_source_url), not by
+    # a vendor/name/version triple the real path never carries.
     mock_response = AsyncMock()
     mock_response.status_code = 200
     mock_response.text = fresh_upstream
@@ -2175,6 +2178,23 @@ def _mock_spec_client(spec_text: str) -> AsyncMock:
     return mock_client
 
 
+def _serve_catalog_spec(spec_text: str) -> Any:
+    """Serve ``spec_text`` as the spec every catalog entry's source returns."""
+    content = spec_text.encode()
+    return patch.object(
+        CatalogRefResolver,
+        "resolve",
+        new=AsyncMock(
+            return_value=CatalogSpec(
+                content=content,
+                digest=hashlib.sha256(content).hexdigest(),
+                media_type="application/json",
+                source_url="https://catalog.example.com/posthog/openapi.json",
+            )
+        ),
+    )
+
+
 async def test_catalog_import_lands_clean_identity_from_sub_segment(
     integration_context: Context,
     registry_db: DatabaseSession,
@@ -2195,16 +2215,13 @@ async def test_catalog_import_lands_clean_identity_from_sub_segment(
     )
     source = svc._to_import_source(
         entry,
-        "https://catalog.example.com/posthog/openapi.json",
         Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
         vendor=vendor,
         name=name,
+        switch_source=False,
     )
 
-    with patch(
-        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(MINIMAL_OPENAPI),
-    ):
+    with _serve_catalog_spec(MINIMAL_OPENAPI):
         result = await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
             session=None,
@@ -2326,20 +2343,17 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
     assert registered == ("posthog-com", "posthog-com-posthog-api")
     source = svc._to_import_source(
         entry,
-        spec_url,
         Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
         vendor=registered[0],
         name=registered[1],
+        switch_source=False,
     )
     assert source["api_name"] == "posthog-com-posthog-api"
 
     # The upstream changed, so the re-import produces a genuinely new revision.
     updated_spec = json.loads(MINIMAL_OPENAPI)
     updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
-    with patch(
-        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(json.dumps(updated_spec)),
-    ):
+    with _serve_catalog_spec(json.dumps(updated_spec)):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
             session=None,
@@ -2397,19 +2411,16 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     )
     source = svc._to_import_source(
         entry,
-        "https://catalog.example.com/posthog/new/openapi.json",
         Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
         vendor=vendor,
         name=name,
+        switch_source=False,
     )
     assert (source["vendor"], source["api_name"]) == ("posthog-com", "posthog-com-posthog-api")
 
     updated_spec = json.loads(MINIMAL_OPENAPI)
     updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
-    with patch(
-        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
-        return_value=_mock_spec_client(json.dumps(updated_spec)),
-    ):
+    with _serve_catalog_spec(json.dumps(updated_spec)):
         await ImportHandler(integration_context).execute(
             job_id=str(uuid.uuid4()),
             session=None,

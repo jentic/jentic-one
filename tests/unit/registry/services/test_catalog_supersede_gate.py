@@ -43,7 +43,6 @@ def _make_ctx() -> MagicMock:
     return ctx
 
 
-_SPEC_URL = "https://raw.githubusercontent.com/x/y/main/openapi.json"
 _ENTRY_ID = "public/acme.com/widgets"
 
 
@@ -61,7 +60,7 @@ def _entry() -> CatalogEntry:
 def _visible() -> AsyncMock:
     """Stand-in for ``CatalogService._visible_entry``: the entry is visible."""
     state = MagicMock()
-    state.snapshot.spec_urls = {_ENTRY_ID: _SPEC_URL}
+    state.snapshot.entries = [_entry()]
     return AsyncMock(return_value=(state, _entry()))
 
 
@@ -71,16 +70,14 @@ def _identity(perms: list[str]) -> Identity:
 
 @pytest.mark.asyncio
 async def test_no_local_api_is_ordinary_import() -> None:
-    """No registered API for the spec_url → nothing to supersede, plain import."""
+    """No API imported from the entry → nothing to supersede, plain import."""
     svc = CatalogService(_make_ctx())
     with patch(
-        f"{_SVC}.ApiRevisionRepository.current_revision_for_source_url",
+        f"{_SVC}.ApiRevisionRepository.current_revision_for_catalog_entry_id",
         new_callable=AsyncMock,
         return_value=None,
     ):
-        result = await svc._authorize_overlay_supersede(
-            _entry(), _SPEC_URL, _identity(["catalog:import"])
-        )
+        result = await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
     assert result is None
 
 
@@ -90,7 +87,7 @@ async def test_no_live_overlay_is_ordinary_import() -> None:
     svc = CatalogService(_make_ctx())
     with (
         patch(
-            f"{_SVC}.ApiRevisionRepository.current_revision_for_source_url",
+            f"{_SVC}.ApiRevisionRepository.current_revision_for_catalog_entry_id",
             new_callable=AsyncMock,
             return_value=(_API_ID, _REV_ID),
         ),
@@ -100,9 +97,7 @@ async def test_no_live_overlay_is_ordinary_import() -> None:
             return_value=None,
         ),
     ):
-        result = await svc._authorize_overlay_supersede(
-            _entry(), _SPEC_URL, _identity(["catalog:import"])
-        )
+        result = await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
     assert result is None
 
 
@@ -114,7 +109,7 @@ async def test_collision_with_confirm_scope_authorizes_supersede() -> None:
     overlay.id = "ovr_abc"
     with (
         patch(
-            f"{_SVC}.ApiRevisionRepository.current_revision_for_source_url",
+            f"{_SVC}.ApiRevisionRepository.current_revision_for_catalog_entry_id",
             new_callable=AsyncMock,
             return_value=(_API_ID, _REV_ID),
         ),
@@ -125,9 +120,7 @@ async def test_collision_with_confirm_scope_authorizes_supersede() -> None:
         ),
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
     ):
-        result = await svc._authorize_overlay_supersede(
-            _entry(), _SPEC_URL, _identity(["overlays:confirm"])
-        )
+        result = await svc._authorize_overlay_supersede(_entry(), _identity(["overlays:confirm"]))
     assert result == "ovr_abc"
     emit.assert_not_awaited()  # authorized: no operator-facing refusal event
 
@@ -140,7 +133,7 @@ async def test_collision_via_org_admin_authorizes_supersede() -> None:
     overlay.id = "ovr_admin"
     with (
         patch(
-            f"{_SVC}.ApiRevisionRepository.current_revision_for_source_url",
+            f"{_SVC}.ApiRevisionRepository.current_revision_for_catalog_entry_id",
             new_callable=AsyncMock,
             return_value=(_API_ID, _REV_ID),
         ),
@@ -150,9 +143,7 @@ async def test_collision_via_org_admin_authorizes_supersede() -> None:
             return_value=overlay,
         ),
     ):
-        result = await svc._authorize_overlay_supersede(
-            _entry(), _SPEC_URL, _identity(["org:admin"])
-        )
+        result = await svc._authorize_overlay_supersede(_entry(), _identity(["org:admin"]))
     assert result == "ovr_admin"
 
 
@@ -164,7 +155,7 @@ async def test_collision_without_scope_refuses_and_reemits() -> None:
     overlay.id = "ovr_xyz"
     with (
         patch(
-            f"{_SVC}.ApiRevisionRepository.current_revision_for_source_url",
+            f"{_SVC}.ApiRevisionRepository.current_revision_for_catalog_entry_id",
             new_callable=AsyncMock,
             return_value=(_API_ID, _REV_ID),
         ),
@@ -176,7 +167,7 @@ async def test_collision_without_scope_refuses_and_reemits() -> None:
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
         pytest.raises(OverlaySupersedeForbiddenError),
     ):
-        await svc._authorize_overlay_supersede(_entry(), _SPEC_URL, _identity(["catalog:import"]))
+        await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
     emit.assert_awaited_once()
     kwargs = emit.await_args.kwargs if emit.await_args else {}
     assert kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
@@ -201,8 +192,12 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
     assert job_id == "job_1"
     assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
+    # The job carries the entry id, never a spec location or source credential.
+    assert payload["sources"][0]["type"] == "catalog"
+    assert payload["sources"][0]["catalog_entry_id"] == _ENTRY_ID
+    assert "url" not in payload["sources"][0]
     assert payload["supersede_overlay_id"] == "ovr_1"
-    assert payload["sources"][0]["supersede_active"] == "true"
+    assert payload["sources"][0]["supersede_active"] is True
 
 
 @pytest.mark.asyncio
@@ -221,7 +216,7 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
     assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
     assert "supersede_overlay_id" not in payload
-    assert "supersede_active" not in payload["sources"][0]
+    assert not payload["sources"][0].get("supersede_active")
 
 
 # ── C1 snooze gate (#925) ──────────────────────────────────────────────────────
@@ -310,7 +305,7 @@ async def _import_payload(perms: list[str]) -> dict[str, Any]:
 async def test_import_entry_stamps_host_change_approval_for_operator(perms: list[str]) -> None:
     """``credentials:write`` (directly or via org:admin) approves a server-host change."""
     payload = await _import_payload(perms)
-    assert payload["sources"][0]["host_change_approved"] == "true"
+    assert payload["sources"][0]["host_change_approved"] is True
 
 
 @pytest.mark.asyncio
@@ -320,4 +315,4 @@ async def test_import_entry_no_host_change_approval_without_operator_scope(
 ) -> None:
     """Default agent scopes and ``apis:write`` alone do not approve a host change."""
     payload = await _import_payload(perms)
-    assert "host_change_approved" not in payload["sources"][0]
+    assert not payload["sources"][0].get("host_change_approved")
