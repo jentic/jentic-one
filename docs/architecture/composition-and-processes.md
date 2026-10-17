@@ -154,13 +154,13 @@ load-bearing:
 
 1. **Startup:** `ctx.startup()` → DB instrumentation → telemetry → the
    surface's own `extra_lifespan` (the broker opens its shared outbound
-   `httpx.AsyncClient` here) → the invalidation bus starts (below) →
-   container-injected lifespans (the `/mcp` session manager) → background
+   `httpx.AsyncClient` here) → the invalidation bus starts (below) → the
+   provider-config refresher starts → container-injected lifespans (the `/mcp` session manager) → background
    workers.
 2. **Shutdown**, with a drain step first: the broker's admission gate
    reports unready (so the load balancer deregisters the instance) →
-   scanners stop → the job worker drains → telemetry flushes →
-   `ctx.shutdown()` → container-injected lifespans exit in reverse → the
+   scanners stop → the job worker drains → telemetry flushes → the
+   provider-config refresher stops → `ctx.shutdown()` (closes the providers) → container-injected lifespans exit in reverse → the
    invalidation bus stops → the surface lifespan closes the shared HTTP
    client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
@@ -199,8 +199,9 @@ flowchart LR
 - **Listening is one dedicated connection per database server per process**,
   opened directly with asyncpg outside the SQLAlchemy pool (a `LISTEN` is
   session state). The bus opens it only when something subscribed — the broker
-  does; control-plane processes cache nothing and open nothing. It is visible
-  in `pg_stat_activity` as `application_name = 'jentic-one-invalidation'`.
+  and any process that resolves credential providers (below) do; a process
+  serving only registry, admin or auth opens nothing. It is visible in
+  `pg_stat_activity` as `application_name = 'jentic-one-invalidation'`.
 - **A lost connection degrades to TTLs, never to stale forever.** The bus
   probes the connection, reconnects with capped exponential backoff
   (`invalidation.reconnect_backoff_*`), and after reconnecting flushes every
@@ -212,6 +213,25 @@ flowchart LR
   single-file database has no second writer process. The TTLs apply. Set
   `invalidation.enabled: false` where `LISTEN` cannot work (a transaction-mode
   connection pooler) to get the same TTL-only behaviour on PostgreSQL.
+- **Credential provider configs ride the same bus.** An admin write to a
+  provider config (`PUT /admin/config/providers/{name}`) rebuilds the
+  provider registry of the process that served it, and the trigger on
+  `provider_configs` notifies every other process that resolves providers
+  (control, the broker, a combined app) on the `admin.provider_configs`
+  topic. Each one rebuilds its registry from the stored configs
+  ([`shared/provider_refresh.py`](../../src/jentic_one/shared/provider_refresh.py)),
+  so a rotated or removed client secret stops being used without a restart.
+  The payload names the provider only — never the config or its ciphertext.
+  Rebuilds are debounced and single-flighted (a burst of writes is one
+  rebuild; a write landing mid-rebuild causes one more), a reconnect flush
+  triggers one, and a failed rebuild is retried with backoff. Resolving a
+  provider stays an in-memory lookup: the database is read only on a
+  rebuild. A rebuild reuses every provider whose config is unchanged; a
+  replaced provider stays usable by the requests that already resolved it
+  and is closed (if it holds resources) after a grace period, or at shutdown.
+  With a bus that never delivers (SQLite's single process, or
+  `invalidation.enabled: false`) only the writing process rebuilds, and the
+  others merge the stored configs at their next boot.
 - **Pluggable.** `AppContainer.invalidation_bus` replaces the default
   (`build_invalidation_bus(ctx)`); the app factory stashes the chosen bus on
   `app.state.invalidation_bus` before installers run, so caches subscribe at

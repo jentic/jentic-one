@@ -258,23 +258,34 @@ async def test_trigger_is_silent_on_rollback_and_no_op_update(
 
 
 @pytest.mark.parametrize(
-    ("database", "migration_module"),
+    ("database", "migration_modules"),
     [
         (
             "admin",
-            "jentic_one.migrations.admin.versions.e046c1696c4b_add_cache_invalidation_triggers",
+            (
+                "jentic_one.migrations.admin.versions.e046c1696c4b_add_cache_invalidation_triggers",
+                "jentic_one.migrations.admin.versions."
+                "b7d41c2e9f60_add_provider_config_invalidation_trigger",
+            ),
         ),
         (
             "control",
-            "jentic_one.migrations.control.versions.5a78aa331015_add_cache_invalidation_triggers",
+            (
+                "jentic_one.migrations.control.versions."
+                "5a78aa331015_add_cache_invalidation_triggers",
+            ),
         ),
     ],
 )
 async def test_every_triggered_table_carries_both_triggers(
-    integration_context: Context, database: str, migration_module: str
+    integration_context: Context, database: str, migration_modules: tuple[str, ...]
 ) -> None:
     """The migrated schema has the row and TRUNCATE trigger on every listed table."""
-    migration = importlib.import_module(migration_module)
+    tables = {
+        table
+        for module in migration_modules
+        for table in importlib.import_module(module).TRIGGERED_TABLES
+    }
     schema = getattr(integration_context.config.databases, database).schema_name
     db = getattr(integration_context, f"{database}_db")
     async with db.session() as session:
@@ -291,9 +302,7 @@ async def test_every_triggered_table_carries_both_triggers(
         ).all()
     found = {(r.relname, r.tgname) for r in rows}
     expected = {
-        (table, f"{table}_invalidation_{kind}")
-        for table in migration.TRIGGERED_TABLES
-        for kind in ("row", "truncate")
+        (table, f"{table}_invalidation_{kind}") for table in tables for kind in ("row", "truncate")
     }
     assert found == expected
 

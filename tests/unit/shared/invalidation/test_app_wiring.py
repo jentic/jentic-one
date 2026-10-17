@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from pathlib import Path
 
 from jentic_one.broker.core.cache_invalidation import BROKER_TOPICS
 from jentic_one.broker.web.app import create_app as create_broker_app
+from jentic_one.control.services.credentials.providers import ProviderRegistry
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.invalidation import (
+    InProcessInvalidationBus,
     InvalidationHandler,
+    InvalidationMessage,
     NoopInvalidationBus,
 )
+from jentic_one.shared.provider_refresh import PROVIDER_CONFIG_TOPIC
 from jentic_one.shared.web.app_factory import _enter_invalidation_bus, create_combined_app
 from jentic_one.shared.web.container import AppContainer
 
@@ -51,8 +56,27 @@ def test_broker_caches_subscribe_to_the_injected_bus(tmp_path: Path) -> None:
     ctx = _sqlite_ctx(tmp_path)
     app = create_broker_app(ctx, AppContainer(ctx=ctx, invalidation_bus=bus))
     assert app.state.invalidation_bus is bus
-    assert set(bus.topics) == BROKER_TOPICS
+    assert set(bus.topics) == BROKER_TOPICS | {PROVIDER_CONFIG_TOPIC}
     assert bus.events == [], "the bus starts in the lifespan, not at build time"
+
+
+def test_provider_resolving_app_subscribes_the_provider_refresh(tmp_path: Path) -> None:
+    bus = _RecordingBus()
+    ctx = _sqlite_ctx(tmp_path)
+    create_combined_app(
+        ctx, ["admin", "control"], container=AppContainer(ctx=ctx, invalidation_bus=bus)
+    )
+    assert bus.topics.count(PROVIDER_CONFIG_TOPIC) == 1
+
+
+def test_app_that_resolves_no_provider_does_not_subscribe(tmp_path: Path) -> None:
+    bus = _RecordingBus()
+    config = _sqlite_ctx(tmp_path).config
+    ctx = Context(config, refresh_providers_on_boot=False)
+    create_combined_app(
+        ctx, ["registry", "admin"], container=AppContainer(ctx=ctx, invalidation_bus=bus)
+    )
+    assert PROVIDER_CONFIG_TOPIC not in bus.topics
 
 
 def test_default_bus_on_sqlite_is_noop(tmp_path: Path) -> None:
@@ -67,3 +91,43 @@ async def test_lifespan_entry_starts_and_schedules_stop() -> None:
         await _enter_invalidation_bus(stack, bus)
         assert bus.events == ["start"]
     assert bus.events == ["start", "stop"]
+
+
+class _CountingContext(Context):
+    """A Context that counts provider refreshes instead of reading the admin DB."""
+
+    def __init__(self, config: AppConfig) -> None:
+        super().__init__(config)
+        self.refreshes = 0
+        self.refreshed = asyncio.Event()
+
+    async def refresh_providers(self) -> ProviderRegistry:
+        self.refreshes += 1
+        self.refreshed.set()
+        return self.providers
+
+
+async def test_lifespan_refreshes_providers_on_notifications_and_reconnect(
+    tmp_path: Path,
+) -> None:
+    bus = InProcessInvalidationBus()
+    ctx = _CountingContext(_sqlite_ctx(tmp_path).config)
+    app = create_combined_app(
+        ctx, ["admin", "control"], container=AppContainer(ctx=ctx, invalidation_bus=bus)
+    )
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(ctx.refreshed.wait(), timeout=5)  # boot + reconcile
+        baseline = ctx.refreshes
+        for flush in (False, True):
+            ctx.refreshed.clear()
+            if flush:
+                await bus.simulate_reconnect()
+            else:
+                await bus.publish(
+                    InvalidationMessage(topic=PROVIDER_CONFIG_TOPIC, operation="UPDATE")
+                )
+            await asyncio.wait_for(ctx.refreshed.wait(), timeout=5)
+        assert ctx.refreshes >= baseline + 2
+    refreshes_at_exit = ctx.refreshes
+    await bus.publish(InvalidationMessage(topic=PROVIDER_CONFIG_TOPIC, operation="UPDATE"))
+    assert ctx.refreshes == refreshes_at_exit, "nothing refreshes after the lifespan exits"

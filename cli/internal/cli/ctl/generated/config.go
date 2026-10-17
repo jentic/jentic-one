@@ -1490,10 +1490,15 @@ func (j *IngestConfig) UnmarshalJSON(value []byte) error {
 // state — the broker — holds one dedicated “LISTEN“ connection per database
 // server and drops the affected cache entries on receipt. A revoke made
 // through one process therefore takes effect on every broker before the
-// cache TTLs lapse. A process with nothing to invalidate opens no connection.
+// cache TTLs lapse. The same channel carries credential provider config
+// writes (“provider_configs“): every process that resolves providers
+// (control, the broker) rebuilds its provider registry on receipt. A process
+// with nothing to invalidate opens no connection.
 //
 // SQLite has no notification channel: the bus is a no-op there and the cache
-// TTLs bound staleness. Disable it (“enabled: false“) when the database is
+// TTLs bound staleness; a provider config write then reaches only the
+// process that served it (other processes merge it at their next boot).
+// Disable it (“enabled: false“) when the database is
 // reached through a pooler that cannot hold a session-level “LISTEN“ — for
 // example PgBouncer in transaction pooling mode — and the TTLs apply as on
 // SQLite.
