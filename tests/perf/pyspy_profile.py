@@ -159,14 +159,22 @@ def record(args: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(["docker", "exec", PYSPY_CONTAINER, "py-spy", "record", *args.split()])
 
 
+def raw_lines(raw: Path) -> list[str]:
+    """Lines of a py-spy ``--format raw`` profile, decoded leniently.
+
+    py-spy copies frame names out of the target's memory as raw bytes; a sample
+    torn mid-update can carry invalid UTF-8. Replacement only touches the torn
+    name: the ``;`` separators and the trailing count are ASCII and survive.
+    """
+    return raw.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
 def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
     total = 0
     buckets: collections.Counter[str] = collections.Counter()
     leaves: collections.Counter[str] = collections.Counter()
     probes: collections.Counter[str] = collections.Counter()
-    # py-spy copies frame names out of the target's memory as raw bytes; a sample
-    # torn mid-update can carry invalid UTF-8, so decode leniently.
-    for line in raw.read_text(errors="replace").splitlines():
+    for line in raw_lines(raw):
         stack, _, count = line.rpartition(" ")
         n = int(count)
         total += n

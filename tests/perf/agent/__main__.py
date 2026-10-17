@@ -227,7 +227,7 @@ def line_hotspots(raw: Path, top: int = 20) -> dict[str, list[dict[str, Any]]]:
     self_: Counter[str] = Counter()
     incl: Counter[str] = Counter()
     frame_re = re.compile(r"(\S+) \((?:.*/)?(jentic_one/[^:]+):(\d+)\)")
-    for line in raw.read_text().splitlines():
+    for line in pyspy_profile.raw_lines(raw):
         stack, _, count = line.rpartition(" ")
         n = int(count)
         total += n

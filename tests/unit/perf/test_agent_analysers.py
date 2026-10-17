@@ -199,6 +199,31 @@ def test_read_csv_handles_quoted_commas_and_escaped_quotes(tmp_path: Path) -> No
     ]
 
 
+def test_cpu_analysers_survive_a_torn_frame_name_without_corrupting_the_others(
+    tmp_path: Path,
+) -> None:
+    raw = tmp_path / "profile.txt"
+    ours = "handle (/app/src/jentic_one/broker/web/app.py:42)"
+    raw.write_bytes(
+        b"run (asyncio/runners.py:118);"
+        + ours.encode()
+        + b";execute (sqlalchemy/engine/base.py:7) 3\n"
+        # The 0xff lands inside the leaf frame name, as a torn read would.
+        + ours.encode()
+        + b";gar\xffbled (x.py:1) 2\n"
+    )
+    summary = pyspy_profile.analyse(raw)
+    assert summary["samples"] == 5
+    assert summary["buckets"] == {"db: other sqlalchemy/asyncpg": 0.6, "other": 0.4}
+    top = {r["frame"]: r["share"] for r in summary["top_self"]}
+    assert top["execute (sqlalchemy/engine/base.py:7)"] == 0.6
+    assert top["gar\ufffdbled (x.py:1)"] == 0.4
+    hot = agent_main.line_hotspots(raw)
+    assert hot["inclusive"] == [
+        {"frame": "src/jentic_one/broker/web/app.py:42 handle", "pct": 100.0}
+    ]
+
+
 def test_broker_env_drift_reports_traced_or_variant_broker() -> None:
     expected = {"PYTHONPATH": "", "PERF_TRACE": "", "JENTIC__X": "true", "EMPTY": None}
     actual = {"PYTHONPATH": "/perf-hooks", "PERF_TRACE": "sql", "JENTIC__X": "true"}
