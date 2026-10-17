@@ -111,6 +111,18 @@ control-plane URL. Re-register with both URLs.
 The database must live on a named volume, not a host bind mount — Docker
 Desktop's file sharing lacks the locking semantics SQLite needs.
 
+## `credential_binding_suspended` (403) on execute
+
+The agent is bound to a credential that covers this API, but an operator
+suspended that binding. This is the operator's decision, so the agent can't
+fix it. Don't try a new connect: while the suspension stands,
+`jentic connect` / `request_connection` for the same agent and API returns
+409 `connect_session_binding_suspended`. Ask the operator whether they'll
+resume it. They can do that from the agent's page in the dashboard, or with
+`POST /agents/{agent_id}/credentials/{credential_id}:resume`
+(`agents:write`). The binding works again on the next call; nothing needs to
+restart.
+
 ## `credential_undecryptable` (424) on execute
 
 The stored data is intact; the key is wrong. A credential row is decrypted

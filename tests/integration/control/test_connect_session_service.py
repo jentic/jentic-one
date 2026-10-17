@@ -61,6 +61,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    BindingSuspendedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     InvalidPollTokenError,
@@ -543,6 +544,85 @@ async def test_vendor_connect_follows_an_already_imported_apis_registered_name(
 
     assert (credential.api_vendor, credential.api_name) == (api.vendor, api.name)
     await _assert_binding_resolves(ctx, api, credential)
+
+
+async def _suspend_binding(ctx: Context, credential_id: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(
+                AgentCredentialBinding.agent_id == _AGENT_ID,
+                AgentCredentialBinding.credential_id == credential_id,
+            )
+            .values(suspended=True)
+        )
+        await session.commit()
+
+
+async def test_vendor_connect_is_refused_while_the_agents_binding_is_suspended(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    credential = await _connect_and_bind(ctx)
+    await _suspend_binding(ctx, credential.id)
+    svc = ConnectSessionService(ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx))
+
+    with pytest.raises(BindingSuspendedError):
+        await svc.create_session(vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY)
+    with pytest.raises(BindingSuspendedError):
+        await svc.create_session(vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY)
+    # Naming no agent, the owner may still connect the vendor.
+    created = await svc.create_session(vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY)
+    assert created.session_id
+
+
+async def test_vendor_connect_with_an_active_binding_is_not_refused(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    await _connect_and_bind(ctx)
+    svc = ConnectSessionService(ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx))
+
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
+    )
+    assert created.session_id
+
+
+async def test_late_bound_vendor_confirm_is_refused_while_the_binding_is_suspended(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    ctx = integration_context
+    credential = await _connect_and_bind(ctx)
+    await _suspend_binding(ctx, credential.id)
+    svc = ConnectSessionService(ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx))
+    created = await svc.create_session(vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY)
+
+    with pytest.raises(BindingSuspendedError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=created.poll_token,
+            confirmed_scopes=[],
+            permission_rules=[],
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+        )
+
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None and row.state == "created" and row.agent_id is None
 
 
 # ---------------------------------------------------------------------------

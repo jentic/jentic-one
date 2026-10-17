@@ -606,6 +606,8 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
 #: Everything else — ``action_denied`` (a permission rule forbids the op;
 #: connecting a fresh credential must NOT be taught as a way around it),
 #: ``credential_identity_mismatch`` (an operator fixes the credential),
+#: ``credential_binding_suspended`` (only the operator resumes the binding;
+#: a new connect is refused),
 #: ``credential_undecryptable`` (operator re-adds it), and any unknown type —
 #: keeps ``whoami``.
 _PROVISIONING_PROBLEM_TYPES = frozenset(

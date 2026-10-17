@@ -216,6 +216,13 @@ func apiTargetCoded(he *HTTPError, target string, err error, lane connectLane) (
 				"needed it for; continue without this API unless they say otherwise.",
 		}
 		return coded, ""
+	case "connect_session_binding_suspended":
+		return &ux.CodedError{
+			Code: ux.CodeBrokerDenied,
+			Msg:  fmt.Sprintf("this agent's access to %s is suspended: %v", target, err),
+			Actionable: "Your operator suspended your access to this API. Do not ask again; " +
+				"ask your operator to resume it.",
+		}, ""
 	}
 	return nil, ""
 }

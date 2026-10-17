@@ -1317,7 +1317,8 @@ components:
         token lacking the required `capabilities:execute` permission
         (`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`
         revision they don't own, using a credential they aren't bound to
-        (`no_credential_binding`), or being denied by a binding's
+        (`no_credential_binding`), holding only a suspended binding for the
+        API (`credential_binding_suspended`), or being denied by a binding's
         permission rules. Body is RFC 9457 `application/problem+json`.
       content:
         application/problem+json:
@@ -1355,6 +1356,27 @@ components:
                     to that credential (in the dashboard, or via POST
                     /agents/{agent_id}/credentials) — only a human can grant the
                     binding. Once bound, retry this call.
+            credential_binding_suspended:
+              summary: The caller's binding for this API is suspended by its operator.
+              value:
+                type: credential_binding_suspended
+                title: The credential binding for this API is suspended
+                status: 403
+                detail: The credential binding for this API is suspended
+                error_origin: broker
+                instance: /api.example.com/v1/users
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    api:
+                      vendor: api.example.com
+                      name: main
+                      version: "1.0.0"
+                  human_readable_instruction: >-
+                    Your operator has suspended your access to 'api.example.com/main'.
+                    Ask your operator whether they will resume it — only they can. Do
+                    not request a new connection for this API. Once they resume it,
+                    retry this call.
     NotFound:
       description: |
         Upstream URL doesn't resolve to a registered API operation, or

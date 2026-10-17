@@ -61,6 +61,22 @@ class AgentInactiveError(ConnectSessionServiceError):
         self.status = status
 
 
+class BindingSuspendedError(ConnectSessionServiceError):
+    """The agent has a suspended binding to a credential that covers the requested API.
+
+    A suspension is the operator's cut-off for that agent and API, so a new
+    connect for the same pair is refused until the operator resumes or
+    removes the suspended binding.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(
+            f"agent {agent_id!r} has a suspended credential binding for this API; "
+            "only an operator can resume it"
+        )
+        self.agent_id = agent_id
+
+
 class NoOpForFlowError(ConnectSessionServiceError):
     """The resolved flow is not yet implemented in phase 1."""
 
