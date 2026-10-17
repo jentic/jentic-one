@@ -7862,6 +7862,12 @@ type PreviewCatalogOperationsParams struct {
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
 type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
 
+// RefreshCatalogParams defines parameters for RefreshCatalog.
+type RefreshCatalogParams struct {
+	// Force Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
+
 // ListConnectSessionsParams defines parameters for ListConnectSessions.
 type ListConnectSessionsParams struct {
 	// State Filter by session state
@@ -10662,8 +10668,11 @@ type ClientInterface interface {
 	//
 	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
 	//
+	// Also syncs every enabled catalog source; ``force=true`` overrides the
+	// mass-removal guard for this run.
+	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-	RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnectSessions List connect sessions
 	//
@@ -14321,9 +14330,12 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 //
 // Force a refresh of the catalog cache from the upstream manifest (org:admin).
 //
+// Also syncs every enabled catalog source; “force=true“ overrides the
+// mass-removal guard for this run.
+//
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-func (c *Client) RefreshCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRefreshCatalogRequest(c.Server)
+func (c *Client) RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshCatalogRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -21085,7 +21097,7 @@ func NewUnsnoozeCatalogEntryRequest(server string, apiId string) (*http.Request,
 }
 
 // NewRefreshCatalogRequest constructs an http.Request for the RefreshCatalog method
-func NewRefreshCatalogRequest(server string) (*http.Request, error) {
+func NewRefreshCatalogRequest(server string, params *RefreshCatalogParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -21101,6 +21113,33 @@ func NewRefreshCatalogRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force", *params.Force, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
@@ -27110,10 +27149,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
 	//
+	// Also syncs every enabled catalog source; ``force=true`` overrides the
+	// mass-removal guard for this run.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-	RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
+	RefreshCatalogWithResponse(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error)
 
 	// ListConnectSessionsWithResponse List connect sessions
 	//
@@ -45385,11 +45427,14 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 //
 // Force a refresh of the catalog cache from the upstream manifest (org:admin).
 //
+// Also syncs every enabled catalog source; “force=true“ overrides the
+// mass-removal guard for this run.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
-func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error) {
-	rsp, err := c.RefreshCatalog(ctx, reqEditors...)
+func (c *ClientWithResponses) RefreshCatalogWithResponse(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*RefreshCatalogHTTPResp, error) {
+	rsp, err := c.RefreshCatalog(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
