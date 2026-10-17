@@ -192,11 +192,13 @@ describe('ConnectedClientsCard', () => {
 		).toBeInTheDocument();
 	});
 
-	it('renders a quiet owner-or-admin note on 403 instead of a hard error', async () => {
+	it('renders a quiet owner-or-admin note on 404 instead of a hard error', async () => {
+		// The backend answers a caller who may not list the grants with the
+		// unknown-agent 404; the agent itself has already loaded.
 		worker.use(
 			createErrorHandler('get', '/agents/:id/oauth-grants', {
-				status: 403,
-				body: { detail: 'Not permitted' },
+				status: 404,
+				body: { detail: "Actor 'agnt_active_1' not found" },
 			}),
 		);
 		renderCard({ agentId: 'agnt_active_1', agentName: 'support-agent' });
