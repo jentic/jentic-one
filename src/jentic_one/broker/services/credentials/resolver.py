@@ -132,7 +132,10 @@ class CredentialResolver:
         most-specific-wins to break ties.
         """
         # Read-only: the header query and the winner's material query need no
-        # shared snapshot, so autocommit drops the BEGIN/ROLLBACK round trips.
+        # shared snapshot. At READ COMMITTED (the server default; the
+        # application sets no isolation level) each already takes its own, so
+        # autocommit drops the BEGIN/ROLLBACK round trips without changing what
+        # is read.
         async with self._ctx.control_db.read_session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
