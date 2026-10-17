@@ -18,9 +18,10 @@ Two TTLs guard against a poison-pill (a pending claim must be short):
 Per-caller keyspace (``idem:{caller}:{key}``) stops one caller replaying
 another's response; ``caller`` is the resolved ``actor_id``, never the raw
 token. A record is small and bounded (status, fingerprint, capped headers);
-the response body is a separate ``idem-body:{caller}:{key}:{fp-tag}`` entry, so on the
-memory backend bodies spend their own budget and a full body budget only
-drops bodies from replays, never refuses claims.
+the response body is a separate ``idem-body:{caller}:{key}:{tag}`` entry
+(``tag`` is the start of the request fingerprint), so on the memory backend
+bodies spend their own budget and a full body budget only drops bodies from
+replays, never refuses claims.
 """
 
 from __future__ import annotations
