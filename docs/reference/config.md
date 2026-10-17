@@ -286,7 +286,7 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration. Unknown subkeys are ignored, so a `control:` section written for another release keeps validating.
+Control surface configuration. `egress` is the allowlist for the platform's outbound OAuth and credential calls. Each `control.egress` key left unset takes its value from the matching `broker.egress` key. The policy is read by whichever process makes the call: the control surface for credential and OAuth app writes, the connect-session confirm, code exchange, device authorization and the identity probe, and the broker surface for the token refresh it runs before injecting a credential. With one process per surface, set `control.egress` (and the `broker.egress` keys it inherits) identically on both. Unknown subkeys of `control:` are ignored, so a section written for another release keeps validating; `control.egress` rejects unknown keys so a mistyped allowlist key fails at startup instead of silently allowing less.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -295,6 +295,8 @@ Control surface configuration. Unknown subkeys are ignored, so a `control:` sect
 | `control.connect.max_open_sessions_per_agent` | integer (>= 1) | `10` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_AGENT` | Most open connect sessions one agent may hold at once while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
 | `control.connect.max_open_sessions_per_owner` | integer (>= 1) | `50` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_OWNER` | Most open connect sessions across one user and the agents they own while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
 | `control.connect.rejection_cooldown_hours` | integer (>= 0) | `24` | `JENTIC__CONTROL__CONNECT__REJECTION_COOLDOWN_HOURS` | Hours after a human rejects an agent's connect request during which the agent's repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the cooldown off. |
+| `control.egress.allowed_private_subnets` | list of string \| null | `null` | `JENTIC__CONTROL__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP block for these calls (e.g. `["10.50.0.0/16"]`); unset inherits `broker.egress.allowed_private_subnets`, and `[]` blocks every private range for these calls even when the broker allows one. The cloud-metadata and platform-credential IPs are never exempted. Accepts a YAML list or a comma-separated string. |
+| `control.egress.allowed_internal_domains` | list of string \| null | `null` | `JENTIC__CONTROL__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".corp.internal"]`) whose resolved private IP is permitted for these calls; unset inherits `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 
 ## `ingest`
 

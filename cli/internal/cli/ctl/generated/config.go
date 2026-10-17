@@ -711,13 +711,71 @@ func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Private-network allowlist for the platform's OAuth and credential calls.
+//
+// Holds only the two allowlist keys. A key left unset takes its value from
+// the matching “broker.egress“ key. These calls always pin DNS, so there is
+// no “dns_pinning_enabled“ key here, and unknown keys are rejected.
+type ControlEgressConfig struct {
+	// Domain suffixes (e.g. ``[".corp.internal"]``) whose resolved private IP is
+	// permitted for these calls; unset inherits
+	// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+	// allowed subnet. Accepts a YAML list or a comma-separated string.
+	AllowedInternalDomains *ControlEgressConfigAllowedInternalDomains `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// CIDRs exempted from the private-IP block for these calls (e.g.
+	// ``["10.50.0.0/16"]``); unset inherits `broker.egress.allowed_private_subnets`,
+	// and `[]` blocks every private range for these calls even when the broker allows
+	// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+	// a YAML list or a comma-separated string.
+	AllowedPrivateSubnets *ControlEgressConfigAllowedPrivateSubnets `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
+}
+
+// Domain suffixes (e.g. “[".corp.internal"]“) whose resolved private IP is
+// permitted for these calls; unset inherits
+// `broker.egress.allowed_internal_domains`. The resolved IP must still fall in an
+// allowed subnet. Accepts a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedInternalDomains []string
+
+type ControlEgressConfigAllowedInternalDomains_0 []string
+
+// CIDRs exempted from the private-IP block for these calls (e.g.
+// “["10.50.0.0/16"]“); unset inherits `broker.egress.allowed_private_subnets`,
+// and `[]` blocks every private range for these calls even when the broker allows
+// one. The cloud-metadata and platform-credential IPs are never exempted. Accepts
+// a YAML list or a comma-separated string.
+type ControlEgressConfigAllowedPrivateSubnets []string
+
+type ControlEgressConfigAllowedPrivateSubnets_0 []string
+
 // Control surface configuration.
 //
-// Unknown subkeys are ignored, so a “control:“ section written for another
-// release keeps validating.
+// “egress“ is the allowlist for the platform's outbound OAuth and credential
+// calls. Each “control.egress“ key left unset takes its value from the
+// matching “broker.egress“ key. The policy is read by whichever process makes
+// the call: the control surface for credential and OAuth app writes, the
+// connect-session confirm, code exchange, device authorization and the
+// identity probe, and the broker surface for the token refresh it runs before
+// injecting a credential. With one process per surface, set “control.egress“
+// (and the “broker.egress“ keys it inherits) identically on both.
+//
+// Unknown subkeys of “control:“ are ignored, so a section written for
+// another release keeps validating; “control.egress“ rejects unknown keys so
+// a mistyped allowlist key fails at startup instead of silently allowing less.
 type ControlSurfaceConfig struct {
 	// Agent connect-session settings.
 	Connect *ControlConnectConfig `json:"connect,omitempty,omitzero" yaml:"connect,omitempty" mapstructure:"connect,omitempty"`
+
+	// Private-network allowlist for the platform's OAuth and credential calls: OAuth2
+	// credential and OAuth app registration URL checks, own-client endpoints
+	// confirmed on a connect session, token exchange and refresh, device
+	// authorization, and the vendor identity probe. Each key left unset takes its
+	// value from `broker.egress`; set a key (e.g. `allowed_private_subnets: []`) to
+	// override it for these calls alone. These calls always pin DNS. The process
+	// making the call reads it, and the broker surface makes token refresh calls, so
+	// with one process per surface set it identically on the control and broker
+	// surfaces.
+	Egress *ControlEgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 }
 
 // Credentials subsystem configuration.

@@ -45,6 +45,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     RefreshResult,
 )
 from jentic_one.control.services.integrations import device_authorization as df
+from jentic_one.shared.config import resolved_control_egress
 from jentic_one.shared.context import Context
 
 
@@ -87,6 +88,7 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
             authorization_endpoint=dfc.authorization_endpoint,
             client_id=dfc.client_id,
             scopes=scopes,
+            egress=resolved_control_egress(ctx.config),
         )
         encrypted_device_code = ctx.encryption.encrypt(result.device_code)
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
@@ -171,6 +173,7 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
                 "refresh_token": refresh_token,
                 "client_id": client_id,
             },
+            egress=resolved_control_egress(ctx.config),
         )
         access_token = data.get("access_token")
         if not access_token:
