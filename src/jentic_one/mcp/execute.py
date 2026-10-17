@@ -360,8 +360,9 @@ RECOVER_UNKNOWN = "unknown"
 #: ``too_many_candidates`` (TooManyCandidatesError, 503: operation resolution
 #: overloaded, before dispatch), ``refresh_transient_error``
 #: (CredentialRefreshTransientError, 502: the token refresh failed before
-#: dispatch), ``upstream_connect_failed`` (UpstreamTimeoutError raised in the
-#: connect phase, 504: no request bytes were sent) and ``rate_limit_exceeded``
+#: dispatch), ``upstream_connect_failed`` (raised in the connect phase — 504
+#: UpstreamTimeoutError on a timeout, 502 UpstreamTransportError on a refused
+#: connection: no request bytes were sent) and ``rate_limit_exceeded``
 #: (RateLimitExceededError, 429 + Retry-After).
 _BROKER_TRANSIENT_PROBLEM_TYPES = frozenset(
     {
@@ -390,8 +391,8 @@ def broker_transport_recovery(status: int, problem_type: str) -> str:
     ``runner_scheme_unsupported`` (RunnerSchemeUnsupportedError, 501) needs a
     different operation. Everything else is unknown, including
     ``upstream_response_too_large`` (UpstreamResponseTooLargeError, 502: the
-    upstream answered, so the call ran) and ``upstream_transport_error`` (the
-    connection failed mid-request).
+    upstream answered, so the call ran) and ``upstream_transport_error``
+    (UpstreamTransportError, 502: the connection failed mid-request).
     """
     if status == 429 or problem_type in _BROKER_TRANSIENT_PROBLEM_TYPES:
         return RECOVER_WAIT
