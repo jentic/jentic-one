@@ -219,6 +219,17 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+@pytest.fixture()
+def restore_logging() -> Iterator[None]:
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    structlog_config = structlog.get_config()
+    yield
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    structlog.configure(**structlog_config)
+
+
 class _Lines(logging.Handler):
     def __init__(self) -> None:
         super().__init__()
@@ -229,7 +240,7 @@ class _Lines(logging.Handler):
 
 
 @pytest.fixture()
-async def served(env: Context) -> AsyncGenerator[tuple[str, _Lines], None]:
+async def served(env: Context, restore_logging: None) -> AsyncGenerator[tuple[str, _Lines], None]:
     """The integrations router behind a real uvicorn, logging as the app configures it.
 
     The app's logging setup runs first, then uvicorn's own ``dictConfig``
@@ -239,6 +250,9 @@ async def served(env: Context) -> AsyncGenerator[tuple[str, _Lines], None]:
         update={"runtime": env.config.runtime.model_copy(update={"log_level": "INFO"})}
     )
     configure_logging(app_config)
+    # No first-use caching, so module loggers bound in this window do not keep
+    # the app's processors after ``restore_logging`` (later tests capture logs).
+    structlog.configure(cache_logger_on_first_use=False)
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(build_app(env, AGENT), host="127.0.0.1", port=port))
     access = logging.getLogger("uvicorn.access")
