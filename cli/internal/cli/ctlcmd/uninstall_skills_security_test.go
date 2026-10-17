@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 )
 
 // plantEscapingSidecar rewrites an installed claude skill's sidecar so its
@@ -228,5 +230,49 @@ func TestUninstall_DisplayUsesProbedHome(t *testing.T) {
 	want := filepath.Join("~", ".claude", "skills", "jentic", "SKILL.md")
 	if s := out.String(); !strings.Contains(s, want) {
 		t.Errorf("expected %q in listing:\n%s", want, s)
+	}
+}
+
+// editBeforeRemove is a skillCleanup that edits one installed file between
+// uninstall's probe and its removal, then removes through the real engine.
+type editBeforeRemove struct {
+	skillCleanup
+	path string
+}
+
+func (e editBeforeRemove) RemoveSkillCleanupTargets(targets []localagentcmd.SkillCleanupTarget, dryRun bool) ([]localagentcmd.SkillCleanupOutcome, error) {
+	if err := os.WriteFile(e.path, []byte("edited after the preview\n"), 0o600); err != nil {
+		return nil, err
+	}
+	return e.skillCleanup.RemoveSkillCleanupTargets(targets, dryRun)
+}
+
+// A skill edited between the preview and the removal is kept by the engine's
+// edit guard and reported as manually edited with the targeted --force
+// command, not the `--all` hint that would refuse it again.
+func TestUninstall_EditedSinceProbeGetsForceHint(t *testing.T) {
+	a, out, home, cwd := skillUninstallApp(t)
+	claude := installSkill(t, home, cwd, "claude")
+	prev := newSkillCleanup
+	t.Cleanup(func() { newSkillCleanup = prev })
+	newSkillCleanup = func(a *app) skillCleanup { return editBeforeRemove{skillCleanup: prev(a), path: claude} }
+
+	if err := a.uninstallE(&uninstallOptions{yes: true, removeSkills: true}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if !exists(claude) {
+		t.Fatal("a skill edited after the preview must be kept")
+	}
+	s := out.String()
+	for _, want := range []string{
+		"claude/jentic", "(manually edited)",
+		"jentic skill remove --operator claude --skill jentic --scope user --force",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "jentic skill remove --all") {
+		t.Errorf("the --all hint cannot remove an edited skill:\n%s", s)
 	}
 }

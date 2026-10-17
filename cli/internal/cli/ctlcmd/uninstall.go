@@ -411,9 +411,17 @@ func (a *app) reportRemainingSkills(p skillPlan, outcomes []localagentcmd.SkillC
 		return
 	}
 	gone := map[string]bool{}
+	// A removable target the engine kept without an error was edited after
+	// the probe; it needs the targeted --force line, since `--all` would
+	// refuse it again.
+	editedSinceProbe := map[string]bool{}
 	for _, o := range outcomes {
-		if o.Removed {
-			gone[o.Target.Skill+"\x00"+o.Target.Path] = true
+		key := o.Target.Skill + "\x00" + o.Target.Path
+		switch {
+		case o.Removed:
+			gone[key] = true
+		case o.Kept && o.Err == nil && o.Target.Removable():
+			editedSinceProbe[key] = true
 		}
 	}
 	if dryRun {
@@ -423,9 +431,14 @@ func (a *app) reportRemainingSkills(p skillPlan, outcomes []localagentcmd.SkillC
 	}
 	var remaining []localagentcmd.SkillCleanupTarget
 	for _, t := range p.installed {
-		if !gone[t.Skill+"\x00"+t.Path] {
-			remaining = append(remaining, t)
+		key := t.Skill + "\x00" + t.Path
+		if gone[key] {
+			continue
 		}
+		if editedSinceProbe[key] {
+			t.UserEdits = true
+		}
+		remaining = append(remaining, t)
 	}
 	if len(remaining) == 0 {
 		return
