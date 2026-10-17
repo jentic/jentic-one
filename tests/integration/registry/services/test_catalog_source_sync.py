@@ -139,6 +139,62 @@ async def test_listing_that_raises_midway_applies_nothing(catalog_ctx: CtxFactor
         assert run is not None and run.status == "failed"
 
 
+async def test_listing_over_its_timeout_fails_and_releases_the_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        outcome = await sync.sync_source("public", stream=stuck, listing_timeout_s=0.05)
+        assert (outcome.status, outcome.error_code) == ("failed", "listing_timeout")
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.consecutive_failures) == ("failed", 1)
+        assert source.sync_lease_owner is None
+        assert await _staged_count(ctx) == 0
+
+
+async def test_listing_timeout_counts_only_time_spent_awaiting_the_listing(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slow staging writes do not eat the listing budget."""
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        real_stage = CatalogSyncRunRepository.stage
+
+        async def _slow_stage(session: Any, batch: Any) -> None:
+            await asyncio.sleep(0.2)
+            await real_stage(session, batch)
+
+        monkeypatch.setattr(sync_module, "STAGE_BATCH_SIZE", 1)
+        monkeypatch.setattr(CatalogSyncRunRepository, "stage", staticmethod(_slow_stage))
+        outcome = await sync.sync_source(
+            "public", stream=full("a.io", "b.io", "c.io"), listing_timeout_s=0.3
+        )
+        assert (outcome.status, outcome.upserted) == ("applied", 3)
+
+
+async def test_run_cancelled_while_listing_fails_and_releases_the_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        stuck = ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event())
+        task = asyncio.create_task(sync.sync_source("public", stream=stuck))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.consecutive_failures) == ("failed", 1)
+        assert source.sync_lease_owner is None
+        async with ctx.registry_db.session() as session:
+            runs = (await session.execute(select(CatalogSyncRun))).scalars().all()
+        assert [(r.status, r.error_code) for r in runs] == [("failed", "cancelled")]
+
+
 async def test_delta_listing_never_tombstones_unlisted_rows(catalog_ctx: CtxFactory) -> None:
     async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
         sync = CatalogSourceSync(ctx)

@@ -58,6 +58,9 @@ _CORP_URL = f"{_CORP_BASE}/openapi/apis.json"
 _VAULT_BASE = f"{_RAW}/vault/catalog/main/apis"
 _VAULT_URL = f"{_VAULT_BASE}/openapi/apis.json"
 
+#: The unpatched client class (the autouse fixture replaces ``httpx.AsyncClient``).
+_REAL_ASYNC_CLIENT = httpx.AsyncClient
+
 #: Manifest URL -> the ``catalog_api_id``s it lists (``{domain}`` or ``{domain}/{sub}``).
 _LISTINGS: dict[str, list[str]] = {}
 
@@ -430,6 +433,70 @@ async def test_lazy_read_flags_stale_sources_and_starts_no_sync_task(
             rows = {r.slug: r for r in (await session.execute(select(CatalogSourceRow))).scalars()}
         assert rows["corp"].sync_wanted_at is not None
         assert rows["corp"].sync_lease_owner is None
+        await _truncate(ctx)
+
+
+async def test_first_sync_over_the_fetch_timeout_fails_and_stops_blocking_reads(
+    web_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A never-synced source whose listing outlasts ``fetch_timeout_s`` ends a failed
+    run (so the scanner backs off) and releases its lease; later reads skip it."""
+    _LISTINGS[_CORP_URL] = ["corp-a.example"]
+    cfg = _config(web_config, [_public_source(), _corp_source(visibility="public")])
+    cfg = cfg.model_copy(update={"ingest": cfg.ingest.model_copy(update={"fetch_timeout_s": 0.3})})
+
+    async def _slow(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _CORP_URL:
+            await asyncio.sleep(5)
+        response = _mock_transport().handler(request)
+        assert isinstance(response, httpx.Response)
+        return response
+
+    def _factory(*_args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        return _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(_slow), **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("jentic_one.registry.services.catalog.fetch.httpx.AsyncClient", _factory)
+    synced: list[str] = []
+    real_sync = CatalogSourceSync.sync_source
+
+    async def _spy(self: CatalogSourceSync, slug: str, **kwargs: Any) -> Any:
+        synced.append(slug)
+        return await real_sync(self, slug, **kwargs)
+
+    monkeypatch.setattr(CatalogSourceSync, "sync_source", _spy)
+    async with Context(cfg) as ctx:
+        await _truncate(ctx)
+        started = asyncio.get_running_loop().time()
+        view = await CatalogService(ctx).list_all(permissions=frozenset())
+        assert asyncio.get_running_loop().time() - started < 3
+        assert {e.source_slug for e in view.data} == {"public"}
+        async with ctx.registry_db.session() as session:
+            corp = (
+                await session.execute(
+                    select(CatalogSourceRow).where(CatalogSourceRow.slug == "corp")
+                )
+            ).scalar_one_or_none()
+            runs = (
+                (
+                    await session.execute(
+                        select(CatalogSyncRun).where(CatalogSyncRun.source_slug == "corp")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert corp is not None
+        assert corp.sync_lease_owner is None
+        assert corp.consecutive_failures == 1
+        assert corp.last_status == "failed"
+        assert [(r.status, r.error_code) for r in runs] == [("failed", "listing_timeout")]
+
+        synced.clear()
+        started = asyncio.get_running_loop().time()
+        await CatalogService(ctx).list_all(permissions=frozenset())
+        assert asyncio.get_running_loop().time() - started < 1
+        assert synced == []
         await _truncate(ctx)
 
 
