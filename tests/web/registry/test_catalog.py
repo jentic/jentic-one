@@ -8,6 +8,7 @@ mirroring the ingest fetch unit-test pattern (no real network).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import AsyncGenerator, Iterator
@@ -30,6 +31,7 @@ from jentic_one.registry.services.catalog.service import CatalogEntryView, Catal
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.pagination import encode_catalog_cursor
 from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
@@ -176,6 +178,144 @@ async def test_refresh_shadow_writes_catalog_entries(
     forced = admin_client.post("/catalog:refresh", params={"force": "true"})
     assert forced.status_code == 200
     assert forced.json() == {"count": 2, "status": "refreshed"}
+
+
+async def _wipe_source_tables(ctx: Context) -> None:
+    async with ctx.registry_db.session() as session:
+        await session.execute(delete(CatalogEntryRow))
+        await session.execute(delete(CatalogSyncRun))
+        await session.execute(delete(CatalogSourceRow))
+        await session.commit()
+
+
+async def test_get_catalog_is_byte_identical_with_and_without_the_shadow_write(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reads serve the snapshot only: the shadow-written tables change no byte."""
+    import jentic_one.registry.services.catalog.service as service_module
+
+    assert admin_client.post("/catalog:refresh").status_code == 200
+    async with web_context.registry_db.session() as session:
+        assert (await session.execute(select(CatalogEntryRow.id))).first() is not None
+    frozen = utcnow()
+    monkeypatch.setattr(service_module, "utcnow", lambda: frozen)
+
+    paths = ["/catalog", "/catalog?q=stripe", "/catalog?limit=1", "/catalog/stripe.com"]
+    with_shadow = [admin_client.get(p).content for p in paths]
+    await _wipe_source_tables(web_context)
+    without_shadow = [admin_client.get(p).content for p in paths]
+    assert with_shadow == without_shadow
+
+    # And a snapshot refreshed with the shadow write turned off reads the same.
+    async def _no_shadow(self: CatalogService, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(CatalogService, "_sync_sources", _no_shadow)
+    assert admin_client.post("/catalog:refresh").status_code == 200
+
+    def _strip_age(raw: bytes) -> Any:
+        body = json.loads(raw)
+        body.pop("manifest_age_seconds", None)
+        return body
+
+    snapshot_only = [admin_client.get(p).content for p in paths]
+    assert [_strip_age(b) for b in snapshot_only] == [_strip_age(b) for b in with_shadow]
+
+
+async def test_refresh_force_overrides_a_suspect_empty_listing(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    assert admin_client.post("/catalog:refresh").status_code == 200
+
+    async def _live() -> list[str]:
+        async with web_context.registry_db.session() as session:
+            rows = await session.execute(
+                select(CatalogEntryRow.entry_id).where(CatalogEntryRow.removed_at.is_(None))
+            )
+            return sorted(r[0] for r in rows.all())
+
+    async def _status() -> str:
+        async with web_context.registry_db.session() as session:
+            row = (
+                await session.execute(
+                    select(CatalogSourceRow).where(CatalogSourceRow.slug == "public")
+                )
+            ).scalar_one()
+            return str(row.last_status)
+
+    assert await _live() == ["public/slack.com", "public/stripe.com"]
+
+    # Upstream now lists nothing: the guard holds the removal of every row.
+    monkeypatch.setattr(sys.modules[__name__], "_manifest", lambda: {"include": []})
+    assert admin_client.post("/catalog:refresh").status_code == 200
+    assert await _live() == ["public/slack.com", "public/stripe.com"]
+    assert await _status() == "suspect_empty"
+
+    forced = admin_client.post("/catalog:refresh", params={"force": "true"})
+    assert forced.status_code == 200
+    assert await _live() == []
+    assert await _status() == "ok"
+    async with web_context.registry_db.session() as session:
+        runs = (await session.execute(select(CatalogSyncRun.forced, CatalogSyncRun.status))).all()
+    assert (True, "applied") in [tuple(r) for r in runs]
+
+
+async def test_lazy_read_flags_other_sources_and_starts_no_sync_task(
+    web_config: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
+    from jentic_one.shared.config import CatalogConfig
+
+    corp = {
+        "slug": "corp",
+        "kind": "git-manifest",
+        "settings": {"url": "https://corp.example/apis.json"},
+    }
+    public = {
+        "slug": "public",
+        "kind": "git-manifest",
+        "trust": "curated",
+        "precedence": 10,
+        "settings": {"url": _MANIFEST_URL},
+    }
+    cfg = web_config.model_copy(
+        update={"catalog": CatalogConfig.model_validate({"sources": [public, corp]})}
+    )
+    synced: list[str] = []
+    real_sync = CatalogSourceSync.sync_source
+
+    async def _spy(self: CatalogSourceSync, slug: str, **kwargs: Any) -> Any:
+        synced.append(slug)
+        return await real_sync(self, slug, **kwargs)
+
+    monkeypatch.setattr(CatalogSourceSync, "sync_source", _spy)
+    async with Context(cfg) as ctx:
+        await _wipe_source_tables(ctx)
+        before = set(asyncio.all_tasks())
+        view = await CatalogService(ctx).list_all()
+        assert view.catalog_total == 2
+        leftover = [
+            t
+            for t in asyncio.all_tasks() - before
+            if not t.done() and "update_notify" not in repr(t.get_coro())
+        ]
+        assert leftover == []
+        # The legacy source synced inline with the snapshot refresh; "corp" was
+        # only flagged for the scanner.
+        assert synced == ["public"]
+        async with ctx.registry_db.session() as session:
+            rows = {r.slug: r for r in (await session.execute(select(CatalogSourceRow))).scalars()}
+            corp_runs = (
+                await session.execute(
+                    select(CatalogSyncRun.id).where(CatalogSyncRun.source_slug == "corp")
+                )
+            ).all()
+        assert rows["corp"].sync_wanted_at is not None
+        assert rows["corp"].sync_lease_owner is None
+        assert corp_runs == []
+        await _wipe_source_tables(ctx)
 
 
 def test_list_search_filter(admin_client: TestClient) -> None:
