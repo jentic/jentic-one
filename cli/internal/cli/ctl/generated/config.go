@@ -217,6 +217,13 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
+	// TTL (seconds) of the per-process cache of a vendor's non-secret credential
+	// headers that sync execute requests select from. Secret material, the caller's
+	// bindings and the audit event are never cached. A credential write served by
+	// this process clears the cache immediately; one served by another process takes
+	// effect within the TTL. 0 disables the cache.
+	CredentialCacheTtlS float64 `json:"credential_cache_ttl_s,omitempty,omitzero" yaml:"credential_cache_ttl_s,omitempty" mapstructure:"credential_cache_ttl_s,omitempty"`
+
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -270,6 +277,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["credential_cache_ttl_s"]; !ok || v == nil {
+		plain.CredentialCacheTtlS = 3.0
+	}
+	if 0 > plain.CredentialCacheTtlS {
+		return fmt.Errorf("field %s: must be >= %v", "credential_cache_ttl_s", 0)
 	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0

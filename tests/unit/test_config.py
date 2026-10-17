@@ -1196,6 +1196,25 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+def test_broker_credential_cache_ttl_default_and_env_override(config_file: Path) -> None:
+    """A short TTL by default; the env var overrides it and ``0`` (disabled) is valid."""
+    assert load_config(config_file).broker.credential_cache_ttl_s == 3.0
+    env = {"JENTIC__BROKER__CREDENTIAL_CACHE_TTL_S": "0"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.broker.credential_cache_ttl_s == 0.0
+
+
+def test_broker_credential_cache_ttl_rejects_negative(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    sample_config_dict["broker"] = {"credential_cache_ttl_s": -1}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
 @pytest.mark.parametrize("value", [False, "false"])
 def test_broker_retired_direct_bindings_flag_false_is_rejected(
     tmp_path: Path, sample_config_dict: dict[str, Any], value: object

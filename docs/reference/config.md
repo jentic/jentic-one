@@ -226,6 +226,7 @@ Broker surface configuration.
 | `broker.toolkit_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__TOOLKIT_CACHE_TTL_S` |  |
 | `broker.rule_cache_ttl_s` | number | `3.0` | `JENTIC__BROKER__RULE_CACHE_TTL_S` |  |
 | `broker.rule_cache_max_entries` | integer | `5000` | `JENTIC__BROKER__RULE_CACHE_MAX_ENTRIES` |  |
+| `broker.credential_cache_ttl_s` | number (>= 0.0) | `3.0` | `JENTIC__BROKER__CREDENTIAL_CACHE_TTL_S` | TTL (seconds) of the per-process cache of a vendor's non-secret credential headers that sync execute requests select from. Secret material, the caller's bindings and the audit event are never cached. A credential write served by this process clears the cache immediately; one served by another process takes effect within the TTL. 0 disables the cache. |
 | `broker.jobs_api_base_url` | string \| null | `null` | `JENTIC__BROKER__JOBS_API_BASE_URL` |  |
 | `broker.jwt_secret` | string (secret) \| null | `null` | `JENTIC__BROKER__JWT_SECRET` |  |
 | `broker.jwt_verification.audience` | string \| null | `null` | `JENTIC__BROKER__JWT_VERIFICATION__AUDIENCE` |  |

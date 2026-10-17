@@ -603,6 +603,7 @@ async def _handle(
         credential_id=request.headers.get("jentic-credential-id"),
         request_server_variables=ctx_req.server_variables,
         server_variables_unresolved=ctx_req.server_variables_unresolved,
+        use_credential_cache=True,
     )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids

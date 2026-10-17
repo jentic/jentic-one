@@ -1699,6 +1699,18 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    credential_cache_ttl_s: float = Field(
+        default=3.0,
+        ge=0.0,
+        description=(
+            "TTL (seconds) of the per-process cache of a vendor's non-secret "
+            "credential headers that sync execute requests select from. Secret "
+            "material, the caller's bindings and the audit event are never "
+            "cached. A credential write served by this process clears the cache "
+            "immediately; one served by another process takes effect within the "
+            "TTL. 0 disables the cache."
+        ),
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

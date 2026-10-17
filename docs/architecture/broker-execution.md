@@ -152,6 +152,18 @@ one place a secret meets a request:
    secret back.
 4. **Audit** — every resolve/decrypt emits a `CREDENTIAL_ACCESSED` event.
 
+On the sync execute path, step 1 picks the credential from a short-lived,
+per-process cache of the vendor's **non-secret** credential headers
+([`shared/credential_selection_cache.py`](../../src/jentic_one/shared/credential_selection_cache.py),
+`broker.credential_cache_ttl_s`, default 3 s, `0` disables it). The cache is
+the same for every caller: the binding boundary, coverage and
+disambiguation run on each request, and the winner's secret material is read
+from the control DB every time, along with its current header, so a deleted or
+disabled credential's secret is never injected. A credential write served by the same
+process clears the cache when its transaction ends; a write served by another
+process takes effect within the TTL. Queued executions resolve without the
+cache.
+
 Before any of that, the binding deriver
 ([`broker/repos/credential_binding_resolver.py`](../../src/jentic_one/broker/repos/credential_binding_resolver.py), wrapped by the
 short-TTL cache in [`caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py)) works out which

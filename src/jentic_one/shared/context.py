@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from jentic_one.shared.config import AppConfig, load_config
+from jentic_one.shared.credential_selection_cache import CredentialSelectionCache
 from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
@@ -63,6 +64,7 @@ class Context:
         self._control_db: DatabaseSession | None = None
         self._update_sweep_lock: asyncio.Lock | None = None
         self._release_checker: ReleaseChecker | None = None
+        self._credential_selection_cache: CredentialSelectionCache | None = None
         # Product telemetry (issue #446). Resolved + owned by the lifespan when
         # telemetry is enabled; both stay None otherwise (the single consent gate).
         self._instance_id: str | None = None
@@ -230,6 +232,19 @@ class Context:
         if self._update_sweep_lock is None:
             self._update_sweep_lock = asyncio.Lock()
         return self._update_sweep_lock
+
+    @property
+    def credential_selection_cache(self) -> CredentialSelectionCache:
+        """Process-wide cache of non-secret credential headers for broker resolution.
+
+        Shared by every sync execute request on this Context; disabled when
+        ``broker.credential_cache_ttl_s`` is 0. Lazily constructed on first access.
+        """
+        if self._credential_selection_cache is None:
+            self._credential_selection_cache = CredentialSelectionCache(
+                ttl_seconds=self._config.broker.credential_cache_ttl_s
+            )
+        return self._credential_selection_cache
 
     @property
     def release_checker(self) -> ReleaseChecker:
