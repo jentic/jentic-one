@@ -1,0 +1,50 @@
+{
+  "catalog_total": 2,
+  "data": [
+    {
+      "_links": {
+        "alternates": [
+          "https://auth.example.com/catalog/internal/stripe.com"
+        ],
+        "human": "https://github.com/jentic/catalog/stripe.com",
+        "import": "https://auth.example.com/catalog/public/stripe.com:import",
+        "operations": "https://auth.example.com/catalog/public/stripe.com/operations",
+        "self": "https://auth.example.com/catalog/public/stripe.com"
+      },
+      "alternates": 1,
+      "catalog_api_id": "stripe.com",
+      "display_vendor": "stripe.com",
+      "entry_id": "public/stripe.com",
+      "has_spec": true,
+      "registered": false,
+      "source_slug": "public",
+      "title": "Stripe API",
+      "update_available": false,
+      "vendor": "stripe.com",
+      "version": "2024-06-20"
+    },
+    {
+      "_links": {
+        "import": "https://auth.example.com/catalog/internal/acme.com:import",
+        "operations": "https://auth.example.com/catalog/internal/acme.com/operations",
+        "self": "https://auth.example.com/catalog/internal/acme.com"
+      },
+      "alternates": 0,
+      "catalog_api_id": "acme.com",
+      "display_vendor": "acme.com",
+      "entry_id": "internal/acme.com",
+      "has_spec": false,
+      "registered": true,
+      "source_slug": "internal",
+      "title": null,
+      "update_available": true,
+      "vendor": "acme.com",
+      "version": null
+    }
+  ],
+  "has_more": false,
+  "oldest_source_sync_age_seconds": 42,
+  "outdated_count": 1,
+  "registered_count": 1,
+  "schema_version": "2"
+}

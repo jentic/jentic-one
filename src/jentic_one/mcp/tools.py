@@ -598,7 +598,15 @@ async def handle_search_catalog(
                     "operations": f"{self_link}/operations",
                     "import": f"{self_link}:import",
                     **({"human": view.human_url} if view.human_url else {}),
-                    "alternates": [f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids],
+                    **(
+                        {
+                            "alternates": [
+                                f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids
+                            ]
+                        }
+                        if view.alternates > 0
+                        else {}
+                    ),
                 },
             }
         )
