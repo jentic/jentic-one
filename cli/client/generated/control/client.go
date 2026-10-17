@@ -10810,7 +10810,8 @@ type ClientInterface interface {
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -14584,7 +14585,8 @@ func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string,
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -27392,7 +27394,8 @@ type ClientWithResponsesInterface interface {
 	// Terminate a still-active session at the user's request.
 	//
 	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
-	// the target agent's owner / ``org:admin`` without it.
+	// the target agent's owner / ``org:admin`` without it. The audit entry
+	// for the cancel names the caller, with the session's initiator alongside.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -45794,7 +45797,8 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 // Terminate a still-active session at the user's request.
 //
 // Gated like “/status“ — the “poll_token“ the SPA already holds, or
-// the target agent's owner / “org:admin“ without it.
+// the target agent's owner / “org:admin“ without it. The audit entry
+// for the cancel names the caller, with the session's initiator alongside.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session

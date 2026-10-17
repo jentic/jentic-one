@@ -34725,7 +34725,7 @@
     "/connect-sessions/{session_id}:cancel": {
       "description": "`POST`: Cancel an in-flight connect session.",
       "post": {
-        "description": "Terminate a still-active session at the user's request.\n\nGated like ``/status`` — the ``poll_token`` the SPA already holds, or\nthe target agent's owner / ``org:admin`` without it.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
+        "description": "Terminate a still-active session at the user's request.\n\nGated like ``/status`` — the ``poll_token`` the SPA already holds, or\nthe target agent's owner / ``org:admin`` without it. The audit entry\nfor the cancel names the caller, with the session's initiator alongside.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
         "operationId": "cancelConnectSession",
         "parameters": [
           {

@@ -3472,6 +3472,7 @@ class ConnectSessionService:
         detail: str,
         *,
         error_code: str | None = None,
+        actor: Identity | None = None,
     ) -> bool:
         """Log the terminal outcome, then delete the credential + session.
 
@@ -3496,6 +3497,12 @@ class ConnectSessionService:
 
         The winner records the session's outcome in the same transaction, so
         how it ended outlives the cascade-deleted session row.
+
+        ``actor`` is the caller who ended the session (a cancel or reject
+        request); the REVOKE audit entry names it, with the session's
+        initiator in ``after``. Without it (scanner, callback and expiry
+        paths) the entry is attributed to the initiator with
+        ``origin=system``.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -3538,32 +3545,46 @@ class ConnectSessionService:
         # rows, so they're the most consequential mutation on the
         # lifecycle — an operator needs to be able to say "who / what
         # tore this session down" (scanner-TTL sweep, vendor rejection,
-        # callback error, or user-driven cancel). ``_mark_terminal`` is
-        # called from scanner / callback contexts without a caller
-        # ``Identity``, so attribute the revoke to the session's
-        # ``initiator_actor_id`` — the real actor whose session is
-        # being torn down. The ``reason`` field (``detail``) captures
+        # callback error, or user-driven cancel). A cancel or reject
+        # passes the caller as ``actor``, and the entry names that caller
+        # with the request's origin. The scanner and callback contexts
+        # have no caller ``Identity``, so they attribute the revoke to the
+        # session's ``initiator_actor_id`` — the real actor whose session
+        # is being torn down. The ``reason`` field (``detail``) captures
         # *why* (TTL vs. callback vs. user cancel); the actor field
         # names *whose* session it was, without inventing a "system"
         # sentinel that no longer exists in ``ActorType``.
-        # Tolerant of residual ``sva_`` initiators (theme-8 L4).
-        initiator_actor_type = actor_type_label_from_id(row.initiator_actor_id)
+        after: dict[str, Any] = {
+            "state": state,
+            "error_code": error_code,
+            "credential_id": row.credential_id,
+        }
+        if actor is not None:
+            after["initiator_actor_id"] = row.initiator_actor_id
+            actor_type, actor_id, origin = (
+                actor.actor_type.value,
+                actor.sub,
+                actor.origin.value,
+            )
+        else:
+            # Expiry or a failed poll tears the session down on the
+            # platform's side, attributed to its initiator. Tolerant of
+            # residual ``sva_`` initiators (theme-8 L4).
+            actor_type, actor_id, origin = (
+                actor_type_label_from_id(row.initiator_actor_id),
+                row.initiator_actor_id,
+                Origin.SYSTEM.value,
+            )
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,
             target_type=AuditTargetType.SESSION,
             target_id=session_id,
-            actor_type=initiator_actor_type,
-            actor_id=row.initiator_actor_id,
-            # Expiry, a failed poll or a cancel tears the session down on the
-            # platform's side, attributed to its initiator.
-            origin=Origin.SYSTEM.value,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            origin=origin,
             before={"state": row.state},
-            after={
-                "state": state,
-                "error_code": error_code,
-                "credential_id": row.credential_id,
-            },
+            after=after,
             reason=detail,
         )
         # Metrics: per-vendor + per-flow + per-outcome unhappy-terminal
@@ -3715,7 +3736,9 @@ class ConnectSessionService:
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
         if row.state in ("connected", "failed", "expired"):
             return
-        await self._mark_terminal(session_id, "failed", "user cancelled", error_code="cancelled")
+        await self._mark_terminal(
+            session_id, "failed", "user cancelled", error_code="cancelled", actor=identity
+        )
 
     async def reject_session(self, session_id: str, *, identity: Identity) -> None:
         """A human explicitly turns the agent's request down (the approve dialog's Reject).
@@ -3734,7 +3757,11 @@ class ConnectSessionService:
         if row.state not in LIVE_STATES:
             return
         won = await self._mark_terminal(
-            session_id, "failed", "rejected by approver", error_code=ERROR_REJECTED
+            session_id,
+            "failed",
+            "rejected by approver",
+            error_code=ERROR_REJECTED,
+            actor=identity,
         )
         if won:
             await record_audit_best_effort(
