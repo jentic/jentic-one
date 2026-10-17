@@ -30,12 +30,15 @@ and smoke-test workflow.
   subchart doesn't set `JENTIC__APPS=broker` itself, so running it on the
   published app image needs `broker.extraEnv.JENTIC__APPS=broker` (the AWS
   Marketplace overlay does exactly that).
-- No pod anti-affinity, and no HorizontalPodAutoscaler. Both are deliberate
-  non-goals rather than gaps: CPU-based autoscaling on IO-bound API surfaces
-  scales on the wrong signal, and `replicas` plus a cluster autoscaler (or a
-  KEDA/custom-metrics HPA the operator owns) covers the same ground without the
-  chart guessing thresholds. Spread constraints likewise depend on the cluster's
-  topology labels — add either via a post-renderer or a wrapper chart.
+- No pod anti-affinity, and no HorizontalPodAutoscaler. OSS supports one
+  process per surface: every surface but the gateway keeps its rate limits,
+  circuit state, `Idempotency-Key` records and auth anti-replay markers in its
+  process, so `replicas` above 1 on any of them needs a shared-state backend
+  registered with `register_state_backend` (the chart's install notes warn
+  when one is set; see
+  [Scaling and HA](../../docs/installation/helm.md#scaling-and-ha)). Spread
+  constraints depend on the cluster's topology labels — add them via a
+  post-renderer or a wrapper chart.
 - Egress restriction (`networkPolicy.restrictEgress`) exempts the broker
   entirely. Its job is calling arbitrary third-party APIs, so the chart cannot
   narrow its egress; do that with a cluster-level policy that enumerates the
@@ -96,9 +99,10 @@ helm install jentic deploy/helm/jentic-one \
   `<svc>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` (or the same
   key in a mounted config file), or `ingress.skipTrustedProxiesCheck=true` if
   you rate-limit upstream of the cluster.
-- **PodDisruptionBudget** is per enabled surface at `minAvailable: 1`. Only
-  enable it above `replicas: 1` — at one replica a budget has no spare pod to
-  give up and blocks node drains outright.
+- **PodDisruptionBudget** is per enabled surface at `minAvailable: 1`. It only
+  helps a surface running above `replicas: 1` (the gateway, or a surface on a
+  registered shared-state backend) — at one replica a budget has no spare pod
+  to give up and blocks node drains outright.
 - **NetworkPolicy** restricts ingress to same-release pods plus
   `networkPolicy.allowFromNamespaces`. The bundled database is policed too, but
   only ever admits this release's pods — `allowFromNamespaces` does not widen it.

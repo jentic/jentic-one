@@ -298,7 +298,8 @@ ingress:
   skipTrustedProxiesCheck: false
 
 podDisruptionBudget:
-  # Only useful above `replicas: 1` — at one replica a budget blocks node drains
+  # Only useful above `replicas: 1` (the gateway, or a surface on a registered
+  # shared-state backend) — at one replica a budget blocks node drains
   # instead of protecting availability.
   enabled: false
   minAvailable: 1

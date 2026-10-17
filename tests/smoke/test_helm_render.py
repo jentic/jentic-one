@@ -1216,3 +1216,43 @@ def test_render_bundled_postgres_raises_connection_ceiling() -> None:
     sts = next(doc for doc in docs if doc.get("kind") == "StatefulSet")
     container = sts["spec"]["template"]["spec"]["containers"][0]
     assert container["args"] == ["-c", "max_connections=200"]
+
+
+def _install_notes(*args: str) -> str:
+    """Render the chart's NOTES.txt (``helm template`` never renders it)."""
+    if shutil.which("helm") is None:
+        pytest.skip("helm not installed")
+    result = subprocess.run(
+        ["helm", "install", "jentic", str(CHART_DIR), "--dry-run=client", *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split("NOTES:", 1)[1]
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ("overrides", "warned"),
+    [
+        ((), None),
+        (("--set", "gateway.replicas=3"), None),
+        (("--set", "app.replicas=2"), "app.replicas=2"),
+        (("--set", "broker.replicas=3", "--set", "registry.replicas=2"), "registry.replicas=2"),
+    ],
+)
+def test_notes_warn_when_a_stateful_surface_runs_more_than_one_replica(
+    overrides: tuple[str, ...], warned: str | None
+) -> None:
+    """One process per surface: >1 replica warns (gateway exempt) and never fails."""
+    values = (
+        "local-combined.yaml" if not any("registry" in o for o in overrides) else "local-parts.yaml"
+    )
+    notes = _install_notes("-f", str(VALUES_DIR / values), *overrides)
+    if warned is None:
+        assert "WARNING" not in notes
+    else:
+        assert "WARNING: more than one replica" in notes
+        assert warned in notes
+        assert "register_state_backend" in notes
