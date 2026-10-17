@@ -24,7 +24,9 @@ import { authHeaders } from './helpers';
 
 const UPSTREAM = 'http://127.0.0.1:8099';
 const CATALOG_API_ID = 'flow3-e2e.test';
-const IMPORT_PATH = `/catalog/${CATALOG_API_ID}:import`;
+/** The fixture manifest is the `public` source, so its entry is `public/{catalog_api_id}`. */
+const ENTRY_ID = `public/${CATALOG_API_ID}`;
+const IMPORT_PATH = `/catalog/${ENTRY_ID}:import`;
 
 /** True when the fixture upstream is up (CI launches it; local runs may not). */
 async function upstreamReachable(request: APIRequestContext): Promise<boolean> {

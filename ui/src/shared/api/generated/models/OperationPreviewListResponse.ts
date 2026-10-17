@@ -26,9 +26,17 @@ export type OperationPreviewListResponse = {
      */
     offset: number;
     /**
-     * Slimmed `components.securitySchemes` projection.
+     * Every security scheme some operation in the spec requires, over the whole spec (not just this window or filter).
+     */
+    required_schemes?: Array<string>;
+    /**
+     * Slimmed `components.securitySchemes` projection. An `oauth2` scheme lists its flow names in `flows` and each flow's `authorizationUrl`, `tokenUrl`, `refreshUrl` and `scopes` in `flow_details`.
      */
     security_schemes: Record<string, Record<string, any>>;
+    /**
+     * The first server's URL variables (`servers[0].variables`), each with its `default`, `enum` and `description` when the spec sets them.
+     */
+    server_variables?: Record<string, Record<string, any>>;
     /**
      * Total operations in the spec (pre-page).
      */

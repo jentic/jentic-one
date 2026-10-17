@@ -11,6 +11,7 @@ import {
 
 const ENTITY: DiscoveryEntity = {
 	id: 'github.com',
+	entryId: 'public/github.com',
 	apiId: 'github.com',
 	summary: 'github.com',
 	registered: false,

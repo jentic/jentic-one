@@ -25,7 +25,7 @@ describe('listCatalog', () => {
 					catalog_total: 0,
 					registered_count: 0,
 					outdated_count: 0,
-					manifest_age_seconds: null,
+					oldest_source_sync_age_seconds: null,
 					has_more: false,
 					next_cursor: null,
 				});
@@ -52,7 +52,7 @@ describe('listCatalog', () => {
 					catalog_total: 0,
 					registered_count: 0,
 					outdated_count: 0,
-					manifest_age_seconds: null,
+					oldest_source_sync_age_seconds: null,
 					has_more: false,
 					next_cursor: null,
 				});
@@ -71,7 +71,7 @@ describe('listCatalog', () => {
 					catalog_total: 10,
 					registered_count: 4,
 					outdated_count: 2,
-					manifest_age_seconds: 30,
+					oldest_source_sync_age_seconds: 30,
 					has_more: false,
 					next_cursor: null,
 				}),
@@ -86,7 +86,7 @@ describe('listCatalog', () => {
 /**
  * Contract: the rail's jump cursor must match the backend's
  * `encode_catalog_cursor` (`src/jentic_one/shared/pagination.py`) byte for
- * byte — base64 of Python's `json.dumps({"id": api_id})`. The expected tokens
+ * byte — base64 of Python's `json.dumps({"id": entry_id})`. The expected tokens
  * below are that encoder's output; a format change on either side fails here.
  */
 describe('catalogCursorAfter', () => {

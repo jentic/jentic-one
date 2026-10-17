@@ -44,7 +44,7 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 		gotLimit = r.URL.Query().Get("limit")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"data": [{"api_id":"googleapis.com/sheets","vendor":"googleapis.com","path":"sheets","spec_url":"https://x/spec.json","registered":false,"update_available":false,"_links":{"self":"/catalog/googleapis.com/sheets","operations":"/catalog/googleapis.com/sheets/operations","import":"/catalog/googleapis.com/sheets:import"}}],
+			"data": [{"entry_id":"public/googleapis.com/sheets","source_slug":"public","catalog_api_id":"googleapis.com/sheets","vendor":"googleapis.com","registered":false,"update_available":false,"_links":{"self":"/catalog/public/googleapis.com/sheets","operations":"/catalog/public/googleapis.com/sheets/operations","import":"/catalog/public/googleapis.com/sheets:import"}}],
 			"catalog_total": 1200,
 			"registered_count": 3,
 			"has_more": true,
@@ -75,7 +75,7 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 		t.Fatalf("data = %v, want one entry", payload["data"])
 	}
 	entry := data[0].(map[string]any)
-	if entry["api_id"] != "googleapis.com/sheets" || entry["registered"] != false {
+	if entry["api_id"] != "public/googleapis.com/sheets" || entry["registered"] != false {
 		t.Errorf("entry = %v, want the catalog projection (api_id, registered)", entry)
 	}
 	if payload["catalog_total"] != float64(1200) || payload["registered_count"] != float64(3) {

@@ -21,7 +21,11 @@ with skewed clocks still order runs and tombstones the same way.
 
 A listing that raises applies nothing: its staged rows are dropped and the
 source keeps its last good rows. A run whose heartbeat cannot renew the lease
-stops listing and ends ``lease_lost``.
+stops listing and ends ``lease_lost``. A caller may cap the time spent waiting
+on the listing itself (``listing_timeout_s``; staging writes and the apply are
+not counted): a listing over it ends ``listing_timeout``. A run cancelled while
+listing ends ``cancelled``; one cancelled while applying finishes the apply.
+Both failures count toward the source's backoff and release the lease.
 """
 
 from __future__ import annotations
@@ -99,6 +103,10 @@ OUTCOME_BUSY = "busy"
 OUTCOME_DISABLED = "disabled"
 
 ERROR_LEASE_LOST = "lease_lost"
+ERROR_LISTING_TIMEOUT = "listing_timeout"
+ERROR_CANCELLED = "cancelled"
+
+_END = object()
 
 #: SQLite's per-source apply locks, one set per event loop (an ``asyncio.Lock``
 #: belongs to the loop it first waits on).
@@ -129,6 +137,40 @@ class _ListingError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class _BoundedStream:
+    """``stream`` with the time spent awaiting it (the listing fetch) capped in total.
+
+    Only the stream's own awaits count, so writing staged batches between
+    entries does not eat the budget.
+    """
+
+    def __init__(self, stream: ListStream, budget_s: float) -> None:
+        self._stream = stream
+        self._left = budget_s
+        self.is_full = stream.is_full
+
+    async def _bounded(self, awaitable: Any) -> Any:
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(max(self._left, 0.0)):
+                return await awaitable
+        except TimeoutError:
+            raise _ListingError(ERROR_LISTING_TIMEOUT) from None
+        finally:
+            self._left -= time.monotonic() - start
+
+    async def _iter(self) -> AsyncIterator[Any]:
+        it = aiter(self._stream)
+        while (change := await self._bounded(anext(it, _END))) is not _END:
+            yield change
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._iter()
+
+    async def summary(self) -> Any:
+        return await self._bounded(self._stream.summary())
 
 
 def _valid_external_id(value: str) -> bool:
@@ -169,9 +211,7 @@ class CatalogSourceSync:
     def __init__(self, ctx: Context, *, deps_factory: DepsFactory | None = None) -> None:
         self._ctx = ctx
         self._catalog = ctx.config.catalog
-        self._sources: dict[str, CatalogSourceConfig] = {
-            s.slug: s for s in self._catalog.effective_sources()
-        }
+        self._sources: dict[str, CatalogSourceConfig] = {s.slug: s for s in self._catalog.sources}
         self._mappings = [
             CatalogApiIdMapping.from_config(m) for m in self._catalog.catalog_api_id_mappings
         ]
@@ -263,18 +303,14 @@ class CatalogSourceSync:
         """Flag enabled, auto-syncing sources whose last sync is older than their max age.
 
         The read path calls this instead of syncing inline; the scanner drains it.
-        The legacy source is never flagged here: the catalog snapshot refresh,
-        which already fetches its manifest, syncs it in the same pass.
         """
         now = utcnow()
-        legacy = self._catalog.legacy_source_slug
         async with self._ctx.registry_db.transaction() as session:
             rows = {r.slug: r for r in await CatalogSourceRepository.list_all(session)}
             stale = [
                 cfg.slug
                 for cfg in self._sources.values()
-                if cfg.slug != legacy
-                and (row := rows.get(cfg.slug)) is not None
+                if (row := rows.get(cfg.slug)) is not None
                 and is_due(cfg, row, now=now)
                 and row.sync_wanted_at is None
             ]
@@ -287,12 +323,18 @@ class CatalogSourceSync:
         return [await self.sync_source(slug, forced=forced) for slug in list(self._sources)]
 
     async def sync_source(
-        self, slug: str, *, forced: bool = False, stream: ListStream | None = None
+        self,
+        slug: str,
+        *,
+        forced: bool = False,
+        stream: ListStream | None = None,
+        listing_timeout_s: float | None = None,
     ) -> SyncOutcome:
         """Claim the lease and sync one source; ``busy`` when another run holds it.
 
         ``stream`` replaces the source's own listing (a caller that already holds
         the listing document, such as the snapshot refresh, passes it here).
+        ``listing_timeout_s`` caps the time spent awaiting the listing.
         """
         cfg = self._sources[slug]
         if not cfg.enabled:
@@ -316,6 +358,8 @@ class CatalogSourceSync:
                 )
                 metrics.record_sync(slug, outcome.status, 0.0)
                 return outcome
+        if listing_timeout_s is not None:
+            stream = _BoundedStream(stream, listing_timeout_s)
         return await self.run_claimed(cfg, stream, run_id=run_id, forced=forced)
 
     async def run_claimed(
@@ -334,12 +378,21 @@ class CatalogSourceSync:
         staging = asyncio.create_task(self._stage(slug, stream, run_id))
         lost = asyncio.create_task(lease_lost.wait())
         try:
-            await asyncio.wait({staging, lost}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for task in (heartbeat, lost, staging):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(heartbeat, lost, staging, return_exceptions=True)
+            try:
+                await asyncio.wait({staging, lost}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in (heartbeat, lost, staging):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(heartbeat, lost, staging, return_exceptions=True)
+        except asyncio.CancelledError:
+            # The caller gave up mid-listing: end the run as failed (so backoff
+            # applies) and release the lease, even though this task is cancelled.
+            logger.warning("catalog_source_run_cancelled", source=slug, run_id=run_id)
+            await asyncio.shield(
+                self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=ERROR_CANCELLED)
+            )
+            raise
 
         if lease_lost.is_set():
             logger.warning("catalog_source_run_lease_lost", source=slug, run_id=run_id)
@@ -358,14 +411,18 @@ class CatalogSourceSync:
         else:
             staged, is_full, watermark = staging.result()
             try:
-                outcome = await self._apply(
-                    cfg,
-                    run_id=run_id,
-                    started_at=started_at,
-                    is_full=is_full,
-                    watermark=watermark,
-                    forced=forced,
-                    staged=staged,
+                # One short transaction: a cancelled caller lets it finish
+                # rather than leave the lease held until it lapses.
+                outcome = await asyncio.shield(
+                    self._apply(
+                        cfg,
+                        run_id=run_id,
+                        started_at=started_at,
+                        is_full=is_full,
+                        watermark=watermark,
+                        forced=forced,
+                        staged=staged,
+                    )
                 )
             except Exception:
                 logger.exception("catalog_source_apply_failed", source=slug, run_id=run_id)

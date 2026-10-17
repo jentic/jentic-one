@@ -20,7 +20,8 @@ from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
 from jentic_one.registry.repos.api_repo import ApiRepository
-from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.catalog.entries import CatalogEntry, build_catalog_entry
+from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import (
     HostOwnedByOtherVendorError,
     OverlayStateConflictError,
@@ -2148,6 +2149,18 @@ async def test_url_source_via_mock(
         assert len(rows) == 1
 
 
+def _catalog_entry(catalog_api_id: str) -> CatalogEntry:
+    """A ``public``-source catalog entry whose external id is its ``catalog_api_id``."""
+    return build_catalog_entry(
+        source_slug="public",
+        external_id=catalog_api_id,
+        catalog_api_id=catalog_api_id,
+        hint=catalog_api_id,
+        title=None,
+        version=None,
+    )
+
+
 def _mock_spec_client(spec_text: str) -> AsyncMock:
     """An httpx.AsyncClient double serving ``spec_text`` for any GET."""
     mock_response = AsyncMock()
@@ -2175,16 +2188,17 @@ async def test_catalog_import_lands_clean_identity_from_sub_segment(
     registry row is ``posthog-com/posthog-api``, not the vendor-doubled
     ``posthog-com/posthog-com-posthog-api`` the pre-fix full-id slug produced.
     """
-    entry = CatalogEntryView(
-        api_id="posthog.com/posthog-api",
-        vendor="posthog.com",
-        path=None,
-        spec_url="https://catalog.example.com/posthog/openapi.json",
-        github_url=None,
-        registered=False,
+    entry = _catalog_entry("posthog.com/posthog-api")
+    svc = CatalogService(integration_context)
+    vendor, name = await svc._import_target(
+        entry, catalog_ids={entry.catalog_api_id}, switch_source=False
     )
-    source = CatalogService(integration_context)._to_import_source(
-        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    source = svc._to_import_source(
+        entry,
+        "https://catalog.example.com/posthog/openapi.json",
+        Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
+        vendor=vendor,
+        name=name,
     )
 
     with patch(
@@ -2303,19 +2317,16 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
             created_by="usr_test",
         )
 
-    entry = CatalogEntryView(
-        api_id="posthog.com/posthog-api",
-        vendor="posthog.com",
-        path=None,
-        spec_url=spec_url,
-        github_url=None,
-        registered=True,
-    )
+    entry = _catalog_entry("posthog.com/posthog-api")
     svc = CatalogService(integration_context)
-    registered = await svc._registered_identity(entry)
+    # The API predates recorded entry ids, so the import adopts it by catalog_api_id.
+    registered = await svc._import_target(
+        entry, catalog_ids={entry.catalog_api_id}, switch_source=False
+    )
     assert registered == ("posthog-com", "posthog-com-posthog-api")
     source = svc._to_import_source(
         entry,
+        spec_url,
         Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
         vendor=registered[0],
         name=registered[1],
@@ -2352,8 +2363,7 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
     """A doubled-name API whose manifest ``spec_url`` has since moved still
     re-imports onto its existing row.
 
-    The moved URL makes the entry read as unregistered (``registered`` is
-    spec_url-keyed), so a spec_url-only lookup would fall back to the clean
+    A spec_url-keyed lookup would miss the moved URL, fall back to the clean
     sub-segment name and fork a second row carrying the same ``catalog_api_id``
     — stranding the credentials and rules keyed on the old one. The stored
     catalog id is the lookup that survives the move.
@@ -2380,17 +2390,17 @@ async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id
             created_by="usr_test",
         )
 
-    entry = CatalogEntryView(
-        api_id="posthog.com/posthog-api",
-        vendor="posthog.com",
-        path=None,
-        spec_url="https://catalog.example.com/posthog/new/openapi.json",
-        github_url=None,
-        registered=False,
-    )
+    entry = _catalog_entry("posthog.com/posthog-api")
     svc = CatalogService(integration_context)
-    source = await svc._import_source_for(
-        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    vendor, name = await svc._import_target(
+        entry, catalog_ids={entry.catalog_api_id}, switch_source=False
+    )
+    source = svc._to_import_source(
+        entry,
+        "https://catalog.example.com/posthog/new/openapi.json",
+        Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
+        vendor=vendor,
+        name=name,
     )
     assert (source["vendor"], source["api_name"]) == ("posthog-com", "posthog-com-posthog-api")
 

@@ -65,9 +65,9 @@ _Total endpoints: **170**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/catalog` | `capabilities:read` | agent | List Catalog |
-| GET | `/catalog/{api_id}` | `capabilities:read` | agent | Get Catalog Entry |
-| GET | `/catalog/{api_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
-| POST | `/catalog/{api_id}:import` | `catalog:import` | agent | Import Catalog Entry |
+| GET | `/catalog/{entry_id}` | `capabilities:read` | agent | Get Catalog Entry |
+| GET | `/catalog/{entry_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
+| POST | `/catalog/{entry_id}:import` | `catalog:import` | agent | Import Catalog Entry |
 
 ### `events`
 
@@ -168,8 +168,8 @@ _Total endpoints: **170**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/catalog/{api_id}:snooze` | `events:write` | operator | Snooze Catalog Entry |
-| POST | `/catalog/{api_id}:unsnooze` | `events:write` | operator | Unsnooze Catalog Entry |
+| POST | `/catalog/{entry_id}:snooze` | `events:write` | operator | Snooze Catalog Entry |
+| POST | `/catalog/{entry_id}:unsnooze` | `events:write` | operator | Unsnooze Catalog Entry |
 
 ### `catalog:refresh`
 

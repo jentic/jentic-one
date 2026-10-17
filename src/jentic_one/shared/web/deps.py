@@ -135,3 +135,16 @@ def get_current_identity(
         return identity
 
     return Depends(_dependency)
+
+
+async def effective_permissions(
+    identity: Identity = Depends(resolve_identity),
+) -> frozenset[str]:
+    """The caller's permissions expanded through the implication map.
+
+    API-key identities arrive with their raw grants and access-token identities
+    already expanded; expanding here (idempotent) makes every permission-driven
+    decision below the router independent of the credential type. FastAPI caches
+    ``resolve_identity`` per request, so this reuses the route's identity.
+    """
+    return frozenset(compute_effective(set(identity.permissions)))

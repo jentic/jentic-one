@@ -4,17 +4,18 @@ Handlers only: project CatalogService views into web schemas and build links.
 No DB access, no try/except (service errors map to Problem Details via the
 registry error handler). Action verbs use the colon pattern (``:refresh``,
 ``:import``). Route ordering matters: ``/operations`` is declared before the bare
-``/{api_id:path}`` because the ``:path`` converter greedily eats slashes.
+``/{entry_id:path}`` because the ``:path`` converter greedily eats slashes.
 
-``api_id`` can contain slashes (umbrella vendors like ``googleapis.com/admin``),
-so the path parameter uses Starlette's ``{api_id:path}`` converter, which matches
-**literal** ``/``. Clients must therefore send the slash unencoded — a generated
-HTTP client that percent-encodes path params (``%2F``) will NOT match these
-routes. The OpenAPI document can only describe ``{api_id}`` as a plain string, so
-this constraint cannot be expressed in the schema; any client wiring (e.g. the
-Discover UI) must build the path by interpolation, not by an encode-each-segment
-helper. (Kept as path-addressing for parity with jentic-mini; revisit with a
-query-param/opaque-key scheme if a generated client can't honour raw slashes.)
+An ``entry_id`` is ``{source_slug}/{external_id}`` and the external id may itself
+contain slashes (``public/googleapis.com/admin``), so the path parameter uses
+Starlette's ``{entry_id:path}`` converter, which matches **literal** ``/``.
+Clients must therefore send the slashes unencoded — a generated HTTP client that
+percent-encodes path params (``%2F``) will NOT match these routes. The OpenAPI
+document can only describe ``{entry_id}`` as a plain string, so any client wiring
+must build the path by interpolation, not by an encode-each-segment helper.
+
+Every entry route answers an entry hidden from the caller exactly like a missing
+one (``404``, same body), and reads with the caller's effective permissions.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.web.deps import get_catalog_service
 from jentic_one.registry.web.schemas.apis import ApiImportLinksResponse, ApiImportResponse
 from jentic_one.registry.web.schemas.catalog import (
@@ -41,7 +43,7 @@ from jentic_one.registry.web.schemas.catalog import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import effective_permissions, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.openapi_responses import conflict
@@ -49,20 +51,53 @@ from jentic_one.shared.web.openapi_responses import conflict
 router = APIRouter()
 
 
+#: Longest ``entry_id`` the catalog stores.
+_ENTRY_ID_MAX_LENGTH = 320
+
+_ENTRY_ID_DESCRIPTION = (
+    "Catalog entry identity, `{source_slug}/{external_id}`; send every `/` unencoded."
+)
+
+EntryIdPath = Annotated[
+    str,
+    Path(description=_ENTRY_ID_DESCRIPTION, openapi_examples=ex.example(ex.CATALOG_ENTRY_ID)),
+]
+
+
+def _checked_entry_id(entry_id: str) -> str:
+    """Reject an id no entry can have (empty, ``.``/``..`` segments, over-long) as missing."""
+    segments = entry_id.split("/")
+    if (
+        len(entry_id) > _ENTRY_ID_MAX_LENGTH
+        or any(seg in ("", ".", "..") for seg in segments)
+        or any(ord(ch) < 0x20 or ch == "\x7f" for ch in entry_id)
+    ):
+        raise CatalogEntryNotFoundError(entry_id)
+    return entry_id
+
+
 def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryResponse:
-    self_link = build_link(request, f"/catalog/{view.api_id}")
+    self_link = build_link(request, f"/catalog/{view.entry_id}")
     return CatalogEntryResponse(
-        api_id=view.api_id,
+        entry_id=view.entry_id,
+        source_slug=view.source_slug,
+        catalog_api_id=view.catalog_api_id,
         vendor=view.vendor,
-        path=view.path,
-        spec_url=view.spec_url,
+        display_vendor=view.display_vendor,
+        title=view.title,
+        version=view.version,
+        tags=list(view.tags),
+        human_url=view.human_url,
+        has_spec=view.has_spec,
         registered=view.registered,
         update_available=view.update_available,
+        alternates=view.alternates,
         links=CatalogEntryLinksResponse(
             self_link=self_link,
             operations=f"{self_link}/operations",
             import_link=f"{self_link}:import",
-            github=view.github_url,
+            human=view.human_url,
+            alternates=[build_link(request, f"/catalog/{alt}") for alt in view.alternate_ids],
         ),
     )
 
@@ -71,11 +106,15 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
 async def list_catalog(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
     svc: CatalogService = Depends(get_catalog_service),
     q: str | None = Query(
         default=None,
         max_length=500,
-        description="Search text matched against entry IDs; results are ranked by match quality.",
+        description=(
+            "Search text matched against each entry's `catalog_api_id`; results are ranked "
+            "by match quality."
+        ),
         openapi_examples=ex.example("charges"),
     ),
     registered_only: bool = Query(
@@ -116,13 +155,23 @@ async def list_catalog(
         description="Maximum number of entries to return (1-200).",
         openapi_examples=ex.example(25),
     ),
+    include_alternates: bool = Query(
+        default=False,
+        description=(
+            "Return every visible entry instead of collapsing entries that share a "
+            "`catalog_api_id` into one."
+        ),
+        openapi_examples=ex.example(False),
+    ),
 ) -> JSONResponse:
-    """List a keyset page of browsable catalog entries (search/filter aware).
+    """List a keyset page of the catalog entries visible to the caller.
 
     The catalog holds thousands of entries, so this is cursor-paginated like
-    ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-    ``catalog_total``/``registered_count``/``outdated_count`` count the whole
-    manifest, not the page, so the Discover status row stays stable while scrolling.
+    ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false. Visible
+    entries sharing a ``catalog_api_id`` collapse into one (registered first,
+    then source precedence) unless ``include_alternates`` is set.
+    ``catalog_total``/``registered_count``/``outdated_count`` count the visible
+    collapsed list before filters and paging, so the status row stays stable.
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(
@@ -143,6 +192,9 @@ async def list_catalog(
 
     try:
         page = await svc.list_all(
+            permissions=permissions,
+            actor_id=identity.sub or None,
+            include_alternates=include_alternates,
             q=q,
             registered_only=registered_only,
             unregistered_only=unregistered_only,
@@ -159,7 +211,7 @@ async def list_catalog(
         catalog_total=page.catalog_total,
         registered_count=page.registered_count,
         outdated_count=page.outdated_count,
-        manifest_age_seconds=page.manifest_age_seconds,
+        oldest_source_sync_age_seconds=page.oldest_source_sync_age_seconds,
         has_more=page.has_more,
         next_cursor=page.next_cursor,
     )
@@ -167,21 +219,14 @@ async def list_catalog(
 
 
 @router.get(
-    "/catalog/{api_id:path}/operations",
+    "/catalog/{entry_id:path}/operations",
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
 )
 async def preview_catalog_operations(
-    api_id: Annotated[
-        str,
-        Path(
-            description=(
-                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
-            ),
-            openapi_examples=ex.example(ex.CATALOG_API_ID),
-        ),
-    ],
+    entry_id: EntryIdPath,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
     svc: CatalogService = Depends(get_catalog_service),
     offset: int = Query(
         default=0,
@@ -217,7 +262,15 @@ async def preview_catalog_operations(
     so the UI's search box covers every operation in the spec and pages the
     filtered set via ``offset``/``limit`` ("Load more").
     """
-    preview = await svc.preview(api_id, offset=offset, limit=limit, tag=tag, q=q)
+    preview = await svc.preview(
+        _checked_entry_id(entry_id),
+        permissions=permissions,
+        actor_id=identity.sub or None,
+        offset=offset,
+        limit=limit,
+        tag=tag,
+        q=q,
+    )
     resp = OperationPreviewListResponse(
         data=[
             PreviewOperationResponse(
@@ -249,29 +302,30 @@ async def preview_catalog_operations(
             description=preview.info.description,
         ),
         security_schemes=preview.security_schemes,
+        server_variables=preview.server_variables,
+        required_schemes=preview.required_schemes,
     )
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
 @router.get(
-    "/catalog/{api_id:path}", response_model=CatalogEntryResponse, response_model_by_alias=True
+    "/catalog/{entry_id:path}", response_model=CatalogEntryResponse, response_model_by_alias=True
 )
 async def get_catalog_entry(
     request: Request,
-    api_id: Annotated[
-        str,
-        Path(
-            description=(
-                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
-            ),
-            openapi_examples=ex.example(ex.CATALOG_API_ID),
-        ),
-    ],
+    entry_id: EntryIdPath,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> JSONResponse:
-    """Retrieve a single catalog entry by api_id."""
-    view = await svc.get(api_id)
+    """Retrieve a single visible catalog entry by ``entry_id``.
+
+    A hidden or unknown id is a ``404``; when the id looks like a bare
+    ``catalog_api_id`` the body's ``did_you_mean`` names the visible entry for it.
+    """
+    view = await svc.get(
+        _checked_entry_id(entry_id), permissions=permissions, actor_id=identity.sub or None
+    )
     resp = _entry_response(request, view)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
@@ -289,42 +343,45 @@ async def refresh_catalog(
         openapi_examples=ex.example(False),
     ),
 ) -> JSONResponse:
-    """Force a refresh of the catalog cache from the upstream manifest (org:admin).
+    """Sync every enabled catalog source now (org:admin).
 
-    Also syncs every enabled catalog source; ``force=true`` overrides the
-    mass-removal guard for this run.
+    ``force=true`` overrides the mass-removal guard for this run.
     """
-    result = await svc.refresh(sync_sources=True, force=force)
+    result = await svc.refresh(force=force)
     # An explicit operator "refresh now" is the strongest "check upstream" signal,
-    # so trigger the update-notify sweep too (the lazy read path already does this
-    # via _safe_refresh). Fire-and-forget: never block the refresh response on it.
+    # so trigger the update-notify sweep too. Fire-and-forget: never block the
+    # refresh response on it.
     svc.trigger_update_notify_sweep()
     resp = CatalogRefreshResponse(count=result.count)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
 @router.post(
-    "/catalog/{api_id:path}:import",
+    "/catalog/{entry_id:path}:import",
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
 )
 async def import_catalog_entry(
     request: Request,
-    api_id: Annotated[
-        str,
-        Path(
-            description=(
-                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
-            ),
-            openapi_examples=ex.example(ex.CATALOG_API_ID),
-        ),
-    ],
+    entry_id: EntryIdPath,
     identity: Identity = get_current_identity(required_permissions=["catalog:import"]),
     svc: CatalogService = Depends(get_catalog_service),
+    switch_source: bool = Query(
+        default=False,
+        description=(
+            "When another catalog entry's import already holds this entry's "
+            "`catalog_api_id`, supersede that API with this entry's spec (its "
+            "credentials then point at it). Needs `credentials:write`; without it the "
+            "import takes a distinct name and leaves that API untouched."
+        ),
+        openapi_examples=ex.example(False),
+    ),
 ) -> JSONResponse:
-    """Enqueue an async import of a catalog entry into the local registry."""
-    job_id = await svc.import_entry(api_id, identity)
+    """Enqueue an async import of a visible catalog entry into the local registry."""
+    job_id = await svc.import_entry(
+        _checked_entry_id(entry_id), identity, switch_source=switch_source
+    )
     resp = ApiImportResponse(
         job_id=job_id,
         status="queued",
@@ -334,25 +391,17 @@ async def import_catalog_entry(
 
 
 @router.post(
-    "/catalog/{api_id:path}:snooze",
+    "/catalog/{entry_id:path}:snooze",
     status_code=204,
     responses=conflict("The catalog entry has no outstanding update to snooze."),
 )
 async def snooze_catalog_entry(
-    api_id: Annotated[
-        str,
-        Path(
-            description=(
-                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
-            ),
-            openapi_examples=ex.example(ex.CATALOG_API_ID),
-        ),
-    ],
+    entry_id: EntryIdPath,
     body: CatalogSnoozeRequest | None = None,
     identity: Identity = get_current_identity(required_permissions=["events:write"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> Response:
-    """Snooze the outstanding update notification for a catalog entry (C1, #925).
+    """Snooze the outstanding update notification for a catalog entry.
 
     Operator action (``events:write``): quiet the "update available" badge for a
     known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -360,24 +409,18 @@ async def snooze_catalog_entry(
     per-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A
     genuinely newer upstream change re-lights the badge automatically.
     """
-    await svc.snooze_entry(api_id, identity, until=body.snoozed_until if body else None)
+    await svc.snooze_entry(
+        _checked_entry_id(entry_id), identity, until=body.snoozed_until if body else None
+    )
     return Response(status_code=204)
 
 
-@router.post("/catalog/{api_id:path}:unsnooze", status_code=204)
+@router.post("/catalog/{entry_id:path}:unsnooze", status_code=204)
 async def unsnooze_catalog_entry(
-    api_id: Annotated[
-        str,
-        Path(
-            description=(
-                "Catalog identity of the API (`domain[/sub-api]`); send any `/` unencoded."
-            ),
-            openapi_examples=ex.example(ex.CATALOG_API_ID),
-        ),
-    ],
+    entry_id: EntryIdPath,
     identity: Identity = get_current_identity(required_permissions=["events:write"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> Response:
-    """Clear a snooze for a catalog entry (C1). Operator action (``events:write``)."""
-    await svc.unsnooze_entry(api_id, identity)
+    """Clear a snooze for a catalog entry. Operator action (``events:write``)."""
+    await svc.unsnooze_entry(_checked_entry_id(entry_id), identity)
     return Response(status_code=204)

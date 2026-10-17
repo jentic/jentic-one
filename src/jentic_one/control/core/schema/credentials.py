@@ -53,7 +53,7 @@ class Credential(AuditableMixin, ControlBase):
     # create time when the client knows it. Display-only — resolution identity
     # stays the (api_vendor, api_name, api_version) tuple. NULL for credentials
     # created before this column or against manually-imported APIs.
-    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    catalog_api_id: Mapped[str | None] = mapped_column(String(320), nullable=True)
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, default="static", server_default=text("'static'")
     )

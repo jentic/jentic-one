@@ -32,6 +32,19 @@ class CatalogEntryRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def live_rows(session: AsyncSession, slugs: Iterable[str]) -> list[CatalogEntryRow]:
+        """Every live row of the given sources, in ``entry_id`` order."""
+        wanted = list(slugs)
+        if not wanted:
+            return []
+        result = await session.execute(
+            select(CatalogEntryRow)
+            .where(CatalogEntryRow.source_slug.in_(wanted), CatalogEntryRow.removed_at.is_(None))
+            .order_by(CatalogEntryRow.entry_id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def live_external_ids(session: AsyncSession, slug: str) -> set[str]:
         result = await session.execute(
             select(CatalogEntryRow.external_id).where(

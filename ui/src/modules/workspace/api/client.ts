@@ -206,9 +206,33 @@ export async function deleteApi(key: ApiKey): Promise<void> {
 }
 
 /**
+ * Run a catalog call keyed by the API's `catalog_api_id`, following the 404's
+ * `did_you_mean` once. The catalog routes take an `entry_id`; an id without a
+ * visible source prefix misses with a hint naming the visible entry for it,
+ * which is the entry the API was imported from when that one is registered.
+ */
+async function withCatalogEntry<T>(
+	catalogApiId: string,
+	call: (entryId: string) => Promise<T>,
+): Promise<T> {
+	try {
+		return await call(catalogApiId);
+	} catch (error) {
+		const hint =
+			error instanceof ApiError && error.status === 404
+				? (error.body as { did_you_mean?: unknown } | null)?.did_you_mean
+				: undefined;
+		if (typeof hint === 'string' && hint && hint !== catalogApiId) {
+			return call(hint);
+		}
+		throw error;
+	}
+}
+
+/**
  * Re-import a catalog-backed API from the public catalog to adopt an upstream
  * spec update (Flow-3 "Update available"). Enqueues an async import of the
- * catalog entry keyed by its `api_id` (`POST /catalog/{id}:import`) and returns
+ * catalog entry for the API's `catalog_api_id` (`POST /catalog/{entry_id}:import`) and returns
  * the queued job — the same endpoint Discover uses to import. On success the
  * API's `update_available` clears on the next `GET /apis` read.
  *
@@ -216,9 +240,11 @@ export async function deleteApi(key: ApiKey): Promise<void> {
  * this thin wrapper mirrors Discover's `importCatalogEntry` against the shared
  * `CatalogService` (the repository tier is the sanctioned place to touch it).
  */
-export async function reimportCatalogEntry(apiId: string): Promise<ImportJob> {
+export async function reimportCatalogEntry(catalogApiId: string): Promise<ImportJob> {
 	try {
-		const res = await CatalogService.importCatalogEntry({ apiId });
+		const res = await withCatalogEntry(catalogApiId, (entryId) =>
+			CatalogService.importCatalogEntry({ entryId }),
+		);
 		return { jobId: res.job_id, status: res.status };
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to start the re-import.');
@@ -301,14 +327,17 @@ export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<
  * until a newer upstream digest lands; a value → time-boxed snooze.
  */
 export async function snoozeCatalogEntry(
-	apiId: string,
+	catalogApiId: string,
 	snoozedUntil?: string | null,
 ): Promise<void> {
 	try {
-		await CatalogService.snoozeCatalogEntry({
-			apiId,
-			requestBody: snoozedUntil !== undefined ? { snoozed_until: snoozedUntil } : undefined,
-		});
+		await withCatalogEntry(catalogApiId, (entryId) =>
+			CatalogService.snoozeCatalogEntry({
+				entryId,
+				requestBody:
+					snoozedUntil !== undefined ? { snoozed_until: snoozedUntil } : undefined,
+			}),
+		);
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to mute update notifications.');
 	}

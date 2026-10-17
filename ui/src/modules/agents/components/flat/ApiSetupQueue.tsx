@@ -327,7 +327,7 @@ export function ApiSetupQueue({
 				// The wizard already imported an unregistered catalog API on save.
 				const imported = entry.created?.credential_id === chosen.credential_id;
 				if (entry.importsApi && entry.api.apiId && !imported) {
-					await importMutation.mutateAsync(entry.api.apiId);
+					await importMutation.mutateAsync(entry.api.entryId ?? entry.api.apiId);
 				}
 				let rulesFailed: string[];
 				try {

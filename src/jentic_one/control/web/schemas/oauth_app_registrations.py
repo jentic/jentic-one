@@ -170,7 +170,7 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
         str,
         Field(
             min_length=1,
-            max_length=255,
+            max_length=320,
             pattern=_CATALOG_API_ID_PATTERN,
             examples=["github.com/api.github.com"],
             description=(
@@ -279,7 +279,7 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
         str,
         Field(
             min_length=1,
-            max_length=255,
+            max_length=320,
             pattern=_CATALOG_API_ID_PATTERN,
             examples=["github.com/api.github.com"],
             description=(

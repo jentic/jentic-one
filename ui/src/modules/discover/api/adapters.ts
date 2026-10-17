@@ -9,13 +9,13 @@
 import type { CatalogEntryResponse } from '@/shared/api';
 import { titleFromApiId } from '@/shared/lib';
 import type { DiscoveryEntity } from '@/modules/discover/api/types';
-import { parseCatalogSpecUrl } from '@/modules/discover/lib/catalogSpec';
 
 /**
  * Raw `GET /catalog` manifest entry → `DiscoveryEntity`.
  *
- * `registered` comes straight from the entry — the backend computes it by exact
- * spec_url match, so the UI just reads the boolean (no host/vendor matching).
+ * `registered` comes straight from the entry, so the UI just reads the boolean
+ * (no host/vendor matching). Routes address the entry by `entry_id`; the title
+ * and workspace matching read `catalog_api_id`.
  *
  * `summary` is the per-entry title (distinct even within one umbrella vendor);
  * `vendor` is the shared domain shown as a secondary line so two sub-APIs of the
@@ -23,19 +23,20 @@ import { parseCatalogSpecUrl } from '@/modules/discover/lib/catalogSpec';
  */
 export function catalogEntryToEntity(entry: CatalogEntryResponse): DiscoveryEntity {
 	const vendor = entry.vendor ?? undefined;
-	const summary = titleFromApiId(entry.api_id);
+	const summary = titleFromApiId(entry.catalog_api_id);
 	return {
-		id: entry.api_id,
-		apiId: entry.api_id,
+		id: entry.entry_id,
+		entryId: entry.entry_id,
+		apiId: entry.catalog_api_id,
 		summary,
 		// Only surface the vendor as a subtitle when it adds information beyond
 		// the title (i.e. an umbrella sub-API), to avoid `stripe.com / stripe.com`.
 		subtitle: vendor && vendor !== summary ? vendor : undefined,
 		registered: entry.registered,
 		updateAvailable: entry.update_available ?? false,
-		vendor: vendor ?? entry.api_id,
+		vendor: vendor ?? entry.catalog_api_id,
 		catalogVendor: vendor,
-		version: parseCatalogSpecUrl(entry.spec_url, entry.api_id) ?? undefined,
-		githubUrl: entry._links.github ?? undefined,
+		version: entry.version ?? undefined,
+		githubUrl: entry.human_url ?? undefined,
 	};
 }

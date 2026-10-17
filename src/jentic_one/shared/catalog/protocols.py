@@ -7,39 +7,57 @@ from typing import Protocol
 
 
 class CatalogAutoImportProtocol(Protocol):
-    """Best-effort auto-import of a public-catalog API into the local registry.
+    """Best-effort auto-import of a catalog API into the local registry.
 
     Consumed by ``ConnectSessionService`` when a vendor credential finishes
     connecting: the broker cannot route a request to (say) ``api.github.com``
     unless the GitHub OpenAPI spec is registered, so we import it now to close
     the gap between "credential exists" and "credential is usable".
 
+    Every method takes a ``catalog_api_id`` (the control plane never knows a
+    catalog ``entry_id``) and matches local APIs by it. When several local APIs
+    hold the id, the one imported from the entry a caller without permissions
+    would resolve to wins, then the newest.
+
     Contract:
 
-    * Idempotent — implementations must no-op when the entry is already
-      registered (or not present in the manifest).
+    * Idempotent — implementations must no-op when the API is already
+      registered (or no visible catalog entry carries the id).
     * Best-effort — must not raise. Callers treat failures as advisory and
       continue. The credential is still valid; the operator can import the
-      API manually via ``POST /catalog/{api_id}:import``.
+      API manually via ``POST /catalog/{entry_id}:import``.
     * Returns the enqueued job id when a fresh import was queued; ``None``
       when no work was needed or the import could not be started.
     """
 
-    async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None: ...
+    async def ensure_imported(
+        self,
+        *,
+        catalog_api_id: str,
+        initiator_actor_id: str,
+        initiator_permissions: frozenset[str] = frozenset(),
+    ) -> str | None:
+        """Import the entry ``catalog_api_id`` resolves to for the initiator.
 
-    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
-        """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None.
+        ``initiator_permissions`` (the initiator's effective permissions) decide
+        which catalog sources the entry may come from; the empty default sees
+        public sources only.
+        """
+        ...
+
+    async def registered_identity(self, *, catalog_api_id: str) -> tuple[str, str] | None:
+        """Return the ``(vendor, name)`` of the local API holding ``catalog_api_id``, or None.
 
         A vendor connect stamps the credential with this identity so it covers
         the registered API exactly — the name a catalog import gives depends on
-        the manifest (sub segment, or the whole id for a clashing entry) and on
+        the catalog (sub segment, or the whole id for a clashing entry) and on
         when the API was first imported. ``None`` when nothing is imported yet
         (or on any lookup error).
         """
         ...
 
-    async def current_version(self, *, api_id: str) -> str | None:
-        """Return the imported api's current-revision version, or None if not imported yet.
+    async def current_version(self, *, catalog_api_id: str) -> str | None:
+        """Return the imported API's current-revision version, or None if not imported yet.
 
         Used by ``ConnectSessionService.get_review_data`` to fill in the
         ``api_reference.version`` the SPA needs to hit

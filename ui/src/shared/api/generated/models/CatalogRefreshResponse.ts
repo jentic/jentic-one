@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Acknowledgement of a manifest refresh.
+ * Acknowledgement of a catalog refresh.
  */
 export type CatalogRefreshResponse = {
     /**
-     * Number of entries in the freshly fetched manifest.
+     * Live entries of the enabled sources after the sync.
      */
     count: number;
     /**

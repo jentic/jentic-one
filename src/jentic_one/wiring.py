@@ -25,15 +25,13 @@ from dataclasses import replace
 
 import structlog
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
     install_mcp_mount,
     mcp_lifespan,
 )
-from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.api_repo import ApiRepository, CatalogHolder
 from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
@@ -97,96 +95,123 @@ def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
 class InProcessCatalogAutoImporter:
     """Registry-backed ``CatalogAutoImportProtocol`` implementation.
 
-    Delegates to :class:`CatalogService`. Idempotent (skips when the entry is
-    already registered) and best-effort (swallows every failure — the connect
-    flow keeps working even if the catalog manifest is unreachable, the vendor
-    slug isn't in the manifest, or the job store is temporarily wedged). The
-    operator retains the manual ``POST /catalog/{api_id}:import`` escape hatch.
+    Delegates to :class:`CatalogService`: ``resolve`` picks the entry the
+    initiator may see for a ``catalog_api_id``, ``import_entry`` imports it.
+    Idempotent (skips when an API already holds the id) and best-effort
+    (swallows every failure — the connect flow keeps working even if the
+    catalog is unreachable, no visible entry carries the id, or the job store is
+    temporarily wedged). The operator retains the manual
+    ``POST /catalog/{entry_id}:import`` escape hatch.
 
     Actor attribution: the ``initiator_actor_id`` is threaded through as the
     identity ``sub`` and its ``actor_type`` is derived from the id prefix
     (``usr_`` / ``agnt_``), so audit + job telemetry attribute the
     (re-)import to whoever finished the connect. Any other prefix — notably a
-    residual ``sva_`` id on a connect session that pre-dates the theme-8
-    Phase-4 retirement — is **not** relabelled as a user (that would forge the
+    residual ``sva_`` id on a connect session from before service accounts
+    were retired — is **not** relabelled as a user (that would forge the
     audit trail): the auto-import is skipped with an info log and the operator
-    keeps the manual import route. The service method itself
-    does not enforce ``catalog:import`` scope; the router does, and we do not
-    go through the router.
+    keeps the manual import route. The service method itself does not enforce
+    ``catalog:import`` scope; the router does, and we do not go through the
+    router.
     """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+    async def _holder(self, catalog_api_id: str) -> CatalogHolder | None:
+        """The local API standing for ``catalog_api_id``.
+
+        Among the APIs holding the id, the one imported from the entry a caller
+        without permissions resolves to (so the answer never depends on who
+        asks), else the newest.
+        """
+        async with self._ctx.registry_db.session() as session:
+            holders = await ApiRepository.catalog_holders(session, catalog_api_id)
+        if len(holders) <= 1:
+            return holders[0] if holders else None
+        winner = await CatalogService(self._ctx).public_winner(catalog_api_id)
+        return next((h for h in holders if h.catalog_entry_id == winner), holders[0])
+
+    async def ensure_imported(
+        self,
+        *,
+        catalog_api_id: str,
+        initiator_actor_id: str,
+        initiator_permissions: frozenset[str] = frozenset(),
+    ) -> str | None:
         try:
-            svc = CatalogService(self._ctx)
-            entry = await svc.get(api_id)
-            if entry.registered:
+            if await self._holder(catalog_api_id) is not None:
                 return None
             try:
                 actor_type = actor_type_from_id(initiator_actor_id)
             except ValueError:
                 _logger.info(
                     "catalog_auto_import.skipped_retired_initiator",
-                    api_id=api_id,
+                    catalog_api_id=catalog_api_id,
                     initiator=initiator_actor_id,
                     actionable_step=(
                         "The connect was started by a retired actor (not a user or "
-                        "agent); import the API manually via POST /catalog/{api_id}:import."
+                        "agent); import the API manually via POST /catalog/{entry_id}:import."
                     ),
                 )
                 return None
+            svc = CatalogService(self._ctx)
+            entry = await svc.resolve(
+                catalog_api_id, permissions=initiator_permissions, actor_id=initiator_actor_id
+            )
             identity = Identity(sub=initiator_actor_id, actor_type=actor_type)
-            job_id = await svc.import_entry(api_id, identity)
+            job_id = await svc.import_entry(
+                entry.entry_id, identity, permissions=initiator_permissions
+            )
             _logger.info(
                 "catalog_auto_import.enqueued",
-                api_id=api_id,
+                catalog_api_id=catalog_api_id,
+                entry_id=entry.entry_id,
                 job_id=job_id,
                 initiator=initiator_actor_id,
             )
             return job_id
         except CatalogEntryNotFoundError:
-            # The vendor's canonical slug isn't in the public catalog manifest.
-            # Nothing to auto-import — the operator can wire a private registry
-            # entry manually.
-            _logger.info("catalog_auto_import.skipped.not_in_manifest", api_id=api_id)
+            # No catalog entry visible to the initiator carries the vendor's id.
+            # Nothing to auto-import — the operator can register the API manually.
+            _logger.info(
+                "catalog_auto_import.skipped.not_in_catalog", catalog_api_id=catalog_api_id
+            )
             return None
         except Exception:
-            _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
+            _logger.warning(
+                "catalog_auto_import.failed", catalog_api_id=catalog_api_id, exc_info=True
+            )
             return None
 
-    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
-        """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None."""
+    async def registered_identity(self, *, catalog_api_id: str) -> tuple[str, str] | None:
+        """Return the ``(vendor, name)`` of the local API holding ``catalog_api_id``, or None."""
         try:
-            async with self._ctx.registry_db.session() as session:
-                return await ApiRepository.identity_for_catalog_api_id(session, api_id)
+            holder = await self._holder(catalog_api_id)
         except Exception:
-            _logger.warning("catalog_registered_identity.failed", api_id=api_id, exc_info=True)
+            _logger.warning(
+                "catalog_registered_identity.failed", catalog_api_id=catalog_api_id, exc_info=True
+            )
             return None
+        return (holder.vendor, holder.name) if holder is not None else None
 
-    async def current_version(self, *, api_id: str) -> str | None:
-        """Return the imported api's current-revision version, or None.
+    async def current_version(self, *, catalog_api_id: str) -> str | None:
+        """Return the imported API's current-revision version, or None.
 
-        Direct lookup on the registry ``apis`` table by ``catalog_api_id``,
-        gated on ``current_revision_id`` being set — otherwise the row
-        exists but hasn't finished importing. Returns None on any error /
-        no-match; the SPA polls until this becomes non-null.
+        ``None`` until the API standing for ``catalog_api_id`` has a current
+        revision (the row exists before its import finishes) and on any error;
+        the SPA polls until this becomes non-null.
         """
         try:
-            async with self._ctx.registry_db.session() as session:
-                stmt = (
-                    select(Api.version)
-                    .where(Api.catalog_api_id == api_id)
-                    .where(Api.current_revision_id.is_not(None))
-                    .limit(1)
-                )
-                result = await session.execute(stmt)
-                row = result.scalar_one_or_none()
-                return row if row else None
+            holder = await self._holder(catalog_api_id)
         except Exception:
-            _logger.warning("catalog_current_version.failed", api_id=api_id, exc_info=True)
+            _logger.warning(
+                "catalog_current_version.failed", catalog_api_id=catalog_api_id, exc_info=True
+            )
             return None
+        if holder is None or not holder.is_current:
+            return None
+        return holder.version or None
 
 
 def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:

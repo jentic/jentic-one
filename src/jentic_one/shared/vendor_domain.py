@@ -30,6 +30,8 @@ from functools import cache
 
 from publicsuffixlist import PublicSuffixList
 
+from jentic_one.shared.catalog.api_id import NAMESPACE_SEPARATOR
+
 # PRIVATE-section suffixes owned and operated by a single API vendor. A host under
 # one of these resolves to the suffix itself rather than to a per-subdomain vendor.
 # Keep this list short and limited to operator-owned API namespaces; genuinely
@@ -106,7 +108,14 @@ def vendor_from_api_id(api_id: str) -> str | None:
     ``api.stripe.com`` → ``stripe.com``; ``slack.com/api`` → ``slack.com``;
     ``github.com/api.github.com`` → ``github.com``; a bare ``stripe`` stays
     ``stripe``. Only the portion before the first ``/`` is considered.
+
+    A namespaced id (``{source}~{hint}``, minted by the catalog resolver) is its
+    own vendor: ``corp~api.stripe.com`` stays whole rather than reducing to
+    ``stripe.com``, so a namespaced entry is never mistaken for the curated
+    vendor it was namespaced away from.
     """
     if not api_id:
         return None
+    if NAMESPACE_SEPARATOR in api_id:
+        return api_id
     return registrable_domain(api_id.split("/", 1)[0])
