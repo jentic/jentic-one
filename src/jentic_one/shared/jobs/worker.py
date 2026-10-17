@@ -327,7 +327,10 @@ class WorkerLoop:
         return await self._db.run_in_transaction(_claim)
 
     async def _execute_handler(self, handler: Any, job: Any) -> JobResultPayload:
-        """Run the handler within a transaction, renewing the job's lease meanwhile."""
+        """Run the handler within a transaction, renewing the job's lease meanwhile.
+
+        The lease is renewed only where :meth:`_renews_leases` holds (not on SQLite).
+        """
         heartbeat = (
             asyncio.create_task(self._heartbeat(job), name=f"job-lease-heartbeat:{job.id}")
             if self._renews_leases()
@@ -365,15 +368,18 @@ class WorkerLoop:
         Runs alongside the handler and is cancelled when it returns. A failed
         renewal (e.g. a transient database error) is logged and retried on the
         next beat; the interval leaves several beats of headroom before the
-        lease lapses. A lost lease (the job was reclaimed or cancelled) ends the
-        heartbeat; the handler runs on, and its fenced completion drops the
-        result.
+        lease lapses. Each renewal is bounded by the interval, so one stalled
+        renewal (a pool checkout or network stall) costs a single beat rather
+        than the remaining lease. A lost lease (the job was reclaimed or
+        cancelled) ends the heartbeat; the handler runs on, and its fenced
+        completion drops the result.
         """
         interval = _heartbeat_interval_s(self._config)
         while True:
             await asyncio.sleep(interval)
             try:
-                renewed = await self._renew_lease(job)
+                async with asyncio.timeout(interval):
+                    renewed = await self._renew_lease(job)
             except Exception as exc:
                 cause = connection_loss_cause(exc)
                 logger.warning(

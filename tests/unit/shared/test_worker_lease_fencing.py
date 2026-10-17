@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import MutableMapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.job_repo import JobRepository
@@ -94,7 +96,11 @@ async def _db_clock(db: DatabaseSession) -> datetime:
 
 async def _stale_and_current_claims(db: DatabaseSession) -> tuple[Any, Any]:
     """Claim a job, let its lease lapse, and reclaim it: (stale claim, current claim)."""
-    job_id = await _insert_job(db)
+    return await _stale_and_current_claims_of(db, await _insert_job(db))
+
+
+async def _stale_and_current_claims_of(db: DatabaseSession, job_id: str) -> tuple[Any, Any]:
+    """Claim the queued ``job_id``, let its lease lapse, and reclaim it."""
     stale = await _worker(db)._claim_next()
     await _set_visible_at(db, job_id, await _db_clock(db) - timedelta(seconds=5))
     current = await _worker(db)._claim_next()
@@ -243,6 +249,13 @@ def test_heartbeat_interval_is_well_under_visibility_timeout() -> None:
     assert _heartbeat_interval_s(WorkerConfig(visibility_timeout_s=120.0)) == 30.0
 
 
+@pytest.mark.parametrize("timeout_s", [0.0, -1.0])
+def test_visibility_timeout_must_be_positive(timeout_s: float) -> None:
+    """A non-positive timeout would make the heartbeat renew in a tight loop."""
+    with pytest.raises(ValidationError):
+        WorkerConfig(visibility_timeout_s=timeout_s)
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_keeps_renewing_until_cancelled(jobs_db: DatabaseSession) -> None:
     """The heartbeat renews the lease on every beat while it runs."""
@@ -281,8 +294,9 @@ async def test_heartbeat_stops_once_lease_is_lost(jobs_db: DatabaseSession) -> N
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_survives_a_failed_renewal(jobs_db: DatabaseSession) -> None:
-    """A renewal error is logged without SQL and the next beat tries again."""
+@pytest.mark.parametrize("failure", ["error", "stall"])
+async def test_heartbeat_survives_a_failed_renewal(jobs_db: DatabaseSession, failure: str) -> None:
+    """A renewal that errors (logged without SQL) or stalls past a beat is retried next beat."""
 
     class _FlakyRenewWorker(WorkerLoop):
         calls = 0
@@ -290,7 +304,9 @@ async def test_heartbeat_survives_a_failed_renewal(jobs_db: DatabaseSession) -> 
         async def _renew_lease(self, job: Any) -> bool:
             self.calls += 1
             if self.calls == 1:
-                raise RuntimeError("UPDATE jobs SET visible_at = ? failed")
+                if failure == "stall":
+                    await asyncio.Event().wait()
+                raise RuntimeError("renew failed [SQL: UPDATE jobs SET visible_at = ?]")
             return False
 
     worker = _FlakyRenewWorker(
@@ -304,19 +320,37 @@ async def test_heartbeat_survives_a_failed_renewal(jobs_db: DatabaseSession) -> 
     assert worker.calls == 2
     [failed] = _events(logs, "job_lease_renew_failed")
     assert failed["log_level"] == "warning"
-    assert failed["error_type"] == "RuntimeError"
+    if failure == "stall":
+        assert failed["error_type"] == "TimeoutError"
+    else:
+        assert failed["error_type"] == "RuntimeError"
+        assert failed["error"] == "renew failed"
 
 
 @pytest.mark.asyncio
 async def test_sqlite_runs_handler_without_heartbeat(jobs_db: DatabaseSession) -> None:
     """On SQLite the handler's transaction holds the write lock, so no heartbeat runs."""
-    worker = _worker(jobs_db, visibility_timeout_s=0.2)
+    started: list[str] = []
+
+    class _RecordingWorker(WorkerLoop):
+        async def _heartbeat(self, job: Any) -> None:
+            started.append(job.id)
+
+    registry = JobHandlerRegistry()
+    registry.register(JobKind.EXECUTION, _OkHandler())
+    worker = _RecordingWorker(jobs_db, registry, worker_config=WorkerConfig())
+    job_id = await _insert_job(jobs_db)
+
     assert worker._renews_leases() is False
+    assert await worker._tick() is True
+    assert started == []
+    assert (await _get(jobs_db, job_id)).status == JobStatus.COMPLETED
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("handler_raises", [False, True], ids=["returns", "raises"])
 async def test_heartbeat_runs_alongside_handler_and_is_cancelled_after(
-    jobs_db: DatabaseSession,
+    jobs_db: DatabaseSession, handler_raises: bool
 ) -> None:
     """Where leases are renewed, the heartbeat starts with the handler and ends with it."""
     seen: list[str] = []
@@ -336,6 +370,8 @@ async def test_heartbeat_runs_alongside_handler_and_is_cancelled_after(
         async def execute(self, job_id: str, session: Any, **kwargs: Any) -> JobResultPayload:
             await asyncio.sleep(0)
             seen.append("handler")
+            if handler_raises:
+                raise RuntimeError("handler failed")
             return await super().execute(job_id, session, **kwargs)
 
     registry = JobHandlerRegistry()
@@ -346,4 +382,38 @@ async def test_heartbeat_runs_alongside_handler_and_is_cancelled_after(
     assert await worker._tick() is True
 
     assert seen == ["started", "handler", "cancelled"]
-    assert (await _get(jobs_db, job_id)).status == JobStatus.COMPLETED
+    expected = JobStatus.QUEUED if handler_raises else JobStatus.COMPLETED
+    assert (await _get(jobs_db, job_id)).status == expected
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_cannot_refuse_reclaimed_approved_job(jobs_db: DatabaseSession) -> None:
+    """The approved-reclaim refusal is fenced: a cancelled claim writes no failure or result."""
+    job_id = await _insert_job(jobs_db)
+    async with jobs_db.transaction() as session:
+        session.add(
+            HeldExecution(
+                job_id=job_id,
+                agent_id="agnt_worker",
+                credential_id="cred_worker",
+                api_vendor="api.example.com",
+                api_name="main",
+                api_version="1",
+                method="POST",
+                path="/v1/x",
+                request_fingerprint=job_id.ljust(64, "0"),
+                state="approved",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+    _first, reclaim = await _stale_and_current_claims_of(jobs_db, job_id)
+    async with jobs_db.transaction() as session:
+        assert await JobRepository.cancel_if_active(session, job_id) is not None
+
+    with structlog.testing.capture_logs() as logs:
+        assert await _worker(jobs_db)._refuse_approved_reclaim(reclaim) is True
+
+    assert (await _get(jobs_db, job_id)).status == JobStatus.CANCELLED
+    assert await _result_count(jobs_db, job_id) == 0
+    assert [e["stage"] for e in _events(logs, "job_cancelled_while_running")] == ["refuse_reclaim"]
+    assert not _events(logs, "approved_job_reclaim_refused")
