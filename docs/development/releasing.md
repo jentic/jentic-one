@@ -45,6 +45,12 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 Releases continue the pre-1.0 `0.x` line — see `VERSIONING.md` for the
 versioning policy.
 
+Before merging a Release PR, confirm the CLI's minimum catalog server version
+(`minCatalogServerVersion` in `cli/internal/cli/api/catalog_gate.go`) still
+names the release that first served the catalog by `entry_id` (0.44.0). If the
+multi-source catalog ships under another number, set the constant to that
+release in the Release PR.
+
 ### Forcing or recovering a release
 
 For a **partially failed run** (e.g. `publish-image` succeeded but GoReleaser
@@ -93,17 +99,27 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
 
 - **Upgrade every CLI with the server — the CLI and server must run the same
   release.** A 0.44.0 CLI checks the server's `GET /health` version before its
-  first catalog call and refuses a server older than 0.44.0 (or one that
-  reports no version) with `SERVER_INCOMPATIBLE` instead of failing with a
-  confusing 404. An **older** CLI, or an older `jentic mcp` stdio server,
-  talking to a 0.44.0 server fails: it builds `/catalog/{api_id}` paths the
-  server answers with `404`, and reads entries with empty ids. Source builds
-  of the CLI (version `dev`) skip the check.
-- **CLI agent-mode contract: `schema_version` is now `"2"`.** Every
-  agent-mode JSON envelope (`--json`, `--mode agent`, `jentic execute`, and
-  the `jentic mcp` tool results) is stamped `"schema_version": "2"`. The
-  envelope shape of non-catalog commands is unchanged; an agent that pins
-  `"1"` must accept `"2"`.
+  first catalog call:
+  - a reported version older than 0.44.0 is refused with
+    `SERVER_INCOMPATIBLE` instead of a confusing 404;
+  - a `/health` that answers 5xx or 429 is a retryable `TRANSPORT_ERROR`;
+  - when `/health` reports no version (or a proxy answers it with 401/404),
+    the CLI checks the catalog response instead: entries without an
+    `entry_id` are refused with `SERVER_INCOMPATIBLE`.
+
+  An **older** CLI, or an older `jentic mcp` stdio server, talking to a
+  0.44.0 server fails: it builds `/catalog/{api_id}` paths the server answers
+  with `404`, and reads entries with empty ids. Source builds of the CLI
+  (version `dev`, or a `go install …@<branch>` pseudo-version) skip the check;
+  `go install …@v0.44.0` builds run it.
+- **Agent machine contract: `schema_version` is now `"2"`** on the
+  `jentic` CLI's agent-mode envelopes (the `--json` / `--mode agent` result,
+  list, error and `jentic execute` envelopes) and on every MCP tool result,
+  from both the `/mcp` mount and `jentic mcp`. Only the catalog entries
+  changed shape; the other envelopes moved to `"2"` with no field changes, so
+  an agent that pins `"1"` must accept `"2"`. The `jentic skill init`,
+  `skill update`, `skill remove` and `skill list` documents keep
+  `"schema_version": "1"`: their shape didn't change.
 - **Catalog entry fields** (REST `GET /catalog`, `jentic catalog … --json`,
   and the `search_catalog` MCP tool):
 
@@ -121,12 +137,12 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   `/operations`, `:import`, `:snooze` and `:unsnooze`. An old-style id
   (`stripe.com`) gets a `404` whose body carries a `did_you_mean` field naming
   the entry you can see; `jentic catalog show|import` and the `import_api`
-  MCP tool repeat it (`did you mean "public/stripe.com"?`). Bookmarked
-  `/discover/catalog/<api_id>` dashboard links and saved list cursors stop
-  working: search the catalog again.
+  MCP tool repeat it (`did you mean "public/stripe.com"?`). Saved list cursors
+  stop working: search the catalog again.
 - **`jentic catalog show|import <entry_id>`.** Both take the `entry_id` from
   `jentic catalog search`; a malformed id (an empty, `.` or `..` segment, a
-  control character, more than 320 characters) is refused before any request.
+  character below U+0020 or U+007F, more than 320 characters) is refused
+  before any request, the same rule the server applies.
 - **MCP `import_api` takes `entry_id`.** `api_id`, `id` and `api` stay
   accepted as aliases, so existing tool calls keep working once they send an
   `entry_id` value. Both MCP surfaces (the `/mcp` mount and `jentic mcp`)
