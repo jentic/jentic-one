@@ -279,6 +279,13 @@ helm install jentic deploy/helm/jentic-one \
   --set global.observability.otel.endpoint=http://otel-collector:4317
 ```
 
+`global.observability.otel.samplingRatio` sets the application's trace
+sampling ratio (`JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO`, config field
+`observability.tracing.sample_ratio`) on every service. It is rendered only
+when set, so a `sample_ratio` in a mounted config file stays effective
+otherwise. The ratio also caps requests that arrive with a sampled
+`traceparent`; see [Monitoring](../../docs/operations/monitoring.md).
+
 ## Metrics exporter
 
 The application emits metrics via the OpenTelemetry metrics SDK. The

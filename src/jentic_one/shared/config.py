@@ -466,7 +466,33 @@ class MetricsConfig(BaseModel):
 class TracingConfig(BaseModel):
     """Tracing exporter configuration."""
 
-    exporter: Literal["otlp", "none"] = "otlp"
+    exporter: Literal["otlp", "none"] = Field(
+        default="otlp",
+        description=(
+            "Where spans go. ``none`` records no spans at all (every span is "
+            "non-recording), while trace ids are still generated and propagated: "
+            "an inbound ``traceparent`` is honoured, outbound requests carry "
+            "``traceparent``/``tracestate``, and execution records and logs keep "
+            "their ``trace_id``. With ``none`` the outbound ``traceparent`` has "
+            "the sampled flag unset (``-00``) even when the caller sent ``-01``, "
+            "since this process records nothing."
+        ),
+    )
+    sample_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of traces recorded and exported when ``exporter`` is "
+            "``otlp`` (1.0 records every trace). It caps every trace entering "
+            "the process, including requests that arrive with a sampled "
+            "``traceparent`` (the CLI and MCP send one on every call), so a "
+            "caller cannot force recording. A caller's unsampled ``traceparent`` "
+            "stays unsampled. Ignored with ``exporter: none``, and overridden by "
+            "the standard ``OTEL_TRACES_SAMPLER`` environment variable when that "
+            "is set (a warning is logged if this field is not 1.0)."
+        ),
+    )
 
 
 class ObservabilityConfig(BaseModel):

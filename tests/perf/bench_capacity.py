@@ -137,7 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     token = env.caller("jak").token
     concs = [int(c) for c in args.concurrency.split(",") if c]
     configs = args.configs.split(",")
-    env.check_fresh(callers=["jak"], run_s=len(configs) * (len(concs) * args.duration + 60))
+    env.check_fresh(
+        callers=["jak"],
+        run_s=len(configs) * (len(concs) * args.duration + 60),
+        shorten="pass fewer --configs / --concurrency steps or a lower --duration",
+    )
     # On exit the broker goes back to the caller's PERF_* config (or its defaults).
     restore_workers = int(os.environ.get("PERF_WORKERS", "1"))
     restore_cpus = os.environ.get("PERF_BROKER_CPUS", "2")
