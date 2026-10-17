@@ -836,6 +836,30 @@ def test_a_trusted_proxy_forwarded_for_separates_clients(ctx: MagicMock) -> None
 
 
 @pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("203.0.113.7:51234", "203.0.113.7:443"),
+        ("[2001:db8:1:2::1]:443", "2001:db8:1:2::9"),
+    ],
+)
+def test_a_forwarded_port_does_not_split_a_client(ctx: MagicMock, first: str, second: str) -> None:
+    """A proxy that forwards ``address:port`` does not make each source port
+    its own client."""
+    proxy = "10.0.0.2"
+    ctx.config.auth.oauth_rate_limit = OAuthRateLimitConfig(trusted_proxies=[proxy])
+    app = _share_app(ctx)
+    via_proxy = _client_at(app, proxy)
+    ls = _signed_state(ctx)
+
+    def get(client_addr: str) -> int:
+        return via_proxy.get(
+            "/login", params={"ls": ls}, headers={"X-Forwarded-For": client_addr}
+        ).status_code
+
+    assert [get(first), get(first), get(second)] == [200, 200, 503]
+
+
+@pytest.mark.parametrize(
     ("first", "second", "shared"),
     [
         ("2001:db8:1:2::1", "2001:db8:1:2:ffff:ffff:ffff:fffe", True),

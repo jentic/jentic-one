@@ -30,8 +30,9 @@ from the OAuth authorization flow, behind a default-off gate:
   is an explicit "Continue as <email>" button — never automatic — with a
   "Use a different account" link falling back to the form (rung 3).
 
-Security posture (see #1276): both routes take the existing per-client_id+IP
-authorize limiter (IP-keyed here — the client_id rides inside ``ls``); CSRF is
+Security posture (see #1276): both routes take the existing authorize limiter,
+always keyed by bare client IP (``check_login_rate_limit`` — the client_id
+rides inside ``ls``, so a query ``client_id`` is caller-chosen); CSRF is
 a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
 ambient credential — there is no cookie session to ride); failed auth
 re-renders one generic message (no user-enumeration *response* oracle, same
@@ -326,6 +327,26 @@ def _ls_digest(ls: str) -> str:
     return hashlib.sha256(ls.encode()).hexdigest()
 
 
+def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse a client address, tolerating a forwarded hop's ``:port`` suffix.
+
+    Some proxies forward ``203.0.113.7:51234`` or ``[2001:db8::1]:443``;
+    without stripping the port, every source port would count as its own
+    client.
+    """
+    candidates = [value]
+    if value.startswith("[") and "]" in value:
+        candidates.append(value[1 : value.index("]")])
+    elif value.count(":") == 1:
+        candidates.append(value.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
 def _client_network(ip: str) -> str:
     """The network a login page request is budgeted under.
 
@@ -334,9 +355,8 @@ def _client_network(ip: str) -> str:
     its prefix to escape its ``login-csrf`` share. A value that is not an IP
     address (no socket peer, or an unparsable forwarded hop) is used as-is.
     """
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
+    addr = _parse_client_address(ip)
+    if addr is None:
         return ip
     if isinstance(addr, ipaddress.IPv6Address):
         if addr.ipv4_mapped is not None:
