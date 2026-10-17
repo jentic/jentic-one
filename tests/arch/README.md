@@ -35,6 +35,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_web_links_absolute.py`](test_web_links_absolute.py) — routers build links through `build_link`, never by hand
 - [`test_broker_runner_seam.py`](test_broker_runner_seam.py) — the broker execution path stays runner-shaped, not inlined
 - [`test_worker_no_inline_dispatch.py`](test_worker_no_inline_dispatch.py) — the async worker holds no inline upstream dispatch
+- [`test_no_process_local_state.py`](test_no_process_local_state.py) — no module-level mutable cache in the modules and packages holding cross-request state (it lives on `Context.state_backend` or in the database), and no `MemoryStateBackend` built outside the state factory; process-local exceptions are allowlisted with a reason
 - [`test_search_encapsulation.py`](test_search_encapsulation.py) — services and web never import search strategy modules directly
 - [`test_no_ml_in_core_surfaces.py`](test_no_ml_in_core_surfaces.py) — core surfaces never import ML embedding modules
 - [`test_error_handler_consistency.py`](test_error_handler_consistency.py) — MRO-walk error handling lives only in the shared module

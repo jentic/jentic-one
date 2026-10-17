@@ -11,7 +11,9 @@ Two scopes: the modules this state moved out of are checked strictly (any
 module-level mutable binding); the surrounding packages are checked for
 lower-case module-level mutables, since an UPPER_CASE binding is by
 convention a read-only lookup table. Anything genuinely process-local is
-allowlisted below with the reason.
+allowlisted below with the reason. Separately, only the state factory may
+construct a ``MemoryStateBackend``: a surface building its own would hold a
+private copy of the shared state.
 """
 
 from __future__ import annotations
@@ -154,6 +156,44 @@ def test_no_lower_case_module_level_mutables(path: Path) -> None:
         "Lower-case module-level mutable state is a per-process cache; keep "
         "cross-request state on Context.state_backend or in the database, or "
         f"allowlist it here with the reason it is process-local: {offenders}"
+    )
+
+
+@pytest.mark.arch
+def test_every_allowlisted_name_still_exists() -> None:
+    """A stale allowlist entry would silently exempt a future binding of that name."""
+    stale: list[str] = []
+    for rel, name in sorted(ALLOWED):
+        path = SRC_ROOT / rel
+        if not path.is_file():
+            stale.append(f"{rel} (file gone)")
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if name not in {n for node in tree.body for n in _targets(node)}:
+            stale.append(f"{rel}:{name}")
+    assert not stale, f"Remove these stale ALLOWED entries: {stale}"
+
+
+#: The one module that builds the in-process backend: the state factory.
+_STATE_FACTORY = SRC_ROOT / "shared" / "state" / "factory.py"
+
+
+@pytest.mark.arch
+def test_only_the_state_factory_builds_a_memory_backend() -> None:
+    """A surface that built its own ``MemoryStateBackend`` would hold a private
+    copy of state every other surface of the process (and, on a shared
+    backend, every other process) is meant to see."""
+    offenders: list[str] = []
+    for path in sorted(SRC_ROOT.rglob("*.py")):
+        if path == _STATE_FACTORY:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _callee_name(node.func) == "MemoryStateBackend":
+                offenders.append(f"{path.relative_to(SRC_ROOT).as_posix()}:{node.lineno}")
+    assert not offenders, (
+        "Build the shared-state backend through the state factory "
+        f"(Context.state_backend), never directly: {offenders}"
     )
 
 
