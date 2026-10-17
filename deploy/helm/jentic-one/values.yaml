@@ -11,7 +11,7 @@ broker:
     type: ClusterIP
     port: 8000
   # Holds the ~130Mi baseline plus the memory shared-state backend's 192 MiB
-  # cap (broker.resilience.backend.memory.max_total_bytes); see charts/broker.
+  # cap (state.memory.max_total_bytes); see charts/broker.
   resources:
     requests:
       cpu: 100m
