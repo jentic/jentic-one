@@ -1,23 +1,22 @@
 /**
- * DiscoverStatusRow — whole-manifest counts + freshness for the Library header,
+ * DiscoverStatusRow — whole-catalog counts + freshness for the Library header,
  * as one `CountLine`: "6,345 APIs in the catalog from 1,200+ vendors so far · 3
  * in your workspace · 1 update available · updated 2m ago".
  *
- * Reads `catalog_total` / `outdated_count` / `manifest_age_seconds` off the
- * catalog response. These describe the WHOLE manifest (not the current page or
- * filtered set) and stay constant while paging, so the row doesn't flicker as
- * the user scrolls.
- * `manifest_age_seconds === null` means the catalog has never been fetched / has
- * no snapshot yet. The "N update(s) available" segment renders only when
+ * Reads `catalog_total` / `outdated_count` / `oldest_source_sync_age_seconds`
+ * off the catalog response. These describe the WHOLE visible catalog (not the
+ * current page or filtered set) and stay constant while paging, so the row
+ * doesn't flicker as the user scrolls. The age is the least recently synced
+ * visible source's ("updated 2m ago" is the stalest source, never the
+ * freshest); `null` means no visible source has synced yet. The "N update(s) available" segment renders only when
  * `outdated_count > 0`. The catalog response carries no vendor total, so the
  * vendor figure counts the vendors LOADED so far — a floor (`N+ … so far`)
  * until the whole catalog has paged in, and omitted when nothing is loaded.
  *
  * "N in your workspace" is the WORKSPACE's own count (`GET /apis`, via the
- * digest the docked panel reads), NOT the manifest's `registered_count`. The
- * manifest figure counts how many PUBLIC CATALOG entries match a local spec
- * URL, so it silently excludes every locally-added or pasted spec
- * (`source_url IS NULL`), and the header would disagree with the panel beside
+ * digest the docked panel reads), NOT the catalog's `registered_count`. The
+ * catalog figure counts how many CATALOG entries match a local
+ * import, so it silently excludes every locally-added or pasted spec, and the header would disagree with the panel beside
  * it (#1543). Reading the same digest makes the two agree by construction.
  */
 import { ArrowUpCircle } from 'lucide-react';
@@ -31,7 +30,8 @@ interface DiscoverStatusRowProps {
 	 */
 	workspaceCount: number | null;
 	outdatedCount: number;
-	manifestAgeSeconds: number | null;
+	/** Age of the least recently synced visible source; null = none has synced. */
+	oldestSourceSyncAgeSeconds: number | null;
 	loading: boolean;
 	/** Distinct vendors among the loaded catalog rows (0 = omit the figure). */
 	vendorsLoaded?: number;
@@ -54,7 +54,7 @@ export function DiscoverStatusRow({
 	catalogTotal,
 	workspaceCount,
 	outdatedCount,
-	manifestAgeSeconds,
+	oldestSourceSyncAgeSeconds,
 	loading,
 	vendorsLoaded = 0,
 	vendorsComplete = false,
@@ -99,7 +99,9 @@ export function DiscoverStatusRow({
 						available
 					</span>
 				),
-				<span key="age">{formatAge(manifestAgeSeconds)}</span>,
+				<span key="age" data-testid="discover-status-age">
+					{formatAge(oldestSourceSyncAgeSeconds)}
+				</span>,
 			]}
 		/>
 	);

@@ -14,7 +14,15 @@
  * height, so the geometry is exact in row pixels and never crosses an avatar.
  */
 import { memo, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, GripVertical, KeyRound, Plus } from 'lucide-react';
+import {
+	ChevronDown,
+	ChevronRight,
+	ChevronUp,
+	ExternalLink,
+	GripVertical,
+	KeyRound,
+	Plus,
+} from 'lucide-react';
 import {
 	AppLink,
 	Button,
@@ -22,6 +30,7 @@ import {
 	LedgerRow,
 	LedgerRowActions,
 	StatusText,
+	Tag,
 	Tooltip,
 	VendorIcon,
 } from '@/shared/ui';
@@ -34,6 +43,7 @@ import {
 	matchRanges,
 	type VendorCount,
 } from '@/modules/discover/lib/catalogGroups';
+import { alternatesHint, alternatesLabel, isGitHubUrl } from '@/modules/discover/lib/catalogSpec';
 
 const CREDENTIAL_READY_HINT = 'You already have a credential that covers this API';
 
@@ -102,6 +112,46 @@ export interface CatalogApiRowProps {
 	consumeDragClick?: () => boolean;
 	/** Phones: the status goes under the name instead of in its own column. */
 	stackStatus?: boolean;
+	/**
+	 * Badge the row with its catalog source. Only when the loaded rows come
+	 * from more than one source — with one, every row would say the same.
+	 */
+	showSource?: boolean;
+}
+
+/**
+ * Where the entry comes from: its source badge (when sources are mixed) and
+ * how many other sources list the same API ("+2 other sources").
+ */
+export function CatalogEntrySourceMeta({
+	entity,
+	showSource,
+}: {
+	entity: DiscoveryEntity;
+	showSource: boolean;
+}) {
+	if (!showSource && entity.alternates <= 0) return null;
+	return (
+		<span className="inline-flex min-w-0 shrink-0 items-center gap-1.5">
+			{showSource && (
+				<Tag
+					data-testid="catalog-row-source"
+					title={`From the ${entity.sourceSlug} catalog source`}
+				>
+					{entity.sourceSlug}
+				</Tag>
+			)}
+			{entity.alternates > 0 && (
+				<span
+					className="text-muted-foreground text-[11.5px] whitespace-nowrap"
+					data-testid="catalog-row-alternates"
+					title={alternatesHint(entity.alternates)}
+				>
+					{alternatesLabel(entity.alternates)}
+				</span>
+			)}
+		</span>
+	);
 }
 
 function RowStatus({ entity, pending }: { entity: DiscoveryEntity; pending: boolean }) {
@@ -147,6 +197,7 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 	onPointerDown,
 	consumeDragClick,
 	stackStatus = false,
+	showSource = false,
 }: CatalogApiRowProps) {
 	const canAdd = !entity.registered && !pending;
 	const credentials = canAdd && readyCredentials?.length ? readyCredentials : null;
@@ -165,6 +216,7 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 		<LedgerRow
 			data-testid="catalog-row"
 			data-api-id={entity.apiId}
+			data-entry-id={entity.entryId}
 			data-registered={entity.registered}
 			zebra={zebra}
 			selected={selected}
@@ -180,19 +232,32 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 			)}
 			actions={
 				<LedgerRowActions>
-					{entity.githubUrl && (
-						<Tooltip content="View spec on GitHub" interactiveChild>
-							<AppLink
-								href={entity.githubUrl}
-								variant="tonal"
-								size="icon-xs"
-								aria-label={`View ${title} spec on GitHub`}
-								data-testid="catalog-row-github"
-							>
-								<GitHubMark />
-							</AppLink>
-						</Tooltip>
-					)}
+					{entity.humanUrl &&
+						(isGitHubUrl(entity.humanUrl) ? (
+							<Tooltip content="View spec on GitHub" interactiveChild>
+								<AppLink
+									href={entity.humanUrl}
+									variant="tonal"
+									size="icon-xs"
+									aria-label={`View ${title} spec on GitHub`}
+									data-testid="catalog-row-github"
+								>
+									<GitHubMark />
+								</AppLink>
+							</Tooltip>
+						) : (
+							<Tooltip content="View at its source" interactiveChild>
+								<AppLink
+									href={entity.humanUrl}
+									variant="tonal"
+									size="icon-xs"
+									aria-label={`View ${title} at its source`}
+									data-testid="catalog-row-human-link"
+								>
+									<ExternalLink size={14} aria-hidden="true" />
+								</AppLink>
+							</Tooltip>
+						))}
 					{entity.registered ? (
 						<>
 							{reviewHref && (
@@ -293,6 +358,7 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 					>
 						<Highlight text={title} query={flat ? query : undefined} />
 					</Button>
+					<CatalogEntrySourceMeta entity={entity} showSource={showSource} />
 					{flat && (vendorLabel || versionLabel) && (
 						<span className="text-muted-foreground max-w-full min-w-0 shrink truncate text-[12.5px]">
 							{vendorLabel && <Highlight text={vendorLabel} query={query} />}

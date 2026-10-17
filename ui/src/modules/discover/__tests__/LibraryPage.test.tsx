@@ -791,16 +791,16 @@ describe('LibraryPage', () => {
 		let pollsAfterImport = 0;
 		restorePollInterval = setImportPollIntervalForTests(100);
 		const row = (apiId: string, registered: boolean) => ({
-			entry_id: apiId,
+			entry_id: `public/${apiId}`,
 			source_slug: 'public',
 			catalog_api_id: apiId,
 			vendor: apiId,
 			has_spec: true,
 			registered,
 			_links: {
-				self: `/catalog/${apiId}`,
-				operations: `/catalog/${apiId}/operations`,
-				import: `/catalog/${apiId}:import`,
+				self: `/catalog/public/${apiId}`,
+				operations: `/catalog/public/${apiId}/operations`,
+				import: `/catalog/public/${apiId}:import`,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -827,7 +827,8 @@ describe('LibraryPage', () => {
 				// `acme.com` sits at the frontier, so it's held back; `abc.com` shows.
 				if (after == null)
 					return page([row('abc.com', false), row('acme.com', false)], true);
-				if (after === 'z') return page([row('zoom.us', imported)]);
+				// A jump cursor is scoped to the source: `{source_slug}/{letter}`.
+				if (after === 'public/z') return page([row('zoom.us', imported)]);
 				// The head's own next page: never answers (keeps zoom.us out of it).
 				await delay('infinite');
 				return page([]);
@@ -996,16 +997,16 @@ describe('LibraryPage', () => {
 		// just before the previous jump's range. The landing must re-pin to the
 		// clicked letter through that reflow. Guards the Y→G→A overshoot.
 		const row = (apiId: string) => ({
-			entry_id: apiId,
+			entry_id: `public/${apiId}`,
 			source_slug: 'public',
 			catalog_api_id: apiId,
 			vendor: apiId,
 			has_spec: true,
 			registered: false,
 			_links: {
-				self: `/catalog/${apiId}`,
-				operations: `/catalog/${apiId}/operations`,
-				import: `/catalog/${apiId}:import`,
+				self: `/catalog/public/${apiId}`,
+				operations: `/catalog/public/${apiId}/operations`,
+				import: `/catalog/public/${apiId}:import`,
 			},
 		});
 		const cursorId = (cursor: string | null) =>
@@ -1023,7 +1024,7 @@ describe('LibraryPage', () => {
 					: null,
 			});
 		// Each letter's jump range is keyed by the keyset start the rail builds
-		// for it (`jumpStartKey`: the lowercased letter). Each range is a tall
+		// for it (`{source_slug}/` + `jumpStartKey`, the lowercased letter). Each range is a tall
 		// block of single-API vendors, so jumping back to A inserts enough rows
 		// above the (scrolled-to-G) viewport to shift it — the condition that
 		// clamps a landing a letter short.
@@ -1032,9 +1033,9 @@ describe('LibraryPage', () => {
 				row(`${c}${String(i).padStart(2, '0')}vendor.com`),
 			);
 		const RANGES: Record<string, ReturnType<typeof row>[]> = {
-			a: block('a'),
-			g: block('g'),
-			y: block('y'),
+			'public/a': block('a'),
+			'public/g': block('g'),
+			'public/y': block('y'),
 		};
 		worker.use(
 			http.get('/catalog', async ({ request }) => {

@@ -19,12 +19,17 @@ function api(apiId: string, extra: Partial<DiscoveryEntity> = {}): DiscoveryEnti
 		id: apiId,
 		entryId: `public/${apiId}`,
 		apiId,
+		sourceSlug: 'public',
+		browseKey: apiId,
+		displayVendor: apiId.split('/')[0],
+		alternates: 0,
+		hasSpec: true,
 		summary: sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : apiId,
 		registered: false,
 		updateAvailable: false,
 		vendor: apiId.split('/')[0],
 		version: '1.0.0',
-		githubUrl: `https://github.com/jentic/x/${apiId}`,
+		humanUrl: `https://github.com/jentic/x/${apiId}`,
 		...extra,
 	};
 }

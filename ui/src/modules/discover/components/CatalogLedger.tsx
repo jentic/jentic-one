@@ -369,6 +369,16 @@ export function CatalogLedger({
 		}
 		return map;
 	}, [entities, jump?.entities, workspaceEntities, factsFor]);
+	// Source badges only when the loaded rows mix sources: with one source
+	// (the usual install) every row would carry the same word.
+	const mixedSources = useMemo(() => {
+		const sources = new Set<string>();
+		for (const e of [...(workspaceEntities ?? []), ...entities, ...(jump?.entities ?? [])]) {
+			sources.add(e.sourceSlug);
+			if (sources.size > 1) return true;
+		}
+		return false;
+	}, [entities, jump?.entities, workspaceEntities]);
 
 	// One stable handler for every row, so the memoised rows don't all
 	// re-render whenever the ledger does (a new page, a jump, a selection).
@@ -744,6 +754,7 @@ export function CatalogLedger({
 				consumeDragClick={drag?.consumeDragClick}
 				onPointerDown={drag ? onRowPointerDown : undefined}
 				stackStatus={stackStatus}
+				showSource={mixedSources}
 			/>
 		);
 	};
