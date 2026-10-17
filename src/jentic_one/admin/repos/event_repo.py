@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
-from sqlalchemy import and_, insert, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy.sql.expression import TableClause
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.db.utils import execute_core_insert
-
-_EVENTS = cast(TableClause, Event.__table__)
+from jentic_one.shared.db.utils import insert_append_only_row
 
 
 class EventRepository:
-    """Data access layer for Event entities — flush-only, never commits."""
+    """Data access layer for Event entities.
+
+    Writes within the caller's transaction, never commits.
+    """
 
     @staticmethod
     async def create(
@@ -39,30 +39,29 @@ class EventRepository:
     ) -> str:
         """Insert one event and return its id.
 
-        Events are append-only and every emit site needs only the id, so this
-        is a Core ``INSERT`` (no ORM instance, no unit-of-work flush) with the
-        failure semantics of a flush (see :func:`execute_core_insert`). The id is
-        minted here, so no ``RETURNING`` is needed. ``created_at`` and
-        ``updated_at`` come from their column defaults, which a Core insert
-        applies.
+        Events are append-only and every emit site needs only the id, so the
+        row is written without an ORM instance (see
+        :func:`insert_append_only_row`). The id is minted here, so nothing is
+        read back. ``created_at`` and ``updated_at`` come from their column
+        defaults.
         """
         event_id = generate_ksuid("evt")
-        stmt = insert(_EVENTS).values(
-            id=event_id,
-            type=type,
-            severity=severity,
-            summary=summary,
-            requires_action=requires_action,
-            trace_id=trace_id,
-            detail=detail,
-            data=data if data is not None else {},
-            execution_id=execution_id,
-            job_id=job_id,
-            created_by=created_by,
-            actor_id=actor_id,
-            actor_type=actor_type,
-        )
-        await execute_core_insert(session, stmt)
+        values: dict[str, Any] = {
+            "id": event_id,
+            "type": type,
+            "severity": severity,
+            "summary": summary,
+            "requires_action": requires_action,
+            "trace_id": trace_id,
+            "detail": detail,
+            "data": data if data is not None else {},
+            "execution_id": execution_id,
+            "job_id": job_id,
+            "created_by": created_by,
+            "actor_id": actor_id,
+            "actor_type": actor_type,
+        }
+        await insert_append_only_row(session, Event, values)
         return event_id
 
     @staticmethod

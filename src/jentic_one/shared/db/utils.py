@@ -1,11 +1,11 @@
 """Shared database utility functions."""
 
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import func, select, util
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.dml import Insert
 
 
 def utcnow() -> datetime:
@@ -30,42 +30,31 @@ async def db_now(session: AsyncSession) -> datetime:
     return value.astimezone(UTC)
 
 
-async def execute_core_insert(session: AsyncSession, stmt: Insert) -> None:
-    """Run a Core ``INSERT`` with the transaction semantics of an ORM flush.
+async def insert_append_only_row(
+    session: AsyncSession, model: type[Any], values: dict[str, Any]
+) -> None:
+    """Insert one row of ``model`` without registering an ORM instance.
 
-    For append-only rows on hot paths: a Core statement skips the unit of work
-    (identity map, attribute instrumentation, flush planning) that
-    ``session.add`` + ``session.flush`` pays for a row nobody reads back.
+    For append-only rows on hot paths that nobody reads back through the
+    session: no identity map, no attribute instrumentation, no flush planning,
+    no flush events. Column ``default=``s still apply to keys absent from
+    ``values``.
 
-    A bare ``session.execute`` does not match a flush on failure, though. A
-    failed flush rolls back its enclosing scope and parks the session until
-    ``rollback()``. On PostgreSQL that scope is the savepoint inside
-    ``begin_nested()``, or else the whole transaction, after which every
-    further statement and the ``commit()`` raise ``PendingRollbackError``. A
-    failed bare execute leaves the session active instead: inside a savepoint
-    the ``RELEASE`` hits an aborted transaction; outside one, a caller that
-    swallows the error (a best-effort emit) gets a ``COMMIT`` that PostgreSQL
-    silently turns into a rollback, and SQLite commits the rest of the
-    transaction. So the statement runs in the same subtransaction scope
-    ``Session.flush`` opens, and that scope rolls back with the flush's
-    exception capture when the statement fails.
+    Failure semantics match a flush: the insert runs in the same subtransaction
+    scope ``Session.flush`` opens, so a failure rolls back the enclosing
+    savepoint (or the whole transaction) and parks the session until
+    ``rollback()``. A bare ``session.execute`` would leave the session active
+    instead, and on PostgreSQL that turns a swallowed failure into a failed
+    ``RELEASE SAVEPOINT`` or a ``COMMIT`` that silently rolls back.
 
-    Pending ORM state is flushed first, so rows the caller added earlier in the
-    transaction still land before this one. The flush is a no-op, and fires no
-    flush events, on a clean session.
+    Pending ORM state is flushed first, so rows the caller added earlier still
+    land before this one.
     """
-    await session.run_sync(_execute_in_flush_scope, stmt)
+    await session.run_sync(_flush_then_bulk_insert, model, values)
 
 
-def _execute_in_flush_scope(sync_session: Session, stmt: Insert) -> None:
+def _flush_then_bulk_insert(
+    sync_session: Session, model: type[Any], values: dict[str, Any]
+) -> None:
     sync_session.flush()
-    # ``_autobegin_t()._begin()`` and ``rollback(_capture_exception=True)`` are
-    # the calls ``Session._flush`` makes. They are private SQLAlchemy API, pinned
-    # by tests/integration/shared/test_core_insert_hot_path.py.
-    transaction = sync_session._autobegin_t()._begin()
-    try:
-        sync_session.execute(stmt)
-        transaction.commit()
-    except BaseException:
-        with util.safe_reraise():
-            transaction.rollback(_capture_exception=True)
+    sync_session.bulk_insert_mappings(model, [values])
