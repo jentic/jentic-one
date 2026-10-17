@@ -13,7 +13,11 @@ snapshot is warm after the first call, which is reported separately.
 public reader), so routing, validation and serialisation are included.
 ``--backend postgres`` runs against the fixture Postgres on ``JENTIC_PG_PORT``
 (use a throwaway container: the run empties the catalog tables). The process's
-peak RSS is printed at the end.
+peak RSS is printed at the end. Steady-state RSS is printed too, after a full GC,
+before the sync, after it and after the timed reads. The snapshot's own retained
+heap is measured by rebuilding it once under ``tracemalloc``: that figure is what
+the snapshot and its cached collapsed view hold after the rebuild's transients
+are freed. RSS stays high after a free, so RSS alone can't isolate it.
 
 Exits ``1`` when a p95 exceeds its budget (``--browse-p95-ms``,
 ``--search-p95-ms``). Local only; not collected by pytest and not run in CI::
@@ -27,12 +31,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
+import os
 import random
 import resource
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
+import tracemalloc
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -45,6 +53,7 @@ from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_staged_entries import CatalogStagedEntry
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.snapshot import clear_snapshots
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
@@ -114,6 +123,34 @@ async def _empty_catalog(ctx: Context) -> None:
         await session.commit()
 
 
+def _current_rss_mib() -> float:
+    """Resident set size now, after a full collection (no psutil dependency)."""
+    gc.collect()
+    if sys.platform.startswith("linux"):
+        with open("/proc/self/statm") as statm:
+            pages = int(statm.read().split()[1])
+        return pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    out = subprocess.run(
+        ["ps", "-o", "rss=", "-p", str(os.getpid())], capture_output=True, text=True, check=True
+    )
+    return int(out.stdout.strip()) / 1024
+
+
+async def _snapshot_heap_mib(svc: CatalogService, limit: int) -> float:
+    """Heap retained by a freshly rebuilt snapshot (plus its one cached view)."""
+    clear_snapshots()
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        await svc.list_all(permissions=frozenset(), limit=limit)
+        gc.collect()
+        retained = tracemalloc.get_traced_memory()[0] - before
+    finally:
+        tracemalloc.stop()
+    return retained / (1024 * 1024)
+
+
 def _peak_rss_mib() -> float:
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # Bytes on macOS, KiB on Linux.
@@ -165,14 +202,17 @@ async def _run(args: argparse.Namespace, config: AppConfig) -> bool:
     async with Context(config) as ctx:
         await _empty_catalog(ctx)
         svc = CatalogService(ctx)
+        print(f"RSS      {_current_rss_mib():.0f} MiB before sync + GC")
         start = time.perf_counter()
         result = await svc.refresh()
         print(f"synced   {result.count} entries in {time.perf_counter() - start:.1f} s")
+        print(f"RSS      {_current_rss_mib():.0f} MiB after sync + GC")
 
         start = time.perf_counter()
         first = await svc.list_all(permissions=frozenset(), limit=args.limit)
         print(f"cold     first read (snapshot build) {(time.perf_counter() - start) * 1000:.1f} ms")
         assert first.catalog_total == args.entries, first.catalog_total
+        print(f"snapshot {await _snapshot_heap_mib(svc, args.limit):.1f} MiB retained heap")
 
         rng = random.Random(1853)
         slugs = [f"src{i:02d}" for i in range(args.sources)]
@@ -214,6 +254,7 @@ async def _run(args: argparse.Namespace, config: AppConfig) -> bool:
                 http_search = await _time(_http_search, args.iterations)
             ok = _report("GET browse", http_browse, args.browse_p95_ms) and ok
             ok = _report("GET search", http_search, args.search_p95_ms) and ok
+        print(f"RSS      {_current_rss_mib():.0f} MiB steady state after the timed reads + GC")
         await _empty_catalog(ctx)
     print(f"peak RSS {_peak_rss_mib():.0f} MiB")
     return ok
