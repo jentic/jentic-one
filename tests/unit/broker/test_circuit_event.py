@@ -230,3 +230,23 @@ async def test_a_refused_report_claim_reports_nothing() -> None:
     breaker = CircuitBreaker(backend, failure_ratio=0.5, min_calls=2, window_s=30, cooldown_s=15)
 
     assert await breaker.claim_open_report("api.example.com") is False
+
+
+class _ReportClaimFails(MemoryStateBackend):
+    """A backend whose open-circuit report claim errors (a flaky shared store)."""
+
+    async def set_if_absent(self, key: str, value: bytes, *, ttl_s: float) -> bool:
+        if key.startswith("cb:report:"):
+            raise ConnectionError("store unreachable")
+        return await super().set_if_absent(key, value, ttl_s=ttl_s)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_report_claim_still_answers_circuit_open_unreported() -> None:
+    """The report claim only gates telemetry: a store error never replaces the 503."""
+    runner = await _open_breaker_runner(_ReportClaimFails(), "api.example.com")
+
+    with pytest.raises(CircuitOpenError) as exc:
+        await runner.run(RunnerRequest(method="GET", url="https://api.example.com/v1/things"))
+
+    assert exc.value.report is False
