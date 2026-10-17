@@ -243,10 +243,11 @@ backend.
   auth and control (and a broker process one each for the broker and its auth
   verifier). `state.memory.max_total_bytes` (192 MiB) now caps the whole
   process's shared state; the defaults fit the shipped memory limits.
-- **One process per surface is the supported shape.** Every surface but the
-  gateway keeps its rate limits, circuit state, `Idempotency-Key` records and
-  auth anti-replay markers in its process, so a second replica or uvicorn
-  worker of a surface gets its own copy. Keep `replicas: 1`; the Helm chart's
+- **One process per surface is the supported shape.** The auth, control and
+  broker surfaces keep their rate limits, circuit state, `Idempotency-Key`
+  records and auth anti-replay markers in the process, so a second replica or
+  uvicorn worker of one gets its own copy. Keep `replicas: 1` on every surface
+  but the gateway; the Helm chart's
   install notes warn when another value is set. Multi-process shared state
   comes from a backend registered with `register_state_backend` and selected
   by `state.backend`

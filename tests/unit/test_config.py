@@ -2209,6 +2209,19 @@ def test_conflicting_old_and_new_sections_fail_to_load(
     assert field in str(exc.value)
 
 
+@pytest.mark.usefixtures("_fresh_state_deprecation_latch")
+def test_the_deprecated_section_may_be_a_model_instance(sample_config_dict: dict[str, Any]):
+    """A programmatic caller passing a StateBackendConfig keeps working."""
+    sample_config_dict["broker"] = {
+        **sample_config_dict.get("broker", {}),
+        "resilience": {
+            "backend": StateBackendConfig.model_validate({"memory": {"max_total_bytes": 4096}})
+        },
+    }
+    config = AppConfig.model_validate(sample_config_dict)
+    assert config.state.memory.max_total_bytes == 4096
+
+
 def test_a_backend_name_must_be_well_formed(tmp_path: Path, sample_config_dict: dict[str, Any]):
     sample_config_dict["state"] = {"backend": "Not A Name"}
     with pytest.raises(ConfigError, match=r"state\.backend"):

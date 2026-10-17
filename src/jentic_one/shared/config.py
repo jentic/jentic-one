@@ -1889,10 +1889,17 @@ def _fold_deprecated_state_section(data: Any) -> Any:
         "resilience": {k: v for k, v in resilience.items() if k != "backend"},
     }
     current = data.get("state")
-    if not isinstance(legacy, dict) or not (current is None or isinstance(current, dict)):
+    # A programmatic caller may pass model instances rather than mappings.
+    if isinstance(legacy, BaseModel):
+        legacy = legacy.model_dump(exclude_unset=True)
+    if isinstance(current, BaseModel):
+        current = current.model_dump(exclude_unset=True)
+    if not isinstance(legacy, dict):
         raise ValueError(
             f"{_DEPRECATED_STATE_PATH} must be a mapping; move it to the top-level state section"
         )
+    if not (current is None or isinstance(current, dict)):
+        raise ValueError("state must be a mapping")
     current = current or {}
     if current:
         _reject_conflicting_state_sections(current, legacy)
