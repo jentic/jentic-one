@@ -96,6 +96,9 @@ _SWEEP_TASKS: set[asyncio.Task[None]] = set()
 #: Stateless, so one instance serves every request.
 _TOKEN_STRATEGY = TokenSearchStrategy()
 
+#: Metric label for a cursor naming a strategy this process doesn't know.
+_UNKNOWN_STRATEGY_LABEL = "unknown"
+
 
 def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
     """Whether the update-notify sweep should probe this candidate (OQ-3 scope).
@@ -768,8 +771,12 @@ class CatalogService:
             strategy = resolve_catalog_search_strategy(name)
         except UnknownCatalogSearchStrategyError:
             if not first_page:
-                record_strategy_failure(name, reason="unregistered", outcome="rejected")
-                logger.warning("catalog_search_cursor_strategy_unregistered", strategy=name)
+                # The name came from a client cursor: keep it out of metric labels
+                # (unbounded cardinality) and bound it in the log.
+                record_strategy_failure(
+                    _UNKNOWN_STRATEGY_LABEL, reason="unregistered", outcome="rejected"
+                )
+                logger.warning("catalog_search_cursor_strategy_unregistered", strategy=name[:32])
                 raise InvalidCursorError("Invalid pagination cursor") from None
             return await self._fall_back(q, entries, name, reason="unregistered", exc=None)
 
