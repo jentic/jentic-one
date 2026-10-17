@@ -134,7 +134,7 @@ async def test_aclose_is_noop(backend: MemoryStateBackend) -> None:
 
 
 async def test_write_only_keys_are_swept_so_memory_stays_bounded(clock: FakeClock) -> None:
-    """Keys written once and never read (jti replay records) must not accumulate.
+    """Keys written once and never read (single-use markers) must not accumulate.
 
     Without the write-time sweep every one of these unique keys stays resident
     until process exit.
@@ -143,7 +143,7 @@ async def test_write_only_keys_are_swept_so_memory_stays_bounded(clock: FakeCloc
     ttl_s = 5.0
     peak = 0
     for i in range(10_000):
-        assert await backend.set_if_absent(f"jti:{i}", b"1", ttl_s=ttl_s) is True
+        assert await backend.set_if_absent(f"consent-handle-used:{i}", b"1", ttl_s=ttl_s) is True
         clock.advance(0.01)  # 100 writes per second
         peak = max(peak, len(backend._kv))
     # Live records are rate x (ttl + sweep interval) at most, not the 10k written.
@@ -204,14 +204,14 @@ async def test_overwrite_counts_only_the_size_difference(clock: FakeClock) -> No
 
 
 async def test_namespaces_have_separate_budgets(clock: FakeClock) -> None:
-    """Filling one key kind (CSRF nonces) never refuses another (jti records)."""
+    """Filling one key kind (CSRF nonces) never refuses another (single-use markers)."""
     backend = MemoryStateBackend(clock=clock, max_entries=5)
     for i in range(5):
         await backend.set(f"login-csrf:{i}", b"d", ttl_s=300.0)
     with pytest.raises(StateBackendCapacityError):
         await backend.set("login-csrf:overflow", b"d", ttl_s=300.0)
 
-    assert await backend.set_if_absent("auth:jwt_bearer_jti:j1", b"1", ttl_s=300.0) is True
+    assert await backend.set_if_absent("consent-handle-used:h1", b"1", ttl_s=300.0) is True
     assert await backend.set_if_absent("idem:caller:k", b"c", ttl_s=35.0) is True
 
 
