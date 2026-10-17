@@ -39,6 +39,11 @@ func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, e
 	}
 	target := a.Target(scope, c.Name, env)
 	out := Outcome{Operator: a.Operator(), Skill: c.Name, Path: target}
+	if scope == ScopeProject {
+		if err := confineToProject(env.Cwd, target); err != nil {
+			return out, err
+		}
+	}
 
 	existing, err := os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env, not arbitrary input.
 	if err != nil && !os.IsNotExist(err) {
@@ -73,14 +78,18 @@ func applySharedFile(a Adapter, c Canonical, target string, norm []byte, out Out
 	}
 	out.Changed = changed
 	out.Skipped = !changed
-	if !changed || opts.DryRun {
+	if !changed {
 		return out, nil
 	}
 	// A symlinked AGENTS.md is updated at the file it points to, keeping the
-	// link (see resolveSharedTarget).
+	// link (see resolveSharedTarget). Resolved before the dry-run return so a
+	// preview refuses exactly what the real write would.
 	resolved, err := resolveSharedTarget(target)
 	if err != nil {
 		return out, err
+	}
+	if opts.DryRun {
+		return out, nil
 	}
 	if err := writeTarget(resolved, newBytes); err != nil {
 		return out, err
@@ -177,7 +186,7 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 		return false, nil
 	}
 	skillDir := filepath.Dir(target)
-	refDir := filepath.Join(skillDir, "references")
+	refDir := filepath.Join(skillDir, referencesDir)
 	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		current[ref] = true
@@ -185,20 +194,13 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 		if err != nil {
 			return changed, err
 		}
-		// Embed names are trusted, but the references dir on disk is not: a
-		// planted references/ symlink must not redirect this write.
-		path, err := referencePath(skillDir, ref)
+		// Embed names are trusted, but the references dir on disk is not:
+		// writeManagedReference confines the write to the skill dir.
+		wrote, err := writeManagedReference(skillDir, ref, data)
 		if err != nil {
 			return changed, err
 		}
-		if existing, rerr := os.ReadFile(path); rerr == nil && //nolint:gosec // path is validated by referencePath.
-			normalizeNewlines(string(existing)) == normalizeNewlines(string(data)) {
-			continue
-		}
-		if err := writeTarget(path, data); err != nil {
-			return changed, err
-		}
-		changed = true
+		changed = changed || wrote
 	}
 	for _, ref := range recorded {
 		if current[ref] {
@@ -221,7 +223,7 @@ func applyOwnedReferences(target, name string, recorded []string) (changed bool,
 // or a recorded file awaiting pruning. This is the read-only mirror of
 // applyOwnedReferences for DryRun outcomes.
 func pendingReferenceChanges(target, name string, recorded []string) bool {
-	refDir := filepath.Join(filepath.Dir(target), "references")
+	skillDir := filepath.Dir(target)
 	refs := renderedReferences(name)
 	current := make(map[string]bool, len(refs))
 	for _, ref := range refs {
@@ -230,8 +232,7 @@ func pendingReferenceChanges(target, name string, recorded []string) bool {
 		if err != nil {
 			continue // build-time programming error; the write path reports it.
 		}
-		existing, rerr := os.ReadFile(filepath.Join(refDir, ref)) //nolint:gosec // path derives from adapter rules + embed names.
-		if rerr != nil || normalizeNewlines(string(existing)) != normalizeNewlines(string(data)) {
+		if ok, _ := referenceState(skillDir, ref, data); !ok {
 			return true
 		}
 	}
@@ -239,11 +240,8 @@ func pendingReferenceChanges(target, name string, recorded []string) bool {
 		if current[ref] {
 			continue
 		}
-		path, err := referencePath(filepath.Dir(target), ref)
-		if err != nil {
-			continue // removeManagedReference skips the same entry.
-		}
-		if fi, err := os.Lstat(path); err == nil && !fi.IsDir() {
+		// An unsafe name reads as absent: removeManagedReference skips it too.
+		if _, present := referenceState(skillDir, ref, nil); present {
 			return true
 		}
 	}
@@ -354,6 +352,11 @@ func Remove(a Adapter, c Canonical, env DetectEnv, opts RemoveOptions) (RemoveOu
 	if err != nil {
 		return out, fmt.Errorf("read %s: %w", target, err)
 	}
+	if scope == ScopeProject {
+		if err := confineToProject(env.Cwd, target); err != nil {
+			return out, err
+		}
+	}
 	norm := []byte(normalizeNewlines(string(existing)))
 
 	if a.OwnsWholeFile() {
@@ -376,19 +379,20 @@ func removeSharedFile(target string, norm []byte, c Canonical, out RemoveOutcome
 		out.UserEdits = true
 		return out, nil
 	}
+	// A symlinked AGENTS.md is edited at the file it points to; the link
+	// itself is never replaced or deleted. Resolved before the dry-run return
+	// so a preview refuses exactly what the real removal would.
+	linked := isSymlink(target)
+	resolved, err := resolveSharedTarget(target)
+	if err != nil {
+		return out, err
+	}
 	if opts.DryRun {
 		out.Removed = true
 		return out, nil
 	}
 
 	remainder := trimSurrounding(string(norm[:blk.start]) + string(norm[blk.endPos:]))
-	// A symlinked AGENTS.md is edited at the file it points to; the link
-	// itself is never replaced or deleted.
-	linked := isSymlink(target)
-	resolved, err := resolveSharedTarget(target)
-	if err != nil {
-		return out, err
-	}
 	if remainder == "" {
 		if linked {
 			// Deleting the link would leave the block in the real file, and
@@ -517,11 +521,14 @@ func isSymlink(path string) bool {
 }
 
 // resolveSharedTarget returns the file a shared target (AGENTS.md) really
-// lives at. A symlinked AGENTS.md — commonly a link into a dotfiles repo — is
-// edited in place at its resolved path, so the link survives and the linked
-// copy is the one updated; renaming over the link would replace it with a
-// regular file and leave the real file holding the stale block. A link that
-// cannot be resolved (dangling, loop) is refused with a message naming it.
+// lives at. A symlinked AGENTS.md — commonly a link into a dotfiles repo, or
+// to a sibling CLAUDE.md — is edited in place at its resolved path, so the
+// link survives and the linked copy is the one updated; renaming over the link
+// would replace it with a regular file and leave the real file holding the
+// stale block. The link is only followed to a regular file; for project scope,
+// Apply and Remove have already required (confineToProject) that it resolves
+// inside the project. A link that cannot be resolved (dangling, loop) or that
+// points at anything else is refused with a message naming it.
 func resolveSharedTarget(target string) (string, error) {
 	if !isSymlink(target) {
 		return target, nil
@@ -529,6 +536,9 @@ func resolveSharedTarget(target string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		return "", fmt.Errorf("%s is a symlink that cannot be resolved; edit the file it points to by hand: %w", target, err)
+	}
+	if fi, err := os.Stat(resolved); err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is a symlink to %s, which is not a regular file; edit it by hand", target, resolved)
 	}
 	return resolved, nil
 }

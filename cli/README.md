@@ -546,6 +546,10 @@ alone and lists the ones still installed, with the command to remove them.
   command. A `SKILL.md` at a Jentic skill path that Jentic did not write (no
   provenance) is labelled `(not written by Jentic)` and never removed.
 - A symlinked `AGENTS.md` is edited at the file it points to; the link stays.
+  At project scope the link (and any symlinked skill directory) is only
+  followed when it resolves inside the current directory; one pointing
+  elsewhere, such as into your home directory, is refused and left for you to
+  edit by hand.
 - Skills are removed only after the `~/.jentic` teardown succeeds. If a skill
   cannot be removed, uninstall still finishes, reports it, and exits non-zero.
 - To clean up by hand at any time: `jentic skill remove --all` (add `--force`
