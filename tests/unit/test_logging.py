@@ -7,9 +7,9 @@ import contextlib
 import json
 import logging
 import logging.config
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock, patch
 
 import h2.config
 import h2.connection
@@ -17,6 +17,9 @@ import httpx
 import pytest
 import structlog
 from fastapi import FastAPI
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from starlette.testclient import TestClient
@@ -250,32 +253,41 @@ def test_configure_logging_adds_file_handler_and_writes_json(tmp_path: Path):
             handler.close()
 
 
-def test_add_otel_context_injects_trace_and_span_when_recording():
-    mock_span_context = MagicMock()
-    mock_span_context.trace_id = 0xABCDEF1234567890ABCDEF1234567890
-    mock_span_context.span_id = 0x1234567890ABCDEF
-
-    mock_span = MagicMock()
-    mock_span.is_recording.return_value = True
-    mock_span.get_span_context.return_value = mock_span_context
-
-    with patch("opentelemetry.trace.get_current_span", return_value=mock_span):
-        event_dict: dict[str, object] = {"event": "test"}
-        result = add_otel_context(None, "info", event_dict)
-
-    assert "trace_id" in result
-    assert "span_id" in result
-    assert result["trace_id"] == format(mock_span_context.trace_id, "032x")
-    assert result["span_id"] == format(mock_span_context.span_id, "016x")
+@contextlib.contextmanager
+def _attached_span(span: trace.Span) -> Iterator[None]:
+    token = otel_context.attach(trace.set_span_in_context(span))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
 
 
-def test_add_otel_context_noop_when_not_recording():
-    mock_span = MagicMock()
-    mock_span.is_recording.return_value = False
+@pytest.mark.parametrize(
+    "trace_flags",
+    [
+        pytest.param(TraceFlags(TraceFlags.SAMPLED), id="sampled"),
+        pytest.param(TraceFlags(TraceFlags.DEFAULT), id="unsampled"),
+    ],
+)
+def test_add_otel_context_injects_trace_and_span_for_a_valid_span_context(trace_flags):
+    """A non-recording span (``exporter: none`` or an unsampled trace) still
+    stamps its trace/span id, so logs correlate with execution records."""
+    span_context = SpanContext(
+        trace_id=0xABCDEF1234567890ABCDEF1234567890,
+        span_id=0x1234567890ABCDEF,
+        is_remote=False,
+        trace_flags=trace_flags,
+    )
+    with _attached_span(NonRecordingSpan(span_context)):
+        result = add_otel_context(None, "info", {"event": "test"})
 
-    with patch("opentelemetry.trace.get_current_span", return_value=mock_span):
-        event_dict: dict[str, object] = {"event": "test"}
-        result = add_otel_context(None, "info", event_dict)
+    assert result["trace_id"] == "abcdef1234567890abcdef1234567890"
+    assert result["span_id"] == "1234567890abcdef"
+
+
+def test_add_otel_context_noop_without_a_valid_span_context():
+    with _attached_span(trace.INVALID_SPAN):
+        result = add_otel_context(None, "info", {"event": "test"})
 
     assert "trace_id" not in result
     assert "span_id" not in result
