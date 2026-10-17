@@ -27,6 +27,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
+    ConnectState,
 )
 from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialCreate,
@@ -42,6 +43,13 @@ from jentic_one.control.services.credentials.state import (
 )
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
+)
+from jentic_one.control.web.connect_binding import (
+    clear_browser_binding_cookie,
+    loopback_alias_redirect,
+    mint_browser_binding,
+    read_browser_binding_cookie,
+    set_browser_binding_cookie,
 )
 from jentic_one.control.web.deps import (
     get_connect_service,
@@ -287,6 +295,7 @@ def _oauth_callback_error() -> RedirectResponse:
 
 @router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback", include_in_schema=False)
 async def oauth_callback(
+    request: Request,
     code: str | None = Query(
         default=None,
         description="Authorization code issued by the identity provider.",
@@ -308,10 +317,12 @@ async def oauth_callback(
 ) -> Response:
     """Handle the OAuth callback from the IdP.
 
-    This endpoint is intentionally unauthenticated — it receives redirects
-    from external IdPs where the user has no session cookie. Security
-    binding is provided by the signed, time-limited state JWT which ties
-    the callback to a specific credential and caller.
+    This endpoint carries no platform credential — it receives redirects
+    from external IdPs. It is bound instead by the signed, time-limited
+    state JWT, which ties the callback to a specific credential and caller,
+    and by the browser-binding cookie set on the browser that started the
+    flow (``control/web/connect_binding.py``): a callback without the
+    matching cookie changes nothing and leaves the flow open.
 
     Redirects the popup the SPA opened to a public SPA route
     (``/app/oauth/connected``) that owns the user-facing "you can close this"
@@ -339,33 +350,69 @@ async def oauth_callback(
         )
         return _oauth_callback_error()
 
-    # Peek the state to see if this callback belongs to a connect-session
-    # (agent-driven integration flow). The ``sid`` claim is set by
+    # Peek the state (signature + TTL only) to route the callback and find
+    # its browser-binding cookie. The ``sid`` claim is set by
     # ``AuthCodeFlowHandler.begin`` — its presence routes completion to
     # ``ConnectSessionService.complete_from_callback`` instead of the
-    # standalone-credential path. One URL, two consumers; the peek runs the
-    # verify + one-shot nonce consume inside whichever service we dispatch
-    # to, so no bypass around replay protection.
+    # standalone-credential path. One URL, two consumers; whichever service
+    # we dispatch to re-verifies the state, checks the binding cookie and
+    # consumes the one-shot nonce, so the peek is never a bypass.
     state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
-    session_id: str | None
+    peeked: ConnectState | None
     try:
-        session_id = decode_state(state_secret, state).session_id
+        peeked = decode_state(state_secret, state)
     except StateError:
         # Fall through to the standalone path — it'll re-verify + surface
         # the canonical error.
-        session_id = None
+        peeked = None
 
+    alias = loopback_alias_redirect(request, peeked)
+    if alias is not None:
+        # Local deploy reached on the other loopback alias: the binding
+        # cookie lives on the host the browser started on, so hop there.
+        return RedirectResponse(alias, status_code=303)
+
+    binding = read_browser_binding_cookie(request, peeked)
+    response = await _complete_oauth_callback(
+        raw_state=state,
+        session_id=peeked.session_id if peeked is not None else None,
+        code=code,
+        error=error,
+        binding=binding,
+        svc=svc,
+        session_svc=session_svc,
+    )
+    # One attempt per binding: cleared on success and on every refusal. A
+    # refused callback leaves the flow itself live (nothing is consumed), so
+    # the initiator can still finish it from the browser holding the cookie.
+    clear_browser_binding_cookie(response, request, ctx, peeked)
+    return response
+
+
+async def _complete_oauth_callback(
+    *,
+    raw_state: str,
+    session_id: str | None,
+    code: str | None,
+    error: str | None,
+    binding: str | None,
+    svc: ConnectService,
+    session_svc: ConnectSessionService,
+) -> RedirectResponse:
+    """Dispatch a verified-shape callback to its service; map the outcome to a redirect."""
     if session_id is not None:
         if error or not code:
             # Pass the raw state so the error branch runs the same
-            # ``consume_callback_state`` prologue (signature verify +
-            # one-shot nonce consume) as the success branch — a replayed
-            # callback URL carrying ``error=access_denied`` must not be
-            # able to terminate (and cascade-delete) a session that
+            # ``consume_callback_state`` prologue (signature verify, binding
+            # check, one-shot nonce consume) as the success branch — a
+            # replayed callback URL carrying ``error=access_denied`` must not
+            # be able to terminate (and cascade-delete) a session that
             # already connected.
             try:
                 await session_svc.mark_terminal_from_callback(
-                    raw_state=state, error=error or "no_code_returned"
+                    raw_state=raw_state,
+                    error=error or "no_code_returned",
+                    browser_binding=binding,
                 )
             except StateError as exc:
                 _logger.warning(
@@ -383,10 +430,11 @@ async def oauth_callback(
             return _oauth_callback_error()
         try:
             # Pass the raw state so ``complete_from_callback`` runs the
-            # shared ``consume_callback_state`` prologue (signature
-            # verify + one-shot nonce consume) — never trust the sid
-            # we peeked at above as a bypass around replay protection.
-            await session_svc.complete_from_callback(raw_state=state, code=code)
+            # shared ``consume_callback_state`` prologue — never trust the
+            # sid peeked above as a bypass around replay protection.
+            result = await session_svc.complete_from_callback(
+                raw_state=raw_state, code=code, browser_binding=binding
+            )
         except StateError as exc:
             _logger.warning(
                 "oauth_callback.connect_session.state_invalid",
@@ -400,13 +448,22 @@ async def oauth_callback(
                 "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
             )
             return _oauth_callback_error()
+        if result.status != "connected":
+            # The exchange failed or the session ended meanwhile.
+            _logger.warning(
+                "oauth_callback.connect_session.not_connected",
+                session_id=session_id,
+                status=result.status,
+                error_code=result.error_code,
+            )
+            return _oauth_callback_error()
         _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
         return _oauth_callback_success()
 
     callback = ConnectCallback(code=code, error=error)
 
     try:
-        credential_id = await svc.complete(state, callback)
+        credential_id = await svc.complete(raw_state, callback, browser_binding=binding)
     except ConnectFlowError as exc:
         _logger.warning(
             "oauth_callback.connect_flow_error",
@@ -1034,6 +1091,7 @@ async def connect_credential(
     ],
     body: ConnectRequestBody,
     request: Request,
+    response: Response,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
     ctx: Context = Depends(get_ctx),
@@ -1044,21 +1102,33 @@ async def connect_credential(
     authorization-code providers return an ``authorize_url`` for popup
     redirect; device-flow providers return ``user_code`` /
     ``verification_uri`` for the RFC 8628 human step.
+
+    An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+    cookie scoped to the OAuth callback path: the callback completes only
+    in the browser that called this endpoint, so call it from the browser
+    that opens the ``authorize_url``.
     """
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
     redirect_uri = _connect_callback_url(request, ctx)
+    # Bind the callback to this browser: the cookie is set on this response
+    # and only its hash enters the signed state.
+    binding = mint_browser_binding(request)
     try:
         challenge = await svc.begin(
             credential_id,
             connect_req,
             identity=identity,
             redirect_uri=redirect_uri,
+            browser_binding=binding.claim,
         )
     except NotConnectableError as exc:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
     if isinstance(challenge, AuthCodeChallenge):
+        set_browser_binding_cookie(
+            response, request, ctx, binding, authorize_url=challenge.authorize_url
+        )
         return AuthCodeConnectChallengeResponse(
             authorize_url=challenge.authorize_url, state=challenge.state
         )

@@ -53,6 +53,7 @@ from jentic_one.control.services.credentials.providers.direct_oauth2 import (
 )
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
@@ -76,6 +77,9 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
+
+# The approver's browser; its cookie value accompanies each callback below.
+_BINDING = new_browser_binding()
 
 
 _USER_ID = "usr_alice"
@@ -239,6 +243,7 @@ async def test_confirm_against_db_registration_stamps_fk_and_skips_occ(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     q = parse_qs(urlsplit(confirmed.authorize_url).query)
@@ -350,6 +355,7 @@ async def test_legacy_embedded_path_still_writes_oauth_client_credentials(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     q = parse_qs(urlsplit(confirmed.authorize_url).query)
@@ -397,6 +403,7 @@ async def test_complete_from_callback_through_registration_end_to_end(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     raw_state = _state_from_authorize_url(confirmed.authorize_url)
@@ -428,7 +435,11 @@ async def test_complete_from_callback_through_registration_end_to_end(
         patch("httpx.AsyncClient", return_value=_FakeClient()),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity_result)),
     ):
-        result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+        result = await svc.complete_from_callback(
+            raw_state=raw_state,
+            code="the-code",
+            browser_binding=_BINDING.value,
+        )
 
     assert result.status == "connected"
     # The same-slug config entry lends its identity probe to the registration.
@@ -481,6 +492,7 @@ async def test_finalise_fails_session_when_registration_disabled_mid_flow(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
 
     async with ctx.control_db.transaction() as session:
@@ -554,6 +566,7 @@ async def test_config_session_ignores_registration_added_after_connect(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     q = parse_qs(urlsplit(confirmed.authorize_url).query)
@@ -591,6 +604,7 @@ async def test_confirm_cancels_when_config_entry_removed_after_connect(
             confirmed_scopes=["scope-a"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
     await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
 
@@ -628,6 +642,7 @@ async def test_confirm_cancels_when_pinned_registration_disabled(
             confirmed_scopes=["scope-a"],
             permission_rules=[],
             identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
         )
     await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
 
@@ -809,6 +824,7 @@ async def _pinned_session_awaiting_callback(
         confirmed_scopes=["scope-a"],
         permission_rules=[],
         identity=_USER_IDENTITY,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(confirmed, AuthCodeConfirmResult)
     return created.session_id, _state_from_authorize_url(confirmed.authorize_url)
@@ -834,7 +850,11 @@ async def test_callback_fails_as_registration_inactive_when_disabled_after_confi
     async with ctx.control_db.transaction() as session:
         await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
 
-    result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+    result = await svc.complete_from_callback(
+        raw_state=raw_state,
+        code="the-code",
+        browser_binding=_BINDING.value,
+    )
 
     assert result.status == "failed"
     assert result.error_code == "registration_inactive"

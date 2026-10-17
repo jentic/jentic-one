@@ -43,6 +43,7 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
+    BrowserBindingClaim,
     encode_state,
     generate_nonce,
 )
@@ -138,6 +139,7 @@ class AuthCodeFlowHandler:
         *,
         app: SessionApp,
         confirmed_scopes: list[str],
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> BeginResult:
         assert app.authorize_url is not None, "authorize_url required for authorization_code"
 
@@ -169,6 +171,10 @@ class AuthCodeFlowHandler:
             issued_at=datetime.now(UTC),
             nonce=generate_nonce(),
             session_id=row.id,
+            # The approver's browser — the one that goes to the vendor. An
+            # unbound state is refused at the callback.
+            browser_binding_hash=browser_binding.digest if browser_binding else None,
+            browser_host=browser_binding.host if browser_binding else None,
         )
         state_secret = self._ctx.config.credentials.connect.state_secret.get_secret_value()
         ttl = self._ctx.config.credentials.connect.state_ttl_seconds
