@@ -68,13 +68,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The export helpers run on the daemon's native platform. Both are pinned to
+# it so a cached foreign-arch uv or Python tag (e.g. a `docker pull --platform`
+# on another arch) is re-resolved instead of failing with an exec format error;
+# the lock export is platform-independent, so native is correct for every
+# target image.
+native_platform="linux/$(docker version -f '{{.Server.Arch}}')"
+
 # The uv image is FROM scratch (no interpreter for uv to discover), so its
 # binary runs inside the builder's Python image instead, as in the builder.
-uv_container="$(docker create "${uv_image}")"
+uv_container="$(docker create --platform "${native_platform}" "${uv_image}")"
 docker cp -q "${uv_container}:/uv" "${tmp}/uv"
 
 in_builder() {
-    docker run --rm -e UV_NO_CACHE=1 \
+    docker run --rm --platform "${native_platform}" -e UV_NO_CACHE=1 \
         -v "${tmp}/uv:/usr/local/bin/uv:ro" -v "${repo}:/src:ro" -w /src \
         "${python_image}" "$@"
 }
