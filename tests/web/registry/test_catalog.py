@@ -35,6 +35,7 @@ from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
+from jentic_one.registry.repos.catalog_source_repo import CatalogSourceRepository
 from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
@@ -1377,3 +1378,40 @@ async def test_auto_import_noop_when_already_registered(web_context: Context) ->
         catalog_api_id="stripe.com", initiator_actor_id="usr_1"
     )
     assert job_id is None
+
+
+async def test_public_winner_reads_the_snapshot_without_syncing_or_flagging(
+    web_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        async with ctx.registry_db.transaction() as session:
+            await session.execute(
+                text(
+                    "UPDATE registry.catalog_sources SET last_sync_at = last_sync_at"
+                    " - interval '30 days'"
+                )
+            )
+        calls: list[str] = []
+
+        async def _no_sync(self: CatalogSourceSync, slug: str, **_: Any) -> Any:
+            calls.append(f"sync:{slug}")
+            raise AssertionError("public_winner must not sync")
+
+        async def _no_flag(_session: Any, slugs: Any) -> int:
+            calls.append(f"flag:{slugs}")
+            return 0
+
+        monkeypatch.setattr(CatalogSourceSync, "sync_source", _no_sync)
+        monkeypatch.setattr(CatalogSourceRepository, "mark_sync_wanted", staticmethod(_no_flag))
+        svc = CatalogService(ctx)
+        assert await svc.public_winner("stripe.com") == "public/stripe.com"
+        assert await svc.public_winner("never.example") is None
+        assert calls == []
+        # A regular read of the same catalog does flag the stale sources.
+        await svc.list_all(permissions=frozenset())
+        assert calls and calls[0].startswith("flag:")

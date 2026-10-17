@@ -969,11 +969,17 @@ class CatalogService:
         return self._to_view(state, state.snapshot.by_id[winner])
 
     async def public_winner(self, catalog_api_id: str) -> str | None:
-        """The ``entry_id`` ``resolve`` returns for a caller with no permissions, if any."""
-        try:
-            return (await self.resolve(catalog_api_id, permissions=frozenset())).entry_id
-        except CatalogEntryNotFoundError:
-            return None
+        """The ``entry_id`` ``resolve`` picks for a caller with no permissions, if any.
+
+        Reads the current snapshot only: unlike a catalog read it never syncs a
+        source inline nor flags stale ones, so a caller on another hot path
+        (the connect hand-off) never waits on a listing.
+        """
+        allowed = allowed_sources(self._sources.values(), permissions=frozenset(), actor_id=None)
+        snapshot = await self._load_snapshot(await self._source_rows())
+        async with self._ctx.registry_db.session() as session:
+            registered = await ApiRepository.registered_catalog_entry_ids(session)
+        return snapshot.collapse(allowed, registered).winner_by_api_id.get(catalog_api_id)
 
     # ── preview ──────────────────────────────────────────────────────────────
 
