@@ -3050,3 +3050,48 @@ async def test_upsert_keeps_current_revision_loaded_in_the_session(
         assert again is not None
         assert again.current_revision is not None
         assert again.current_revision.id == locked.current_revision_id
+
+
+async def test_supersede_gate_scopes_to_the_identity_the_reimport_lands_on(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#1078: the A4b gate and identity resolution pick the same row.
+
+    The overlay lives on the doubled row, which carries the stored ``catalog_api_id``, so
+    the re-import lands there. An older clean sibling serves a catalog revision from the
+    same ``spec_url``, so an unscoped oldest-first lookup would resolve the sibling, find
+    no overlay and skip the ``supersede_active`` stamp; the ingest on the doubled row
+    would then fail on ``ix_api_revisions_one_active``.
+    """
+    handler = ImportHandler(integration_context)
+    doubled_api_id, clean_api_id, overlay_id, _ = await _doubled_and_clean_rows(
+        handler, registry_db
+    )
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Api)
+            .where(Api.id == doubled_api_id)
+            .values(catalog_api_id="posthog.com/posthog-api")
+        )
+        await session.commit()
+    async with registry_db.session() as session:
+        unscoped = await ApiRevisionRepository.current_revision_for_source_url(
+            session, _CATALOG_URL
+        )
+    assert unscoped is not None and unscoped[0] == clean_api_id
+
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url=_CATALOG_URL,
+        github_url=None,
+        registered=True,
+    )
+    svc = CatalogService(integration_context)
+    operator = Identity(sub="usr_operator", email="o@test.com", permissions=["overlays:confirm"])
+    source = await svc._import_source_for(entry, operator)
+    assert (source["vendor"], source["api_name"]) == ("posthog-com", "posthog-com-posthog-api")
+    assert await svc._authorize_overlay_supersede(entry, operator) == overlay_id

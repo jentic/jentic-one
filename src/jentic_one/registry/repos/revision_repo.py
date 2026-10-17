@@ -283,6 +283,7 @@ class ApiRevisionRepository:
         source_url: str,
         *,
         api_id: uuid.UUID | None = None,
+        identity: tuple[str, str] | None = None,
         exclude_origin: str | None = None,
     ) -> tuple[uuid.UUID, uuid.UUID] | None:
         """The (api_id, current_revision_id) of a local API served from ``source_url``.
@@ -298,7 +299,8 @@ class ApiRevisionRepository:
         Several API rows can serve the same ``source_url`` (e.g. a vendor-doubled row and
         its clean identity, #1078); the oldest wins, matching
         ``registered_identity_for_source_url``, so the answer is deterministic on every
-        backend. ``api_id`` scopes the lookup to one API row; ``exclude_origin`` skips
+        backend. ``api_id`` scopes the lookup to one API row; ``identity`` scopes it to the
+        rows with that stored ``(vendor, name)`` (any version); ``exclude_origin`` skips
         rows whose current revision has that ``origin`` (NULL origins are kept).
         """
         stmt = (
@@ -308,6 +310,8 @@ class ApiRevisionRepository:
         )
         if api_id is not None:
             stmt = stmt.where(Api.id == api_id)
+        if identity is not None:
+            stmt = stmt.where(Api.vendor == identity[0], Api.name == identity[1])
         if exclude_origin is not None:
             stmt = stmt.where(ApiRevision.origin.is_distinct_from(exclude_origin))
         result = await session.execute(stmt.order_by(Api.created_at, Api.id).limit(1))
