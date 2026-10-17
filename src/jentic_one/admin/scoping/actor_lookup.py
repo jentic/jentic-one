@@ -59,6 +59,10 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
     one of the caller's agents (served by ``ix_events_created_by_actor``). The
     held-execution filter is ``agent_id`` the caller or one of its agents; it
     is split the same way so each half probes ``ix_held_executions_agent_state``.
+    The grant relation likewise: of the ``OAuthClientGrant`` filter's
+    branches, only a grant bound to the caller (an agent caller) or to one of
+    its agents can name another consenting user, and each half probes
+    ``ix_oauth_client_grants_agent_id``.
     Audit entries add nothing: a non-admin sees only those whose actor is
     itself or one of its agents, so no other user. Credential creators are
     resolved by the control surface (see ``ActorService.lookup``).
@@ -103,8 +107,13 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
     if OAUTH_CLIENTS_READ in perms:
         conditions.append(
             exists().where(
+                OAuthClientGrant.agent_id == identity.sub, OAuthClientGrant.user_id == User.id
+            )
+        )
+        conditions.append(
+            exists().where(
+                OAuthClientGrant.agent_id.in_(owned_agent_ids),
                 OAuthClientGrant.user_id == User.id,
-                *build_access_filters(identity, OAuthClientGrant),
             )
         )
         conditions.append(exists().where(OAuthClient.created_by == User.id))
