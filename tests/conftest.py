@@ -18,9 +18,11 @@ from jentic_one.shared.dns_cache import clear_resolution_cache
 from jentic_one.shared.metrics import reset_metrics
 from jentic_one.shared.tracing import reset_tracing
 
-# ``ProxyTracer`` internals ``otel_span_exporter`` relies on, as laid out in
-# opentelemetry-api 1.45.1: the instance fields its ``_tracer`` property reads
-# to build the real tracer, plus the ``_real_tracer`` cache that property fills.
+# ``ProxyTracer`` internals ``otel_span_exporter`` relies on: the instance
+# fields its ``_tracer`` property reads to build the real tracer, plus the
+# ``_real_tracer`` cache that property fills. Verified against
+# opentelemetry-api 1.45.1; the checks in ``otel_span_exporter`` fail by name
+# if the layout changes.
 _PROXY_TRACER_FIELDS = (
     "_instrumenting_module_name",
     "_instrumenting_library_version",
@@ -142,11 +144,12 @@ def otel_span_exporter(
     stale_provider = TracerProvider()
     probe = trace.ProxyTracer("tests.otel_probe")
     probe._real_tracer = stale_provider.get_tracer("tests.otel_probe")
-    with probe.start_as_current_span("tests.otel_probe"):
+    with probe.start_as_current_span("tests.otel_probe.current"):
         pass
+    probe.start_span("tests.otel_probe.manual").end()
     stale_provider.shutdown()
     probed = [span.name for span in exporter.get_finished_spans()]
-    assert probed == ["tests.otel_probe"], (
+    assert probed == ["tests.otel_probe.current", "tests.otel_probe.manual"], (
         "a ProxyTracer no longer routes spans through its `_tracer` property; "
         "update otel_span_exporter in tests/conftest.py for the installed OTel version"
     )
