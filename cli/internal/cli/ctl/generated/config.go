@@ -367,15 +367,62 @@ func (j *BrokerResilienceConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Public API catalog settings (manifest source + staleness).
+// Lets one non-curated entry claim a curated source's “catalog_api_id“.
+type CatalogApiIdMappingConfig struct {
+	// CatalogApiId corresponds to the JSON schema field "catalog_api_id".
+	CatalogApiId string `json:"catalog_api_id" yaml:"catalog_api_id" mapstructure:"catalog_api_id"`
+
+	// ExternalId corresponds to the JSON schema field "external_id".
+	ExternalId string `json:"external_id" yaml:"external_id" mapstructure:"external_id"`
+
+	// Source corresponds to the JSON schema field "source".
+	Source string `json:"source" yaml:"source" mapstructure:"source"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CatalogApiIdMappingConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["catalog_api_id"]; raw != nil && !ok {
+		return fmt.Errorf("field catalog_api_id in CatalogApiIdMappingConfig: required")
+	}
+	if _, ok := raw["external_id"]; raw != nil && !ok {
+		return fmt.Errorf("field external_id in CatalogApiIdMappingConfig: required")
+	}
+	if _, ok := raw["source"]; raw != nil && !ok {
+		return fmt.Errorf("field source in CatalogApiIdMappingConfig: required")
+	}
+	type Plain CatalogApiIdMappingConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	*j = CatalogApiIdMappingConfig(plain)
+	return nil
+}
+
+// Public API catalog settings (sources, staleness, update notify).
 type CatalogConfig struct {
-	// ManifestMaxAgeSeconds corresponds to the JSON schema field
-	// "manifest_max_age_seconds".
+	// Rows letting a non-curated entry claim a curated catalog_api_id; matched
+	// case-insensitively and applied in the curated casing.
+	CatalogApiIdMappings []CatalogApiIdMappingConfig `json:"catalog_api_id_mappings,omitempty,omitzero" yaml:"catalog_api_id_mappings,omitempty" mapstructure:"catalog_api_id_mappings,omitempty"`
+
+	// The git-manifest source the deprecated manifest_* keys map onto and that
+	// pre-existing catalog imports are reconciled against.
+	LegacySourceSlug string `json:"legacy_source_slug,omitempty,omitzero" yaml:"legacy_source_slug,omitempty" mapstructure:"legacy_source_slug,omitempty"`
+
+	// Deprecated alias for the legacy source's max_age_seconds.
 	ManifestMaxAgeSeconds int `json:"manifest_max_age_seconds,omitempty,omitzero" yaml:"manifest_max_age_seconds,omitempty" mapstructure:"manifest_max_age_seconds,omitempty"`
 
-	// Manifest source for the public API catalog. Full default:
+	// Deprecated alias for the legacy source's settings.url
+	// (catalog.sources[slug=legacy_source_slug]). Full default:
 	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
 	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
+
+	// Catalog sources. The default is the curated public-apis manifest.
+	Sources []CatalogSourceConfig `json:"sources,omitempty,omitzero" yaml:"sources,omitempty" mapstructure:"sources,omitempty"`
 
 	// UpdateCheckIntervalSeconds corresponds to the JSON schema field
 	// "update_check_interval_seconds".
@@ -405,6 +452,9 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["legacy_source_slug"]; !ok || v == nil {
+		plain.LegacySourceSlug = "public"
+	}
 	if v, ok := raw["manifest_max_age_seconds"]; !ok || v == nil {
 		plain.ManifestMaxAgeSeconds = 86400
 	}
@@ -430,6 +480,213 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 		plain.UpdateSweepMaxConcurrency = 4
 	}
 	*j = CatalogConfig(plain)
+	return nil
+}
+
+// One catalog source: where entries come from and how they are synced.
+//
+// “settings“ is kind-specific and validated against the kind's own model at
+// registry startup. This block is configuration only; sync state lives in the
+// registry database.
+type CatalogSourceConfig struct {
+	// Auth corresponds to the JSON schema field "auth".
+	Auth *SourceAuthConfig `json:"auth,omitempty,omitzero" yaml:"auth,omitempty" mapstructure:"auth,omitempty"`
+
+	// Disabled sources are never synced (kill switch for this source).
+	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
+
+	// Registered source kind, e.g. git-manifest.
+	Kind string `json:"kind" yaml:"kind" mapstructure:"kind"`
+
+	// Background sync interval. 0 disables automatic sync and background egress for
+	// this source; a manual refresh still syncs it.
+	MaxAgeSeconds int `json:"max_age_seconds,omitempty,omitzero" yaml:"max_age_seconds,omitempty" mapstructure:"max_age_seconds,omitempty"`
+
+	// Mass-removal guard: a sync removing more than this share is held.
+	MaxRemovalRatio float64 `json:"max_removal_ratio,omitempty,omitzero" yaml:"max_removal_ratio,omitempty" mapstructure:"max_removal_ratio,omitempty"`
+
+	// The removal ratio only trips above this many removals.
+	MinRemovalCount int `json:"min_removal_count,omitempty,omitzero" yaml:"min_removal_count,omitempty" mapstructure:"min_removal_count,omitempty"`
+
+	// Rank when two sources list the same catalog_api_id (higher wins). An untrusted
+	// source may not rank above any enabled curated source (startup fails).
+	Precedence int `json:"precedence,omitempty,omitzero" yaml:"precedence,omitempty" mapstructure:"precedence,omitempty"`
+
+	// Reader ACL; required for restricted sources only.
+	Readers *CatalogSourceConfigReaders `json:"readers,omitempty,omitzero" yaml:"readers,omitempty" mapstructure:"readers,omitempty"`
+
+	// Kind-specific settings.
+	Settings CatalogSourceConfigSettings `json:"settings,omitempty,omitzero" yaml:"settings,omitempty" mapstructure:"settings,omitempty"`
+
+	// Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$.
+	Slug string `json:"slug" yaml:"slug" mapstructure:"slug"`
+
+	// Cross-process sync lease, renewed every third of it.
+	SyncLeaseSeconds int `json:"sync_lease_seconds,omitempty,omitzero" yaml:"sync_lease_seconds,omitempty" mapstructure:"sync_lease_seconds,omitempty"`
+
+	// curated sources own the catalog_api_ids they list.
+	Trust CatalogSourceConfigTrust `json:"trust,omitempty,omitzero" yaml:"trust,omitempty" mapstructure:"trust,omitempty"`
+
+	// Visibility corresponds to the JSON schema field "visibility".
+	Visibility CatalogSourceConfigVisibility `json:"visibility,omitempty,omitzero" yaml:"visibility,omitempty" mapstructure:"visibility,omitempty"`
+}
+
+// Reader ACL; required for restricted sources only.
+type CatalogSourceConfigReaders struct {
+	// ActorIds corresponds to the JSON schema field "actor_ids".
+	ActorIds []string `json:"actor_ids,omitempty,omitzero" yaml:"actor_ids,omitempty" mapstructure:"actor_ids,omitempty"`
+
+	// Permissions corresponds to the JSON schema field "permissions".
+	Permissions []string `json:"permissions,omitempty,omitzero" yaml:"permissions,omitempty" mapstructure:"permissions,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CatalogSourceConfigReaders) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	var catalogSourceConfigReaders_0 CatalogSourceConfigReaders_0
+	var errs []error
+	if err := catalogSourceConfigReaders_0.UnmarshalJSON(value); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) == 1 {
+		return fmt.Errorf("all validators failed: %s", errors.Join(errs...))
+	}
+	type Plain CatalogSourceConfigReaders
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	*j = CatalogSourceConfigReaders(plain)
+	return nil
+}
+
+// Kind-specific settings.
+type CatalogSourceConfigSettings map[string]interface{}
+
+type CatalogSourceConfigTrust string
+
+const CatalogSourceConfigTrustCurated CatalogSourceConfigTrust = "curated"
+const CatalogSourceConfigTrustInternal CatalogSourceConfigTrust = "internal"
+const CatalogSourceConfigTrustUntrusted CatalogSourceConfigTrust = "untrusted"
+
+var enumValues_CatalogSourceConfigTrust = []interface{}{
+	"curated",
+	"internal",
+	"untrusted",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CatalogSourceConfigTrust) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_CatalogSourceConfigTrust {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_CatalogSourceConfigTrust, v)
+	}
+	*j = CatalogSourceConfigTrust(v)
+	return nil
+}
+
+type CatalogSourceConfigVisibility string
+
+const CatalogSourceConfigVisibilityOrg CatalogSourceConfigVisibility = "org"
+const CatalogSourceConfigVisibilityPublic CatalogSourceConfigVisibility = "public"
+const CatalogSourceConfigVisibilityRestricted CatalogSourceConfigVisibility = "restricted"
+
+var enumValues_CatalogSourceConfigVisibility = []interface{}{
+	"public",
+	"org",
+	"restricted",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CatalogSourceConfigVisibility) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_CatalogSourceConfigVisibility {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_CatalogSourceConfigVisibility, v)
+	}
+	*j = CatalogSourceConfigVisibility(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *CatalogSourceConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["kind"]; raw != nil && !ok {
+		return fmt.Errorf("field kind in CatalogSourceConfig: required")
+	}
+	if _, ok := raw["slug"]; raw != nil && !ok {
+		return fmt.Errorf("field slug in CatalogSourceConfig: required")
+	}
+	type Plain CatalogSourceConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["enabled"]; !ok || v == nil {
+		plain.Enabled = true
+	}
+	if v, ok := raw["max_age_seconds"]; !ok || v == nil {
+		plain.MaxAgeSeconds = 86400
+	}
+	if 0 > plain.MaxAgeSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "max_age_seconds", 0)
+	}
+	if v, ok := raw["max_removal_ratio"]; !ok || v == nil {
+		plain.MaxRemovalRatio = 0.2
+	}
+	if 1 < plain.MaxRemovalRatio {
+		return fmt.Errorf("field %s: must be <= %v", "max_removal_ratio", 1)
+	}
+	if 0 > plain.MaxRemovalRatio {
+		return fmt.Errorf("field %s: must be >= %v", "max_removal_ratio", 0)
+	}
+	if v, ok := raw["min_removal_count"]; !ok || v == nil {
+		plain.MinRemovalCount = 5
+	}
+	if 0 > plain.MinRemovalCount {
+		return fmt.Errorf("field %s: must be >= %v", "min_removal_count", 0)
+	}
+	if v, ok := raw["precedence"]; !ok || v == nil {
+		plain.Precedence = 0
+	}
+	if v, ok := raw["sync_lease_seconds"]; !ok || v == nil {
+		plain.SyncLeaseSeconds = 60
+	}
+	if 3 > plain.SyncLeaseSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "sync_lease_seconds", 3)
+	}
+	if v, ok := raw["trust"]; !ok || v == nil {
+		plain.Trust = "untrusted"
+	}
+	if v, ok := raw["visibility"]; !ok || v == nil {
+		plain.Visibility = "public"
+	}
+	*j = CatalogSourceConfig(plain)
 	return nil
 }
 
@@ -2550,6 +2807,63 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// How a catalog source authenticates its requests.
+//
+// Only “none“ is built in; other resolver types are registered by extensions.
+// The secret itself never appears here: “env“ names the variable holding it.
+type SourceAuthConfig struct {
+	// Env corresponds to the JSON schema field "env".
+	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
+
+	// Header corresponds to the JSON schema field "header".
+	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
+}
+
+type SourceAuthConfigEnv_0 *string
+
+type SourceAuthConfigHeader_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SourceAuthConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain SourceAuthConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["type"]; !ok || v == nil {
+		plain.Type = "none"
+	}
+	*j = SourceAuthConfig(plain)
+	return nil
+}
+
+// Reader ACL of a “restricted“ catalog source (any one match admits).
+type SourceReadersConfig struct {
+	// ActorIds corresponds to the JSON schema field "actor_ids".
+	ActorIds []string `json:"actor_ids,omitempty,omitzero" yaml:"actor_ids,omitempty" mapstructure:"actor_ids,omitempty"`
+
+	// Permissions corresponds to the JSON schema field "permissions".
+	Permissions []string `json:"permissions,omitempty,omitzero" yaml:"permissions,omitempty" mapstructure:"permissions,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SourceReadersConfig) UnmarshalJSON(value []byte) error {
+	type Plain SourceReadersConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	*j = SourceReadersConfig(plain)
+	return nil
+}
+
 // Configuration for :func:`build_state_backend`.
 type StateBackendConfig struct {
 	// Backend corresponds to the JSON schema field "backend".
@@ -3214,6 +3528,33 @@ func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
+
 // Background job-worker durability knobs.
 //
 // The worker claims a job, sets a **visibility deadline**
@@ -3299,29 +3640,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 
 type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
+type CatalogSourceConfigReaders_0 = SourceReadersConfig

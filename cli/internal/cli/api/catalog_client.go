@@ -269,7 +269,8 @@ func (c *catalogClient) Promote(ctx context.Context, vendor, name, version, revi
 }
 
 func (c *catalogClient) Refresh(ctx context.Context) (int, error) {
-	resp, err := c.sdk.RefreshCatalogWithResponse(ctx)
+	// nil params: the CLI refresh never sets force.
+	resp, err := c.sdk.RefreshCatalogWithResponse(ctx, nil)
 	if err := apiErrorFor(resp, err); err != nil {
 		return 0, err
 	}

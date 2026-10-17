@@ -41,6 +41,7 @@ class Api(AuditableMixin, RegistryBase):
         Index("ix_apis_vendor", "vendor"),
         Index("ix_apis_vendor_name", "vendor", "name"),
         Index("ix_apis_created_at_id", "created_at", "id", postgresql_using="btree"),
+        Index("ix_apis_catalog_entry_id", "catalog_entry_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -59,6 +60,10 @@ class Api(AuditableMixin, RegistryBase):
     # (`api_id` would shadow the ubiquitous `Api.id` UUID naming, hence the
     # `catalog_` prefix.)
     catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The catalog entry (`{source_slug}/{external_id}`) this API was imported
+    # from. NULL for manual/inline imports and for rows the boot reconcile could
+    # not map onto a catalog entry.
+    catalog_entry_id: Mapped[str | None] = mapped_column(String(320), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     icon_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

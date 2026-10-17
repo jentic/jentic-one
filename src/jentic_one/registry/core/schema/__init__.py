@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
+from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
+from jentic_one.registry.core.schema.catalog_staged_entries import CatalogStagedEntry
+from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
@@ -18,7 +22,11 @@ from jentic_one.shared.db.base import RegistryBase
 __all__ = [
     "Api",
     "ApiRevision",
+    "CatalogEntryRow",
     "CatalogSnapshot",
+    "CatalogSourceRow",
+    "CatalogStagedEntry",
+    "CatalogSyncRun",
     "CatalogUpdateCheck",
     "Note",
     "Operation",

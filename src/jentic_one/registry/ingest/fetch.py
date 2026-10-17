@@ -39,6 +39,9 @@ class InlineSource(BaseModel):
     #: catalog-originated spec (e.g. overlay materialization). ``None`` for
     #: genuine pastes.
     catalog_api_id: str | None = None
+    #: The catalog entry (``{source_slug}/{external_id}``) the spec came from,
+    #: carried like ``catalog_api_id``. ``None`` for genuine pastes.
+    catalog_entry_id: str | None = None
     #: Overlay-only: the base revision's ``spec_digest`` this overlay is materialized
     #: over. Propagated onto the resulting revision so the Flow-3 sweep diffs upstream
     #: against the overlay's base rather than the overlaid digest. ``None`` otherwise.
@@ -73,6 +76,9 @@ class UrlSource(BaseModel):
     #: imports. Persisted verbatim on the Api row (the `api_name` copy of the
     #: same slug gets slugified and loses the separable structure).
     catalog_api_id: str | None = None
+    #: The catalog entry (``{source_slug}/{external_id}``) a catalog import came
+    #: from. Persisted on the Api row next to ``catalog_api_id``.
+    catalog_entry_id: str | None = None
     #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
     #: confirmed overlay (the current revision is then overlay-origin, so the stage must
     #: archive every active revision). Set only by the scope-checked enqueue path.
@@ -425,6 +431,7 @@ async def load_specification(
         submitted_by=source.submitted_by,
         origin=source.origin,
         catalog_api_id=source.catalog_api_id,
+        catalog_entry_id=source.catalog_entry_id,
         overlay_base_digest=getattr(source, "overlay_base_digest", None),
         supersede_active=source.supersede_active,
         host_change_approved=source.host_change_approved,
