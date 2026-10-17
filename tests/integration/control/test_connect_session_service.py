@@ -1570,14 +1570,11 @@ def _expected_status(caller: str, route: str, *, with_token: bool) -> int:
     Confirm then applies its own rules to everyone who got through: an agent
     cannot confirm an agent-started session, and approving for the agent
     needs ownership plus ``credentials:write`` and ``agents:write`` (or
-    ``org:admin``). A token-holding stranger, who does not own the agent,
-    gets the same 400 as for an agent that does not exist.
+    ``org:admin``).
     """
     approver = caller in ("owner", "admin")
     if not with_token and not approver:
         return 403
-    if route == "confirm" and caller == "stranger":
-        return 400
     if route == "confirm" and not approver:
         return 403
     return _OK[route]
