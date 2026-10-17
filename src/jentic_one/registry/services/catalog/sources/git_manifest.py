@@ -70,6 +70,16 @@ def changes_watermark(changes: Sequence[EntryChange]) -> str:
     return digest.hexdigest()
 
 
+def manifest_stream(doc: dict[str, Any]) -> FullListStream:
+    """A full listing over an already fetched ``apis.json`` document."""
+    changes = manifest_changes(doc)
+
+    async def _load() -> list[EntryChange]:
+        return changes
+
+    return FullListStream(_load, watermark=changes_watermark)
+
+
 @register_catalog_source_kind
 class GitManifestSource:
     """Lists a curated ``apis.json`` index; fetches specs by URL."""

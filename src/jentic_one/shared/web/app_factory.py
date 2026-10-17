@@ -21,6 +21,8 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from starlette.routing import Route
 
 from jentic_one import __version__
+from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
+from jentic_one.registry.services.catalog.sources.validate import validate_catalog_sources
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
@@ -403,6 +405,39 @@ async def _stop_catalog_update_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_catalog_source_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+) -> tuple[CatalogSourceSyncScanner, asyncio.Task[None]] | None:
+    """Validate ``catalog.sources`` and start the catalog source sync scanner.
+
+    A registry-surface background job that needs only the registry DB (sources,
+    entries and sync runs all live there). An invalid ``catalog.sources`` block
+    fails startup here, before any scanner runs.
+    """
+    if "registry" not in enabled_apps or not ctx.has_db("registry"):
+        return None
+    validate_catalog_sources(ctx)
+    scanner = CatalogSourceSyncScanner(ctx)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("catalog_source_sync_scanner_task_started")
+    return scanner, task
+
+
+async def _stop_catalog_source_scanner(
+    handle: tuple[CatalogSourceSyncScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the catalog source sync scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
 def _start_connect_poll_scanner(
     ctx: Context,
     enabled_apps: set[str],
@@ -655,6 +690,7 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
+            source_scanner_task = _start_catalog_source_scanner(ctx, enabled_apps)
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 enabled_apps,
@@ -672,6 +708,7 @@ def create_surface_app(
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
                 await _stop_connect_poll_scanner(connect_poll_task)
+                await _stop_catalog_source_scanner(source_scanner_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
@@ -945,6 +982,7 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+            source_scanner_task = _start_catalog_source_scanner(ctx, set(apps))
             connect_poll_task = _start_connect_poll_scanner(
                 ctx,
                 set(apps),
@@ -954,6 +992,7 @@ def create_combined_app(
                 yield
             finally:
                 await _stop_connect_poll_scanner(connect_poll_task)
+                await _stop_catalog_source_scanner(source_scanner_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
