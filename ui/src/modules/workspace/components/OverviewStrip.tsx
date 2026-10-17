@@ -71,10 +71,11 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	// dialog first (the "close the overlay-update loop" flow). When `origin` is
 	// absent (older backend), we treat it as catalog and re-import directly.
 	const isOverlayOrigin = api.origin === 'overlay';
-	// The catalog routes address the entry the API was imported from by its
-	// `entry_id`; fall back to the catalog identity (then the vendor) when the
-	// backend records none, which the catalog answers with a not-found hint.
-	const catalogApiId = api.catalogEntryId ?? api.catalogApiId ?? api.api.vendor;
+	// The catalog entry is addressed by its `api_id`. For umbrella specs that id is
+	// `domain/sub` (e.g. `nytimes.com/article_search`), which the API's vendor alone
+	// can't resolve — so prefer the real `catalogApiId` surfaced by the backend and
+	// fall back to the vendor only for older backends that don't emit it.
+	const catalogApiId = api.catalogApiId ?? api.api.vendor;
 
 	const handleReimportClick = () => {
 		if (isOverlayOrigin) {

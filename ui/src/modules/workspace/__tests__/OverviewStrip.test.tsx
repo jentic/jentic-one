@@ -10,7 +10,6 @@ function makeApi(overrides: Partial<WorkspaceApi> = {}): WorkspaceApi {
 	return {
 		api: { vendor: 'stripe.com', name: 'stripe-api', version: '1', host: 'api.stripe.com' },
 		catalogApiId: null,
-		catalogEntryId: null,
 		displayName: 'Stripe',
 		description: null,
 		iconUrl: null,
@@ -213,6 +212,52 @@ describe('OverviewStrip — update-available re-import', () => {
 		// The full umbrella id is used — the bare vendor would 404 the re-import.
 		await waitFor(() => expect(importedApiId).toBe('nytimes.com/article_search'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
+	});
+
+	it('follows the catalog did_you_mean hint to the entry_id on re-import', async () => {
+		const user = userEvent.setup();
+		const imported: string[] = [];
+		worker.use(
+			http.post('/catalog/*', ({ request }) => {
+				const id = decodeURIComponent(
+					new URL(request.url).pathname.replace(/^\/catalog\//, ''),
+				).replace(/:import$/, '');
+				imported.push(id);
+				if (id === 'stripe.com') {
+					return HttpResponse.json(
+						{
+							type: 'urn:jentic:errors:catalog_entry_not_found',
+							title: 'Not Found',
+							status: 404,
+							did_you_mean: 'public/stripe.com',
+						},
+						{ status: 404 },
+					);
+				}
+				return HttpResponse.json(
+					{ job_id: 'job_reimport', status: 'queued' },
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-reimport'));
+
+		await waitFor(() => expect(imported).toEqual(['stripe.com', 'public/stripe.com']));
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
