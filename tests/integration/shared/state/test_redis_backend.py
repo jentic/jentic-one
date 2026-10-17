@@ -7,6 +7,7 @@ unset or the server is unreachable, so the suite stays green without Redis.
 
 from __future__ import annotations
 
+import inspect
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -15,7 +16,9 @@ import pytest
 
 redis = pytest.importorskip("redis.asyncio")
 
+from jentic_one.shared.state import SharedStateBackend  # noqa: E402
 from jentic_one.shared.state.redis import RedisStateBackend  # noqa: E402
+from jentic_one.testing import BaseStateBackendContract  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -119,3 +122,27 @@ async def test_distinct_prefixes_are_isolated(redis_url: str) -> None:
     finally:
         await a.aclose()
         await b.aclose()
+
+
+class _RedisContract(BaseStateBackendContract):
+    """The shipped contract on a real Redis, one fresh key prefix per backend."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    def backend_factory(self) -> SharedStateBackend:
+        return RedisStateBackend(self.url, key_prefix=f"jentic:test:{uuid.uuid4().hex}:")
+
+
+CONTRACT_TESTS = sorted(
+    name
+    for name, _ in inspect.getmembers(BaseStateBackendContract, inspect.isfunction)
+    if name.startswith("test_")
+)
+
+
+@pytest.mark.parametrize("name", CONTRACT_TESTS)
+async def test_redis_backend_meets_the_contract(redis_url: str, name: str) -> None:
+    result = getattr(_RedisContract(redis_url), name)()
+    if inspect.isawaitable(result):
+        await result

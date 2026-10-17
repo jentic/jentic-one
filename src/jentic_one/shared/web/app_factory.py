@@ -565,6 +565,16 @@ def create_surface_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        # The process's shared-state backend closes last, after the surface's
+        # own extra_lifespan (the broker's runners) has exited.
+        try:
+            async with _surface_lifespan(app):
+                yield
+        finally:
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _surface_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
@@ -719,6 +729,15 @@ def create_combined_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        try:
+            async with _combined_lifespan(app):
+                yield
+        finally:
+            # The process's shared-state backend closes once, last.
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _combined_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)

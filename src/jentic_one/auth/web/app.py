@@ -39,8 +39,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError
-from jentic_one.shared.state import build_state_backend
-from jentic_one.shared.state.factory import BackendKind
+from jentic_one.shared.state import MEMORY_BACKEND
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
@@ -84,25 +83,20 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the auth token verifier and shared state on the app."""
+    """Install the auth token verifier and the process's shared state on the app."""
     app.state.verify_token = make_superset_verifier(ctx)
-    backend_cfg = ctx.config.broker.resilience.backend
-    backend = build_state_backend(backend_cfg)
-    app.state.auth_state_backend = backend
-    if backend_cfg.backend is BackendKind.MEMORY:
+    # The process's one backend (closed by ctx.shutdown()), shared with every
+    # other surface this process serves.
+    app.state.auth_state_backend = ctx.state_backend
+    if ctx.config.state.backend == MEMORY_BACKEND:
         # Rate limiters and consent-handle state live per-process on this
-        # backend, so a multi-worker deployment gets independent buckets and
-        # loses the anti-replay guarantee across workers. Warn loudly so an
-        # operator running >1 worker knows to configure Redis.
+        # backend, so a second worker or replica of this surface gets
+        # independent buckets and loses the anti-replay guarantee across them.
         logger.warning(
             "auth_state_backend_memory_selected — rate limits and consent "
-            "handles are per-process; configure redis for multi-worker deployments",
+            "handles are per-process; run one process per surface, or select a "
+            "shared backend registered with register_state_backend",
         )
-
-    async def _close_auth_backend() -> None:
-        await backend.aclose()
-
-    app.router.add_event_handler("shutdown", _close_auth_backend)
 
 
 def make_superset_verifier(ctx: Context) -> Any:
