@@ -116,6 +116,7 @@ class ApiRepository:
         description: str | None = None,
         created_by: str,
         catalog_api_id: str | None = None,
+        catalog_entry_id: str | None = None,
     ) -> Api:
         """Create the Api for ``(vendor, name, version)`` or update the existing one.
 
@@ -134,6 +135,7 @@ class ApiRepository:
         spec onto it as a new revision would silently corrupt provenance. A NULL
         stored id (a manual import of the same identity) is backfilled, and a
         manual re-import (``catalog_api_id=None``) never clears a recorded one.
+        ``catalog_entry_id`` follows the same rule: set when given, never cleared.
         """
         result = await session.execute(
             select(Api)
@@ -154,6 +156,8 @@ class ApiRepository:
                 api.description = description
             if catalog_api_id is not None:
                 api.catalog_api_id = catalog_api_id
+            if catalog_entry_id is not None:
+                api.catalog_entry_id = catalog_entry_id
         else:
             api = Api(
                 vendor=vendor,
@@ -163,10 +167,74 @@ class ApiRepository:
                 description=description,
                 created_by=created_by,
                 catalog_api_id=catalog_api_id,
+                catalog_entry_id=catalog_entry_id,
             )
             session.add(api)
         await session.flush()
         return api
+
+    @staticmethod
+    async def unmapped_catalog_ids(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
+        """``(id, catalog_api_id)`` of rows with a catalog id but no ``catalog_entry_id``."""
+        result = await session.execute(
+            select(Api.id, Api.catalog_api_id).where(
+                Api.catalog_entry_id.is_(None), Api.catalog_api_id.is_not(None)
+            )
+        )
+        return [(row[0], str(row[1])) for row in result.all()]
+
+    @staticmethod
+    async def unmapped_source_urls(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
+        """``(api id, revision source_url)`` of rows with neither catalog id set.
+
+        One pair per non-archived revision carrying a ``source_url``; an API with
+        several such revisions yields several pairs.
+        """
+        result = await session.execute(
+            select(Api.id, ApiRevision.source_url)
+            .join(ApiRevision, ApiRevision.api_id == Api.id)
+            .where(
+                Api.catalog_entry_id.is_(None),
+                Api.catalog_api_id.is_(None),
+                ApiRevision.source_url.is_not(None),
+                ApiRevision.state != "archived",
+            )
+            .order_by(Api.id, ApiRevision.created_at.desc())
+        )
+        return [(row[0], str(row[1])) for row in result.all()]
+
+    @staticmethod
+    async def count_unmapped(session: AsyncSession) -> int:
+        """Rows that still have no ``catalog_entry_id``."""
+        result = await session.execute(
+            select(func.count()).select_from(Api).where(Api.catalog_entry_id.is_(None))
+        )
+        return int(result.scalar_one())
+
+    @staticmethod
+    async def set_catalog_entry_id_if_unset(
+        session: AsyncSession, api_id: uuid.UUID, catalog_entry_id: str
+    ) -> bool:
+        """Set ``catalog_entry_id`` on one row only while it is still NULL."""
+        result = await session.execute(
+            update(Api)
+            .where(Api.id == api_id, Api.catalog_entry_id.is_(None))
+            .values(catalog_entry_id=catalog_entry_id)
+            .execution_options(synchronize_session=False)
+        )
+        return bool(cast(CursorResult[Any], result).rowcount)
+
+    @staticmethod
+    async def imported_from_source(
+        session: AsyncSession, source_slug: str
+    ) -> list[tuple[str, str, str, str | None, str]]:
+        """``(vendor, name, version, catalog_api_id, catalog_entry_id)`` of APIs from a source."""
+        result = await session.execute(
+            select(Api.vendor, Api.name, Api.version, Api.catalog_api_id, Api.catalog_entry_id)
+            .where(Api.catalog_entry_id.like(f"{source_slug}/%"))
+            .order_by(Api.vendor, Api.name, Api.version)
+        )
+        return [(r[0], r[1], r[2], r[3], str(r[4])) for r in result.all()]
 
     @staticmethod
     async def set_current_revision(
