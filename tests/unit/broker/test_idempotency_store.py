@@ -8,12 +8,15 @@ Exercises the full claim/replay state machine over the in-process memory backend
 - a retry while the original is still pending is ``IN_PROGRESS`` with a ``Retry-After``,
 - callers are isolated (one caller's key never replays another's),
 - a short pending TTL frees a crashed claim before the long replay window,
-- sensitive response headers are scrubbed and oversized bodies are dropped.
+- sensitive response headers are scrubbed and oversized bodies are dropped,
+- the memory backend's byte budget tracks the real memory it allocates.
 """
 
 from __future__ import annotations
 
+import gc
 import json
+import tracemalloc
 
 import pytest
 import structlog
@@ -231,12 +234,12 @@ async def test_a_retry_after_the_claim_ttl_does_not_rerun_when_the_record_does_n
     backend = MemoryStateBackend(
         clock=clock, namespace_budgets={"idem": NamespaceBudget(max_entries=10, max_bytes=budget)}
     )
-    store = _store(backend, pending_ttl_s=35.0)
+    store = _store(backend, pending_ttl_s=35.0, max_response_bytes=100_000)
     assert (await store.begin("agent-1", "k", "fp")).state is IdempotencyState.FRESH
 
     with structlog.testing.capture_logs() as logs:
         await store.complete(
-            "agent-1", "k", "fp", status_code=201, headers={"h": "v" * 200}, body=b"x"
+            "agent-1", "k", "fp", status_code=201, headers={"h": "v" * 200}, body=b"x" * 50_000
         )
 
     assert "idempotency_record_stored_as_tombstone" in {entry["event"] for entry in logs}
@@ -312,38 +315,99 @@ async def test_long_headers_are_capped_so_records_stay_bounded() -> None:
     assert replay.stored.body == b"ok"
 
 
+_TYPICAL_HEADERS = {
+    "content-type": "application/json",
+    "content-length": "1024",
+    "date": "Sat, 17 Oct 2026 00:00:00 GMT",
+    "server": "nginx",
+    "x-request-id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "jentic-execution-id": "exec_" + "e" * 27,
+    "jentic-upstream-status": "200",
+}
+_FILL_BUDGET_BYTES = 12 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("filled", "body_len"), [("idem", 0), ("idem-body", 1024)])
+async def test_the_byte_budget_tracks_real_memory(filled: str, body_len: int) -> None:
+    """Filled to its budget, a namespace holds about the memory the budget says.
+
+    Runs typical requests (20 callers, seven response headers, a claim then
+    a record each) until ``filled`` refuses, then compares the bytes
+    ``tracemalloc`` traces for the whole backend with its budgeted bytes. An
+    understated ``ENTRY_OVERHEAD_BYTES`` would let a memory limit sized from
+    the budgets be OOM-killed before the store ever refuses; an overstated
+    one refuses requests the memory could hold.
+    """
+    clock = _Clock()
+    unbounded = NamespaceBudget(max_entries=10**8, max_bytes=10**12, max_owner_share=0.1)
+    full = NamespaceBudget(max_entries=10**8, max_bytes=_FILL_BUDGET_BYTES, max_owner_share=0.1)
+    budgets = {"idem": unbounded, "idem-body": unbounded, filled: full}
+    gc.collect()
+    tracemalloc.start()
+    try:
+        base = tracemalloc.get_traced_memory()[0]
+        backend = MemoryStateBackend(clock=clock, namespace_budgets=budgets, max_total_bytes=10**12)
+        store = _store(backend, done_ttl_s=3_600.0, max_response_bytes=1_000_000)
+        usage = backend._usage
+        for i in range(10**6):
+            caller, key, fp = f"agnt_{i % 20:027d}", f"{i:036d}", f"{i:064x}"
+            try:
+                await store.begin(caller, key, fp)
+            except IdempotencyUnavailableError:
+                break
+            body_bytes = usage["idem-body"].bytes if "idem-body" in usage else 0
+            await store.complete(
+                caller,
+                key,
+                fp,
+                status_code=200,
+                headers=dict(_TYPICAL_HEADERS),
+                body=bytes(bytearray(body_len)),
+            )
+            if body_len and usage["idem-body"].bytes == body_bytes:
+                break
+            clock.advance(0.001)
+        gc.collect()
+        real = tracemalloc.get_traced_memory()[0] - base
+    finally:
+        tracemalloc.stop()
+
+    assert usage[filled].bytes >= 0.99 * _FILL_BUDGET_BYTES
+    assert 0.85 <= real / backend._total_bytes <= 1.15
+
+
 @pytest.mark.asyncio
 async def test_default_budgets_hold_the_documented_sustained_rate() -> None:
-    """The built-in idem budgets hold about 80 req/s for the 1 h memory TTL.
+    """The built-in budgets hold about 30 req/s (3 per caller) for the 1 h memory TTL.
 
-    Measures a typical record (seven response headers, 1 KiB body) on the
-    real store and checks the default budgets hold the rate the docs state.
+    Uses the budgeted size of a typical record and 1 KiB body, which
+    ``test_the_byte_budget_tracks_real_memory`` keeps within 15% of real
+    memory, and checks the built-in budgets fit the backend-wide cap.
     """
-    headers = {
-        "content-type": "application/json",
-        "content-length": "1024",
-        "date": "Sat, 17 Oct 2026 00:00:00 GMT",
-        "server": "nginx",
-        "x-request-id": "0f8fad5b-d9cb-469f-a165-70867728950e",
-        "jentic-execution-id": "exec_" + "e" * 27,
-        "jentic-upstream-status": "200",
-    }
     backend = MemoryStateBackend(clock=_Clock())
     store = _store(backend, max_response_bytes=256 * 1024)
     caller, key = "agnt_" + "a" * 27, "0f8fad5b-d9cb-469f-a165-70867728950e"
     fp = "f" * 64
     await store.begin(caller, key, fp)
-    await store.complete(caller, key, fp, status_code=200, headers=headers, body=b"x" * 1024)
+    await store.complete(
+        caller, key, fp, status_code=200, headers=_TYPICAL_HEADERS, body=b"x" * 1024
+    )
     record_bytes = backend._usage["idem"].bytes
     body_bytes = backend._usage["idem-body"].bytes
 
-    budgets = MemoryBackendConfig().budgets()
+    memory = MemoryBackendConfig()
+    budgets = memory.budgets()
     ttl_s = IdempotencyConfig().replay_ttl_s(BackendKind.MEMORY)
     assert ttl_s == 3_600
     idem, body = budgets["idem"], budgets["idem-body"]
     records_per_s = min(idem.max_entries, idem.max_bytes // record_bytes) / ttl_s
     bodies_per_s = min(body.max_entries, body.max_bytes // body_bytes) / ttl_s
-    assert records_per_s >= 75
-    assert bodies_per_s >= 20
+    assert 28 <= records_per_s <= 32
+    assert 4.5 <= bodies_per_s <= 5.5
     assert idem.max_owner_share is not None
-    assert records_per_s * idem.max_owner_share >= 7.5
+    assert records_per_s * idem.max_owner_share >= 2.8
+    # idem, idem-body and one default-sized namespace (the breaker's) fit the cap.
+    assert idem.max_bytes + body.max_bytes + memory.max_bytes_per_namespace <= (
+        memory.max_total_bytes
+    )
