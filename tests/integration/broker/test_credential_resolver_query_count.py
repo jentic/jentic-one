@@ -39,6 +39,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import StoredCredentialType
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -483,3 +484,32 @@ async def test_list_by_vendor_is_header_only_and_unloaded_children_raise(
             _ = winner.token_value_credential
         with pytest.raises(InvalidRequestError):
             _ = by_id["cred_1698_oauth"].oauth_token
+
+
+@pytest.mark.parametrize("outcome", ["resolved", "not-provisioned"])
+async def test_resolve_reads_without_begin_or_rollback(
+    integration_context: Context, clean_vendor: None, outcome: str
+) -> None:
+    """Resolution runs in autocommit: no BEGIN/ROLLBACK round trips (#1823).
+
+    The resolved case runs the header and material queries; the 404 case
+    raises out of the session, which must not issue a ROLLBACK either.
+    """
+    await _seed_mixed_vendor(integration_context)
+    await _warm_pool(integration_context)
+    allowed = {"cred_1698_win"} if outcome == "resolved" else set()
+
+    with trace_round_trips(integration_context.control_db) as trace:
+        if outcome == "resolved":
+            resolved = await CredentialResolver(integration_context).resolve(
+                api=_API, caller="agent_42", allowed_credential_ids=allowed
+            )
+            assert resolved.credential_id == "cred_1698_win"
+        else:
+            with pytest.raises(CredentialNotProvisionedError):
+                await CredentialResolver(integration_context).resolve(
+                    api=_API, caller="agent_42", allowed_credential_ids=allowed
+                )
+
+    assert len(trace.statements) == (2 if outcome == "resolved" else 1), trace.statements
+    trace.assert_no_begin_or_rollback()
