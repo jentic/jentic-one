@@ -227,8 +227,14 @@ async def test_lookup_after_a_generation_bump_never_joins_an_older_flight() -> N
     before = asyncio.create_task(cache.resolve(method="GET", url=URL, revision_id=None, load=stale))
     await asyncio.sleep(0)  # the pre-commit lookup is in flight
     generation.value += 1
-    after = await cache.resolve(method="GET", url=URL, revision_id=None, load=fresh)
-    release.set()
+    try:
+        # Joining the pre-commit flight would wait on ``release``; the timeout
+        # turns that into a failure instead of a hang.
+        after = await asyncio.wait_for(
+            cache.resolve(method="GET", url=URL, revision_id=None, load=fresh), timeout=1
+        )
+    finally:
+        release.set()
     stale_result = await before
 
     assert after is not None and after.operation.id == "op_fresh"
