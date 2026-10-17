@@ -3329,10 +3329,15 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 //
 // The worker claims a job, sets a **visibility deadline**
 // (“visibility_timeout_s“
-// from claim), and processes it. A job left “RUNNING“ past that deadline by a
-// crashed worker/pod is reclaimed on a later poll. A handler failure requeues the
-// job with capped exponential backoff up to “max_attempts“ claims; beyond that
-// it is dead-lettered (poison-message handling) rather than looped forever.
+// from claim, on the database clock), and processes it. On PostgreSQL a
+// heartbeat renews the deadline every quarter of the timeout while the handler
+// runs. A job
+// left “RUNNING“ past that deadline by a crashed worker/pod is reclaimed on a
+// later poll; every completion, failure and requeue is fenced on the claim, so
+// a worker whose lease lapsed cannot overwrite the newer claim's outcome. A
+// handler failure requeues the job with capped exponential backoff up to
+// “max_attempts“ claims; beyond that it is dead-lettered (poison-message
+// handling) rather than looped forever.
 type WorkerConfig struct {
 	// DrainTimeoutS corresponds to the JSON schema field "drain_timeout_s".
 	DrainTimeoutS float64 `json:"drain_timeout_s,omitempty,omitzero" yaml:"drain_timeout_s,omitempty" mapstructure:"drain_timeout_s,omitempty"`

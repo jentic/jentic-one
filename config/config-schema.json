@@ -2129,7 +2129,7 @@
       "type": "object"
     },
     "WorkerConfig": {
-      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "description": "Background job-worker durability knobs.\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim, on the database clock), and processes it. On PostgreSQL a\nheartbeat renews the deadline every quarter of the timeout while the handler\nruns. A job\nleft ``RUNNING`` past that deadline by a crashed worker/pod is reclaimed on a\nlater poll; every completion, failure and requeue is fenced on the claim, so\na worker whose lease lapsed cannot overwrite the newer claim's outcome. A\nhandler failure requeues the job with capped exponential backoff up to\n``max_attempts`` claims; beyond that it is dead-lettered (poison-message\nhandling) rather than looped forever.",
       "properties": {
         "drain_timeout_s": {
           "default": 25.0,

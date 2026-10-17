@@ -49,7 +49,9 @@ class Job(AuditableMixin, AdminBase):
     visible_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     # How many times this job has been claimed for processing. Incremented on
     # each claim; once it exceeds the retry budget a failing job is dead-lettered
-    # instead of requeued.
+    # instead of requeued. It is also the claim's fencing token: the worker's
+    # writes for a claim match only while ``attempts`` still equals the value
+    # that claim stamped, so it must only ever increase.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     payload: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
         json_variant(), nullable=True, server_default=text("NULL")
