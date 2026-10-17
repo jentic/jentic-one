@@ -8,6 +8,7 @@ import httpx
 import pytest
 from httpx import AsyncClient
 
+from tests.harness.smoke_upstream import mock_control
 from tests.harness.smoke_upstream.mock_control import (
     HEADER_DELAY,
     HEADER_DISCONNECT,
@@ -66,6 +67,27 @@ async def test_mock_status_sequence_requires_test_id(smoke_client: AsyncClient) 
         "/behavior/echo", headers={HEADER_STATUS_SEQUENCE: "503,200"}
     )
     assert response.status_code == 400
+
+
+async def test_mock_status_sequence_cursors_are_bounded(
+    smoke_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Load runs mint a fresh test id per logical request; the cursor map is an
+    # LRU so it cannot grow without bound. The oldest id is evicted (its cursor
+    # restarts) while a recently used one keeps advancing.
+    monkeypatch.setattr(mock_control, "_MAX_SEQUENCE_CURSORS", 2)
+    seq = {HEADER_STATUS_SEQUENCE: "503,200"}
+
+    async def call(test_id: str) -> int:
+        resp = await smoke_client.post("/behavior/echo", headers={**seq, HEADER_TEST_ID: test_id})
+        return resp.status_code
+
+    assert await call("lru-a") == 503
+    assert await call("lru-b") == 503
+    assert await call("lru-c") == 503  # evicts lru-a
+    assert len(mock_control._sequence_cursors) == 2
+    assert await call("lru-c") == 200  # recent id keeps its cursor
+    assert await call("lru-a") == 503  # evicted id restarts its sequence
 
 
 async def test_mock_disconnect_raises_transport_error(smoke_client: AsyncClient) -> None:

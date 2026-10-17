@@ -1,0 +1,285 @@
+# Broker perf / load-test stack. Self-contained: Postgres, migrations, the app
+# (control/registry/admin/auth), the broker (sole surface), the smoke-upstream
+# harness, and on-demand load generators + observability.
+#
+# Modelled on deploy/docker/quickstart/docker-compose.yaml, but Postgres-backed,
+# with a locally built image (`make perf-build`) and every load generator on
+# the same pinned network as the broker so numbers exclude Docker Desktop's
+# host port-forwarding.
+#
+#   make perf-build                  # build jentic-one/app:perf from this checkout
+#   make perf-up                     # db + migrate + app + broker + upstream
+#   make perf-provision              # vendors, credentials, callers -> results/.perf-env.json
+#   make perf-overhead               # oha A/B: direct vs via broker
+#   make perf-ui                     # Locust web UI on http://127.0.0.1:8089
+#   make perf-down                   # stop + wipe volumes
+#
+# Profiles: `load` (locust master/worker), `tools` (oha), `obs` (prometheus,
+# grafana, postgres-exporter). Variant knobs are environment variables read
+# below (PERF_*); tests/perf/README.md lists them.
+#
+# Third-party images are pinned by tag + digest so run-over-run numbers compare
+# like with like; result JSON records the resolved image of every service.
+
+name: jentic-perf
+
+x-image: &image ${PERF_IMAGE:-jentic-one/app:perf}
+
+x-jentic: &jentic
+  image: *image
+  volumes:
+    - ./config.perf.yaml:/etc/jentic/config.yaml:ro
+  networks: [perf]
+
+networks:
+  perf:
+    ipam:
+      config:
+        # Pinned so config.perf.yaml can allowlist exactly this range for the
+        # broker/ingest egress guard (the harness has an RFC 1918 address).
+        - subnet: 172.28.0.0/24
+
+volumes:
+  pg-data:
+  prom-data:
+
+services:
+  postgres:
+    image: postgres:16.13@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - max_connections=300
+    environment:
+      POSTGRES_DB: jentic
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks: [perf]
+    cpus: ${PERF_PG_CPUS:-2}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jentic"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *jentic
+    environment:
+      JENTIC_CONFIG_FILE: /etc/jentic/config.yaml
+    command: ["python", "-m", "jentic_one.migrations.run"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  app:
+    <<: *jentic
+    environment:
+      JENTIC_CONFIG_FILE: /etc/jentic/config.yaml
+      JENTIC__APPS: registry,admin,control,auth
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:${PERF_APP_PORT:-18000}:8000"]
+    cpus: ${PERF_APP_CPUS:-2}
+    healthcheck: &health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  broker:
+    <<: *jentic
+    # Variant knobs: each PERF_* maps onto a JENTIC__* override. Defaults equal
+    # config.perf.yaml / product defaults, so an unset PERF_* is a no-op.
+    environment:
+      JENTIC_CONFIG_FILE: /etc/jentic/config.yaml
+      JENTIC__APPS: broker
+      JENTIC__BROKER__RESILIENCE__UPSTREAM__STREAM_PASSTHROUGH_ENABLED: ${PERF_STREAMING:-true}
+      JENTIC__BROKER__RESILIENCE__UPSTREAM__MAX_PER_HOST: ${PERF_MAX_PER_HOST:-50}
+      JENTIC__BROKER__RESILIENCE__RETRY__ENABLED: ${PERF_RETRY:-false}
+      JENTIC__BROKER__RESILIENCE__CIRCUIT_BREAKER__ENABLED: ${PERF_BREAKER:-true}
+      JENTIC__BROKER__RESILIENCE__RATE_LIMIT__ENABLED: ${PERF_RATE_LIMIT:-false}
+      JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT: ${PERF_MAX_IN_FLIGHT:-200}
+      JENTIC__BROKER__RESOLVE_CACHE_TTL_SECONDS: ${PERF_RESOLVE_TTL:-3.0}
+      JENTIC__BROKER__TOOLKIT_CACHE_TTL_S: ${PERF_TOOLKIT_TTL:-3.0}
+      JENTIC__BROKER__RULE_CACHE_TTL_S: ${PERF_RULE_TTL:-3.0}
+      JENTIC__DATABASES__ADMIN__POOL_MAX: ${PERF_ADMIN_POOL:-10}
+      JENTIC__DATABASES__CONTROL__POOL_MAX: ${PERF_CONTROL_POOL:-10}
+      JENTIC__DATABASES__REGISTRY__POOL_MAX: ${PERF_REGISTRY_POOL:-10}
+      JENTIC__OBSERVABILITY__TRACING__EXPORTER: ${PERF_TRACING:-none}
+      PERF_WORKERS: ${PERF_WORKERS:-1}
+    # One worker runs the normal entrypoint; N>1 needs the uvicorn factory path
+    # (python -m jentic_one passes an app instance, which uvicorn can't fork).
+    command:
+      - sh
+      - -c
+      - >-
+        if [ "$${PERF_WORKERS}" -gt 1 ]; then
+        exec uvicorn jentic_one.__main__:create_app --factory --host 0.0.0.0
+        --port 8000 --workers "$${PERF_WORKERS}" --log-level warning;
+        else exec python -m jentic_one; fi
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:${PERF_BROKER_PORT:-18100}:8000"]
+    cpus: ${PERF_BROKER_CPUS:-2}
+    healthcheck: *health
+
+  smoke-upstream:
+    image: *image
+    # The app image ships only the wheel (src/), not tests/ — mount the harness.
+    volumes:
+      - ../../tests:/work/tests:ro
+    working_dir: /work
+    environment:
+      PYTHONPATH: /work
+      PYTHONDONTWRITEBYTECODE: "1"
+      PORT: "8084"
+    command: ["python", "-m", "tests.harness.smoke_upstream"]
+    ports: ["127.0.0.1:${PERF_UPSTREAM_PORT:-18084}:8084"]
+    cpus: ${PERF_UPSTREAM_CPUS:-2}
+    networks:
+      perf:
+        # One alias per perf vendor: each vendor's spec advertises its own
+        # host, so URL lookup never sees two APIs on one (host, method, path).
+        # All under .perf.internal — the suffix config.perf.yaml allowlists.
+        aliases:
+          - smoke-noauth.perf.internal
+          - smoke-bearer.perf.internal
+          - smoke-apikey-hdr.perf.internal
+          - smoke-apikey-qry.perf.internal
+          - smoke-apikey-cookie.perf.internal
+          - smoke-sigv4.perf.internal
+          - smoke-upstream-1.perf.internal
+          - smoke-upstream-2.perf.internal
+          - smoke-upstream-3.perf.internal
+          - smoke-upstream-4.perf.internal
+          - smoke-upstream-5.perf.internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/specs/live.json', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # ── load generators (profiles: tools, load) ────────────────────────────────
+  oha:
+    image: ghcr.io/hatoo/oha:1.16.0@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f
+    profiles: [tools]
+    # Large request bodies (100 KB / 1 MB) are passed by file, not argv.
+    volumes:
+      - ./results:/results:ro
+    networks: [perf]
+    cpus: ${PERF_LOADGEN_CPUS:-2}
+
+  locust-master:
+    image: locustio/locust:2.46.7@sha256:8492fcaa6a07314551590f579219204e459d9fdc9dde060843bd2896e7a7259f
+    profiles: [load]
+    volumes:
+      - ../../tests:/work/tests:ro
+      # Writable overlay for --csv / --html output and .perf-env.json.
+      - ./results:/work/tests/perf/results
+    working_dir: /work
+    environment:
+      PYTHONPATH: /work
+      PYTHONDONTWRITEBYTECODE: "1"
+      PERF_ENV_FILE: /work/tests/perf/results/.perf-env.json
+      PERF_SHAPE: ${PERF_SHAPE:-}
+      PERF_STEP_USERS: ${PERF_STEP_USERS:-10}
+      PERF_STEP_S: ${PERF_STEP_S:-30}
+      PERF_MAX_USERS: ${PERF_MAX_USERS:-200}
+      PERF_SOAK_S: ${PERF_SOAK_S:-1800}
+      PERF_USER_RPS: ${PERF_USER_RPS:-1}
+      PERF_CALLER: ${PERF_CALLER:-jak}
+      PERF_VENDOR: ${PERF_VENDOR:-perf-noauth}
+      PERF_UPSTREAM_DELAY: ${PERF_UPSTREAM_DELAY:-}
+      PERF_STATUS_SEQUENCE: ${PERF_STATUS_SEQUENCE:-}
+      # Must match the broker's mode; DisconnectUser asserts on it.
+      PERF_STREAMING: ${PERF_STREAMING:-true}
+      PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
+      PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
+      PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
+      PERF_RUN_S: ${PERF_RUN_S:-600}
+      PERF_LOCUST_WORKERS: ${PERF_WORKERS_LOCUST:-1}
+    command: >-
+      -f /work/tests/perf/locustfile.py --master --class-picker
+      --host http://broker:8000 ${PERF_LOCUST_ARGS:-}
+    ports: ["127.0.0.1:${PERF_LOCUST_PORT:-8089}:8089"]
+    networks: [perf]
+
+  locust-worker:
+    image: locustio/locust:2.46.7@sha256:8492fcaa6a07314551590f579219204e459d9fdc9dde060843bd2896e7a7259f
+    profiles: [load]
+    volumes:
+      - ../../tests:/work/tests:ro
+      # Writable overlay for --csv / --html output and .perf-env.json.
+      - ./results:/work/tests/perf/results
+    working_dir: /work
+    environment:
+      PYTHONPATH: /work
+      PYTHONDONTWRITEBYTECODE: "1"
+      PERF_ENV_FILE: /work/tests/perf/results/.perf-env.json
+      PERF_SHAPE: ${PERF_SHAPE:-}
+      PERF_STEP_USERS: ${PERF_STEP_USERS:-10}
+      PERF_STEP_S: ${PERF_STEP_S:-30}
+      PERF_MAX_USERS: ${PERF_MAX_USERS:-200}
+      PERF_SOAK_S: ${PERF_SOAK_S:-1800}
+      PERF_USER_RPS: ${PERF_USER_RPS:-1}
+      PERF_CALLER: ${PERF_CALLER:-jak}
+      PERF_VENDOR: ${PERF_VENDOR:-perf-noauth}
+      PERF_UPSTREAM_DELAY: ${PERF_UPSTREAM_DELAY:-}
+      PERF_STATUS_SEQUENCE: ${PERF_STATUS_SEQUENCE:-}
+      # Must match the broker's mode; DisconnectUser asserts on it.
+      PERF_STREAMING: ${PERF_STREAMING:-true}
+      PERF_IMPORT_SPEC: ${PERF_IMPORT_SPEC:-}
+      PERF_IMPORT_RPS: ${PERF_IMPORT_RPS:-0.2}
+      PERF_CONTROL_RPS: ${PERF_CONTROL_RPS:-1}
+      PERF_RUN_S: ${PERF_RUN_S:-600}
+      PERF_LOCUST_WORKERS: ${PERF_WORKERS_LOCUST:-1}
+    command: -f /work/tests/perf/locustfile.py --worker --master-host locust-master
+    depends_on: [locust-master]
+    networks: [perf]
+    cpus: ${PERF_LOADGEN_CPUS:-2}
+
+  # ── observability (profile: obs) ────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    profiles: [obs]
+    volumes:
+      - ./obs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports: ["127.0.0.1:${PERF_PROM_PORT:-19090}:9090"]
+    networks: [perf]
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    profiles: [obs]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/jentic?sslmode=disable"  # pragma: allowlist secret
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [perf]
+
+  grafana:
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    profiles: [obs]
+    environment:
+      # Anonymous users can view the provisioned dashboards but not change
+      # anything. Edit the dashboard in obs/grafana/dashboards/; for Explore or
+      # admin, log in as Grafana's built-in admin (password from
+      # PERF_GRAFANA_ADMIN_PASSWORD, default `admin`; 127.0.0.1 only). Grafana
+      # reads it when it creates its database, i.e. on a fresh container.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${PERF_GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./obs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./obs/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:${PERF_GRAFANA_PORT:-13000}:3000"]
+    depends_on: [prometheus]
+    networks: [perf]
