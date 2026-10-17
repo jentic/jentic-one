@@ -29,6 +29,7 @@ from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminS
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     OAuthGrantAccessDeniedError,
+    OAuthGrantNotFoundError,
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.auth.identity import Identity
@@ -71,10 +72,9 @@ async def test_list_grants_for_agent_owner_or_admin_matrix(
     integration_context: Context, clean_grants: None
 ) -> None:
     """Owner OK; org:admin OK; a stranger who cannot see the agent (even one
-    holding an oauth-clients permission) and an unknown agent both 404-mapped;
-    a caller who can see the agent without owning it (the agent itself, a
-    delegated sibling agent) 403-mapped — mirroring the ``:revoke`` semantics
-    on the read side."""
+    holding an oauth-clients permission), a caller who can see the agent
+    without owning it (the agent itself, a delegated sibling agent) and an
+    unknown agent all get the same not-found."""
     owner_id = await _seed_user(integration_context, "usr_l_owner")
     stranger_id = await _seed_user(integration_context, "usr_l_stranger")
     admin_id = await _seed_user(integration_context, "usr_l_admin")
@@ -113,7 +113,7 @@ async def test_list_grants_for_agent_owner_or_admin_matrix(
         ),
     ]
     for identity in visible_non_owners:
-        with pytest.raises(OAuthGrantAccessDeniedError):
+        with pytest.raises(ActorNotFoundError):
             await grant_svc.list_grants_for_agent(agent_id, identity=identity)
 
     page = await grant_svc.list_grants_for_agent(
@@ -396,11 +396,12 @@ async def test_can_revoke_matrix_consenter_transfer_and_admin_arms(
         await grant_svc.revoke_grant(grant_id, identity=new_owner)
 
     # Read-only-admin arm: `oauth-clients:read` alone neither lifts list
-    # scoping (the grant is outside its rows) nor grants the revoke.
+    # scoping (the grant is outside its rows) nor grants the revoke, which
+    # answers like an unknown grant.
     ro_admin = Identity(sub=ro_admin_id, email="", permissions=["oauth-clients:read"])
     cross = await OAuthGrantAdminService(integration_context).list_grants(identity=ro_admin)
     assert cross.data == []
-    with pytest.raises(OAuthGrantAccessDeniedError):
+    with pytest.raises(OAuthGrantNotFoundError):
         await grant_svc.revoke_grant(grant_id, identity=ro_admin)
 
     # org:admin sees and CAN revoke — capability True on both surfaces.

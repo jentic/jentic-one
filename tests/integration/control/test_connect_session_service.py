@@ -1153,13 +1153,14 @@ async def test_confirm_rejects_agent_not_owned_by_caller(
     clean_session_tables: None,
 ) -> None:
     # Owner-or-admin: a caller with ``credentials:write`` must not bind a
-    # credential to an agent someone else owns.
+    # credential to an agent someone else owns. The refusal is the same as
+    # for an agent that does not exist.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
         vendor_key="testauth", agent_id=None, identity=_OTHER_USER_IDENTITY
     )
-    with pytest.raises(ConfirmationForbiddenError):
+    with pytest.raises(AgentNotFoundError):
         await svc.confirm(
             created.session_id,
             poll_token=created.poll_token,
