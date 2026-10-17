@@ -462,6 +462,10 @@ class StatusResult:
 # Overall hard TTL for a vendor OAuth session — clamps stale rows even if
 # flow-level device_code_expires_at hasn't been reached.
 _SESSION_TTL_SECONDS = 30 * 60
+# Slack past the signed callback state's TTL before the sweep expires an
+# auth-code session still waiting on its callback (clock skew, a callback
+# already in flight).
+_CALLBACK_STATE_GRACE = timedelta(seconds=60)
 
 # Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
 # human completes by entering a credential, or one waiting for an OAuth app)
@@ -3519,7 +3523,11 @@ class ConnectSessionService:
         ``_mark_terminal`` (CAS-guarded), so a session that completes
         between the read and the sweep is left alone. Vendor OAuth flows
         expire after ``_SESSION_TTL_SECONDS``; every other flow after
-        ``control.connect.manual_flows_ttl_hours``.
+        ``control.connect.manual_flows_ttl_hours``. An auth-code session
+        waiting on its callback (``polling``) also expires once its signed
+        callback state has (``credentials.connect.state_ttl_seconds`` after
+        confirm, plus a minute's grace): no callback can complete it after
+        that, so the agent waiting on it learns at once.
 
         The same tick drops outcomes older than the retention window.
         Returns the number of sessions actually expired.
@@ -3552,9 +3560,25 @@ class ConnectSessionService:
                 flows=_OAUTH_FLOWS,
                 exclude_target_kind=TARGET_KIND_VENDOR,
             )
+            lapsed_ids = await ConnectSessionRepository.list_lapsed_ids(
+                read_session,
+                state="polling",
+                flow=AuthCodeFlowHandler.kind,
+                updated_before=now
+                - timedelta(seconds=self._ctx.config.credentials.connect.state_ttl_seconds)
+                - _CALLBACK_STATE_GRACE,
+                limit=limit,
+            )
         expired = 0
         for session_id in stale_ids:
             if await self._mark_terminal(session_id, "expired", "session TTL exceeded"):
+                expired += 1
+        for session_id in lapsed_ids:
+            if session_id in stale_ids:
+                continue
+            if await self._mark_terminal(
+                session_id, "expired", "authorization not completed in time"
+            ):
                 expired += 1
         async with self._ctx.control_db.transaction() as session:
             await ConnectSessionOutcomeRepository.delete_ended_before(
