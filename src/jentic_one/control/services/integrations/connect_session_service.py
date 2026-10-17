@@ -79,6 +79,7 @@ from jentic_one.control.services.integrations.dedupe import oauth_dedupe_key
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    BindingSuspendedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     CredentialMissingCreatorError,
@@ -936,6 +937,8 @@ class ConnectSessionService:
             raise NoOpForFlowError(flow.kind) from exc
         handler = handler_cls(self._ctx)
 
+        api_scope = await self._vendor_api_scope(entry.vendor)
+        await self._refuse_suspended_binding(agent_id, api_scope)
         await self._check_rejection_cooldown(
             agent_id, target_kind=TARGET_KIND_VENDOR, vendor=vendor_key
         )
@@ -966,8 +969,6 @@ class ConnectSessionService:
         session_app = self._session_app_for(resolved)
 
         poll_token = secrets.token_urlsafe(32)
-
-        api_scope = await self._vendor_api_scope(entry.vendor)
 
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -1102,6 +1103,11 @@ class ConnectSessionService:
         scheme = select_scheme(view, auth_type)
         require_pinnable_hosts(view)
 
+        # Name and version pinned: the credential covers exactly this API.
+        api_scope = canonical_credential_scope(
+            vendor=view.vendor, name=view.name, version=view.version
+        )
+        await self._refuse_suspended_binding(agent_id, api_scope)
         await self._check_rejection_cooldown(
             agent_id,
             target_kind=TARGET_KIND_API,
@@ -1173,10 +1179,6 @@ class ConnectSessionService:
                 AWAITING_APP,
             )
 
-        # Name and version pinned: the credential covers exactly this API.
-        api_scope = canonical_credential_scope(
-            vendor=view.vendor, name=view.name, version=view.version
-        )
         poll_token = secrets.token_urlsafe(32)
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -1348,6 +1350,54 @@ class ConnectSessionService:
             ended = ended.replace(tzinfo=UTC)
         retry_after = max(1, math.ceil((ended + cooldown - now).total_seconds()))
         raise RecentlyRejectedError(retry_after)
+
+    async def _refuse_suspended_binding(self, agent_id: str | None, scope: CredentialScope) -> None:
+        """Refuse a connect for an agent whose suspended binding covers the requested API.
+
+        A suspended binding is the operator's cut-off for that agent and
+        credential; a new connect for an API the suspended credential covers
+        would hand the agent that access again, so only the operator may lift
+        it (resume or remove the binding). Coverage is the bind-time rule: a
+        NULL credential axis is a wildcard, and an unscoped requested axis
+        matches any credential value. Called only after the caller's right to
+        name the agent is settled, so it says nothing about another owner's
+        agent.
+        """
+        if agent_id is None:
+            return
+        async with self._ctx.admin_db.session() as admin_session:
+            suspended = await EffectsRepository.list_suspended_credential_ids(
+                admin_session, agent_id
+            )
+        if not suspended:
+            return
+        async with self._ctx.control_db.session() as session:
+            covered = await CredentialRepository.any_covering(
+                session,
+                credential_ids=suspended,
+                vendor=scope.vendor,
+                name=scope.name,
+                version=scope.version,
+            )
+        if covered:
+            raise BindingSuspendedError(agent_id)
+
+    async def _refuse_suspended_binding_for_session(
+        self, row: ConnectSession, agent_id: str
+    ) -> None:
+        """:meth:`_refuse_suspended_binding` for the API a session's pending credential targets."""
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        if credential is None:
+            return
+        await self._refuse_suspended_binding(
+            agent_id,
+            canonical_credential_scope(
+                vendor=credential.api_vendor,
+                name=credential.api_name,
+                version=credential.api_version,
+            ),
+        )
 
     async def _check_open_session_caps(
         self, agent_id: str | None, identity: Identity, agent: AgentOwnerRow | None
@@ -2017,6 +2067,9 @@ class ConnectSessionService:
             await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
+            # A late-bound agent was never checked at create, and a binding
+            # may have been suspended since the session opened.
+            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
         api_target = row.target_kind == TARGET_KIND_API
         await self._verify_review(
             row,
@@ -2211,6 +2264,9 @@ class ConnectSessionService:
             await self._require_agent_binding_allowed(
                 effective_agent_id, identity, late_bound=late_bound
             )
+            # A late-bound agent was never checked at create, and a binding
+            # may have been suspended since the session opened.
+            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
         await self._verify_review(
             row,
             effective_agent_id=effective_agent_id,

@@ -10840,7 +10840,10 @@ type ClientInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -10867,7 +10870,10 @@ type ClientInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -11325,7 +11331,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -11347,7 +11356,10 @@ type ClientInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -14625,7 +14637,10 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -14662,7 +14677,10 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -15510,7 +15528,10 @@ func (c *Client) GetInstance(ctx context.Context, reqEditors ...RequestEditorFn)
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -15542,7 +15563,10 @@ func (c *Client) IntegrationsConnectWithBody(ctx context.Context, contentType st
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -27426,7 +27450,10 @@ type ClientWithResponsesInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -27453,7 +27480,10 @@ type ClientWithResponsesInterface interface {
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
-	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
+	// whose binding to a credential covering the session's API is suspended
+	// (including one picked at confirm) is refused with 409
+	// ``connect_session_binding_suspended``.
 	//
 	// A response carrying an ``authorize_url`` also sets a short-lived
 	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -27955,7 +27985,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -27977,7 +28010,10 @@ type ClientWithResponsesInterface interface {
 	// `connect_session_agent_not_found`, the same as an unknown agent. Naming
 	// an owned agent also takes `agents:write`, which confirming for it needs
 	// (403 `connect_session_confirmation_forbidden` otherwise), and an active
-	// agent (409 `connect_session_agent_inactive` otherwise). When
+	// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+	// binding to a credential covering the requested API is suspended gets
+	// 409 `connect_session_binding_suspended`: only the operator can resume
+	// that binding, so a new connect for the same API is refused. When
 	// named, confirm creates the direct agent-credential binding + permission
 	// rules; when omitted, the credential connects unbound and an agent can
 	// be bound later through the credentials API.
@@ -45835,7 +45871,10 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -45868,7 +45907,10 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
-// (“poll_token“ or owner / “org:admin“; 403 otherwise).
+// (“poll_token“ or owner / “org:admin“; 403 otherwise). An agent
+// whose binding to a credential covering the session's API is suspended
+// (including one picked at confirm) is refused with 409
+// “connect_session_binding_suspended“.
 //
 // A response carrying an “authorize_url“ also sets a short-lived
 // “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
@@ -46604,7 +46646,10 @@ func (c *ClientWithResponses) GetInstanceWithResponse(ctx context.Context, reqEd
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.
@@ -46632,7 +46677,10 @@ func (c *ClientWithResponses) IntegrationsConnectWithBodyWithResponse(ctx contex
 // `connect_session_agent_not_found`, the same as an unknown agent. Naming
 // an owned agent also takes `agents:write`, which confirming for it needs
 // (403 `connect_session_confirmation_forbidden` otherwise), and an active
-// agent (409 `connect_session_agent_inactive` otherwise). When
+// agent (409 `connect_session_agent_inactive` otherwise). An agent whose
+// binding to a credential covering the requested API is suspended gets
+// 409 `connect_session_binding_suspended`: only the operator can resume
+// that binding, so a new connect for the same API is refused. When
 // named, confirm creates the direct agent-credential binding + permission
 // rules; when omitted, the credential connects unbound and an agent can
 // be bound later through the credentials API.

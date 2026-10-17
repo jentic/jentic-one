@@ -109,6 +109,23 @@ class EffectsRepository:
         return existing.scalar_one(), True
 
     @staticmethod
+    async def list_suspended_credential_ids(session: AsyncSession, agent_id: str) -> list[str]:
+        """The credentials the agent holds a suspended binding to, via raw SQL (admin DB).
+
+        A suspended binding is the operator's reversible cut-off for that
+        agent and credential; the connect flow refuses a new connect that the
+        suspended credential's API identity covers.
+        """
+        result = await session.execute(
+            text(
+                "SELECT credential_id FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND suspended = true"
+            ),
+            {"agent_id": agent_id},
+        )
+        return [str(row[0]) for row in result.all()]
+
+    @staticmethod
     async def unbind_agent_from_credential(
         session: AsyncSession,
         *,

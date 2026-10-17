@@ -208,12 +208,17 @@ class CredentialDerivation:
       cross-tenant leak into a directive.
     - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
       but none of its bound credentials cover the operation identity.
+    - ``binding_suspended`` — the agent holds a *suspended* binding to a
+      credential covering the API. Computed only for an empty
+      ``credentials``; the recovery is the operator's (resume the binding),
+      never a new connect.
     """
 
     credentials: tuple[BoundCredential, ...]
     agent_bound_any: bool
     api_served: bool
     identity_mismatch: IdentityMismatch | None
+    binding_suspended: bool = False
 
 
 @runtime_checkable
