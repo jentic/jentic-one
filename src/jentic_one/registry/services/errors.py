@@ -298,6 +298,19 @@ class CatalogUnavailableError(RegistryServiceError):
         self.detail = detail
 
 
+class CatalogSearchUnavailableError(RegistryServiceError):
+    """Raised when a catalog search walk's strategy fails after its first page.
+
+    The walk's order belongs to the strategy recorded in its cursor, so it can't
+    be continued by a different ranker; the caller retries the page or restarts
+    the search without a cursor.
+    """
+
+    def __init__(self, strategy: str) -> None:
+        super().__init__(f"Catalog search strategy '{strategy}' is temporarily unavailable")
+        self.strategy = strategy
+
+
 class OverlaySupersedeForbiddenError(RegistryServiceError):
     """Raised when a re-import would supersede a live overlay but the caller can't.
 

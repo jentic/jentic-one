@@ -42,8 +42,23 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_update_notified,
     record_update_snoozed,
 )
+from jentic_one.registry.services.catalog.search import (
+    TOKEN_STRATEGY_NAME,
+    CatalogMatch,
+    CatalogSearchStrategy,
+    RankedEntry,
+    TokenSearchStrategy,
+    UnknownCatalogSearchStrategyError,
+    normalize_ranking,
+    resolve_catalog_search_strategy,
+)
+from jentic_one.registry.services.catalog.search_metrics import (
+    FailureReason,
+    record_strategy_failure,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
@@ -61,7 +76,12 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.models.registry import ORIGIN_CATALOG, ORIGIN_OVERLAY
-from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
+from jentic_one.shared.pagination import (
+    CatalogCursor,
+    InvalidCursorError,
+    encode_catalog_cursor,
+    parse_catalog_cursor,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -73,9 +93,9 @@ logger = structlog.get_logger(__name__)
 #: on the refresh that spawns them.
 _SWEEP_TASKS: set[asyncio.Task[None]] = set()
 
-#: Registry-DB advisory-lock key that single-flights the update-notify sweep across
-#: processes (scanner and request-triggered sweeps on every replica/worker).
-UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sweep")
+#: The built-in ranker, used directly for ``token`` walks and as the fallback.
+#: Stateless, so one instance serves every request.
+_TOKEN_STRATEGY = TokenSearchStrategy()
 
 
 def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
@@ -110,6 +130,9 @@ class CatalogEntryView:
     #: update the local revision hasn't adopted yet (Flow-3). Always False for
     #: unregistered entries (nothing to update).
     update_available: bool = False
+    #: Why the entry matched a search, when the ranking strategy reports it.
+    #: ``None`` for browse and for the default ``token`` strategy.
+    match: CatalogMatch | None = None
 
 
 @dataclass(frozen=True)
@@ -674,21 +697,41 @@ class CatalogService:
             if mb.is_registered(e, registered_urls) and e.spec_url in outdated_urls
         )
 
-        scored = mb.score_entries(all_entries, q)
+        # Filters run before ranking, so a strategy only ever ranks (and the
+        # pager only ever walks) entries this request can return.
+        entries = all_entries
         if registered_only:
-            scored = [(e, s) for e, s in scored if mb.is_registered(e, registered_urls)]
+            entries = [e for e in entries if mb.is_registered(e, registered_urls)]
         elif unregistered_only:
-            scored = [(e, s) for e, s in scored if not mb.is_registered(e, registered_urls)]
+            entries = [e for e in entries if not mb.is_registered(e, registered_urls)]
         if outdated_only:
-            scored = [(e, s) for e, s in scored if e.spec_url in outdated_urls]
+            entries = [e for e in entries if e.spec_url in outdated_urls]
 
-        after_api_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
+        parsed = parse_catalog_cursor(cursor) if cursor else None
+        matches: dict[str, CatalogMatch] = {}
+        walk_strategy: str | None = None
+        scored: list[tuple[mb.ManifestEntry, int | float | None]]
+        if not q or not mb.has_query_tokens(q):
+            # Browse: api_id order, no scores, no strategy.
+            scored = [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
+        else:
+            rows, served_by = await self._rank(q, entries, parsed)
+            scored = [(r.entry, r.score) for r in rows]
+            matches = {r.entry.api_id: r.match for r in rows if r.match is not None}
+            walk_strategy = None if served_by == TOKEN_STRATEGY_NAME else served_by
+
         page = mb.paginate_entries(
-            scored, after_api_id=after_api_id, after_score=after_score, limit=limit
+            scored,
+            after_api_id=parsed.api_id if parsed else None,
+            after_score=parsed.score if parsed else None,
+            limit=limit,
         )
-        views = [self._to_view(e, registered_urls, outdated_urls) for e in page.items]
+        views = [
+            self._to_view(e, registered_urls, outdated_urls, match=matches.get(e.api_id))
+            for e in page.items
+        ]
         next_cursor = (
-            encode_catalog_cursor(page.next_api_id, page.next_score)
+            encode_catalog_cursor(page.next_api_id, page.next_score, strategy=walk_strategy)
             if page.has_more and page.next_api_id is not None
             else None
         )
@@ -703,6 +746,104 @@ class CatalogService:
             next_cursor=next_cursor,
             outdated_count=outdated_count,
         )
+
+    async def _rank(
+        self, q: str, entries: list[mb.ManifestEntry], cursor: CatalogCursor | None
+    ) -> tuple[list[RankedEntry], str]:
+        """Rank ``entries`` for a search page; return ``(rows, strategy that ranked)``.
+
+        The first page (no cursor) uses ``catalog.search_strategy``; if that
+        strategy is unregistered, raises, returns an unusable result, or misses
+        ``catalog.search_deadline_ms``, the page is ranked by ``token`` and —
+        because the returned name is recorded in the cursor — so is every later
+        page of the walk. A later page uses the strategy its cursor names
+        (no ``st`` = ``token``): an unregistered one is an invalid cursor (400),
+        and a failure is ``CatalogSearchUnavailableError`` (503) rather than a
+        silent switch that would reorder the walk mid-scroll.
+        """
+        first_page = cursor is None
+        if cursor is None:
+            name = self._cfg.search_strategy
+        else:
+            name = cursor.strategy or TOKEN_STRATEGY_NAME
+        if name == TOKEN_STRATEGY_NAME:
+            return await self._rank_with(_TOKEN_STRATEGY, q, entries), TOKEN_STRATEGY_NAME
+
+        try:
+            strategy = resolve_catalog_search_strategy(name)
+        except UnknownCatalogSearchStrategyError:
+            if not first_page:
+                record_strategy_failure(name, reason="unregistered", outcome="rejected")
+                logger.warning("catalog_search_cursor_strategy_unregistered", strategy=name)
+                raise InvalidCursorError("Invalid pagination cursor") from None
+            return await self._fall_back(q, entries, name, reason="unregistered", exc=None)
+
+        deadline_ms = self._cfg.search_deadline_ms
+        try:
+            async with asyncio.timeout(deadline_ms / 1000):
+                rows = await self._rank_with(strategy, q, entries, deadline_ms=deadline_ms)
+        except TimeoutError as exc:
+            reason: FailureReason = "timeout"
+            failure: Exception = exc
+        except Exception as exc:  # a strategy failure must never fail the search
+            reason, failure = "error", exc
+        else:
+            return rows, name
+
+        if first_page:
+            return await self._fall_back(q, entries, name, reason=reason, exc=failure)
+        record_strategy_failure(name, reason=reason, outcome="unavailable")
+        logger.warning(
+            "catalog_search_strategy_unavailable",
+            strategy=name,
+            reason=reason,
+            error_type=type(failure).__name__,
+        )
+        raise CatalogSearchUnavailableError(name) from failure
+
+    async def _fall_back(
+        self,
+        q: str,
+        entries: list[mb.ManifestEntry],
+        name: str,
+        *,
+        reason: FailureReason,
+        exc: Exception | None,
+    ) -> tuple[list[RankedEntry], str]:
+        """Serve a first page with ``token`` (and so the whole walk) after ``name`` failed."""
+        record_strategy_failure(name, reason=reason, outcome="fallback")
+        # Neither the query nor the exception text is logged: either may carry
+        # caller-supplied text. The type is enough to tell failure modes apart.
+        logger.warning(
+            "catalog_search_strategy_fallback",
+            strategy=name,
+            fallback=TOKEN_STRATEGY_NAME,
+            reason=reason,
+            error_type=type(exc).__name__ if exc is not None else None,
+        )
+        return await self._rank_with(_TOKEN_STRATEGY, q, entries), TOKEN_STRATEGY_NAME
+
+    @staticmethod
+    async def _rank_with(
+        strategy: CatalogSearchStrategy,
+        q: str,
+        entries: list[mb.ManifestEntry],
+        *,
+        deadline_ms: int | None = None,
+    ) -> list[RankedEntry]:
+        """Call ``strategy.rank`` and normalise its output (validity, uniqueness, order)."""
+        ranked = await strategy.rank(q, entries, deadline_ms=deadline_ms, context=None)
+        result = normalize_ranking(ranked, entries)
+        dropped = result.dropped_invalid + result.dropped_foreign + result.dropped_duplicate
+        if dropped:
+            logger.debug(
+                "catalog_search_rows_dropped",
+                strategy=strategy.name,
+                invalid=result.dropped_invalid,
+                foreign=result.dropped_foreign,
+                duplicate=result.dropped_duplicate,
+            )
+        return result.rows
 
     async def get(self, api_id: str) -> CatalogEntryView:
         """Resolve a single catalog entry by api_id."""
@@ -721,6 +862,8 @@ class CatalogService:
         entry: mb.ManifestEntry,
         registered_spec_urls: set[str],
         outdated_spec_urls: set[str] | None = None,
+        *,
+        match: CatalogMatch | None = None,
     ) -> CatalogEntryView:
         registered = mb.is_registered(entry, registered_spec_urls)
         return CatalogEntryView(
@@ -735,6 +878,7 @@ class CatalogService:
                 and outdated_spec_urls is not None
                 and entry.spec_url in outdated_spec_urls
             ),
+            match=match,
         )
 
     # ── preview ──────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     GovernedHostsUnavailableError,
     HostChangeRequiresOperatorError,
@@ -93,6 +94,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # DB is misdeployed (SURFACE_DB_DEPS should have granted them) — 503 so
     # callers retry a healthy replica; never a bare 500, never an empty 200.
     GovernedHostsUnavailableError: (503, "governed_hosts_unavailable"),
+    # A search walk's ranking strategy failed after its first page. The walk's
+    # order can't be continued by another ranker, so 503 (retry the page, or
+    # restart the search without a cursor) rather than a silently reordered page.
+    CatalogSearchUnavailableError: (503, "catalog_search_unavailable"),
     # Belt-and-braces: an accidental async lazy load (e.g. on a stale, bulk-updated
     # ORM instance) raises sqlalchemy MissingGreenlet, which the DB transaction
     # wrapper maps to DatabaseConsistencyError. Map it to a known 500 with a

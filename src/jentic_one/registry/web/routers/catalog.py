@@ -32,6 +32,7 @@ from jentic_one.registry.web.schemas.catalog import (
     CatalogEntryLinksResponse,
     CatalogEntryResponse,
     CatalogListResponse,
+    CatalogMatchResponse,
     CatalogRefreshResponse,
     CatalogSnoozeRequest,
     OperationPreviewListResponse,
@@ -64,6 +65,11 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
             import_link=f"{self_link}:import",
             github=view.github_url,
         ),
+        match=(
+            CatalogMatchResponse(channels=list(view.match.channels))
+            if view.match is not None
+            else None
+        ),
     )
 
 
@@ -75,7 +81,10 @@ async def list_catalog(
     q: str | None = Query(
         default=None,
         max_length=500,
-        description="Search text matched against entry IDs; results are ranked by match quality.",
+        description=(
+            "Search text matched against entry IDs; results are ranked by the configured "
+            "catalog search strategy (by default, match quality)."
+        ),
         openapi_examples=ex.example("charges"),
     ),
     registered_only: bool = Query(
@@ -123,6 +132,11 @@ async def list_catalog(
     ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
     ``catalog_total``/``registered_count``/``outdated_count`` count the whole
     manifest, not the page, so the Discover status row stays stable while scrolling.
+
+    A search walk keeps the ranking that served its first page. If that ranking
+    is no longer available on a later page, the cursor is rejected (400) or the
+    page answers 503 ``catalog_search_unavailable``; restart the search without
+    a cursor.
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(

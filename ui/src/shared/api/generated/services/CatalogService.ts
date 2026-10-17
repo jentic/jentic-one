@@ -20,6 +20,11 @@ export class CatalogService {
      * ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
      * ``catalog_total``/``registered_count``/``outdated_count`` count the whole
      * manifest, not the page, so the Discover status row stays stable while scrolling.
+     *
+     * A search walk keeps the ranking that served its first page. If that ranking
+     * is no longer available on a later page, the cursor is rejected (400) or the
+     * page answers 503 ``catalog_search_unavailable``; restart the search without
+     * a cursor.
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */
@@ -33,7 +38,7 @@ export class CatalogService {
         limit = 50,
     }: {
         /**
-         * Search text matched against entry IDs; results are ranked by match quality.
+         * Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).
          */
         q?: (string | null),
         /**

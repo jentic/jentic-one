@@ -3956,6 +3956,24 @@
             "title": "Api Id",
             "type": "string"
           },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogMatchResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.",
+            "examples": [
+              {
+                "channels": [
+                  "token"
+                ]
+              }
+            ]
+          },
           "path": {
             "anyOf": [
               {
@@ -4138,6 +4156,36 @@
           "registered_count"
         ],
         "title": "CatalogListResponse",
+        "type": "object"
+      },
+      "CatalogMatchResponse": {
+        "description": "Why a catalog entry matched a search, as reported by the ranking strategy.",
+        "examples": [
+          {
+            "channels": [
+              "token"
+            ]
+          }
+        ],
+        "properties": {
+          "channels": {
+            "description": "Kinds of evidence behind the match (e.g. `token`). An open set: new values may appear, so clients must accept values they don't recognise.",
+            "examples": [
+              [
+                "token"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Channels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels"
+        ],
+        "title": "CatalogMatchResponse",
         "type": "object"
       },
       "CatalogRefreshResponse": {
@@ -32493,11 +32541,11 @@
     "/catalog": {
       "description": "`GET`: List Catalog.",
       "get": {
-        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.",
+        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.\n\nA search walk keeps the ranking that served its first page. If that ranking\nis no longer available on a later page, the cursor is rejected (400) or the\npage answers 503 ``catalog_search_unavailable``; restart the search without\na cursor.",
         "operationId": "listCatalog",
         "parameters": [
           {
-            "description": "Search text matched against entry IDs; results are ranked by match quality.",
+            "description": "Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).",
             "examples": {
               "example": {
                 "summary": "Example query value for `q`",
@@ -32520,7 +32568,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Search text matched against entry IDs; results are ranked by match quality.",
+              "description": "Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).",
               "examples": [
                 "charges"
               ],

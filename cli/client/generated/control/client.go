@@ -2523,6 +2523,11 @@ type CatalogEntryResponse struct {
 	// Examples: stripe.com
 	ApiId string `json:"api_id"`
 
+	// Match Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.
+	//
+	// Examples: {"channels":["token"]}
+	Match *CatalogMatchResponse `json:"match,omitempty"`
+
 	// Path Manifest path of the entry within the public-APIs repo.
 	//
 	// Examples: apis/openapi/stripe.com
@@ -2587,6 +2592,16 @@ type CatalogListResponse struct {
 	//
 	// Examples: 12
 	RegisteredCount int `json:"registered_count"`
+}
+
+// CatalogMatchResponse Why a catalog entry matched a search, as reported by the ranking strategy.
+//
+// Examples: {"channels":["token"]}
+type CatalogMatchResponse struct {
+	// Channels Kinds of evidence behind the match (e.g. `token`). An open set: new values may appear, so clients must accept values they don't recognise.
+	//
+	// Examples: ["token"]
+	Channels []string `json:"channels"`
 }
 
 // CatalogRefreshResponse Acknowledgement of a manifest refresh.
@@ -7822,7 +7837,7 @@ type ListAuditEntriesParams struct {
 
 // ListCatalogParams defines parameters for ListCatalog.
 type ListCatalogParams struct {
-	// Q Search text matched against entry IDs; results are ranked by match quality.
+	// Q Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
 	// RegisteredOnly Only return entries already imported into the registry.
@@ -10596,6 +10611,11 @@ type ClientInterface interface {
 	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
 	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
 	// manifest, not the page, so the Discover status row stays stable while scrolling.
+	//
+	// A search walk keeps the ranking that served its first page. If that ranking
+	// is no longer available on a later page, the cursor is rejected (400) or the
+	// page answers 503 ``catalog_search_unavailable``; restart the search without
+	// a cursor.
 	//
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14198,6 +14218,11 @@ func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditor
 // “GET /apis“: follow “next_cursor“ until “has_more“ is false.
 // “catalog_total“/“registered_count“/“outdated_count“ count the whole
 // manifest, not the page, so the Discover status row stays stable while scrolling.
+//
+// A search walk keeps the ranking that served its first page. If that ranking
+// is no longer available on a later page, the cursor is rejected (400) or the
+// page answers 503 “catalog_search_unavailable“; restart the search without
+// a cursor.
 //
 // Corresponds with GET /catalog (the `ListCatalog` operationId).
 func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27036,6 +27061,11 @@ type ClientWithResponsesInterface interface {
 	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
 	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
 	// manifest, not the page, so the Discover status row stays stable while scrolling.
+	//
+	// A search walk keeps the ranking that served its first page. If that ranking
+	// is no longer available on a later page, the cursor is rejected (400) or the
+	// page answers 503 ``catalog_search_unavailable``; restart the search without
+	// a cursor.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45282,6 +45312,11 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 // “GET /apis“: follow “next_cursor“ until “has_more“ is false.
 // “catalog_total“/“registered_count“/“outdated_count“ count the whole
 // manifest, not the page, so the Discover status row stays stable while scrolling.
+//
+// A search walk keeps the ranking that served its first page. If that ranking
+// is no longer available on a later page, the cursor is rejected (400) or the
+// page answers 503 “catalog_search_unavailable“; restart the search without
+// a cursor.
 //
 // Returns a wrapper object for the known response body format(s).
 //
