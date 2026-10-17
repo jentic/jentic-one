@@ -745,6 +745,7 @@ def _include_control_plane_routes(
     *,
     ctx: Context,
     extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
 ) -> None:
     """Mount the combined control-plane route table on ``app``.
 
@@ -756,6 +757,14 @@ def _include_control_plane_routes(
     context, for route factories that read deployment config.
     ``extra_routers`` are the container routers the caller mounts after this
     table; a partial app's endpoint reference documents them too.
+
+    The reference app re-runs this helper lazily, on the first unauthenticated
+    request for the reference, with every control-plane surface as ``apps``. So
+    every route factory called here must be config-only and side-effect-free. A
+    router whose factory resolves state at build (runs contributors, logs, may
+    raise) is built once by the serving app and passed in ``prebuilt_routers``:
+    it is mounted after the instance router, and the reference app reuses the
+    same router objects instead of calling the factory again.
     """
     app.get(
         "/health",
@@ -788,13 +797,20 @@ def _include_control_plane_routes(
     if set(CONTROL_PLANE_SURFACES) <= set(apps):
         app.include_router(get_reference_router())
     else:
-        app.include_router(get_control_plane_reference_router(ctx, extra_routers=extra_routers))
+        app.include_router(
+            get_control_plane_reference_router(
+                ctx, extra_routers=extra_routers, prebuilt_routers=prebuilt_routers
+            )
+        )
 
     # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
     # tell which backend it is bound to — cloud vs. a local self-hosted install.
     # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
     # 400/422 (same posture as /health).
     app.include_router(get_instance_router())
+
+    for router in prebuilt_routers:
+        app.include_router(router, responses=COMMON_ERROR_RESPONSES)
 
     # Running/latest version so the signed-in SPA can show the current version
     # and an update banner. Authenticated (any valid session). The latest release
@@ -810,7 +826,10 @@ def _include_extra_routers(app: FastAPI, extra_routers: Sequence[RouterSpec]) ->
 
 
 def build_control_plane_reference_app(
-    ctx: Context, *, extra_routers: Sequence[RouterSpec] = ()
+    ctx: Context,
+    *,
+    extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
 ) -> FastAPI:
     """A route-only app spanning every control-plane surface, for introspection.
 
@@ -821,16 +840,23 @@ def build_control_plane_reference_app(
     gateway) even though each process mounts only its own surface's routes.
     ``extra_routers`` (the serving process's container routers) are mounted
     after the built-in table, in the same order the combined app uses.
+    ``prebuilt_routers`` are the serving app's already-built router objects
+    (see :func:`_include_control_plane_routes`); they are reused, never rebuilt.
     """
     app = FastAPI(**fastapi_metadata_kwargs(ctx.config.server.public_base_url))
-    _include_control_plane_routes(app, CONTROL_PLANE_SURFACES, ctx=ctx)
+    _include_control_plane_routes(
+        app, CONTROL_PLANE_SURFACES, ctx=ctx, prebuilt_routers=prebuilt_routers
+    )
     _include_extra_routers(app, extra_routers)
     install_openapi_metadata(app)
     return app
 
 
 def get_control_plane_reference_router(
-    ctx: Context, *, extra_routers: Sequence[RouterSpec] = ()
+    ctx: Context,
+    *,
+    extra_routers: Sequence[RouterSpec] = (),
+    prebuilt_routers: Sequence[APIRouter] = (),
 ) -> APIRouter:
     """``GET /reference/endpoints.json`` for a partial control-plane process.
 
@@ -838,10 +864,15 @@ def get_control_plane_reference_router(
     the same payload the combined app and the committed
     ``docs/reference/endpoints.json`` carry — plus the process's own
     ``extra_routers``, not just the serving process's surface routes.
+    ``prebuilt_routers`` are the serving app's already-built router objects; the
+    cold reference build reuses them, so it never re-runs their factories.
     """
     return get_reference_router(
         source_app=functools.partial(
-            build_control_plane_reference_app, ctx, extra_routers=tuple(extra_routers)
+            build_control_plane_reference_app,
+            ctx,
+            extra_routers=tuple(extra_routers),
+            prebuilt_routers=tuple(prebuilt_routers),
         )
     )
 

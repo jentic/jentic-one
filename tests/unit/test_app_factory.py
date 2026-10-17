@@ -22,6 +22,7 @@ from jentic_one.shared.web.app_factory import (
     SURFACE_MODULES,
     create_combined_app,
     create_surface_app,
+    get_control_plane_reference_router,
 )
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.endpoint_permissions import _iter_api_routes
@@ -256,6 +257,32 @@ def test_reference_documents_container_extra_routers(ctx: Context, apps: list[st
     assert "/overlay/overlay-ping" in paths
     # A partial app still documents the whole control plane.
     assert any(path.startswith("/credentials") for path in paths)
+
+
+def test_reference_reuses_prebuilt_routers_without_rebuilding(ctx: Context) -> None:
+    """A cold reference build mounts the serving app's prebuilt router objects as is.
+
+    A route factory that resolves state at build (runs contributors, logs, may
+    raise) must run once, at app build, never again on the unauthenticated cold
+    reference request.
+    """
+    factory_calls = 0
+
+    def _side_effecting_factory() -> APIRouter:
+        nonlocal factory_calls
+        factory_calls += 1
+        return _extra_router()
+
+    prebuilt = _side_effecting_factory()
+    app = FastAPI()
+    app.include_router(get_control_plane_reference_router(ctx, prebuilt_routers=(prebuilt,)))
+
+    resp = TestClient(app, raise_server_exceptions=False).get("/reference/endpoints.json")
+
+    assert resp.status_code == 200
+    paths = [ep["path"] for ep in resp.json()["endpoints"]]
+    assert paths.count("/overlay-ping") == 1
+    assert factory_calls == 1
 
 
 def test_standalone_admin_serves_reference(ctx: Context) -> None:
