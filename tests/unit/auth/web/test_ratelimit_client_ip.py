@@ -63,8 +63,19 @@ def _ip(trusted: list[str], socket_ip: str | None, forwarded: str | None = None)
         ),
         # A trusted mapped hop in the chain is unmapped before matching.
         (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7, ::ffff:10.2.0.1", "203.0.113.7"),
-        # Every hop trusted: fall back to the socket address.
-        (["10.0.0.0/8"], "10.0.0.5", "10.2.0.1, 10.3.0.1", "10.0.0.5"),
+        # Every hop trusted: the client is inside a trusted network, and the
+        # leftmost hop is its address rather than the nearest proxy's.
+        (["10.0.0.0/8"], "10.0.0.5", "10.2.0.1, 10.3.0.1", "10.2.0.1"),
+        # A forwarded port is dropped, so a trusted proxy's hop still matches
+        # and the client's identity does not change per source port.
+        (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7:51234, 10.2.0.1:443", "203.0.113.7"),
+        (["fd00::/8"], "fd00::5", "[2001:db8::42]:443, [fd00::9]:8443", "2001:db8::42"),
+        (["fd00::/8"], "fd00::5", "[2001:db8::42]", "2001:db8::42"),
+        # Something that only looks like a port suffix is kept whole.
+        (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7:http", "203.0.113.7:http"),
+        # Empty list elements are ignored rather than becoming an identity.
+        (["10.0.0.0/8"], "10.0.0.5", "203.0.113.7, , 10.2.0.1,", "203.0.113.7"),
+        (["10.0.0.0/8"], "10.0.0.5", " , ", "10.0.0.5"),
         # An unparsable hop is untrusted and is the client identity as-is.
         (["10.0.0.0/8"], "10.0.0.5", "not-an-ip, 10.2.0.1", "not-an-ip"),
         # No XFF header from a trusted proxy: the socket address.
