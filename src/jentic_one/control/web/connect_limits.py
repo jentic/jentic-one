@@ -47,7 +47,8 @@ def _limiter(store: RateLimitStore, namespace: str) -> RateLimiter:
 def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
     """Install both connect limiters on the process's shared-state backend.
 
-    The backend is the process's one instance (closed by ``ctx.shutdown()``).
+    The backend is the process's one instance; the app lifespan closes it
+    (``ctx.close_state_backend()``).
     """
     backend = ctx.state_backend
     setattr(app.state, _BACKEND_ATTR, backend)

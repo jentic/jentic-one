@@ -121,13 +121,16 @@ from jentic_one.shared.state import (
 
 class ClusterOptions(BaseModel):
     url: str
+    key_prefix: str = "jentic:"
 
 
 def build_cluster_backend(ctx: StateBackendBuildContext) -> SharedStateBackend:
     # state.options is passed through unvalidated: validate it here, so a bad
     # value fails startup rather than the first request.
     opts = ClusterOptions.model_validate(ctx.config.options)
-    return MyClusterBackend(opts.url, key_prefix=f"jentic:{','.join(sorted(ctx.apps))}:")
+    # One prefix for every process of a deployment, so replicas of a surface
+    # (and different process shapes serving it) share the same keys.
+    return MyClusterBackend(opts.url, key_prefix=opts.key_prefix)
 
 
 register_state_backend("my-cluster", build_cluster_backend)

@@ -85,7 +85,8 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 def install_on_app(app: FastAPI, ctx: Context) -> None:
     """Install the auth token verifier and the process's shared state on the app."""
     app.state.verify_token = make_superset_verifier(ctx)
-    # The process's one backend (closed by ctx.shutdown()), shared with every
+    # The process's one backend (closed last by the app lifespan, via
+    # ctx.close_state_backend()), shared with every
     # other surface this process serves.
     app.state.auth_state_backend = ctx.state_backend
     if ctx.config.state.backend == MEMORY_BACKEND:
