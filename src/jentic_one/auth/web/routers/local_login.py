@@ -32,8 +32,8 @@ from the OAuth authorization flow, behind a default-off gate:
 
 Security posture (see #1276): both routes take the authorization flow's
 rate limiter (``check_rate_limit``, keyed by client network only — the
-client_id rides inside ``ls``, and any request parameter is caller-chosen); CSRF is
-a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
+client_id rides inside ``ls``, and any request parameter is caller-chosen);
+CSRF is a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
 ambient credential — there is no cookie session to ride); failed auth
 re-renders one generic message (no user-enumeration *response* oracle, same
 posture as ``POST /auth/login``); each client network (IPv4 address or IPv6

@@ -7,10 +7,12 @@ session-continue exchange) derives the caller's identity and reaches the
 shared-state backend the same way, without cross-router imports of
 underscore-private names.
 
-A pre-auth limiter must key only on what the caller cannot choose freely: its
-network address. Any request parameter (``client_id``, a signed blob, a
-token) is caller-chosen before it has been verified, so adding it to the key
-would hand a caller a fresh bucket per value.
+A pre-auth limiter keys on what the caller cannot choose freely: its network
+address. Any request parameter (``client_id``, a signed blob, a token) is
+caller-chosen before it has been verified, so adding it to the key would hand
+a caller a fresh bucket per value. The token endpoint is the one exception: it
+still prefixes the body ``client_id`` to the network, so one host running many
+machine clients does not squeeze them all into one bucket.
 """
 
 from __future__ import annotations
@@ -124,8 +126,9 @@ def client_rate_limit_key(request: Request, trusted_proxies: frozenset[str]) -> 
     """The pre-auth rate-limit key for this request: the caller's client network.
 
     :func:`client_ip` (``X-Forwarded-For`` honoured only from a trusted
-    proxy) normalised by :func:`client_network` (forwarded port dropped,
-    IPv4-mapped unmapped, IPv6 grouped by /64).
+    proxy) normalised by :func:`client_network` (forwarded port dropped, an
+    IPv6 address that embeds an IPv4 client reduced to that IPv4 address,
+    any other IPv6 address grouped by /64).
     """
     return client_network(client_ip(request, trusted_proxies))
 
