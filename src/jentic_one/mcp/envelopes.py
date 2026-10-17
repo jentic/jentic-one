@@ -33,7 +33,7 @@ from jentic_one.shared.web.instance_identity import resolve_instance_identity
 
 #: Pins the machine-contract shape of the MCP tool payloads, mirroring the CLI
 #: envelopes' ``schema_version`` (Go: ``mcpSchemaVersion``).
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 # The CLI's coded error taxonomy (cli/internal/cli/ux/contract.go), verbatim.
 CODE_NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
