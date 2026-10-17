@@ -57,7 +57,7 @@ def _make_ctx(session_mock: AsyncMock) -> MagicMock:
     async def _fake_session() -> AsyncGenerator[AsyncMock, None]:
         yield session_mock
 
-    ctx.control_db.session = _fake_session
+    ctx.control_db.read_session = _fake_session
     return ctx
 
 

@@ -254,7 +254,12 @@ class CredentialResolver:
         cache = self._cache
         generation, token = cache.begin_fill(vendor) if cache is not None else (0, None)
         try:
-            async with self._ctx.control_db.session() as session:
+            # Read-only: the header query and the winner's material query need no
+            # shared snapshot. At READ COMMITTED (the server default; the
+            # application sets no isolation level) each already takes its own, so
+            # autocommit drops the BEGIN/ROLLBACK round trips without changing what
+            # is read.
+            async with self._ctx.control_db.read_session() as session:
                 rows = await CredentialRepository.list_by_vendor(session, vendor)
                 headers = tuple(CredentialHeader.from_row(row) for row in rows)
                 if cache is not None:
@@ -289,7 +294,7 @@ class CredentialResolver:
         """
         if CredentialRepository.material_relationship(header.type) is None:
             return self._build_resolved(header, None)
-        async with self._ctx.control_db.session() as session:
+        async with self._ctx.control_db.read_session() as session:
             found = await CredentialRepository.get_active_material(session, header.id, header.type)
         if found is None:
             return None
