@@ -225,7 +225,7 @@ func (c *catalogClient) Preview(ctx context.Context, apiID string, offset, limit
 }
 
 func (c *catalogClient) Import(ctx context.Context, apiID string) (string, error) {
-	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, apiID, rawPathEditor)
+	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, apiID, nil, rawPathEditor)
 	if err := apiErrorFor(resp, err); err != nil {
 		return "", err
 	}
@@ -282,19 +282,21 @@ func (c *catalogClient) Refresh(ctx context.Context) (int, error) {
 
 // ── projections (generated -> CLI view, preserving json shape) ────────────────
 
+// toCatalogEntry keeps the CLI's existing json shape over the entry_id wire
+// model: `api_id` carries the entry_id (the id every catalog route takes, so a
+// listed id round-trips into get/preview/import), `github` carries the human
+// link, and `path`/`spec_url` stay empty because the server no longer sends them.
 func toCatalogEntry(e control.CatalogEntryResponse) catalogEntry {
 	return catalogEntry{
-		APIID:           e.ApiId,
+		APIID:           e.EntryId,
 		Vendor:          deref(e.Vendor),
-		Path:            deref(e.Path),
-		SpecURL:         deref(e.SpecUrl),
 		Registered:      e.Registered,
 		UpdateAvailable: deref(e.UpdateAvailable),
 		Links: catalogEntryLinks{
 			Self:       e.UnderscoreLinks.Self,
 			Operations: e.UnderscoreLinks.Operations,
 			Import:     e.UnderscoreLinks.Import,
-			Github:     deref(e.UnderscoreLinks.Github),
+			Github:     deref(e.UnderscoreLinks.Human),
 		},
 	}
 }
@@ -305,7 +307,7 @@ func toCatalogListResult(r *control.CatalogListResponse) *catalogListResult {
 		CatalogTotal:       r.CatalogTotal,
 		RegisteredCount:    r.RegisteredCount,
 		OutdatedCount:      deref(r.OutdatedCount),
-		ManifestAgeSeconds: r.ManifestAgeSeconds,
+		ManifestAgeSeconds: r.OldestSourceSyncAgeSeconds,
 		HasMore:            deref(r.HasMore),
 		NextCursor:         deref(r.NextCursor),
 	}
