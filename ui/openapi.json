@@ -33371,6 +33371,23 @@
             },
             "description": "Forbidden"
           },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The resource is no longer available and the operation has self-closed.",
+                  "instance": "/example/path",
+                  "status": 410,
+                  "title": "Gone",
+                  "type": "gone"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "`catalog_spec_gone`: the entry's source no longer has a spec for it."
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -33426,7 +33443,7 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "`catalog_source_unavailable`: the entry's source is throttled or down; retry after the `Retry-After` header."
           }
         },
         "security": [
@@ -33560,6 +33577,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The resource is no longer available and the operation has self-closed.",
+                  "instance": "/example/path",
+                  "status": 410,
+                  "title": "Gone",
+                  "type": "gone"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "`catalog_spec_gone`: the entry lists no spec to import."
           },
           "422": {
             "content": {
