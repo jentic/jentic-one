@@ -13,6 +13,8 @@ exact same harness code paths (``assert_signature_matches`` + ``isinstance``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 from fastapi import Request, Response
 
@@ -24,9 +26,11 @@ from jentic_one.registry.repos.search.sqlite_lexical import SqliteLexicalStrateg
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import AppConfig, SearchConfig
+from jentic_one.shared.web.capabilities import CapabilityContributor, CapabilityView
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 from jentic_one.testing import (
     BaseBrokerComplianceTest,
+    BaseCapabilityContributorComplianceTest,
     BaseSearchStrategyComplianceTest,
     BaseUnregisteredUrlHandlerComplianceTest,
 )
@@ -62,6 +66,18 @@ class _NoopUnregisteredUrlHandler:
 class _NoopHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
     def handler_factory(self) -> UnregisteredUrlHandler:
         return _NoopUnregisteredUrlHandler()
+
+
+class _NoopCapabilityContributor:
+    """Class-shaped contributor matching the seam signature exactly."""
+
+    def __call__(self, view: CapabilityView) -> Mapping[str, bool]:
+        return {}
+
+
+class _NoopContributorCompliance(BaseCapabilityContributorComplianceTest):
+    def contributor_factory(self) -> CapabilityContributor:
+        return _NoopCapabilityContributor()
 
 
 @pytest.mark.parametrize("compliance", [_SqliteCompliance(), _PostgresCompliance()])
@@ -147,3 +163,9 @@ def test_noop_unregistered_url_handler_complies() -> None:
     compliance.test_is_unregistered_url_handler()
     compliance.test_call_signature()
     compliance.test_call_is_coroutine_function()
+
+
+def test_capability_contributor_harness_accepts_conforming_impl() -> None:
+    compliance = _NoopContributorCompliance()
+    compliance.test_is_capability_contributor()
+    compliance.test_call_signature()

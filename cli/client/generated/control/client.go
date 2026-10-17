@@ -324,6 +324,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for CapabilitiesInstanceResponseBackend.
+const (
+	CapabilitiesInstanceResponseBackendLocal  CapabilitiesInstanceResponseBackend = "local"
+	CapabilitiesInstanceResponseBackendRemote CapabilitiesInstanceResponseBackend = "remote"
+)
+
+// Valid indicates whether the value is a known member of the CapabilitiesInstanceResponseBackend enum.
+func (e CapabilitiesInstanceResponseBackend) Valid() bool {
+	switch e {
+	case CapabilitiesInstanceResponseBackendLocal:
+		return true
+	case CapabilitiesInstanceResponseBackendRemote:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -584,16 +602,16 @@ func (e HeldExecutionState) Valid() bool {
 
 // Defines values for InstanceIdentityResponseBackend.
 const (
-	Local  InstanceIdentityResponseBackend = "local"
-	Remote InstanceIdentityResponseBackend = "remote"
+	InstanceIdentityResponseBackendLocal  InstanceIdentityResponseBackend = "local"
+	InstanceIdentityResponseBackendRemote InstanceIdentityResponseBackend = "remote"
 )
 
 // Valid indicates whether the value is a known member of the InstanceIdentityResponseBackend enum.
 func (e InstanceIdentityResponseBackend) Valid() bool {
 	switch e {
-	case Local:
+	case InstanceIdentityResponseBackendLocal:
 		return true
-	case Remote:
+	case InstanceIdentityResponseBackendRemote:
 		return true
 	default:
 		return false
@@ -894,6 +912,24 @@ const (
 func (e OAuthConfirmSessionRequestKind) Valid() bool {
 	switch e {
 	case Oauth:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OauthClientDcrMethodResponseApproval.
+const (
+	Auto   OauthClientDcrMethodResponseApproval = "auto"
+	Manual OauthClientDcrMethodResponseApproval = "manual"
+)
+
+// Valid indicates whether the value is a known member of the OauthClientDcrMethodResponseApproval enum.
+func (e OauthClientDcrMethodResponseApproval) Valid() bool {
+	switch e {
+	case Auto:
+		return true
+	case Manual:
 		return true
 	default:
 		return false
@@ -2141,6 +2177,36 @@ type AuditResponse struct {
 // AuditTargetType Entity types that can be the target of an audited action.
 type AuditTargetType string
 
+// AuthMethodsResponse The login-picker contract: the sign-in options on the process answering.
+//
+// Scope caveat for split deployments: the mount-derived flag (“agent_dcr“)
+// describes **this process only** — “false“ means "not served here", not
+// "does not exist on the deployment"; a sibling tier may serve it (see
+// “surfaces“).
+//
+// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}
+type AuthMethodsResponse struct {
+	// AgentDcr Anonymous agent self-registration (RFC 7591, POST at urls.agent_registration with the agent's public JWKS); the registered agent then signs in with the RFC 7523 jwt-bearer assertion grant at urls.token. True iff the auth surface is mounted on this process.
+	//
+	// Examples: {"enabled":true}
+	AgentDcr EnabledMethodResponse `json:"agent_dcr"`
+
+	// Idp External-IdP login (the ``GET /auth/idp`` hint, restated).
+	//
+	// Examples: {"enabled":true,"provider":"google"}
+	Idp IdpMethodResponse `json:"idp"`
+
+	// LocalLogin Local-account login form on the /authorize flow (auth.local_login). The *effective* offer: false whenever an external IdP is enabled, because the IdP always wins and the form is never reachable (no mixed mode). Entry point: urls.authorize.
+	//
+	// Examples: {"enabled":true}
+	LocalLogin EnabledMethodResponse `json:"local_login"`
+
+	// OauthClientDcr Anonymous OAuth-client dynamic registration (``POST /oauth-clients``).
+	//
+	// Examples: {"approval":"manual","enabled":true}
+	OauthClientDcr OauthClientDcrMethodResponse `json:"oauth_client_dcr"`
+}
+
 // AuthorizationCodeRegistrationCreateRequest Create request for an authorization-code registration.
 //
 // Examples: {"api_vendor":"github","authorize_url":"https://github.com/login/oauth/authorize","catalog_api_id":"github.com/api.github.com","client_id":"Iv1.a1b2c3d4","client_secret":"\u003cpaste-client-secret-from-vendor-console\u003e","default_scopes":["repo","read:user"],"display_name":"GitHub","flow_kind":"authorization_code","name":"MyOrg GitHub","token_url":"https://github.com/login/oauth/access_token"}
@@ -2482,6 +2548,139 @@ type BodyConsentAgentCreate struct {
 	//
 	// Examples: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
 	CreateState string `json:"create_state"`
+}
+
+// CapabilitiesAuthResponse Authentication capabilities.
+//
+// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}}
+type CapabilitiesAuthResponse struct {
+	// Methods The login-picker contract: the sign-in options on the process answering.
+	//
+	// Scope caveat for split deployments: the mount-derived flag (``agent_dcr``)
+	// describes **this process only** — ``false`` means "not served here", not
+	// "does not exist on the deployment"; a sibling tier may serve it (see
+	// ``surfaces``).
+	//
+	// Examples: {"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}
+	Methods AuthMethodsResponse `json:"methods"`
+}
+
+// CapabilitiesInstanceResponse Identity slice of the document (the full probe stays “GET /instance“).
+//
+// Examples: {"backend":"remote","canonical_base_url":"https://jentic.example.com"}
+type CapabilitiesInstanceResponse struct {
+	// Backend Operator-declared backend locality (server.backend); a hint, not an authorization signal.
+	//
+	// Examples: remote
+	Backend CapabilitiesInstanceResponseBackend `json:"backend"`
+
+	// CanonicalBaseUrl The instance's configured public base URL (auth.canonical_base_url, else server.public_base_url), with any userinfo stripped; '' if unset.
+	//
+	// Examples: https://jentic.example.com
+	CanonicalBaseUrl string `json:"canonical_base_url"`
+}
+
+// CapabilitiesInstanceResponseBackend Operator-declared backend locality (server.backend); a hint, not an authorization signal.
+//
+// Examples: remote
+type CapabilitiesInstanceResponseBackend string
+
+// CapabilitiesResponse Deployment self-description for one-URL client onboarding.
+//
+// Additive contract: clients must ignore unknown keys (“features“ grows via
+// downstream contributions) and hard-fail only on an unknown
+// “capabilities_version“.
+//
+// Examples: {"auth":{"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}},"capabilities_version":1,"features":{"governed_hosts":true,"mcp":true},"instance":{"backend":"remote","canonical_base_url":"https://jentic.example.com"},"surfaces":["admin","auth","control","registry"],"urls":{"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}}
+type CapabilitiesResponse struct {
+	// Auth Authentication capabilities.
+	//
+	// Examples: {"methods":{"agent_dcr":{"enabled":true},"idp":{"enabled":true,"provider":"google"},"local_login":{"enabled":true},"oauth_client_dcr":{"approval":"manual","enabled":true}}}
+	Auth CapabilitiesAuthResponse `json:"auth"`
+
+	// CapabilitiesVersion Shape version of this document, bumped only when a field is removed, renamed, or retyped. New keys appear without a bump — ignore unknown keys; hard-fail only on a version you do not understand.
+	//
+	// Examples: 1
+	CapabilitiesVersion int `json:"capabilities_version"`
+
+	// Features Deployment feature flags. OSS ships 'mcp' (server.mcp.enabled) and 'governed_hosts' (true iff the registry surface — which serves GET /governed-hosts — is mounted on this process); downstream packages may contribute additional boolean flags (additive — never overriding built-ins).
+	//
+	// Examples: {"governed_hosts":true,"mcp":true}
+	Features map[string]bool `json:"features"`
+
+	// Instance Identity slice of the document (the full probe stays ``GET /instance``).
+	//
+	// Examples: {"backend":"remote","canonical_base_url":"https://jentic.example.com"}
+	Instance CapabilitiesInstanceResponse `json:"instance"`
+
+	// Surfaces The control-plane surfaces served by the process answering this request (sorted), e.g. ['admin', 'auth', 'control', 'registry']. On a split deployment each tier reports only its own surfaces — a capability absent here may be served by a sibling tier.
+	//
+	// Examples: ["admin","auth","control","registry"]
+	Surfaces []string `json:"surfaces"`
+
+	// Urls Where to reach the deployment's public endpoints.
+	//
+	// Endpoint fields are absolute URLs whenever a base URL is known
+	// (``auth.canonical_base_url``, else ``server.public_base_url``, else the
+	// origin the request arrived on);
+	// metadata paths degrade to root-relative paths only when neither is
+	// resolvable. ``null`` means the corresponding surface or gate is not
+	// available on the process answering this request.
+	//
+	// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}
+	Urls CapabilitiesUrlsResponse `json:"urls"`
+}
+
+// CapabilitiesUrlsResponse Where to reach the deployment's public endpoints.
+//
+// Endpoint fields are absolute URLs whenever a base URL is known
+// (“auth.canonical_base_url“, else “server.public_base_url“, else the
+// origin the request arrived on);
+// metadata paths degrade to root-relative paths only when neither is
+// resolvable. “null“ means the corresponding surface or gate is not
+// available on the process answering this request.
+//
+// Examples: {"agent_registration":"https://jentic.example.com/register","authorization_server_metadata":"https://jentic.example.com/.well-known/oauth-authorization-server","authorization_server_metadata_mcp":"https://jentic.example.com/.well-known/oauth-authorization-server/mcp","authorize":"https://jentic.example.com/authorize","broker":"https://broker.jentic.example.com","oauth_client_registration":"https://jentic.example.com/oauth-clients","protected_resource_metadata":"https://jentic.example.com/.well-known/oauth-protected-resource","token":"https://jentic.example.com/oauth/token"}
+type CapabilitiesUrlsResponse struct {
+	// AgentRegistration Agent dynamic-registration endpoint (RFC 7591, see auth.methods.agent_dcr); null when the auth surface is not mounted on this process.
+	//
+	// Examples: https://jentic.example.com/register
+	AgentRegistration *string `json:"agent_registration"`
+
+	// AuthorizationServerMetadata RFC 8414 authorization-server metadata document for the platform issuer (its registration_endpoint is the agent DCR door /register); null when the auth surface is not mounted on this process.
+	//
+	// Examples: https://jentic.example.com/.well-known/oauth-authorization-server
+	AuthorizationServerMetadata *string `json:"authorization_server_metadata"`
+
+	// AuthorizationServerMetadataMcp RFC 8414 metadata document for the /mcp logical issuer — the one whose registration_endpoint is the OAuth-client DCR door /oauth-clients (see auth.methods.oauth_client_dcr). Null when the auth surface is not mounted on this process or server.mcp.oauth is disabled.
+	//
+	// Examples: https://jentic.example.com/.well-known/oauth-authorization-server/mcp
+	AuthorizationServerMetadataMcp *string `json:"authorization_server_metadata_mcp"`
+
+	// Authorize OAuth authorization endpoint (interactive sign-in entry point for idp and local_login); null when the auth surface is not mounted on this process.
+	//
+	// Examples: https://jentic.example.com/authorize
+	Authorize *string `json:"authorize"`
+
+	// Broker Advertised broker base URL for data-plane traffic — the value a client needs to route agent traffic through this deployment's broker. Published only when the operator sets server.advertised_broker_url (http/https; userinfo, query, and fragment are stripped); the deployment's internal control-plane→broker hop URL (server.mcp.broker_url) is topology-private and never published. Null when unset or invalid.
+	//
+	// Examples: https://broker.jentic.example.com
+	Broker *string `json:"broker"`
+
+	// OauthClientRegistration OAuth-client dynamic-registration endpoint (see auth.methods.oauth_client_dcr); null when the auth surface is not mounted on this process.
+	//
+	// Examples: https://jentic.example.com/oauth-clients
+	OauthClientRegistration *string `json:"oauth_client_registration"`
+
+	// ProtectedResourceMetadata RFC 9728 protected-resource metadata document for the MCP surface; null when the auth surface is not mounted on this process or server.mcp.oauth is disabled.
+	//
+	// Examples: https://jentic.example.com/.well-known/oauth-protected-resource
+	ProtectedResourceMetadata *string `json:"protected_resource_metadata"`
+
+	// Token OAuth token endpoint (authorization_code, refresh_token, and the agent RFC 7523 jwt-bearer assertion grant); null when the auth surface is not mounted on this process.
+	//
+	// Examples: https://jentic.example.com/oauth/token
+	Token *string `json:"token"`
 }
 
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
@@ -3252,6 +3451,16 @@ type EffectivePermission struct {
 	Name string `json:"name"`
 }
 
+// EnabledMethodResponse A simple on/off login capability.
+//
+// Examples: {"enabled":true}
+type EnabledMethodResponse struct {
+	// Enabled Whether this sign-in method is offered.
+	//
+	// Examples: true
+	Enabled bool `json:"enabled"`
+}
+
 // ErrorItem A granular error detail entry within the errors[] array of a ProblemDetails response.
 //
 // At least one of pointer, parameter, or header SHOULD be present to identify the error source.
@@ -3980,6 +4189,21 @@ type HeldRequestResponse struct {
 	//
 	// Examples: https://api.stripe.com/v1/refunds?expand[]=charge
 	Url string `json:"url"`
+}
+
+// IdpMethodResponse External-IdP login (the “GET /auth/idp“ hint, restated).
+//
+// Examples: {"enabled":true,"provider":"google"}
+type IdpMethodResponse struct {
+	// Enabled Whether this sign-in method is offered.
+	//
+	// Examples: true
+	Enabled bool `json:"enabled"`
+
+	// Provider Provider name when enabled (e.g. 'google'); null when disabled.
+	//
+	// Examples: google
+	Provider *string `json:"provider"`
 }
 
 // InstanceIdentityResponse Self-describing identity of the backend serving this request.
@@ -5591,6 +5815,26 @@ type OAuthGrantResponse struct {
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	UserId string `json:"user_id"`
 }
+
+// OauthClientDcrMethodResponse Anonymous OAuth-client dynamic registration (“POST /oauth-clients“).
+//
+// Examples: {"approval":"manual","enabled":true}
+type OauthClientDcrMethodResponse struct {
+	// Approval Registration admission posture (server.mcp.oauth.auto_approve_clients): 'auto' activates registrations immediately; 'manual' parks them pending operator approval. Only meaningful when enabled.
+	//
+	// Examples: manual
+	Approval OauthClientDcrMethodResponseApproval `json:"approval"`
+
+	// Enabled Whether this sign-in method is offered.
+	//
+	// Examples: true
+	Enabled bool `json:"enabled"`
+}
+
+// OauthClientDcrMethodResponseApproval Registration admission posture (server.mcp.oauth.auto_approve_clients): 'auto' activates registrations immediately; 'manual' parks them pending operator approval. Only meaningful when enabled.
+//
+// Examples: manual
+type OauthClientDcrMethodResponseApproval string
 
 // OperationPreviewListResponse Capped, offset-paginated operation preview for a catalog entry.
 //
@@ -10584,6 +10828,22 @@ type ClientInterface interface {
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCapabilities Deployment capabilities
+	//
+	// Return this deployment's public self-description.
+	//
+	// Unauthenticated and DB-free so any client can discover — from one URL —
+	// which sign-in methods this deployment supports, where its broker is,
+	// which surfaces are mounted, and which optional features are enabled,
+	// instead of probe-and-guess across ``/instance``, ``/auth/idp``, and the
+	// RFC 8414 document. The body is deterministic for a given config, so it
+	// carries an ``ETag`` and honours ``If-None-Match`` (304) — every client
+	// fetches this before sign-in, and a fleet restart should revalidate, not
+	// re-download.
+	//
+	// Corresponds with GET /capabilities (the `GetCapabilities` operationId).
+	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListCatalog List Catalog
 	//
 	// List a keyset page of browsable catalog entries (search/filter aware).
@@ -14163,6 +14423,32 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRefreshSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCapabilities Deployment capabilities
+//
+// Return this deployment's public self-description.
+//
+// Unauthenticated and DB-free so any client can discover — from one URL —
+// which sign-in methods this deployment supports, where its broker is,
+// which surfaces are mounted, and which optional features are enabled,
+// instead of probe-and-guess across “/instance“, “/auth/idp“, and the
+// RFC 8414 document. The body is deterministic for a given config, so it
+// carries an “ETag“ and honours “If-None-Match“ (304) — every client
+// fetches this before sign-in, and a fleet restart should revalidate, not
+// re-download.
+//
+// Corresponds with GET /capabilities (the `GetCapabilities` operationId).
+func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCapabilitiesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -20712,6 +20998,33 @@ func NewRefreshSessionRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetCapabilitiesRequest constructs an http.Request for the GetCapabilities method
+func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/capabilities")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListCatalogRequest constructs an http.Request for the ListCatalog method
 func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Request, error) {
 	var err error
@@ -27021,6 +27334,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshSessionHTTPResp, error)
+
+	// GetCapabilitiesWithResponse Deployment capabilities
+	//
+	// Return this deployment's public self-description.
+	//
+	// Unauthenticated and DB-free so any client can discover — from one URL —
+	// which sign-in methods this deployment supports, where its broker is,
+	// which surfaces are mounted, and which optional features are enabled,
+	// instead of probe-and-guess across ``/instance``, ``/auth/idp``, and the
+	// RFC 8414 document. The body is deterministic for a given config, so it
+	// carries an ``ETag`` and honours ``If-None-Match`` (304) — every client
+	// fetches this before sign-in, and a fleet restart should revalidate, not
+	// re-download.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /capabilities (the `GetCapabilities` operationId).
+	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
 
 	// ListCatalogWithResponse List Catalog
 	//
@@ -34700,6 +35031,82 @@ func (r RefreshSessionHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCapabilitiesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CapabilitiesResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCapabilitiesHTTPResp) GetJSON200() *CapabilitiesResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetCapabilitiesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetCapabilitiesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetCapabilitiesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetCapabilitiesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCapabilitiesHTTPResp) GetApplicationproblemJSONDefault() *ProblemDetail {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCapabilitiesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCapabilitiesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCapabilitiesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCapabilitiesHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45255,6 +45662,30 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 	return ParseRefreshSessionHTTPResp(rsp)
 }
 
+// GetCapabilitiesWithResponse Deployment capabilities
+//
+// Return this deployment's public self-description.
+//
+// Unauthenticated and DB-free so any client can discover — from one URL —
+// which sign-in methods this deployment supports, where its broker is,
+// which surfaces are mounted, and which optional features are enabled,
+// instead of probe-and-guess across “/instance“, “/auth/idp“, and the
+// RFC 8414 document. The body is deterministic for a given config, so it
+// carries an “ETag“ and honours “If-None-Match“ (304) — every client
+// fetches this before sign-in, and a fleet restart should revalidate, not
+// re-download.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /capabilities (the `GetCapabilities` operationId).
+func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error) {
+	rsp, err := c.GetCapabilities(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCapabilitiesHTTPResp(rsp)
+}
+
 // ListCatalogWithResponse List Catalog
 //
 // List a keyset page of browsable catalog entries (search/filter aware).
@@ -52778,6 +53209,67 @@ func ParseRefreshSessionHTTPResp(rsp *http.Response) (*RefreshSessionHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCapabilitiesHTTPResp parses an HTTP response from a GetCapabilitiesWithResponse call
+func ParseGetCapabilitiesHTTPResp(rsp *http.Response) (*GetCapabilitiesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCapabilitiesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CapabilitiesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

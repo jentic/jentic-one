@@ -1460,6 +1460,21 @@
       "typical_caller": "operator"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_permissions": {},
+      "method": "GET",
+      "operation_id": "getCapabilities",
+      "path": "/capabilities",
+      "public": true,
+      "required_permissions": [],
+      "summary": "Deployment capabilities",
+      "surface": "capabilities",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent"
@@ -4751,5 +4766,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 170
+  "total": 171
 }
