@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -390,6 +391,35 @@ def test_combined_app_builds_one_pre_auth_state_backend(
         app = create_combined_app(ctx, order)
         assert len(built) == 1
         assert app.state.auth_state_backend is built[0]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(create_admin_app, id="standalone-admin"),
+        pytest.param(create_auth_app, id="standalone-auth"),
+        pytest.param(lambda c: create_combined_app(c, ["admin"]), id="combined-admin-only"),
+    ],
+)
+def test_password_login_app_installs_configured_pre_auth_state_backend(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch, build: Callable[[Context], FastAPI]
+) -> None:
+    """Every app serving a password login gets the configured backend at build (#1441).
+
+    Without it the login limiter falls back to a per-process memory backend at
+    request time, so a Redis-backed deployment silently loses its shared quota.
+    """
+    built: list[MemoryStateBackend] = []
+
+    def _build(_cfg: object) -> MemoryStateBackend:
+        backend = MemoryStateBackend()
+        built.append(backend)
+        return backend
+
+    monkeypatch.setattr(auth_state_module, "build_state_backend", _build)
+    app = build(ctx)
+    assert len(built) == 1
+    assert app.state.auth_state_backend is built[0]
 
 
 def test_combined_app_lifespan_closes_pre_auth_state_backend(
