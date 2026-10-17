@@ -175,8 +175,9 @@ write served by another process, for up to the TTL:
   pin, renamed, or given other `server_variables`) may not be seen yet;
 - a `NO_AUTH` winner, which has no material to read, keeps its cached header:
   a re-type or `server_variables` edit (which drives host/region templating)
-  is not seen. A disable drops it from the binding boundary, so it is not
-  selected.
+  is not seen. A disable drops it from the binding boundary once the binding
+  cache (`broker.toolkit_cache_ttl_s`, 3 s by default) refreshes, so it is not
+  selected after that.
 
 Both select a credential the caller is bound to right now; neither injects a
 secret that is gone or disabled. Queued executions resolve without the cache.
