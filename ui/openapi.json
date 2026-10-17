@@ -33474,22 +33474,22 @@
             },
             "description": "Forbidden"
           },
-          "409": {
+          "410": {
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
-                  "instance": "/catalog/public/slack.com/operations",
-                  "status": 409,
-                  "title": "Conflict",
-                  "type": "catalog_entry_has_no_spec"
+                  "detail": "The resource is no longer available and the operation has self-closed.",
+                  "instance": "/example/path",
+                  "status": 410,
+                  "title": "Gone",
+                  "type": "gone"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             },
-            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
+            "description": "`catalog_spec_gone`: the entry's source no longer has a spec for it."
           },
           "422": {
             "content": {
@@ -33546,7 +33546,7 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "`catalog_source_unavailable`: the entry's source is throttled or down; retry after the `Retry-After` header."
           }
         },
         "security": [
@@ -33681,22 +33681,22 @@
             },
             "description": "Forbidden"
           },
-          "409": {
+          "410": {
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
-                  "instance": "/catalog/public/slack.com:import",
-                  "status": 409,
-                  "title": "Conflict",
-                  "type": "catalog_entry_has_no_spec"
+                  "detail": "The resource is no longer available and the operation has self-closed.",
+                  "instance": "/example/path",
+                  "status": 410,
+                  "title": "Gone",
+                  "type": "gone"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             },
-            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
+            "description": "`catalog_spec_gone`: the entry lists no spec to import."
           },
           "422": {
             "content": {

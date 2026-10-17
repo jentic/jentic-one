@@ -178,10 +178,10 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
+                410: `\`catalog_spec_gone\`: the entry's source no longer has a spec for it.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
-                503: `Service Unavailable`,
+                503: `\`catalog_source_unavailable\`: the entry's source is throttled or down; retry after the \`Retry-After\` header.`,
             },
         });
     }
@@ -217,7 +217,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
+                410: `\`catalog_spec_gone\`: the entry lists no spec to import.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -2801,7 +2801,7 @@ components:
       description: Request body for initiating a credential connect flow.
       examples:
       - &id235
-        extra: &id040
+        extra: &id039
           prompt: consent
         scopes: &id041
         - read_write
@@ -2828,7 +2828,7 @@ components:
       description: Cursor-paginated envelope of connect-session summaries.
       examples:
       - &id225
-        data: &id042
+        data: &id041
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           connected_as: octocat
           created_at: '2026-01-15T09:30:00Z'
@@ -3056,7 +3056,7 @@ components:
       description: Paginated list of agents directly bound to a credential.
       examples:
       - &id229
-        data: &id043
+        data: &id042
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_name: billing-assistant
           bound_at: '2026-01-15T09:30:00Z'
@@ -3448,8 +3448,8 @@ components:
       description: Paginated list of credentials.
       examples:
       - &id226
-        data: &id048
-        - *id047
+        data: &id047
+        - *id046
         has_more: true
         next_cursor: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
       properties:
@@ -4031,8 +4031,8 @@ components:
       description: Paginated list of events.
       examples:
       - &id238
-        data: &id052
-        - _links: *id051
+        data: &id051
+        - _links: *id050
           actor_id: usr_6968b3987ee4c3ec0b4ee3b9
           actor_type: user
           created_at: '2026-01-15T09:30:00Z'
@@ -4080,7 +4080,7 @@ components:
       description: Event representation in API responses.
       examples:
       - &id241
-        _links: *id051
+        _links: *id050
         actor_id: usr_6968b3987ee4c3ec0b4ee3b9
         actor_type: user
         created_at: '2026-01-15T09:30:00Z'
@@ -4194,7 +4194,7 @@ components:
       description: Paginated list of executions.
       examples:
       - &id243
-        data: &id055
+        data: &id054
         - _links:
             self: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           actor_id: agnt_6968b3984d1c238dbe7e2e29
@@ -4268,7 +4268,7 @@ components:
       description: Execution record representation in API responses.
       examples:
       - &id248
-        _links: *id056
+        _links: *id055
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
         api: *id054
@@ -4457,8 +4457,8 @@ components:
       description: Aggregated execution statistics for the dashboard.
       examples:
       - &id258
-        daily_buckets: &id059
-        - *id058
+        daily_buckets: &id058
+        - *id057
         success_rate_percent: 93.75
         top_operations: &id060
         - api_name: stripe
@@ -4589,7 +4589,7 @@ components:
         convention.
       examples:
       - &id249
-        data: &id062
+        data: &id061
         - api.github.com
         - api.stripe.com
         - files.stripe.com:8443
@@ -4671,7 +4671,7 @@ components:
       description: A held execution with the agent context and the held request a reviewer decides on.
       examples:
       - &id245
-        _links: &id063
+        _links: &id062
           execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           result: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
           self: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6
@@ -4949,8 +4949,8 @@ components:
       description: A page of held executions.
       examples:
       - &id244
-        data: &id066
-        - _links: *id065
+        data: &id065
+        - _links: *id064
           agent_id: agnt_6968b3984d1c238dbe7e2e29
           api_name: stripe
           api_vendor: stripe.com
@@ -5006,7 +5006,7 @@ components:
       description: A call held for a human decision, and where it stands.
       examples:
       - &id247
-        _links: *id065
+        _links: *id064
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api_name: stripe
         api_vendor: stripe.com
@@ -5554,8 +5554,8 @@ components:
       description: Paginated list of jobs.
       examples:
       - &id254
-        data: &id071
-        - _links: *id070
+        data: &id070
+        - _links: *id069
           actor_id: agnt_6968b3984d1c238dbe7e2e29
           actor_type: agent
           created_at: '2026-01-15T09:30:00Z'
@@ -5599,7 +5599,7 @@ components:
       description: Job representation in API responses.
       examples:
       - &id255
-        _links: *id070
+        _links: *id069
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
         created_at: '2026-01-15T09:30:00Z'
@@ -6503,7 +6503,7 @@ components:
       description: Paginated list of OAuth app registrations.
       examples:
       - &id262
-        data: &id088
+        data: &id087
         - api_vendor: github
           authorization_endpoint: https://github.com/login/device/code
           authorize_url: https://github.com/login/oauth/authorize
@@ -8972,7 +8972,7 @@ components:
       description: List of available permissions.
       examples:
       - &id278
-        data: &id118
+        data: &id117
         - description: Create, update, and disable users
           grantable_by_caller: true
           implies: &id119
@@ -9036,7 +9036,7 @@ components:
       description: List of permission rules.
       examples:
       - &id230
-        data: &id120
+        data: &id119
         - _comment: Read-only access to charges.
           _system: false
           effect: allow
@@ -9337,9 +9337,9 @@ components:
       description: Patch permission rules — add and/or remove.
       examples:
       - &id231
-        add: &id127
-        - *id126
-        remove: &id128
+        add: &id126
+        - *id125
+        remove: &id127
         - 0
         - 2
       properties:
@@ -9763,8 +9763,8 @@ components:
       description: Discovery response listing all available credential providers.
       examples:
       - &id228
-        providers: &id137
-        - *id136
+        providers: &id136
+        - *id135
       properties:
         providers:
           description: The available credential providers.
@@ -10208,7 +10208,7 @@ components:
       description: Paginated list of rule sets.
       examples:
       - &id274
-        data: &id144
+        data: &id143
         - created_at: '2026-01-15T09:30:00Z'
           created_by: usr_6968b3987ee4c3ec0b4ee3b9
           curated: true
@@ -10466,7 +10466,7 @@ components:
       description: POST /search request body.
       examples:
       - &id282
-        apis: &id147
+        apis: &id146
         - stripe.com/stripe
         cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
         limit: 10
@@ -10526,8 +10526,8 @@ components:
       description: Cursor-paginated search results page.
       examples:
       - &id283
-        data: &id150
-        - *id149
+        data: &id149
+        - *id148
         has_more: true
         next_cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
       properties:
@@ -10773,7 +10773,7 @@ components:
       description: Request body for setting user permissions.
       examples:
       - &id292
-        permissions: &id155
+        permissions: &id154
         - users:write
         - agents:read
       properties:
@@ -11485,7 +11485,7 @@ components:
       description: Paginated list of users.
       examples:
       - &id285
-        data: &id167
+        data: &id166
         - active: true
           auth_provider: external
           created_at: '2026-01-15T09:30:00Z'
@@ -11687,7 +11687,7 @@ components:
       description: The vendors the caller can connect a credential for.
       examples:
       - &id296
-        data: &id168
+        data: &id167
         - catalog_api_id: github.com/api.github.com
           display_name: GitHub
           entry_id: oar_6968b39821e5f89a6975f501
@@ -19665,18 +19665,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
-        '409':
+        '410':
           content:
             application/problem+json:
-              example:
-                detail: Catalog entry 'public/slack.com' has no spec to preview or import
-                instance: /catalog/public/slack.com/operations
-                status: 409
-                title: Conflict
-                type: catalog_entry_has_no_spec
+              example: &id222
+                detail: The resource is no longer available and the operation has self-closed.
+                instance: /example/path
+                status: 410
+                title: Gone
+                type: gone
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).
+          description: '`catalog_spec_gone`: the entry''s source no longer has a spec for it.'
         '422':
           content:
             application/problem+json:
@@ -19697,7 +19697,7 @@ paths:
               example: *id178
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
+          description: '`catalog_source_unavailable`: the entry''s source is throttled or down; retry after the `Retry-After` header.'
         default:
           content:
             application/problem+json:
@@ -19776,18 +19776,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
-        '409':
+        '410':
           content:
             application/problem+json:
-              example:
-                detail: Catalog entry 'public/slack.com' has no spec to preview or import
-                instance: /catalog/public/slack.com:import
-                status: 409
-                title: Conflict
-                type: catalog_entry_has_no_spec
+              example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).
+          description: '`catalog_spec_gone`: the entry lists no spec to import.'
         '422':
           content:
             application/problem+json:
@@ -29420,12 +29415,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example:
-                detail: The resource is no longer available and the operation has self-closed.
-                instance: /example/path
-                status: 410
-                title: Gone
-                type: gone
+              example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Setup already complete — the first admin exists and this endpoint is closed.
