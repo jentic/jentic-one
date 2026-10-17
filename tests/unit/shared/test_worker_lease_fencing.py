@@ -260,7 +260,7 @@ def test_visibility_timeout_must_be_positive(timeout_s: float) -> None:
 async def test_heartbeat_keeps_renewing_until_cancelled(jobs_db: DatabaseSession) -> None:
     """The heartbeat renews the lease on every beat while it runs."""
     job_id = await _insert_job(jobs_db)
-    worker = _worker(jobs_db, visibility_timeout_s=0.2)
+    worker = _worker(jobs_db, visibility_timeout_s=0.8)
     claimed = await worker._claim_next()
     lapsed = await _db_clock(jobs_db) - timedelta(hours=1)
 
@@ -284,7 +284,7 @@ async def test_heartbeat_keeps_renewing_until_cancelled(jobs_db: DatabaseSession
 async def test_heartbeat_stops_once_lease_is_lost(jobs_db: DatabaseSession) -> None:
     """A heartbeat that finds its claim superseded logs the loss once and exits."""
     stale, _current = await _stale_and_current_claims(jobs_db)
-    worker = _worker(jobs_db, visibility_timeout_s=0.2)
+    worker = _worker(jobs_db, visibility_timeout_s=0.8)
 
     with structlog.testing.capture_logs() as logs:
         await asyncio.wait_for(worker._heartbeat(stale), timeout=2.0)
