@@ -1763,11 +1763,11 @@ type ApiLinksResponse struct {
 
 // ApiListResponse Cursor-paginated list of APIs.
 //
-// Examples: {"data":[{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ApiListResponse struct {
 	// Data The page of APIs.
 	//
-	// Examples: [{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}]
+	// Examples: [{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}]
 	Data []ApiResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -1812,7 +1812,7 @@ type ApiReferenceResponse struct {
 // this deployment. The public catalog of importable-but-not-yet-imported APIs
 // is a separate surface (“GET /catalog“); the two are not blended.
 //
-// Examples: {"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}
+// Examples: {"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}
 type ApiResponse struct {
 	// UnderscoreLinks Hypermedia links for a (local) API resource.
 	//
@@ -1828,6 +1828,11 @@ type ApiResponse struct {
 	//
 	// Examples: stripe.com
 	CatalogApiId *string `json:"catalog_api_id"`
+
+	// CatalogEntryId Catalog entry the API was imported from (`{source_slug}/{external_id}`), the id the `/catalog/{entry_id}` routes take; null for manual imports.
+	//
+	// Examples: public/stripe.com
+	CatalogEntryId *string `json:"catalog_entry_id,omitempty"`
 
 	// CreatedAt When the API was created (RFC 3339).
 	//
@@ -2486,81 +2491,121 @@ type BodyConsentAgentCreate struct {
 
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
 //
-// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
+// Examples: {"alternates":[],"human":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/public/stripe.com:import","operations":"/catalog/public/stripe.com/operations","self":"/catalog/public/stripe.com"}
 type CatalogEntryLinksResponse struct {
-	// Github Human-facing GitHub tree URL for the entry, when known.
+	// Alternates URLs of the visible entries with the same `catalog_api_id` collapsed into this one (empty when nothing was collapsed).
+	//
+	// Examples: ["https://jentic.example.com/catalog/internal/stripe.com"]
+	Alternates *[]string `json:"alternates,omitempty"`
+
+	// Human Human-facing page for the entry at its source, when known.
 	//
 	// Examples: https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com
-	Github *string `json:"github,omitempty"`
+	Human *string `json:"human,omitempty"`
 
-	// Import URL of the catalog import action (`POST /catalog/{api_id}:import`).
+	// Import URL of the catalog import action (`POST /catalog/{entry_id}:import`).
 	//
-	// Examples: https://jentic.example.com/catalog/stripe.com:import
+	// Examples: https://jentic.example.com/catalog/public/stripe.com:import
 	Import string `json:"import"`
 
 	// Operations URL of the entry's operation preview.
 	//
-	// Examples: https://jentic.example.com/catalog/stripe.com/operations
+	// Examples: https://jentic.example.com/catalog/public/stripe.com/operations
 	Operations string `json:"operations"`
 
 	// Self Canonical URL of this catalog entry.
 	//
-	// Examples: https://jentic.example.com/catalog/stripe.com
+	// Examples: https://jentic.example.com/catalog/public/stripe.com
 	Self string `json:"self"`
 }
 
 // CatalogEntryResponse A single browsable catalog entry.
 //
-// Examples: {"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","vendor":"stripe.com"}
+// Examples: {"_links":{"alternates":[],"human":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/public/stripe.com:import","operations":"/catalog/public/stripe.com/operations","self":"/catalog/public/stripe.com"},"alternates":0,"catalog_api_id":"stripe.com","display_vendor":"stripe.com","entry_id":"public/stripe.com","has_spec":true,"human_url":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","registered":false,"source_slug":"public","tags":[],"title":"Stripe API","update_available":false,"vendor":"stripe.com","version":"2024-01-01"}
 type CatalogEntryResponse struct {
 	// UnderscoreLinks Hypermedia links for a catalog entry.
 	//
-	// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
+	// Examples: {"alternates":[],"human":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/public/stripe.com:import","operations":"/catalog/public/stripe.com/operations","self":"/catalog/public/stripe.com"}
 	UnderscoreLinks CatalogEntryLinksResponse `json:"_links"`
 
-	// ApiId Catalog identity of the API (manifest domain, e.g. `stripe.com`).
+	// Alternates How many visible entries with the same `catalog_api_id` are collapsed into this one (see `_links.alternates`).
+	//
+	// Examples: 0
+	Alternates *int `json:"alternates,omitempty"`
+
+	// CatalogApiId Canonical, cross-source API identity (`domain[/sub-api]`, or `{source_slug}~{id}` when namespaced). Credentials match on it.
 	//
 	// Examples: stripe.com
-	ApiId string `json:"api_id"`
+	CatalogApiId string `json:"catalog_api_id"`
 
-	// Path Manifest path of the entry within the public-APIs repo.
+	// DisplayVendor Vendor for grouping entries in a UI; never used for identity.
 	//
-	// Examples: apis/openapi/stripe.com
-	Path *string `json:"path"`
+	// Examples: stripe.com
+	DisplayVendor *string `json:"display_vendor,omitempty"`
 
-	// Registered Whether this entry is already imported locally — its `spec_url` backs a non-archived revision in `GET /apis`.
+	// EntryId Catalog entry identity, `{source_slug}/{external_id}`; the key every `/catalog/{entry_id}` route takes.
+	//
+	// Examples: public/stripe.com
+	EntryId string `json:"entry_id"`
+
+	// HasSpec Whether the entry has an importable spec (false for a listing-only card).
+	//
+	// Examples: true
+	HasSpec *bool `json:"has_spec,omitempty"`
+
+	// HumanUrl Human-facing page for the entry at its source, when known.
+	//
+	// Examples: https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com
+	HumanUrl *string `json:"human_url,omitempty"`
+
+	// Registered Whether this entry is already imported into the local registry.
 	//
 	// Examples: true
 	Registered bool `json:"registered"`
 
-	// SpecUrl Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).
+	// SourceSlug Slug of the catalog source the entry comes from.
 	//
-	// Examples: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json
-	SpecUrl *string `json:"spec_url"`
+	// Examples: public
+	SourceSlug string `json:"source_slug"`
+
+	// Tags Entry tags from the source.
+	//
+	// Examples: ["payments"]
+	Tags *[]string `json:"tags,omitempty"`
+
+	// Title Entry title.
+	//
+	// Examples: Stripe API
+	Title *string `json:"title,omitempty"`
 
 	// UpdateAvailable Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
 	//
 	// Examples: false
 	UpdateAvailable *bool `json:"update_available,omitempty"`
 
-	// Vendor Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`).
+	// Vendor Identity vendor derived from `catalog_api_id` (credentials match on it).
 	//
 	// Examples: stripe.com
 	Vendor *string `json:"vendor"`
+
+	// Version Entry version, when the source lists one.
+	//
+	// Examples: 2024-04-10
+	Version *string `json:"version,omitempty"`
 }
 
 // CatalogListResponse List of catalog entries plus status fields for the Discover status row.
 //
-// Examples: {"catalog_total":5231,"data":[],"has_more":true,"manifest_age_seconds":3600,"next_cursor":"eyJpZCI6ICJzdHJpcGUuY29tIn0=","registered_count":12}
+// Examples: {"catalog_total":5231,"data":[],"has_more":true,"next_cursor":"eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9","oldest_source_sync_age_seconds":3600,"outdated_count":1,"registered_count":12}
 type CatalogListResponse struct {
-	// CatalogTotal Total entries in the whole manifest (pre-filter, pre-page).
+	// CatalogTotal Entries visible to the caller after collapsing (pre-filter, pre-page).
 	//
 	// Examples: 5231
 	CatalogTotal int `json:"catalog_total"`
 
 	// Data The page of catalog entries.
 	//
-	// Examples: [{"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","vendor":"stripe.com"}]
+	// Examples: [{"_links":{"alternates":[],"human":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/public/stripe.com:import","operations":"/catalog/public/stripe.com/operations","self":"/catalog/public/stripe.com"},"alternates":0,"catalog_api_id":"stripe.com","display_vendor":"stripe.com","entry_id":"public/stripe.com","has_spec":true,"human_url":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","registered":false,"source_slug":"public","tags":[],"title":"Stripe API","update_available":false,"vendor":"stripe.com","version":"2024-01-01"}]
 	Data []CatalogEntryResponse `json:"data"`
 
 	// HasMore Whether another page follows.
@@ -2568,32 +2613,32 @@ type CatalogListResponse struct {
 	// Examples: true
 	HasMore *bool `json:"has_more,omitempty"`
 
-	// ManifestAgeSeconds Age of the cached manifest in seconds, or null when the cache is empty.
-	//
-	// Examples: 3600
-	ManifestAgeSeconds *int `json:"manifest_age_seconds,omitempty"`
-
 	// NextCursor Opaque keyset cursor for the next page (null when done).
 	//
-	// Examples: eyJpZCI6ICJzdHJpcGUuY29tIn0=
+	// Examples: eyJpZCI6ICJwdWJsaWMvc3RyaXBlLmNvbSJ9
 	NextCursor *string `json:"next_cursor,omitempty"`
 
-	// OutdatedCount Count of whole-manifest registered entries with an upstream update available.
+	// OldestSourceSyncAgeSeconds Seconds since the least recently synced visible source last synced, or null when none has synced.
+	//
+	// Examples: 3600
+	OldestSourceSyncAgeSeconds *int `json:"oldest_source_sync_age_seconds,omitempty"`
+
+	// OutdatedCount Count of visible registered entries with an upstream update available (pre-filter).
 	//
 	// Examples: 1
 	OutdatedCount *int `json:"outdated_count,omitempty"`
 
-	// RegisteredCount Count of whole-manifest entries already imported locally.
+	// RegisteredCount Count of visible entries already imported locally (pre-filter).
 	//
 	// Examples: 12
 	RegisteredCount int `json:"registered_count"`
 }
 
-// CatalogRefreshResponse Acknowledgement of a manifest refresh.
+// CatalogRefreshResponse Acknowledgement of a catalog refresh.
 //
 // Examples: {"count":5231,"status":"refreshed"}
 type CatalogRefreshResponse struct {
-	// Count Number of entries in the freshly fetched manifest.
+	// Count Live entries of the enabled sources after the sync.
 	//
 	// Examples: 5231
 	Count int `json:"count"`
@@ -2604,7 +2649,7 @@ type CatalogRefreshResponse struct {
 	Status *string `json:"status,omitempty"`
 }
 
-// CatalogSnoozeRequest Body for “POST /catalog/{api_id}:snooze“ (C1, #925).
+// CatalogSnoozeRequest Body for “POST /catalog/{entry_id}:snooze“.
 //
 // “snoozed_until“ is optional: omit or send “null“ to mute-until-newer (the primary
 // per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
@@ -7822,7 +7867,7 @@ type ListAuditEntriesParams struct {
 
 // ListCatalogParams defines parameters for ListCatalog.
 type ListCatalogParams struct {
-	// Q Search text matched against entry IDs; results are ranked by match quality.
+	// Q Search text matched against each entry's `catalog_api_id`; results are ranked by match quality.
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
 	// RegisteredOnly Only return entries already imported into the registry.
@@ -7842,6 +7887,9 @@ type ListCatalogParams struct {
 
 	// Limit Maximum number of entries to return (1-200).
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// IncludeAlternates Return every visible entry instead of collapsing entries that share a `catalog_api_id` into one.
+	IncludeAlternates *bool `form:"include_alternates,omitempty" json:"include_alternates,omitempty"`
 }
 
 // PreviewCatalogOperationsParams defines parameters for PreviewCatalogOperations.
@@ -7857,6 +7905,12 @@ type PreviewCatalogOperationsParams struct {
 
 	// Q Only return operations whose method, path, summary or operation ID contains this text (case-insensitive).
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// ImportCatalogEntryParams defines parameters for ImportCatalogEntry.
+type ImportCatalogEntryParams struct {
+	// SwitchSource When another catalog entry's import already holds this entry's `catalog_api_id`, supersede that API with this entry's spec (its credentials then point at it). Needs `credentials:write`; without it the import takes a distinct name and leaves that API untouched.
+	SwitchSource *bool `form:"switch_source,omitempty" json:"switch_source,omitempty"`
 }
 
 // SnoozeCatalogEntryJSONBody defines parameters for SnoozeCatalogEntry.
@@ -10592,22 +10646,27 @@ type ClientInterface interface {
 
 	// ListCatalog List Catalog
 	//
-	// List a keyset page of browsable catalog entries (search/filter aware).
+	// List a keyset page of the catalog entries visible to the caller.
 	//
 	// The catalog holds thousands of entries, so this is cursor-paginated like
-	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
-	// manifest, not the page, so the Discover status row stays stable while scrolling.
+	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false. Visible
+	// entries sharing a ``catalog_api_id`` collapse into one (registered first,
+	// then source precedence) unless ``include_alternates`` is set.
+	// ``catalog_total``/``registered_count``/``outdated_count`` count the visible
+	// collapsed list before filters and paging, so the status row stays stable.
 	//
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCatalogEntry Get Catalog Entry
 	//
-	// Retrieve a single catalog entry by api_id.
+	// Retrieve a single visible catalog entry by ``entry_id``.
 	//
-	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
-	GetCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// A hidden or unknown id is a ``404``; when the id looks like a bare
+	// ``catalog_api_id`` the body's ``did_you_mean`` names the visible entry for it.
+	//
+	// Corresponds with GET /catalog/{entry_id} (the `GetCatalogEntry` operationId).
+	GetCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PreviewCatalogOperations Preview Catalog Operations
 	//
@@ -10617,19 +10676,19 @@ type ClientInterface interface {
 	// so the UI's search box covers every operation in the spec and pages the
 	// filtered set via ``offset``/``limit`` ("Load more").
 	//
-	// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
-	PreviewCatalogOperations(ctx context.Context, apiId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /catalog/{entry_id}/operations (the `PreviewCatalogOperations` operationId).
+	PreviewCatalogOperations(ctx context.Context, entryId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ImportCatalogEntry Import Catalog Entry
 	//
-	// Enqueue an async import of a catalog entry into the local registry.
+	// Enqueue an async import of a visible catalog entry into the local registry.
 	//
-	// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
-	ImportCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /catalog/{entry_id}:import (the `ImportCatalogEntry` operationId).
+	ImportCatalogEntry(ctx context.Context, entryId string, params *ImportCatalogEntryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SnoozeCatalogEntryWithBody Snooze Catalog Entry
 	//
-	// Snooze the outstanding update notification for a catalog entry (C1, #925).
+	// Snooze the outstanding update notification for a catalog entry.
 	//
 	// Operator action (``events:write``): quiet the "update available" badge for a
 	// known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -10639,12 +10698,12 @@ type ClientInterface interface {
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-	SnoozeCatalogEntryWithBody(ctx context.Context, apiId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+	SnoozeCatalogEntryWithBody(ctx context.Context, entryId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SnoozeCatalogEntry Snooze Catalog Entry
 	//
-	// Snooze the outstanding update notification for a catalog entry (C1, #925).
+	// Snooze the outstanding update notification for a catalog entry.
 	//
 	// Operator action (``events:write``): quiet the "update available" badge for a
 	// known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -10654,22 +10713,21 @@ type ClientInterface interface {
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-	SnoozeCatalogEntry(ctx context.Context, apiId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+	SnoozeCatalogEntry(ctx context.Context, entryId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UnsnoozeCatalogEntry Unsnooze Catalog Entry
 	//
-	// Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
+	// Clear a snooze for a catalog entry. Operator action (``events:write``).
 	//
-	// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
-	UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
+	UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RefreshCatalog Refresh Catalog
 	//
-	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
+	// Sync every enabled catalog source now (org:admin).
 	//
-	// Also syncs every enabled catalog source; ``force=true`` overrides the
-	// mass-removal guard for this run.
+	// ``force=true`` overrides the mass-removal guard for this run.
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14184,12 +14242,14 @@ func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditor
 
 // ListCatalog List Catalog
 //
-// List a keyset page of browsable catalog entries (search/filter aware).
+// List a keyset page of the catalog entries visible to the caller.
 //
 // The catalog holds thousands of entries, so this is cursor-paginated like
-// “GET /apis“: follow “next_cursor“ until “has_more“ is false.
-// “catalog_total“/“registered_count“/“outdated_count“ count the whole
-// manifest, not the page, so the Discover status row stays stable while scrolling.
+// “GET /apis“: follow “next_cursor“ until “has_more“ is false. Visible
+// entries sharing a “catalog_api_id“ collapse into one (registered first,
+// then source precedence) unless “include_alternates“ is set.
+// “catalog_total“/“registered_count“/“outdated_count“ count the visible
+// collapsed list before filters and paging, so the status row stays stable.
 //
 // Corresponds with GET /catalog (the `ListCatalog` operationId).
 func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14206,11 +14266,14 @@ func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, req
 
 // GetCatalogEntry Get Catalog Entry
 //
-// Retrieve a single catalog entry by api_id.
+// Retrieve a single visible catalog entry by “entry_id“.
 //
-// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
-func (c *Client) GetCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCatalogEntryRequest(c.Server, apiId)
+// A hidden or unknown id is a “404“; when the id looks like a bare
+// “catalog_api_id“ the body's “did_you_mean“ names the visible entry for it.
+//
+// Corresponds with GET /catalog/{entry_id} (the `GetCatalogEntry` operationId).
+func (c *Client) GetCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCatalogEntryRequest(c.Server, entryId)
 	if err != nil {
 		return nil, err
 	}
@@ -14229,9 +14292,9 @@ func (c *Client) GetCatalogEntry(ctx context.Context, apiId string, reqEditors .
 // so the UI's search box covers every operation in the spec and pages the
 // filtered set via “offset“/“limit“ ("Load more").
 //
-// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
-func (c *Client) PreviewCatalogOperations(ctx context.Context, apiId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPreviewCatalogOperationsRequest(c.Server, apiId, params)
+// Corresponds with GET /catalog/{entry_id}/operations (the `PreviewCatalogOperations` operationId).
+func (c *Client) PreviewCatalogOperations(ctx context.Context, entryId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewCatalogOperationsRequest(c.Server, entryId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14244,11 +14307,11 @@ func (c *Client) PreviewCatalogOperations(ctx context.Context, apiId string, par
 
 // ImportCatalogEntry Import Catalog Entry
 //
-// Enqueue an async import of a catalog entry into the local registry.
+// Enqueue an async import of a visible catalog entry into the local registry.
 //
-// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
-func (c *Client) ImportCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewImportCatalogEntryRequest(c.Server, apiId)
+// Corresponds with POST /catalog/{entry_id}:import (the `ImportCatalogEntry` operationId).
+func (c *Client) ImportCatalogEntry(ctx context.Context, entryId string, params *ImportCatalogEntryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportCatalogEntryRequest(c.Server, entryId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14261,7 +14324,7 @@ func (c *Client) ImportCatalogEntry(ctx context.Context, apiId string, reqEditor
 
 // SnoozeCatalogEntryWithBody Snooze Catalog Entry
 //
-// Snooze the outstanding update notification for a catalog entry (C1, #925).
+// Snooze the outstanding update notification for a catalog entry.
 //
 // Operator action (“events:write“): quiet the "update available" badge for a
 // known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -14271,9 +14334,9 @@ func (c *Client) ImportCatalogEntry(ctx context.Context, apiId string, reqEditor
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-func (c *Client) SnoozeCatalogEntryWithBody(ctx context.Context, apiId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSnoozeCatalogEntryRequestWithBody(c.Server, apiId, contentType, body)
+// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+func (c *Client) SnoozeCatalogEntryWithBody(ctx context.Context, entryId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSnoozeCatalogEntryRequestWithBody(c.Server, entryId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14286,7 +14349,7 @@ func (c *Client) SnoozeCatalogEntryWithBody(ctx context.Context, apiId string, c
 
 // SnoozeCatalogEntry Snooze Catalog Entry
 //
-// Snooze the outstanding update notification for a catalog entry (C1, #925).
+// Snooze the outstanding update notification for a catalog entry.
 //
 // Operator action (“events:write“): quiet the "update available" badge for a
 // known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -14296,9 +14359,9 @@ func (c *Client) SnoozeCatalogEntryWithBody(ctx context.Context, apiId string, c
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-func (c *Client) SnoozeCatalogEntry(ctx context.Context, apiId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSnoozeCatalogEntryRequest(c.Server, apiId, body)
+// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+func (c *Client) SnoozeCatalogEntry(ctx context.Context, entryId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSnoozeCatalogEntryRequest(c.Server, entryId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14311,11 +14374,11 @@ func (c *Client) SnoozeCatalogEntry(ctx context.Context, apiId string, body Snoo
 
 // UnsnoozeCatalogEntry Unsnooze Catalog Entry
 //
-// Clear a snooze for a catalog entry (C1). Operator action (“events:write“).
+// Clear a snooze for a catalog entry. Operator action (“events:write“).
 //
-// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
-func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUnsnoozeCatalogEntryRequest(c.Server, apiId)
+// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
+func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnsnoozeCatalogEntryRequest(c.Server, entryId)
 	if err != nil {
 		return nil, err
 	}
@@ -14328,10 +14391,9 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, apiId string, reqEdit
 
 // RefreshCatalog Refresh Catalog
 //
-// Force a refresh of the catalog cache from the upstream manifest (org:admin).
+// Sync every enabled catalog source now (org:admin).
 //
-// Also syncs every enabled catalog source; “force=true“ overrides the
-// mass-removal guard for this run.
+// “force=true“ overrides the mass-removal guard for this run.
 //
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -20836,6 +20898,18 @@ func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Requ
 
 		}
 
+		if params.IncludeAlternates != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "include_alternates", *params.IncludeAlternates, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -20851,12 +20925,12 @@ func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Requ
 }
 
 // NewGetCatalogEntryRequest constructs an http.Request for the GetCatalogEntry method
-func NewGetCatalogEntryRequest(server string, apiId string) (*http.Request, error) {
+func NewGetCatalogEntryRequest(server string, entryId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "entry_id", entryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20885,12 +20959,12 @@ func NewGetCatalogEntryRequest(server string, apiId string) (*http.Request, erro
 }
 
 // NewPreviewCatalogOperationsRequest constructs an http.Request for the PreviewCatalogOperations method
-func NewPreviewCatalogOperationsRequest(server string, apiId string, params *PreviewCatalogOperationsParams) (*http.Request, error) {
+func NewPreviewCatalogOperationsRequest(server string, entryId string, params *PreviewCatalogOperationsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "entry_id", entryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -20982,12 +21056,12 @@ func NewPreviewCatalogOperationsRequest(server string, apiId string, params *Pre
 }
 
 // NewImportCatalogEntryRequest constructs an http.Request for the ImportCatalogEntry method
-func NewImportCatalogEntryRequest(server string, apiId string) (*http.Request, error) {
+func NewImportCatalogEntryRequest(server string, entryId string, params *ImportCatalogEntryParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "entry_id", entryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -21007,6 +21081,33 @@ func NewImportCatalogEntryRequest(server string, apiId string) (*http.Request, e
 		return nil, err
 	}
 
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.SwitchSource != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "switch_source", *params.SwitchSource, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
@@ -21016,23 +21117,23 @@ func NewImportCatalogEntryRequest(server string, apiId string) (*http.Request, e
 }
 
 // NewSnoozeCatalogEntryRequest calls the generic SnoozeCatalogEntry builder with application/json body
-func NewSnoozeCatalogEntryRequest(server string, apiId string, body SnoozeCatalogEntryJSONRequestBody) (*http.Request, error) {
+func NewSnoozeCatalogEntryRequest(server string, entryId string, body SnoozeCatalogEntryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSnoozeCatalogEntryRequestWithBody(server, apiId, "application/json", bodyReader)
+	return NewSnoozeCatalogEntryRequestWithBody(server, entryId, "application/json", bodyReader)
 }
 
 // NewSnoozeCatalogEntryRequestWithBody constructs an http.Request for the SnoozeCatalogEntry method, with any body, and a specified content type
-func NewSnoozeCatalogEntryRequestWithBody(server string, apiId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewSnoozeCatalogEntryRequestWithBody(server string, entryId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "entry_id", entryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -21063,12 +21164,12 @@ func NewSnoozeCatalogEntryRequestWithBody(server string, apiId string, contentTy
 }
 
 // NewUnsnoozeCatalogEntryRequest constructs an http.Request for the UnsnoozeCatalogEntry method
-func NewUnsnoozeCatalogEntryRequest(server string, apiId string) (*http.Request, error) {
+func NewUnsnoozeCatalogEntryRequest(server string, entryId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "entry_id", entryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -27063,12 +27164,14 @@ type ClientWithResponsesInterface interface {
 
 	// ListCatalogWithResponse List Catalog
 	//
-	// List a keyset page of browsable catalog entries (search/filter aware).
+	// List a keyset page of the catalog entries visible to the caller.
 	//
 	// The catalog holds thousands of entries, so this is cursor-paginated like
-	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
-	// manifest, not the page, so the Discover status row stays stable while scrolling.
+	// ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false. Visible
+	// entries sharing a ``catalog_api_id`` collapse into one (registered first,
+	// then source precedence) unless ``include_alternates`` is set.
+	// ``catalog_total``/``registered_count``/``outdated_count`` count the visible
+	// collapsed list before filters and paging, so the status row stays stable.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27077,12 +27180,15 @@ type ClientWithResponsesInterface interface {
 
 	// GetCatalogEntryWithResponse Get Catalog Entry
 	//
-	// Retrieve a single catalog entry by api_id.
+	// Retrieve a single visible catalog entry by ``entry_id``.
+	//
+	// A hidden or unknown id is a ``404``; when the id looks like a bare
+	// ``catalog_api_id`` the body's ``did_you_mean`` names the visible entry for it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
-	GetCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error)
+	// Corresponds with GET /catalog/{entry_id} (the `GetCatalogEntry` operationId).
+	GetCatalogEntryWithResponse(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error)
 
 	// PreviewCatalogOperationsWithResponse Preview Catalog Operations
 	//
@@ -27094,21 +27200,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
-	PreviewCatalogOperationsWithResponse(ctx context.Context, apiId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*PreviewCatalogOperationsHTTPResp, error)
+	// Corresponds with GET /catalog/{entry_id}/operations (the `PreviewCatalogOperations` operationId).
+	PreviewCatalogOperationsWithResponse(ctx context.Context, entryId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*PreviewCatalogOperationsHTTPResp, error)
 
 	// ImportCatalogEntryWithResponse Import Catalog Entry
 	//
-	// Enqueue an async import of a catalog entry into the local registry.
+	// Enqueue an async import of a visible catalog entry into the local registry.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
-	ImportCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*ImportCatalogEntryHTTPResp, error)
+	// Corresponds with POST /catalog/{entry_id}:import (the `ImportCatalogEntry` operationId).
+	ImportCatalogEntryWithResponse(ctx context.Context, entryId string, params *ImportCatalogEntryParams, reqEditors ...RequestEditorFn) (*ImportCatalogEntryHTTPResp, error)
 
 	// SnoozeCatalogEntryWithBodyWithResponse Snooze Catalog Entry
 	//
-	// Snooze the outstanding update notification for a catalog entry (C1, #925).
+	// Snooze the outstanding update notification for a catalog entry.
 	//
 	// Operator action (``events:write``): quiet the "update available" badge for a
 	// known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -27118,12 +27224,12 @@ type ClientWithResponsesInterface interface {
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-	SnoozeCatalogEntryWithBodyWithResponse(ctx context.Context, apiId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
+	// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+	SnoozeCatalogEntryWithBodyWithResponse(ctx context.Context, entryId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
 
 	// SnoozeCatalogEntryWithResponse Snooze Catalog Entry
 	//
-	// Snooze the outstanding update notification for a catalog entry (C1, #925).
+	// Snooze the outstanding update notification for a catalog entry.
 	//
 	// Operator action (``events:write``): quiet the "update available" badge for a
 	// known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -27133,24 +27239,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-	SnoozeCatalogEntryWithResponse(ctx context.Context, apiId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
+	// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+	SnoozeCatalogEntryWithResponse(ctx context.Context, entryId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error)
 
 	// UnsnoozeCatalogEntryWithResponse Unsnooze Catalog Entry
 	//
-	// Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
+	// Clear a snooze for a catalog entry. Operator action (``events:write``).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
-	UnsnoozeCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error)
+	// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
+	UnsnoozeCatalogEntryWithResponse(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error)
 
 	// RefreshCatalogWithResponse Refresh Catalog
 	//
-	// Force a refresh of the catalog cache from the upstream manifest (org:admin).
+	// Sync every enabled catalog source now (org:admin).
 	//
-	// Also syncs every enabled catalog source; ``force=true`` overrides the
-	// mass-removal guard for this run.
+	// ``force=true`` overrides the mass-removal guard for this run.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45299,12 +45404,14 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 
 // ListCatalogWithResponse List Catalog
 //
-// List a keyset page of browsable catalog entries (search/filter aware).
+// List a keyset page of the catalog entries visible to the caller.
 //
 // The catalog holds thousands of entries, so this is cursor-paginated like
-// “GET /apis“: follow “next_cursor“ until “has_more“ is false.
-// “catalog_total“/“registered_count“/“outdated_count“ count the whole
-// manifest, not the page, so the Discover status row stays stable while scrolling.
+// “GET /apis“: follow “next_cursor“ until “has_more“ is false. Visible
+// entries sharing a “catalog_api_id“ collapse into one (registered first,
+// then source precedence) unless “include_alternates“ is set.
+// “catalog_total“/“registered_count“/“outdated_count“ count the visible
+// collapsed list before filters and paging, so the status row stays stable.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -45319,13 +45426,16 @@ func (c *ClientWithResponses) ListCatalogWithResponse(ctx context.Context, param
 
 // GetCatalogEntryWithResponse Get Catalog Entry
 //
-// Retrieve a single catalog entry by api_id.
+// Retrieve a single visible catalog entry by “entry_id“.
+//
+// A hidden or unknown id is a “404“; when the id looks like a bare
+// “catalog_api_id“ the body's “did_you_mean“ names the visible entry for it.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
-func (c *ClientWithResponses) GetCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error) {
-	rsp, err := c.GetCatalogEntry(ctx, apiId, reqEditors...)
+// Corresponds with GET /catalog/{entry_id} (the `GetCatalogEntry` operationId).
+func (c *ClientWithResponses) GetCatalogEntryWithResponse(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error) {
+	rsp, err := c.GetCatalogEntry(ctx, entryId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45342,9 +45452,9 @@ func (c *ClientWithResponses) GetCatalogEntryWithResponse(ctx context.Context, a
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /catalog/{api_id}/operations (the `PreviewCatalogOperations` operationId).
-func (c *ClientWithResponses) PreviewCatalogOperationsWithResponse(ctx context.Context, apiId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*PreviewCatalogOperationsHTTPResp, error) {
-	rsp, err := c.PreviewCatalogOperations(ctx, apiId, params, reqEditors...)
+// Corresponds with GET /catalog/{entry_id}/operations (the `PreviewCatalogOperations` operationId).
+func (c *ClientWithResponses) PreviewCatalogOperationsWithResponse(ctx context.Context, entryId string, params *PreviewCatalogOperationsParams, reqEditors ...RequestEditorFn) (*PreviewCatalogOperationsHTTPResp, error) {
+	rsp, err := c.PreviewCatalogOperations(ctx, entryId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45353,13 +45463,13 @@ func (c *ClientWithResponses) PreviewCatalogOperationsWithResponse(ctx context.C
 
 // ImportCatalogEntryWithResponse Import Catalog Entry
 //
-// Enqueue an async import of a catalog entry into the local registry.
+// Enqueue an async import of a visible catalog entry into the local registry.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /catalog/{api_id}:import (the `ImportCatalogEntry` operationId).
-func (c *ClientWithResponses) ImportCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*ImportCatalogEntryHTTPResp, error) {
-	rsp, err := c.ImportCatalogEntry(ctx, apiId, reqEditors...)
+// Corresponds with POST /catalog/{entry_id}:import (the `ImportCatalogEntry` operationId).
+func (c *ClientWithResponses) ImportCatalogEntryWithResponse(ctx context.Context, entryId string, params *ImportCatalogEntryParams, reqEditors ...RequestEditorFn) (*ImportCatalogEntryHTTPResp, error) {
+	rsp, err := c.ImportCatalogEntry(ctx, entryId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45368,7 +45478,7 @@ func (c *ClientWithResponses) ImportCatalogEntryWithResponse(ctx context.Context
 
 // SnoozeCatalogEntryWithBodyWithResponse Snooze Catalog Entry
 //
-// Snooze the outstanding update notification for a catalog entry (C1, #925).
+// Snooze the outstanding update notification for a catalog entry.
 //
 // Operator action (“events:write“): quiet the "update available" badge for a
 // known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -45378,9 +45488,9 @@ func (c *ClientWithResponses) ImportCatalogEntryWithResponse(ctx context.Context
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-func (c *ClientWithResponses) SnoozeCatalogEntryWithBodyWithResponse(ctx context.Context, apiId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error) {
-	rsp, err := c.SnoozeCatalogEntryWithBody(ctx, apiId, contentType, body, reqEditors...)
+// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+func (c *ClientWithResponses) SnoozeCatalogEntryWithBodyWithResponse(ctx context.Context, entryId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error) {
+	rsp, err := c.SnoozeCatalogEntryWithBody(ctx, entryId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45389,7 +45499,7 @@ func (c *ClientWithResponses) SnoozeCatalogEntryWithBodyWithResponse(ctx context
 
 // SnoozeCatalogEntryWithResponse Snooze Catalog Entry
 //
-// Snooze the outstanding update notification for a catalog entry (C1, #925).
+// Snooze the outstanding update notification for a catalog entry.
 //
 // Operator action (“events:write“): quiet the "update available" badge for a
 // known-and-accepted upstream change without adopting it. Body is optional — omit or send
@@ -45399,9 +45509,9 @@ func (c *ClientWithResponses) SnoozeCatalogEntryWithBodyWithResponse(ctx context
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /catalog/{api_id}:snooze (the `SnoozeCatalogEntry` operationId).
-func (c *ClientWithResponses) SnoozeCatalogEntryWithResponse(ctx context.Context, apiId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error) {
-	rsp, err := c.SnoozeCatalogEntry(ctx, apiId, body, reqEditors...)
+// Corresponds with POST /catalog/{entry_id}:snooze (the `SnoozeCatalogEntry` operationId).
+func (c *ClientWithResponses) SnoozeCatalogEntryWithResponse(ctx context.Context, entryId string, body SnoozeCatalogEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*SnoozeCatalogEntryHTTPResp, error) {
+	rsp, err := c.SnoozeCatalogEntry(ctx, entryId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45410,13 +45520,13 @@ func (c *ClientWithResponses) SnoozeCatalogEntryWithResponse(ctx context.Context
 
 // UnsnoozeCatalogEntryWithResponse Unsnooze Catalog Entry
 //
-// Clear a snooze for a catalog entry (C1). Operator action (“events:write“).
+// Clear a snooze for a catalog entry. Operator action (“events:write“).
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /catalog/{api_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
-func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error) {
-	rsp, err := c.UnsnoozeCatalogEntry(ctx, apiId, reqEditors...)
+// Corresponds with POST /catalog/{entry_id}:unsnooze (the `UnsnoozeCatalogEntry` operationId).
+func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Context, entryId string, reqEditors ...RequestEditorFn) (*UnsnoozeCatalogEntryHTTPResp, error) {
+	rsp, err := c.UnsnoozeCatalogEntry(ctx, entryId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -45425,10 +45535,9 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 
 // RefreshCatalogWithResponse Refresh Catalog
 //
-// Force a refresh of the catalog cache from the upstream manifest (org:admin).
+// Sync every enabled catalog source now (org:admin).
 //
-// Also syncs every enabled catalog source; “force=true“ overrides the
-// mass-removal guard for this run.
+// “force=true“ overrides the mass-removal guard for this run.
 //
 // Returns a wrapper object for the known response body format(s).
 //

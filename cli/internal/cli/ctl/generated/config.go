@@ -409,17 +409,9 @@ type CatalogConfig struct {
 	// case-insensitively and applied in the curated casing.
 	CatalogApiIdMappings []CatalogApiIdMappingConfig `json:"catalog_api_id_mappings,omitempty,omitzero" yaml:"catalog_api_id_mappings,omitempty" mapstructure:"catalog_api_id_mappings,omitempty"`
 
-	// The git-manifest source the deprecated manifest_* keys map onto and that
-	// pre-existing catalog imports are reconciled against.
+	// The git-manifest source that pre-existing catalog imports are reconciled
+	// against.
 	LegacySourceSlug string `json:"legacy_source_slug,omitempty,omitzero" yaml:"legacy_source_slug,omitempty" mapstructure:"legacy_source_slug,omitempty"`
-
-	// Deprecated alias for the legacy source's max_age_seconds.
-	ManifestMaxAgeSeconds int `json:"manifest_max_age_seconds,omitempty,omitzero" yaml:"manifest_max_age_seconds,omitempty" mapstructure:"manifest_max_age_seconds,omitempty"`
-
-	// Deprecated alias for the legacy source's settings.url
-	// (catalog.sources[slug=legacy_source_slug]). Full default:
-	// https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json
-	ManifestUrl string `json:"manifest_url,omitempty,omitzero" yaml:"manifest_url,omitempty" mapstructure:"manifest_url,omitempty"`
 
 	// Catalog sources. The default is the curated public-apis manifest.
 	Sources []CatalogSourceConfig `json:"sources,omitempty,omitzero" yaml:"sources,omitempty" mapstructure:"sources,omitempty"`
@@ -454,12 +446,6 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["legacy_source_slug"]; !ok || v == nil {
 		plain.LegacySourceSlug = "public"
-	}
-	if v, ok := raw["manifest_max_age_seconds"]; !ok || v == nil {
-		plain.ManifestMaxAgeSeconds = 86400
-	}
-	if v, ok := raw["manifest_url"]; !ok || v == nil {
-		plain.ManifestUrl = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json"
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400
