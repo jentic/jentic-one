@@ -128,9 +128,12 @@ async def test_cancellation_during_the_unlock_discards_the_lock_connection(
     holder: asyncio.Task[None] | None = None
 
     def _cancel_on_unlock(_conn: object, _cursor: object, statement: str, *_args: object) -> None:
-        # The holder's next await is the unlock round trip, so it raises there.
-        if "pg_advisory_unlock" in statement and holder is not None:
-            holder.cancel()
+        # Runs inside the holder task just before the unlock is sent; a running
+        # task's cancel() takes effect at its next suspension, which is the
+        # unlock's round trip, so the cancellation lands there.
+        task = asyncio.current_task()
+        if "pg_advisory_unlock" in statement and task is not None and task is holder:
+            task.cancel()
 
     async def hold() -> None:
         async with registry_db.try_advisory_lock(_KEY) as acquired:
@@ -150,7 +153,8 @@ async def test_cancellation_during_the_unlock_discards_the_lock_connection(
     assert entered.is_set()
     # SQLAlchemy also invalidates a connection whose execute is cancelled; the
     # warning shows the release path itself handled the cancellation.
-    assert "advisory_lock_release_failed" in {entry["event"] for entry in logs}
+    failures = [entry for entry in logs if entry["event"] == "advisory_lock_release_failed"]
+    assert [(f["key"], f["error"].startswith("CancelledError")) for f in failures] == [(_KEY, True)]
     # The discarded connection's backend exits asynchronously; wait for it.
     async with asyncio.timeout(5):
         while await _holder_states(registry_db):
