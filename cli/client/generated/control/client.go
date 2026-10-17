@@ -11522,7 +11522,10 @@ type ClientInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -15921,7 +15924,10 @@ func (c *Client) RegisterOauthClientEndpoint(ctx context.Context, body RegisterO
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token
@@ -28050,7 +28056,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Revoke a consent→agent grant — one of the three revocation kill radii.
 	//
-	// Allowed for the grant's owner (the consenting user) or an admin. Marks
+	// Allowed for the grant's owner (the consenting user) or an admin. A grant
+	// the caller cannot see answers 404, the same as one that does not exist;
+	// a caller who can see it but may not revoke it (the bound agent, or the
+	// agent's owner when someone else consented) gets 403. Marks
 	// the grant ``revoked`` and revokes every outstanding access/refresh token
 	// minted under it in the same transaction; the live resolvers also re-check
 	// grant status on every verdict (belt + braces). The client's next token
@@ -46769,7 +46778,10 @@ func (c *ClientWithResponses) RegisterOauthClientEndpointWithResponse(ctx contex
 //
 // Revoke a consent→agent grant — one of the three revocation kill radii.
 //
-// Allowed for the grant's owner (the consenting user) or an admin. Marks
+// Allowed for the grant's owner (the consenting user) or an admin. A grant
+// the caller cannot see answers 404, the same as one that does not exist;
+// a caller who can see it but may not revoke it (the bound agent, or the
+// agent's owner when someone else consented) gets 403. Marks
 // the grant “revoked“ and revokes every outstanding access/refresh token
 // minted under it in the same transaction; the live resolvers also re-check
 // grant status on every verdict (belt + braces). The client's next token

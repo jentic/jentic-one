@@ -46324,7 +46324,7 @@
     "/oauth-grants/{grant_id}:revoke": {
       "description": "`POST`: Revoke OAuth grant.",
       "post": {
-        "description": "Revoke a consent→agent grant — one of the three revocation kill radii.\n\nAllowed for the grant's owner (the consenting user) or an admin. Marks\nthe grant ``revoked`` and revokes every outstanding access/refresh token\nminted under it in the same transaction; the live resolvers also re-check\ngrant status on every verdict (belt + braces). The client's next token\nuse or refresh fails closed. Idempotent on an already-revoked grant.",
+        "description": "Revoke a consent→agent grant — one of the three revocation kill radii.\n\nAllowed for the grant's owner (the consenting user) or an admin. A grant\nthe caller cannot see answers 404, the same as one that does not exist;\na caller who can see it but may not revoke it (the bound agent, or the\nagent's owner when someone else consented) gets 403. Marks\nthe grant ``revoked`` and revokes every outstanding access/refresh token\nminted under it in the same transaction; the live resolvers also re-check\ngrant status on every verdict (belt + braces). The client's next token\nuse or refresh fails closed. Idempotent on an already-revoked grant.",
         "operationId": "revokeOauthGrant",
         "parameters": [
           {

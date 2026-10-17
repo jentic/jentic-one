@@ -593,8 +593,10 @@ async def test_replayed_refresh_under_revoked_grant_keeps_reuse_telemetry(
 async def test_revoke_grant_owner_admin_and_stranger(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """:revoke authorization: owner OK; admin OK; anyone else 403-mapped;
-    unknown grant 404-mapped; repeat revoke is idempotent."""
+    """:revoke authorization: owner OK; admin OK; a stranger who cannot see
+    the grant gets the unknown-grant not-found; the bound agent, which can
+    see the grant but did not consent, is 403-mapped; repeat revoke is
+    idempotent."""
     user_id = await _seed_user(integration_context, "usr_g_owner")
     stranger_id = await _seed_user(integration_context, "usr_g_stranger")
     admin_id = await _seed_user(integration_context, "usr_g_admin")
@@ -609,8 +611,16 @@ async def test_revoke_grant_owner_admin_and_stranger(
     with pytest.raises(OAuthGrantNotFoundError):
         await grant_svc.revoke_grant("ocg_missing", identity=Identity(sub=user_id, email=""))
 
+    for permissions in ([], ["oauth-clients:read"]):
+        with pytest.raises(OAuthGrantNotFoundError):
+            await grant_svc.revoke_grant(
+                grant_id, identity=Identity(sub=stranger_id, email="", permissions=permissions)
+            )
+    bound_agent = Identity(
+        sub=agent_id, email="", actor_type=ActorType.AGENT, parent_actor_id=user_id
+    )
     with pytest.raises(OAuthGrantAccessDeniedError):
-        await grant_svc.revoke_grant(grant_id, identity=Identity(sub=stranger_id, email=""))
+        await grant_svc.revoke_grant(grant_id, identity=bound_agent)
     grant = await grant_svc.get_grant(grant_id)
     assert grant is not None and grant.status == "active"
 
@@ -630,3 +640,15 @@ async def test_revoke_grant_owner_admin_and_stranger(
     )
     grant2 = await grant_svc.get_grant(grant_id_2)
     assert grant2 is not None and grant2.status == "revoked"
+
+    # oauth-clients:write is a revoke-admin permission: it revokes a grant
+    # outside the holder's own rows.
+    grant_id_3 = await grant_svc.create_grant(
+        user_id=user_id, oauth_client_id=_CLIENT_ID, agent_id=agent_id, scopes=["apis:read"]
+    )
+    await grant_svc.revoke_grant(
+        grant_id_3,
+        identity=Identity(sub=stranger_id, email="", permissions=["oauth-clients:write"]),
+    )
+    grant3 = await grant_svc.get_grant(grant_id_3)
+    assert grant3 is not None and grant3.status == "revoked"
