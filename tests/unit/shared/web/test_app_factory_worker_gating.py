@@ -118,6 +118,26 @@ def test_catalog_scanner_gated_on_registry_app() -> None:
         scanner.assert_called_once_with(registry_ctx)
 
 
+def test_catalog_source_scanner_needs_the_registry_app_and_db_only() -> None:
+    """The source sync scanner runs with the registry surface + registry DB, no admin DB."""
+    with (
+        patch(f"{_AF}.CatalogSourceSyncScanner") as scanner,
+        patch(f"{_AF}.validate_catalog_sources") as validate,
+        patch(f"{_AF}.asyncio.create_task"),
+    ):
+        broker_ctx = _ctx(dbs={"admin", "control", "registry"})
+        assert app_factory._start_catalog_source_scanner(broker_ctx, {"broker"}) is None
+        no_db = _ctx(dbs={"admin"})
+        assert app_factory._start_catalog_source_scanner(no_db, {"registry"}) is None
+        scanner.assert_not_called()
+        validate.assert_not_called()
+
+        standalone = _ctx(dbs={"registry"})
+        assert app_factory._start_catalog_source_scanner(standalone, {"registry"}) is not None
+        validate.assert_called_once_with(standalone)
+        scanner.assert_called_once_with(standalone)
+
+
 def test_expiry_scanner_gated_on_control_app() -> None:
     """Credential-expiry scanner runs for the control surface, never for a broker.
 

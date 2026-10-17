@@ -17,12 +17,15 @@ from unittest.mock import patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select, text
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
+from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
+from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
@@ -95,6 +98,9 @@ async def _clean_catalog(web_context: Context) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
         async with web_context.registry_db.session() as session:
             await session.execute(delete(CatalogSnapshot))
+            await session.execute(delete(CatalogEntryRow))
+            await session.execute(delete(CatalogSyncRun))
+            await session.execute(delete(CatalogSourceRow))
             await session.commit()
 
     await _truncate()
@@ -149,6 +155,27 @@ def test_refresh_then_list(admin_client: TestClient) -> None:
     assert ids == ["slack.com", "stripe.com"]
     assert body["catalog_total"] == 2
     assert body["manifest_age_seconds"] is not None
+
+
+async def test_refresh_shadow_writes_catalog_entries(
+    admin_client: TestClient, web_context: Context
+) -> None:
+    """``:refresh`` also syncs the legacy source; the response shape is unchanged."""
+    r = admin_client.post("/catalog:refresh")
+    assert r.status_code == 200
+    assert r.json() == {"count": 2, "status": "refreshed"}
+    async with web_context.registry_db.session() as session:
+        rows = (
+            await session.execute(
+                select(CatalogEntryRow.entry_id, CatalogEntryRow.catalog_api_id).where(
+                    CatalogEntryRow.removed_at.is_(None)
+                )
+            )
+        ).all()
+    assert sorted(rows) == [("public/slack.com", "slack.com"), ("public/stripe.com", "stripe.com")]
+    forced = admin_client.post("/catalog:refresh", params={"force": "true"})
+    assert forced.status_code == 200
+    assert forced.json() == {"count": 2, "status": "refreshed"}
 
 
 def test_list_search_filter(admin_client: TestClient) -> None:
@@ -544,6 +571,7 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
         "vendor": "coincap.io",
         "api_name": "coincap.io",
         "catalog_api_id": "coincap.io",
+        "catalog_entry_id": "public/coincap.io",
     }
 
 
@@ -590,6 +618,7 @@ def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
         "submitted_by": "usr_importer",
         "api_name": "x",
         "catalog_api_id": "x",
+        "catalog_entry_id": "public/x",
     }
 
 
@@ -616,6 +645,7 @@ async def test_reimport_targets_stored_vendor_of_registered_api(web_context: Con
 
     first = await svc.import_entry("finage.co.uk", identity)
     assert (await _job_source(web_context, first))["vendor"] == "finage.co.uk"
+    assert (await _job_source(web_context, first))["catalog_entry_id"] == "public/finage.co.uk"
 
     try:
         async with web_context.registry_db.session() as session:

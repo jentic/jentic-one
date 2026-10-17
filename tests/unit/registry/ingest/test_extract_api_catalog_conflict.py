@@ -124,3 +124,25 @@ async def test_fresh_identity_creates(apis_sqlite_session: AsyncSession) -> None
     )
     assert existing is not None
     assert existing.catalog_api_id == "stripe.com/checkout"
+
+
+@pytest.mark.asyncio
+async def test_catalog_import_records_catalog_entry_id(apis_sqlite_session: AsyncSession) -> None:
+    session = apis_sqlite_session
+    spec = IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=_IDENTIFIER,
+        content={"openapi": "3.1.0"},
+        catalog_api_id="stripe.com/checkout",
+        catalog_entry_id="public/stripe.com/checkout",
+    )
+    await ResolveApiStage().run(
+        PipelineContext(session=session, specification=spec, created_by="usr_test")
+    )
+    # A later manual re-import never clears it.
+    await ResolveApiStage().run(_ctx(session, catalog_api_id=None))
+    existing = await ApiRepository.get_by_identifier(
+        session, _IDENTIFIER.vendor, _IDENTIFIER.name, _IDENTIFIER.version
+    )
+    assert existing is not None
+    assert existing.catalog_entry_id == "public/stripe.com/checkout"
