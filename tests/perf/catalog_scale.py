@@ -14,8 +14,9 @@ public reader), so routing, validation and serialisation are included.
 ``--backend postgres`` runs against the fixture Postgres on ``JENTIC_PG_PORT``
 (use a throwaway container: the run empties the catalog tables). The process's
 peak RSS is printed at the end. Steady-state RSS is printed too, after a full GC,
-before the sync, after it and after the timed reads. The snapshot's own retained
-heap is measured by rebuilding it once under ``tracemalloc``: that figure is what
+before the sync, after it and after the timed reads. With ``--snapshot-heap`` the
+snapshot's own retained heap is measured by rebuilding it once under
+``tracemalloc`` (which inflates that run's RSS figures): that figure is what
 the snapshot and its cached collapsed view hold after the rebuild's transients
 are freed. RSS stays high after a free, so RSS alone can't isolate it.
 
@@ -212,7 +213,8 @@ async def _run(args: argparse.Namespace, config: AppConfig) -> bool:
         first = await svc.list_all(permissions=frozenset(), limit=args.limit)
         print(f"cold     first read (snapshot build) {(time.perf_counter() - start) * 1000:.1f} ms")
         assert first.catalog_total == args.entries, first.catalog_total
-        print(f"snapshot {await _snapshot_heap_mib(svc, args.limit):.1f} MiB retained heap")
+        if args.snapshot_heap:
+            print(f"snapshot {await _snapshot_heap_mib(svc, args.limit):.1f} MiB retained heap")
 
         rng = random.Random(1853)
         slugs = [f"src{i:02d}" for i in range(args.sources)]
@@ -270,6 +272,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--search-p95-ms", type=float, default=150.0)
     parser.add_argument("--backend", choices=("sqlite", "postgres"), default="sqlite")
     parser.add_argument("--asgi", action="store_true", help="also time GET /catalog over ASGI")
+    parser.add_argument(
+        "--snapshot-heap",
+        action="store_true",
+        help="rebuild the snapshot once under tracemalloc and print its retained heap "
+        "(inflates the RSS figures of that run)",
+    )
     args = parser.parse_args(argv)
 
     register_static_source_kind()
