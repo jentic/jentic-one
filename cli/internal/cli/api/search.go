@@ -215,7 +215,7 @@ func (a *app) printSearchResults(ctx context.Context, hits []searchHit, hasMore 
 		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no operations match in the local registry"))
 		fmt.Fprintln(a.Out, "  "+st.Dim.Render("nothing imported yet? browse and import the public catalog first:"))
 		fmt.Fprintln(a.Out, "    "+st.Command.Render("jentic catalog search <query>")+st.Dim.Render("   # find an importable API"))
-		fmt.Fprintln(a.Out, "    "+st.Command.Render("jentic catalog import <vendor/name>")+st.Dim.Render(" # import it, then search again"))
+		fmt.Fprintln(a.Out, "    "+st.Command.Render("jentic catalog import <entry_id>")+st.Dim.Render(" # import it, then search again"))
 		return
 	}
 	for _, h := range hits {

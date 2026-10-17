@@ -14,8 +14,8 @@ exit: 1
     "Jentic-Error-Origin": "broker",
     "Retry-After": "12"
   },
-  "schema_version": "1",
+  "schema_version": "2",
   "status": 503
 }
 --- stderr ---
-{"actionable_step":"Wait 12s (the broker's Retry-After) and re-run the same `jentic execute`: the broker refused the call before it reached the upstream API, so a retry cannot double-execute it. If it keeps failing, report it to your operator: the broker is degraded.","details":{"http_status":503,"origin":"broker","problem_type":"circuit_open","retry_after_s":12,"retryable":true},"error":"the broker could not complete this call (HTTP 503): Upstream circuit open; the broker is fast-failing to let it recover.","error_code":"TRANSPORT_ERROR","schema_version":"1"}
+{"actionable_step":"Wait 12s (the broker's Retry-After) and re-run the same `jentic execute`: the broker refused the call before it reached the upstream API, so a retry cannot double-execute it. If it keeps failing, report it to your operator: the broker is degraded.","details":{"http_status":503,"origin":"broker","problem_type":"circuit_open","retry_after_s":12,"retryable":true},"error":"the broker could not complete this call (HTTP 503): Upstream circuit open; the broker is fast-failing to let it recover.","error_code":"TRANSPORT_ERROR","schema_version":"2"}

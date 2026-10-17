@@ -33,7 +33,7 @@ func TestPage_RendersAsAgentEnvelope(t *testing.T) {
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("page envelope not valid JSON: %v", err)
 	}
-	if got["schema_version"] != "1" {
+	if got["schema_version"] != "2" {
 		t.Errorf("schema_version = %v", got["schema_version"])
 	}
 	if got["next_token"] != "next-1" {

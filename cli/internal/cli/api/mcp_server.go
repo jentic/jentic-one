@@ -401,8 +401,9 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 }
 
 // mcpSchemaVersion pins the machine-contract shape of the MCP tool payloads,
-// mirroring the CLI envelopes' schema_version (13 §2/§6).
-const mcpSchemaVersion = "1"
+// mirroring the CLI envelopes' schema_version; it moves in lockstep
+// with ux.currentSchemaVersion and the HTTP mount's SCHEMA_VERSION.
+const mcpSchemaVersion = "2"
 
 // redactedErr funnels an error's message through the ux redaction backstop
 // before it is written to the MCP log file. The log is an output surface like

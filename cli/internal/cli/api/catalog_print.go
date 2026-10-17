@@ -24,16 +24,21 @@ func (a *app) printCatalogList(ctx context.Context, entries []catalogEntry, meta
 }
 
 // catalogRow renders one entry: a filled ring (registered) or hollow ring, the
-// accent api_id, a dim vendor when it differs, and an "UPDATE AVAILABLE" marker
-// when the entry's upstream spec has changed since import.
+// accent entry_id (the id every catalog command takes), the dim title when the
+// source gives one, an "N other sources" note when other sources list the same
+// API, and an "UPDATE AVAILABLE" marker when the entry's upstream spec has
+// changed since import.
 func catalogRow(st theme.Styles, e catalogEntry) string {
 	glyph := st.Dim.Render(theme.SelectOff)
 	if e.Registered {
 		glyph = st.Success.Render(theme.SelectOn)
 	}
-	row := glyph + " " + st.Accent.Render(e.APIID)
-	if e.Vendor != "" && e.Vendor != e.APIID {
-		row += "  " + st.Dim.Render(e.Vendor)
+	row := glyph + " " + st.Accent.Render(e.EntryID)
+	if title := deref(e.Title); title != "" {
+		row += "  " + st.Dim.Render(title)
+	}
+	if e.Alternates > 0 {
+		row += "  " + st.Dim.Render(otherSources(e.Alternates))
 	}
 	if e.UpdateAvailable {
 		row += "  " + st.Warn.Render("UPDATE AVAILABLE")
@@ -41,10 +46,19 @@ func catalogRow(st theme.Styles, e catalogEntry) string {
 	return row
 }
 
+// otherSources is the "N other source(s)" note for an entry that collapses
+// alternates from other catalog sources.
+func otherSources(n int) string {
+	if n == 1 {
+		return "+1 other source"
+	}
+	return fmt.Sprintf("+%d other sources", n)
+}
+
 func catalogStatusLine(m *catalogListResult) string {
-	age := "age unknown"
-	if m.ManifestAgeSeconds != nil {
-		age = "cache " + humanizeAge(*m.ManifestAgeSeconds)
+	age := "sources never synced"
+	if m.OldestSourceSyncAgeSeconds != nil {
+		age = "oldest source sync " + humanizeAge(*m.OldestSourceSyncAgeSeconds)
 	}
 	line := fmt.Sprintf("%d entries · %d imported · %s", m.CatalogTotal, m.RegisteredCount, age)
 	if m.OutdatedCount > 0 {
@@ -55,9 +69,17 @@ func catalogStatusLine(m *catalogListResult) string {
 
 func (a *app) printCatalogEntry(ctx context.Context, e *catalogEntry) {
 	st := theme.StylesFromContext(ctx)
-	fmt.Fprintln(a.Out, st.Heading.Render(e.APIID))
-	if e.Vendor != "" {
-		fmt.Fprintln(a.Out, "  "+st.Field("vendor", e.Vendor))
+	fmt.Fprintln(a.Out, st.Heading.Render(e.EntryID))
+	if title := deref(e.Title); title != "" {
+		fmt.Fprintln(a.Out, "  "+st.Field("title", title))
+	}
+	fmt.Fprintln(a.Out, "  "+st.Field("source", e.SourceSlug))
+	fmt.Fprintln(a.Out, "  "+st.Field("catalog_api_id", e.CatalogAPIID))
+	if vendor := deref(e.DisplayVendor); vendor != "" {
+		fmt.Fprintln(a.Out, "  "+st.Field("vendor", vendor))
+	}
+	if version := deref(e.Version); version != "" {
+		fmt.Fprintln(a.Out, "  "+st.Field("version", version))
 	}
 	status := "not imported"
 	dot := st.DotDown()
@@ -65,9 +87,14 @@ func (a *app) printCatalogEntry(ctx context.Context, e *catalogEntry) {
 		status, dot = "imported", st.DotOK()
 	}
 	fmt.Fprintln(a.Out, "  "+dot+" "+st.Field("status", status))
-	fmt.Fprintln(a.Out, "  "+st.Field("spec_url", cmdcore.ValueOr(e.SpecURL, "-")))
-	if e.Links.Github != "" {
-		fmt.Fprintln(a.Out, "  "+st.Field("github", e.Links.Github))
+	if !e.HasSpec {
+		fmt.Fprintln(a.Out, "  "+st.Field("spec", "none (listing only)"))
+	}
+	if e.Links.Human != "" {
+		fmt.Fprintln(a.Out, "  "+st.Field("source page", e.Links.Human))
+	}
+	if e.Alternates > 0 {
+		fmt.Fprintln(a.Out, "  "+st.Field("also listed by", otherSources(e.Alternates)))
 	}
 }
 

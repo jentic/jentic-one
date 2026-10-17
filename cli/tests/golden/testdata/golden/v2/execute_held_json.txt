@@ -18,7 +18,7 @@ exit: 3
     "Content-Type": "application/json",
     "Preference-Applied": "respond-async"
   },
-  "schema_version": "1",
+  "schema_version": "2",
   "status": 202
 }
 --- stderr ---
@@ -28,4 +28,4 @@ Held — this call needs human approval before it runs:
   open: https://console.example/app/agents/approvals/held_held1
   expires: 2026-10-10T12:00:00Z
   then: jentic executions poll held_held1 (do not re-send the call)
-{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/held_held1) — they approve or deny the call there — and end your turn. When they reply, run `jentic executions poll held_held1` once for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"held_held1","next_command":"jentic executions poll held_held1","review_url":"https://console.example/app/agents/approvals/held_held1"},"error":"the call is held for human approval (held execution held_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}
+{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/held_held1) — they approve or deny the call there — and end your turn. When they reply, run `jentic executions poll held_held1` once for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"held_held1","next_command":"jentic executions poll held_held1","review_url":"https://console.example/app/agents/approvals/held_held1"},"error":"the call is held for human approval (held execution held_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"2"}

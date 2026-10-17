@@ -7,6 +7,7 @@ package api
 // their recovery pointers.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -75,8 +76,36 @@ func TestMCPSearchCatalog_EnvelopePassthroughWithStamp(t *testing.T) {
 		t.Fatalf("data = %v, want one entry", payload["data"])
 	}
 	entry := data[0].(map[string]any)
-	if entry["api_id"] != "public/googleapis.com/sheets" || entry["registered"] != false {
-		t.Errorf("entry = %v, want the catalog projection (api_id, registered)", entry)
+	if entry["entry_id"] != "public/googleapis.com/sheets" || entry["registered"] != false {
+		t.Errorf("entry = %v, want the catalog projection (entry_id, registered)", entry)
+	}
+	// The schema_version 2 entry: the HTTP mount's keys, and none of the
+	// retired ones.
+	for _, key := range []string{
+		"entry_id", "source_slug", "catalog_api_id", "vendor", "display_vendor", "title",
+		"version", "tags", "human_url", "has_spec", "registered", "update_available", "alternates", "_links",
+	} {
+		if _, ok := entry[key]; !ok {
+			t.Errorf("entry is missing %q: %v", key, entry)
+		}
+	}
+	for _, key := range []string{"api_id", "spec_url", "path", "github_url"} {
+		if _, ok := entry[key]; ok {
+			t.Errorf("entry carries the retired key %q: %v", key, entry)
+		}
+	}
+	links, _ := entry["_links"].(map[string]any)
+	if _, ok := links["github"]; ok {
+		t.Errorf("_links carries the retired github key: %v", links)
+	}
+	if alts, ok := links["alternates"].([]any); !ok || len(alts) != 0 {
+		t.Errorf("_links.alternates = %v, want an empty array", links["alternates"])
+	}
+	if _, ok := payload["oldest_source_sync_age_seconds"]; !ok {
+		t.Errorf("payload is missing oldest_source_sync_age_seconds: %v", payload)
+	}
+	if _, ok := payload["manifest_age_seconds"]; ok {
+		t.Errorf("payload carries the retired manifest_age_seconds: %v", payload)
 	}
 	if payload["catalog_total"] != float64(1200) || payload["registered_count"] != float64(3) {
 		t.Errorf("counters = %v/%v, want the CLI envelope extras mirrored", payload["catalog_total"], payload["registered_count"])
@@ -207,8 +236,8 @@ func TestMCPImportAPI_CompletesAndPromotes(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	// `id` alias for api_id; the umbrella api_id carries a literal "/".
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"id":"googleapis.com/sheets"}`))
+	// `id` alias for entry_id; the entry_id carries literal "/"s.
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"id":"public/googleapis.com/sheets"}`))
 	if err != nil {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
@@ -216,10 +245,10 @@ func TestMCPImportAPI_CompletesAndPromotes(t *testing.T) {
 		t.Fatalf("unexpected soft error: %s", toolResultText(res))
 	}
 
-	// The rawPathEditor hazard: the umbrella api_id must reach the backend
-	// with its literal slash, not %2F (the Starlette {api_id:path} route).
-	if plane.importPath != "/catalog/googleapis.com/sheets:import" {
-		t.Errorf("import path = %q, want the literal-slash {api_id:path} form", plane.importPath)
+	// The rawPathEditor hazard: the entry_id must reach the backend with its
+	// literal slashes, not %2F (the Starlette {entry_id:path} route).
+	if plane.importPath != "/catalog/public/googleapis.com/sheets:import" {
+		t.Errorf("import path = %q, want the literal-slash {entry_id:path} form", plane.importPath)
 	}
 
 	payload := decodeToolJSON(t, res)
@@ -249,7 +278,7 @@ func TestMCPImportAPI_StillRunningReturnsJobForConvergence(t *testing.T) {
 
 	s := fastAccessServer(t)
 	s.importWaitBudget = 5 * time.Millisecond
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"googleapis.com/sheets"}`))
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/googleapis.com/sheets"}`))
 	if err != nil {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
@@ -278,7 +307,7 @@ func TestMCPImportAPI_FailedJobIsSoftError(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"googleapis.com/sheets"}`))
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/googleapis.com/sheets"}`))
 	if err != nil {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
@@ -305,7 +334,7 @@ func TestMCPImportAPI_404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"nope/nothing"}`))
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/nope/nothing"}`))
 	if err != nil {
 		t.Fatalf("a resolve failure must be a soft error: %v", err)
 	}
@@ -329,7 +358,7 @@ func TestMCPImportAPI_403IsOperatorPermissionGrant(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"googleapis.com/sheets"}`))
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/googleapis.com/sheets"}`))
 	if err != nil {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
@@ -348,13 +377,13 @@ func TestMCPImportAPI_403IsOperatorPermissionGrant(t *testing.T) {
 	}
 }
 
-func TestMCPImportAPI_MissingAPIIDIsInvalidParams(t *testing.T) {
+func TestMCPImportAPI_MissingEntryIDIsInvalidParams(t *testing.T) {
 	s := fastAccessServer(t)
 	res, err := s.handleImportAPI(activeCtx("http://127.0.0.1:0"), callToolRequest("import_api", `{}`))
 	if res != nil {
 		t.Fatalf("want a protocol error, got a result: %v", res)
 	}
-	for _, spelling := range []string{"api_id", "id", "api"} {
+	for _, spelling := range []string{"entry_id", "api_id", "id", "api"} {
 		if err == nil || !strings.Contains(err.Error(), spelling) {
 			t.Errorf("err %v must name the accepted spelling %q", err, spelling)
 		}
@@ -385,7 +414,7 @@ func TestMCPImportAPI_JobPollFailureIsSoftErrorNotSuccess(t *testing.T) {
 	defer srv.Close()
 
 	s := fastAccessServer(t)
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"googleapis.com/sheets"}`))
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"public/googleapis.com/sheets"}`))
 	if err != nil {
 		t.Fatalf("handleImportAPI: %v", err)
 	}
@@ -401,31 +430,37 @@ func TestMCPImportAPI_JobPollFailureIsSoftErrorNotSuccess(t *testing.T) {
 	}
 }
 
-// TestMCPImportAPI_TraversalAPIIDIsInvalidParams pins the syntactic guard in
-// front of the raw-path {api_id:path} route: traversal-shaped ids must never
+// TestMCPImportAPI_TraversalEntryIDIsInvalidParams pins the syntactic guard in
+// front of the raw-path {entry_id:path} route: traversal-shaped ids must never
 // reach the wire (rawPathEditor splices the value into the path VERBATIM).
-func TestMCPImportAPI_TraversalAPIIDIsInvalidParams(t *testing.T) {
+func TestMCPImportAPI_TraversalEntryIDIsInvalidParams(t *testing.T) {
 	s := fastAccessServer(t)
 	for _, bad := range []string{
 		"../access-requests",
 		"/catalog/x",
 		"a//b",
 		"a/./b",
-		"googleapis.com/sheets/..",
-		"googleapis.com/",
+		"public/googleapis.com/sheets/..",
+		"public/googleapis.com/",
+		"public/a\x00b",
+		"public/a\x7fb",
+		"public/" + strings.Repeat("x", maxEntryIDLength),
 	} {
+		args, _ := json.Marshal(map[string]string{"entry_id": bad})
 		res, err := s.handleImportAPI(activeCtx("http://127.0.0.1:0"),
-			callToolRequest("import_api", fmt.Sprintf(`{"api_id":%q}`, bad)))
+			callToolRequest("import_api", string(args)))
 		if res != nil {
-			t.Fatalf("api_id %q: want a protocol error before the wire, got a result: %v", bad, res)
+			t.Fatalf("entry_id %q: want a protocol error before the wire, got a result: %v", bad, res)
 		}
 		if err == nil || !strings.Contains(err.Error(), "search_catalog") {
-			t.Errorf("api_id %q: err %v must point back at search_catalog", bad, err)
+			t.Errorf("entry_id %q: err %v must point back at search_catalog", bad, err)
 		}
 	}
-	// The legitimate umbrella shape (literal slash) must stay accepted.
-	if err := validateAPIID("googleapis.com/sheets"); err != nil {
-		t.Errorf("validateAPIID must accept a real umbrella api_id: %v", err)
+	// The legitimate shapes (literal slashes, a namespaced id) stay accepted.
+	for _, good := range []string{"public/googleapis.com/sheets", "internal/aws-prod~stripe.com", "stripe.com"} {
+		if err := checkEntryID(good); err != nil {
+			t.Errorf("checkEntryID(%q) must accept it: %v", good, err)
+		}
 	}
 }
 
@@ -485,5 +520,63 @@ func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
 	}
 	if payload["next_tool"] != "get_started" {
 		t.Errorf("next_tool = %v, want get_started", payload["next_tool"])
+	}
+}
+
+// TestMCPImportAPI_AcceptsEveryAlias pins the entry_id parameter and its
+// aliases: each spelling files the same import on the {entry_id:path} route.
+func TestMCPImportAPI_AcceptsEveryAlias(t *testing.T) {
+	for _, spelling := range []string{"entry_id", "api_id", "id", "api"} {
+		t.Run(spelling, func(t *testing.T) {
+			plane := &importControlPlane{jobStatus: []string{"completed"}}
+			srv := httptest.NewServer(plane.handler(t))
+			defer srv.Close()
+
+			s := fastAccessServer(t)
+			args := fmt.Sprintf(`{%q:"public/googleapis.com/sheets"}`, spelling)
+			res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", args))
+			if err != nil {
+				t.Fatalf("handleImportAPI: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("unexpected soft error: %s", toolResultText(res))
+			}
+			if plane.importPath != "/catalog/public/googleapis.com/sheets:import" {
+				t.Errorf("import path = %q, want the entry_id route", plane.importPath)
+			}
+		})
+	}
+}
+
+// TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry pins the old-style id
+// recovery: the server's 404 body names the caller's visible entry_id, and the
+// tool error repeats it verbatim (no CLI-built prefix) with a retry hint.
+func TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,` +
+			`"detail":"catalog entry not found","did_you_mean":"internal/stripe.com"}`))
+	}))
+	defer srv.Close()
+
+	s := fastAccessServer(t)
+	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"stripe.com"}`))
+	if err != nil {
+		t.Fatalf("a resolve failure must be a soft error: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeResolveFailed {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
+	}
+	if msg, _ := payload["error"].(string); !strings.Contains(msg, `did you mean "internal/stripe.com"`) {
+		t.Errorf("error %q must name the server's did_you_mean", msg)
+	}
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "internal/stripe.com") {
+		t.Errorf("actionable_step %q must retry with the suggested entry_id", step)
+	}
+	details, _ := payload["details"].(map[string]any)
+	if details["did_you_mean"] != "internal/stripe.com" {
+		t.Errorf("details = %v, want did_you_mean carried", payload["details"])
 	}
 }
