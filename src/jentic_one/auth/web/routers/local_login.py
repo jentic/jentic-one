@@ -30,9 +30,9 @@ from the OAuth authorization flow, behind a default-off gate:
   is an explicit "Continue as <email>" button — never automatic — with a
   "Use a different account" link falling back to the form (rung 3).
 
-Security posture (see #1276): both routes take the existing authorize limiter,
-always keyed by bare client IP (``check_login_rate_limit`` — the client_id
-rides inside ``ls``, so a query ``client_id`` is caller-chosen); CSRF is
+Security posture (see #1276): both routes take the authorization flow's
+rate limiter (``check_rate_limit``, keyed by client network only — the
+client_id rides inside ``ls``, and any request parameter is caller-chosen); CSRF is
 a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
 ambient credential — there is no cookie session to ride); failed auth
 re-renders one generic message (no user-enumeration *response* oracle, same
@@ -55,7 +55,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html as html_mod
-import ipaddress
 import json
 import re
 import secrets
@@ -84,7 +83,7 @@ from jentic_one.auth.web.flow import (
     FONTS_URL,
     SPA_TOKEN_STORAGE_KEY,
     STATE_MAX_AGE_SECONDS,
-    check_login_rate_limit,
+    check_rate_limit,
     client_gate_passes,
     derive_key,
     get_cached_oauth_client,
@@ -96,7 +95,7 @@ from jentic_one.auth.web.flow import (
     verify_payload,
     write_local_consent_handle,
 )
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.auth.web.routers.authorize import get_authorize_service
 from jentic_one.auth.web.schemas.local_login import (
     OAuthSessionContinueRequest,
@@ -119,11 +118,6 @@ logger = structlog.get_logger(__name__)
 #: consent-handle window: long enough to type a password, short enough that a
 #: leaked form snapshot goes stale quickly.
 _CSRF_TTL_SECONDS = CONSENT_STATE_MAX_AGE_SECONDS
-
-#: IPv6 clients are grouped by this prefix length for the ``login-csrf``
-#: per-client share: one host (or one customer site) typically holds a whole
-#: /64, so grouping by full address would let it rotate out of its share.
-_IPV6_CLIENT_PREFIX = 64
 
 #: The form's ``csrf`` value: ``<client-key>.<nonce>``. The client key is
 #: 32 lowercase hex characters and the nonce is ``secrets.token_urlsafe(32)``
@@ -327,45 +321,6 @@ def _ls_digest(ls: str) -> str:
     return hashlib.sha256(ls.encode()).hexdigest()
 
 
-def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Parse a client address, tolerating a forwarded hop's ``:port`` suffix.
-
-    Some proxies forward ``203.0.113.7:51234`` or ``[2001:db8::1]:443``;
-    without stripping the port, every source port would count as its own
-    client.
-    """
-    candidates = [value]
-    if value.startswith("[") and "]" in value:
-        candidates.append(value[1 : value.index("]")])
-    elif value.count(":") == 1:
-        candidates.append(value.split(":", 1)[0])
-    for candidate in candidates:
-        try:
-            return ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-    return None
-
-
-def _client_network(ip: str) -> str:
-    """The network a login page request is budgeted under.
-
-    An IPv4 address (including an IPv4-mapped IPv6 one) stands for itself; an
-    IPv6 address stands for its /64, so a host cannot rotate addresses within
-    its prefix to escape its ``login-csrf`` share. A value that is not an IP
-    address (no socket peer, or an unparsable forwarded hop) is used as-is.
-    """
-    addr = _parse_client_address(ip)
-    if addr is None:
-        return ip
-    if isinstance(addr, ipaddress.IPv6Address):
-        if addr.ipv4_mapped is not None:
-            return str(addr.ipv4_mapped)
-        network = ipaddress.IPv6Network((int(addr), _IPV6_CLIENT_PREFIX), strict=False)
-        return str(network)
-    return str(addr)
-
-
 def _csrf_client_key(request: Request, ctx: Context) -> str:
     """The ``login-csrf`` owner for this request: a keyed digest of its client network.
 
@@ -377,7 +332,7 @@ def _csrf_client_key(request: Request, ctx: Context) -> str:
     segments.
     """
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    network = _client_network(client_ip(request, trusted))
+    network = client_rate_limit_key(request, trusted)
     key = derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "login-csrf-client")
     return hmac.new(key.encode(), network.encode(), hashlib.sha256).hexdigest()[:32]
 
@@ -492,7 +447,7 @@ def _render_login_page(
     response_class=HTMLResponse,
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(check_login_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
 async def login_page(
     request: Request,
@@ -548,7 +503,7 @@ async def login_page(
     summary="Local-account login submit (authorization flow)",
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(check_login_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
 async def login_submit(
     request: Request,
@@ -710,12 +665,12 @@ def _get_session_continue_limiter(request: Request, ctx: Context) -> RateLimiter
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
-    # Own bucket namespace (the RFC 7009 revocation pattern): keyed on bare
-    # IP, so it must not share a bucket with another bare-IP limiter carrying
-    # different rate/burst params. Reuses the exchange rpm/burst knobs
-    # (config schema unchanged): the endpoint is authenticated, one click
-    # sends one request, and its traffic is bounded by the same browser
-    # population as /oauth/token.
+    # Own bucket namespace (the RFC 7009 revocation pattern): keyed on the
+    # client network, so it must not share a bucket with another limiter
+    # keyed the same way but carrying different rate/burst params. Reuses
+    # the exchange rpm/burst knobs (config schema unchanged): the endpoint
+    # is authenticated, one click sends one request, and its traffic is
+    # bounded by the same browser population as /oauth/token.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.exchange_rpm,
@@ -729,16 +684,16 @@ def _get_session_continue_limiter(request: Request, ctx: Context) -> RateLimiter
 async def check_session_continue_rate_limit(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> None:
-    """Per-IP rate limiter for the session-continue exchange.
+    """Per-client-network rate limiter for the session-continue exchange.
 
-    Keyed by bare IP: the request's only other inputs are the bearer token
-    and the signed blob, and both are caller-supplied — a self-chosen key
-    component would let one host sidestep the bucket.
+    Keyed by client network only: the request's only other inputs are the
+    bearer token and the signed blob, and both are caller-supplied — a
+    self-chosen key component would let one host sidestep the bucket.
     """
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_session_continue_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 

@@ -69,10 +69,11 @@ _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
 # default holds about 18,600 live nonces and a 0.02 share about 370 per
 # client within the 5-minute nonce TTL. That is twice what the default
 # ``auth.oauth_rate_limit`` authorize limiter (burst 30 + 30/min, keyed per
-# IP) lets one IP mint in a TTL, so a large shared NAT or corporate egress IP
-# hits the rate limiter before its share, while a single host flooding the
-# page (including one rotating addresses inside its IPv6 /64) is refused
-# without filling the namespace for everyone else.
+# client network the same way) lets one network mint in a TTL, so a large
+# shared NAT or corporate egress IP hits the rate limiter before its share,
+# while a single host flooding the page (including one rotating addresses
+# inside its IPv6 /64) is refused without filling the namespace for everyone
+# else.
 LOGIN_CSRF_OWNER_SHARE = 0.02
 _BUILTIN_OWNER_SHARES: dict[str, float] = {"login-csrf": LOGIN_CSRF_OWNER_SHARE}
 

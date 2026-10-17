@@ -1,12 +1,21 @@
 """Shared helpers for the auth surface's pre-auth rate limiters.
 
-Shared so the anonymous DCR registration router and /authorize derive the
-caller IP and
-reach the shared-state backend the same way, without cross-router imports of
+Shared so every anonymous auth route (``/authorize`` and the rest of the
+authorization flow, the local-login form, DCR registration, the
+approval-status poll, the token and revocation endpoints, the
+session-continue exchange) derives the caller's identity and reaches the
+shared-state backend the same way, without cross-router imports of
 underscore-private names.
+
+A pre-auth limiter must key only on what the caller cannot choose freely: its
+network address. Any request parameter (``client_id``, a signed blob, a
+token) is caller-chosen before it has been verified, so adding it to the key
+would hand a caller a fresh bucket per value.
 """
 
 from __future__ import annotations
+
+import ipaddress
 
 import structlog
 from fastapi import Request
@@ -14,6 +23,12 @@ from fastapi import Request
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 
 logger = structlog.get_logger(__name__)
+
+#: IPv6 clients are grouped by this prefix length. One host (or one customer
+#: site) typically holds at least a whole /64 and can pick any interface ID
+#: inside it, so grouping by full address would let it rotate into a fresh
+#: bucket per request.
+IPV6_CLIENT_PREFIX = 64
 
 
 def get_auth_backend(request: Request) -> SharedStateBackend:
@@ -40,4 +55,61 @@ def client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
     return socket_ip
 
 
-__all__ = ["client_ip", "get_auth_backend"]
+def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse a client address, tolerating a forwarded hop's ``:port`` suffix.
+
+    Some proxies forward ``203.0.113.7:51234`` or ``[2001:db8::1]:443``;
+    without stripping the port, every source port would count as its own
+    client.
+    """
+    candidates = [value]
+    if value.startswith("[") and "]" in value:
+        candidates.append(value[1 : value.index("]")])
+    elif value.count(":") == 1:
+        candidates.append(value.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
+def client_network(ip: str) -> str:
+    """The network a client address is budgeted under.
+
+    An IPv4 address (including an IPv4-mapped IPv6 one, so a dual-stack
+    listener does not give one host two identities) stands for itself; any
+    other IPv6 address stands for its /64, so a host cannot rotate interface
+    IDs within its prefix to escape its budget. Link-local and unique-local
+    addresses follow the same /64 rule. A value that is not an IP address (no
+    socket peer, or an unparsable forwarded hop) is used as-is.
+    """
+    addr = _parse_client_address(ip)
+    if addr is None:
+        return ip
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr.ipv4_mapped is not None:
+            return str(addr.ipv4_mapped)
+        network = ipaddress.IPv6Network((int(addr), IPV6_CLIENT_PREFIX), strict=False)
+        return str(network)
+    return str(addr)
+
+
+def client_rate_limit_key(request: Request, trusted_proxies: frozenset[str]) -> str:
+    """The pre-auth rate-limit key for this request: the caller's client network.
+
+    :func:`client_ip` (``X-Forwarded-For`` honoured only from a trusted
+    proxy) normalised by :func:`client_network` (forwarded port dropped,
+    IPv4-mapped unmapped, IPv6 grouped by /64).
+    """
+    return client_network(client_ip(request, trusted_proxies))
+
+
+__all__ = [
+    "IPV6_CLIENT_PREFIX",
+    "client_ip",
+    "client_network",
+    "client_rate_limit_key",
+    "get_auth_backend",
+]
