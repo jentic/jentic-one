@@ -24,8 +24,7 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `resolve_strategy_by_name` | `jentic_one.registry.repos.search` | Composition seam: a composite strategy (e.g. a hybrid fusing lexical + semantic) resolves its children by `(dialect, name)` instead of importing their modules, so it uses whatever is registered under that key. Raises `SearchUnsupportedError` naming the available modes when the key is unknown. |
 | `ACTIVE_REVISION_STATES` / `search_filter_clause` | `jentic_one.registry.repos.search` | The shared pin/active-state/api-filter contract every strategy applies, so composite strategies fuse filter-identical result sets. Use `search_filter_clause(api_filters=..., revision_pins=...)` on a statement that joins `ApiRevision`; hand-written SQL builds its state predicate from `ACTIVE_REVISION_STATES`. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
-| `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. |
-| `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
+| `register_catalog_search_strategy` *(provisional)* | `jentic_one.registry.services.catalog.search` | Register a `CatalogSearchStrategy` (class or instance) that ranks `GET /catalog?q=` results; select it with `catalog.search_strategy`. See [Catalog search strategies](#catalog-search-strategies-provisional). |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 
@@ -104,6 +103,88 @@ register_pipeline_stage(
     PipelineStageSpec(name="my_ext.embed_operations", factory=EmbedOperationsStage)
 )
 ```
+
+#### Catalog search strategies (provisional)
+
+> **Provisional:** this seam may change before 1.0. Pin the `jentic-one`
+> version your extension is built against.
+
+`GET /catalog?q=` (and the MCP `search_catalog` tool) rank results through a
+`CatalogSearchStrategy`. The built-in `token` strategy is the default; an
+extension can register another and select it with `catalog.search_strategy`.
+The service keeps filtering, validation, ordering, paging and cursors, so a
+strategy only ranks:
+
+```python
+from jentic_one.registry.services.catalog.search import (
+    CatalogMatch,
+    CatalogSearchRequest,
+    RankedEntry,
+    register_catalog_search_strategy,
+)
+from jentic_one.shared.config import AppConfig, CatalogConfig
+
+
+class MyRanker:
+    name = "my_ranker"  # ^[a-z][a-z0-9_]{0,31}$, recorded in cursors
+
+    @classmethod
+    def from_config(cls, config: CatalogConfig, *, app_config: AppConfig) -> "MyRanker":
+        return cls()  # read your own section via app_config.extension("my_ext")
+
+    async def rank(self, request: CatalogSearchRequest) -> list[RankedEntry]:
+        return [
+            RankedEntry(entry=e, score=1.0, match=CatalogMatch(("alias",)))
+            for e in request.entries
+            if request.q.lower() in e.api_id
+        ]
+
+
+register_catalog_search_strategy(MyRanker)  # a class, or a ready instance
+```
+
+The contract:
+
+- **Registration.** Register at import time, before the app is assembled. A
+  class is built once per booted config (through `from_config` when it defines
+  it) and the instance is shared across requests. App assembly fails with a
+  `ConfigError` when `catalog.search_strategy` is not registered or can't be
+  built. `rank` must be `async`. A name can't be re-registered by a different
+  object.
+- **Input.** `rank()` only sees searches (queries with at least one token);
+  `request.entries` is already filtered. Return the **full** ranked list — never
+  apply a limit. `request.options` is empty today; new request fields are added
+  with defaults.
+- **Output.** Higher scores rank first. The service drops rows with a
+  non-finite or non-numeric score, rows for entries outside `request.entries`
+  and lower-scoring duplicates, then sorts by `(-score, api_id)`. A non-empty
+  result in which no row is valid counts as a failure. `match.channels` must be
+  slugs (`^[a-z][a-z0-9_-]{0,31}$`, at most 8); others are dropped.
+- **Stability.** Each page re-ranks and resumes after the cursor's exact
+  `(score, api_id)`, so scores must be identical across calls for the same
+  request. `rank()` runs once per page: cache per `(q, request.manifest_revision)`
+  if ranking is expensive.
+- **Deadline.** `catalog.search_deadline_ms` (default 300) bounds each call;
+  cancellation only interrupts an `await`, so offload CPU-bound work (for
+  example `asyncio.to_thread`). Set the deadline well above the strategy's tail
+  latency.
+- **Failure.** Raise to fail. On the first page the walk falls back to `token`
+  (logged and counted). On a later page the response is 503
+  `catalog_search_unavailable` with `Retry-After: 1`: the client retries the
+  page, or restarts the search without a cursor.
+- **Cursors.** A cursor records its walk's strategy (key `st`, which may gain a
+  version suffix later). A later page is served only while that strategy is the
+  configured one: any other strategy in the cursor answers 400 (restart the
+  search). A cursor naming the configured strategy on a process where it isn't
+  registered answers 503, so a rolling deploy recovers on retry.
+- **Rollout.** Register the strategy on every replica before selecting it, and
+  set `catalog.search_strategy` back to `token` before downgrading to a build
+  without it.
+- **Tests.** Use the `registered_catalog_search_strategy(strategy)` context
+  manager to register a strategy for one test without leaking it.
+
+Failures are counted by `jentic_one.catalog_search.strategy_failures` (see
+[Monitoring](../operations/monitoring.md#metrics-and-traces)).
 
 ### 2. Build an `AppContainer` and compose the app
 
