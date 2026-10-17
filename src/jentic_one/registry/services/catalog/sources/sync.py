@@ -7,28 +7,37 @@ A sync run for one source:
    heartbeat while it works;
 2. iterates the source's listing and stages every change in
    ``catalog_staged_entries``, in batches, holding no long transaction;
-3. applies in one transaction under a per-source lock: a run older than the last
-   applied one is dropped as superseded; the mass-removal guard may hold the
+3. applies in one transaction under a per-source lock (a Postgres advisory lock,
+   or an in-process lock on SQLite) whose first statement re-checks the lease: a
+   run that lost it applies nothing. A run older than the last applied one is
+   dropped as superseded; the mass-removal guard may hold the
    whole run (``suspect_empty``); otherwise connector text is sanitised, the
    ``catalog_api_id`` resolved, rows upserted with ``seen_at`` = the run's start,
    and, only for a full listing confirmed by its summary, rows the run did not
-   see are tombstoned. Digests are recomputed and the lease cleared.
+   see are tombstoned. Digests are recomputed and the lease released.
+
+The run's start time comes from the database clock on Postgres, so replicas
+with skewed clocks still order runs and tombstones the same way.
 
 A listing that raises applies nothing: its staged rows are dropped and the
-source keeps its last good rows.
+source keeps its last good rows. A run whose heartbeat cannot renew the lease
+stops listing and ends ``lease_lost``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+import weakref
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_sources import (
@@ -90,6 +99,19 @@ DepsFactory = Callable[[CatalogSourceConfig], SourceDeps]
 OUTCOME_BUSY = "busy"
 OUTCOME_DISABLED = "disabled"
 
+ERROR_LEASE_LOST = "lease_lost"
+
+#: SQLite's per-source apply locks, one set per event loop (an ``asyncio.Lock``
+#: belongs to the loop it first waits on).
+_SQLITE_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _sqlite_lock(slug: str) -> asyncio.Lock:
+    locks = _SQLITE_LOCKS.setdefault(asyncio.get_running_loop(), {})
+    return locks.setdefault(slug, asyncio.Lock())
+
 
 @dataclass(frozen=True, slots=True)
 class SyncOutcome:
@@ -113,7 +135,7 @@ class _ListingError(Exception):
 def _valid_external_id(value: str) -> bool:
     if not value or len(value) > _EXTERNAL_ID_MAX_LENGTH:
         return False
-    return not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+    return not any(ord(ch) < 0x20 or ord(ch) == 0x7F or 0xD800 <= ord(ch) <= 0xDFFF for ch in value)
 
 
 def _error_code(exc: BaseException) -> str:
@@ -173,6 +195,21 @@ class CatalogSourceSync:
         factory = resolve_catalog_source_kind(cfg.kind)
         return factory.build(cfg, deps=self._deps_factory(cfg))
 
+    @contextlib.asynccontextmanager
+    async def _source_transaction(self, slug: str) -> AsyncIterator[AsyncSession]:
+        """A transaction holding the source's apply lock (applies and re-resolves).
+
+        Postgres takes a transaction-scoped advisory lock; SQLite, a single
+        process, holds an in-process per-source lock around the transaction.
+        """
+        sqlite = self._ctx.registry_db.backend.dialect_name == "sqlite"
+        local: contextlib.AbstractAsyncContextManager[Any] = (
+            _sqlite_lock(slug) if sqlite else contextlib.nullcontext()
+        )
+        async with local, self._ctx.registry_db.transaction() as session:
+            await CatalogSourceRepository.lock_for_apply(session, slug)
+            yield session
+
     def current_resolver_inputs_digest(self) -> str:
         return resolver_inputs_digest(list(self._sources.values()), self._mappings)
 
@@ -214,9 +251,11 @@ class CatalogSourceSync:
                 )
                 if row.resolver_inputs_digest == current:
                     continue
-                if cfg.trust == "curated" or row.live_entries == 0:
+                if row.live_entries == 0:
                     row.resolver_inputs_digest = current
                 else:
+                    # Curated sources too: one that just became curated (or was
+                    # re-enabled) still stores ids resolved as non-curated.
                     row.reresolve_wanted_at = utcnow()
                     logger.info("catalog_source_reresolve_flagged", source=cfg.slug)
             (await self._resolver(session)).report_unmatched()
@@ -225,14 +264,18 @@ class CatalogSourceSync:
         """Flag enabled, auto-syncing sources whose last sync is older than their max age.
 
         The read path calls this instead of syncing inline; the scanner drains it.
+        The legacy source is never flagged here: the catalog snapshot refresh,
+        which already fetches its manifest, syncs it in the same pass.
         """
         now = utcnow()
+        legacy = self._catalog.legacy_source_slug
         async with self._ctx.registry_db.transaction() as session:
             rows = {r.slug: r for r in await CatalogSourceRepository.list_all(session)}
             stale = [
                 cfg.slug
                 for cfg in self._sources.values()
-                if (row := rows.get(cfg.slug)) is not None
+                if cfg.slug != legacy
+                and (row := rows.get(cfg.slug)) is not None
                 and is_due(cfg, row, now=now)
                 and row.sync_wanted_at is None
             ]
@@ -269,8 +312,11 @@ class CatalogSourceSync:
                 stream = self.build_source(cfg).list_entries(since=watermark)
             except Exception:
                 logger.exception("catalog_source_build_failed", source=slug)
-                await self._release(slug, run_id)
-                return SyncOutcome(slug=slug, status=RUN_STATUS_FAILED, error_code="build_error")
+                outcome = await self._fail(
+                    slug, run_id, status=RUN_STATUS_FAILED, error_code="build_error"
+                )
+                metrics.record_sync(slug, outcome.status, 0.0)
+                return outcome
         return await self.run_claimed(cfg, stream, run_id=run_id, forced=forced)
 
     async def run_claimed(
@@ -279,16 +325,29 @@ class CatalogSourceSync:
         """Stage and apply ``stream`` for a source whose lease ``run_id`` already holds."""
         slug = cfg.slug
         clock_start = time.monotonic()
-        started_at = utcnow()
         async with self._ctx.registry_db.transaction() as session:
+            started_at = await CatalogSourceRepository.run_clock(session)
             await CatalogSyncRunRepository.create(
                 session, run_id=run_id, slug=slug, started_at=started_at, forced=forced
             )
         lease_lost = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(cfg, run_id, lease_lost))
+        staging = asyncio.create_task(self._stage(slug, stream, run_id))
+        lost = asyncio.create_task(lease_lost.wait())
         try:
-            staged, is_full, watermark = await self._stage(slug, stream, run_id)
-        except Exception as exc:
+            await asyncio.wait({staging, lost}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (heartbeat, lost, staging):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(heartbeat, lost, staging, return_exceptions=True)
+
+        if lease_lost.is_set():
+            logger.warning("catalog_source_run_lease_lost", source=slug, run_id=run_id)
+            outcome = await self._fail(
+                slug, run_id, status=RUN_STATUS_FAILED, error_code=ERROR_LEASE_LOST
+            )
+        elif (exc := staging.exception()) is not None:
             code = _error_code(exc)
             logger.warning(
                 "catalog_source_listing_failed",
@@ -297,32 +356,30 @@ class CatalogSourceSync:
                 error_type=type(exc).__name__,
             )
             outcome = await self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=code)
-            metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
-            return outcome
-        finally:
-            heartbeat.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat
-        if lease_lost.is_set():
-            outcome = await self._fail(
-                slug, run_id, status=RUN_STATUS_FAILED, error_code="lease_lost", staged=staged
-            )
         else:
-            outcome = await self._apply(
-                cfg,
-                run_id=run_id,
-                started_at=started_at,
-                is_full=is_full,
-                watermark=watermark,
-                forced=forced,
-                staged=staged,
-            )
+            staged, is_full, watermark = staging.result()
+            try:
+                outcome = await self._apply(
+                    cfg,
+                    run_id=run_id,
+                    started_at=started_at,
+                    is_full=is_full,
+                    watermark=watermark,
+                    forced=forced,
+                    staged=staged,
+                )
+            except Exception:
+                logger.exception("catalog_source_apply_failed", source=slug, run_id=run_id)
+                outcome = await self._fail(
+                    slug, run_id, status=RUN_STATUS_FAILED, error_code="apply_error", staged=staged
+                )
         metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
         return outcome
 
     async def _heartbeat(
         self, cfg: CatalogSourceConfig, run_id: str, lease_lost: asyncio.Event
     ) -> None:
+        """Renew the lease every third of its length; any failure to renew loses it."""
         interval = max(1.0, cfg.sync_lease_seconds / 3)
         while True:
             await asyncio.sleep(interval)
@@ -333,7 +390,7 @@ class CatalogSourceSync:
                     )
             except Exception:
                 logger.warning("catalog_source_lease_renew_failed", source=cfg.slug, exc_info=True)
-                continue
+                held = False
             if not held:
                 logger.warning("catalog_source_lease_lost", source=cfg.slug, run_id=run_id)
                 lease_lost.set()
@@ -379,6 +436,12 @@ class CatalogSourceSync:
     async def _fail(
         self, slug: str, run_id: str, *, status: str, error_code: str | None, staged: int = 0
     ) -> SyncOutcome:
+        """End a run that applied nothing, in a fresh transaction.
+
+        The source's failure count (and so the scanner's backoff) only moves when
+        this run still held the lease; a run that lost it leaves the source to
+        the run that holds it now.
+        """
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSyncRunRepository.delete_staged(session, run_id)
             await CatalogSyncRunRepository.finish(
@@ -389,14 +452,15 @@ class CatalogSourceSync:
                 staged=staged,
                 finished_at=utcnow(),
             )
-            source_status = (
-                SOURCE_STATUS_SUSPECT_EMPTY
-                if status == RUN_STATUS_SUSPECT_EMPTY
-                else SOURCE_STATUS_FAILED
-            )
-            await CatalogSourceRepository.record_failure(
-                session, slug=slug, status=source_status, owner=run_id
-            )
+            if await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id):
+                source_status = (
+                    SOURCE_STATUS_SUSPECT_EMPTY
+                    if status == RUN_STATUS_SUSPECT_EMPTY
+                    else SOURCE_STATUS_FAILED
+                )
+                await CatalogSourceRepository.record_failure(
+                    session, slug=slug, status=source_status
+                )
         return SyncOutcome(
             slug=slug, status=status, run_id=run_id, staged=staged, error_code=error_code
         )
@@ -417,24 +481,34 @@ class CatalogSourceSync:
         staged: int,
     ) -> SyncOutcome:
         slug = cfg.slug
-        async with self._ctx.registry_db.transaction() as session:
-            await CatalogSourceRepository.lock_for_apply(session, slug)
+
+        async def _end(session: AsyncSession, status: str, error: str | None) -> SyncOutcome:
+            await CatalogSyncRunRepository.delete_staged(session, run_id)
+            await CatalogSyncRunRepository.finish(
+                session, run_id, status=status, error_code=error, finished_at=utcnow()
+            )
+            return SyncOutcome(
+                slug=slug, status=status, run_id=run_id, staged=staged, error_code=error
+            )
+
+        async with self._source_transaction(slug) as session:
+            # The lease is re-checked (and row-locked on Postgres) under the apply
+            # lock, so a run whose lease lapsed and was claimed elsewhere never
+            # applies over the new owner.
+            if not await CatalogSourceRepository.renew_lease(
+                session, slug=slug, owner=run_id, lease_seconds=cfg.sync_lease_seconds
+            ):
+                logger.warning("catalog_source_apply_lease_lost", source=slug, run_id=run_id)
+                return await _end(session, RUN_STATUS_FAILED, ERROR_LEASE_LOST)
             source = await CatalogSourceRepository.get(session, slug)
-            superseded = False
-            if source is not None and source.last_applied_run_id is not None:
+            if source is None:
+                return await _end(session, RUN_STATUS_FAILED, ERROR_LEASE_LOST)
+            if source.last_applied_run_id is not None:
                 last = await CatalogSyncRunRepository.get(session, source.last_applied_run_id)
-                superseded = last is not None and last.started_at > started_at
-            rejection = _apply_rejection(source, run_id, superseded=superseded)
-            if rejection is not None or source is None:
-                status, error = rejection or (RUN_STATUS_FAILED, "lease_lost")
-                await CatalogSyncRunRepository.delete_staged(session, run_id)
-                await CatalogSyncRunRepository.finish(
-                    session, run_id, status=status, error_code=error, finished_at=utcnow()
-                )
-                await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
-                return SyncOutcome(
-                    slug=slug, status=status, run_id=run_id, staged=staged, error_code=error
-                )
+                if last is not None and last.started_at > started_at:
+                    outcome = await _end(session, RUN_STATUS_SUPERSEDED, None)
+                    await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
+                    return outcome
 
             rows = await CatalogEntryRepository.rows_for_source(session, slug)
             by_external = {r.external_id: r for r in rows}
@@ -468,15 +542,16 @@ class CatalogSourceSync:
                     finished_at=utcnow(),
                 )
                 await CatalogSourceRepository.record_failure(
-                    session, slug=slug, status=SOURCE_STATUS_SUSPECT_EMPTY, owner=run_id
+                    session, slug=slug, status=SOURCE_STATUS_SUSPECT_EMPTY
                 )
+                await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
                 return SyncOutcome(
                     slug=slug, status=RUN_STATUS_SUSPECT_EMPTY, run_id=run_id, staged=staged
                 )
 
             previous_listing = source.listing_digest
             resolver = await self._resolver(session)
-            now = utcnow()
+            now = await CatalogSourceRepository.run_clock(session)
             for staged_row in upserts:
                 _upsert_entry(
                     session,
@@ -509,7 +584,6 @@ class CatalogSourceSync:
                 content_digest=digests.content_digest(live_rows),
                 listing_digest=digests.listing_digest(live_rows),
                 live_entries=len(live_rows),
-                owner=run_id,
             )
             if is_full:
                 source.resolver_inputs_digest = self.current_resolver_inputs_digest()
@@ -524,8 +598,12 @@ class CatalogSourceSync:
                 finished_at=utcnow(),
             )
             await CatalogSyncRunRepository.delete_staged(session, run_id)
-            if cfg.trust == "curated" and source.listing_digest != previous_listing:
-                await self._flag_conflicting(session)
+            await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
+            if self._is_curated(cfg):
+                if source.listing_digest != previous_listing:
+                    await self._flag_conflicting(session)
+            else:
+                await self._record_ownership_conflicts(session, slug, resolver)
         metrics.record_entries(slug, len(live_rows))
         logger.info(
             "catalog_source_synced",
@@ -545,62 +623,79 @@ class CatalogSourceSync:
 
     # ── re-resolve ────────────────────────────────────────────────────────────
 
-    async def _flag_conflicting(self, session: Any) -> None:
+    @staticmethod
+    def _is_curated(cfg: CatalogSourceConfig) -> bool:
+        return cfg.enabled and cfg.trust == "curated"
+
+    async def _flag_conflicting(self, session: AsyncSession) -> None:
         """After the curated id set changed, flag every non-curated source with live rows."""
         slugs = [
             row.slug
             for row in await CatalogSourceRepository.list_all(session)
             if row.slug in self._sources
-            and self._sources[row.slug].trust != "curated"
+            and not self._is_curated(self._sources[row.slug])
             and row.live_entries > 0
         ]
         await CatalogSourceRepository.mark_reresolve_wanted(session, slugs)
 
+    async def _record_ownership_conflicts(
+        self, session: AsyncSession, slug: str, resolver: CatalogApiIdResolver
+    ) -> int:
+        """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
+
+        Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
+        credentials), so each one is logged and counted, once per API row.
+        """
+        prefix = f"{slug}/"
+        conflicts = 0
+        for vendor, name, version, api_id, entry_id in await ApiRepository.imported_from_source(
+            session, slug
+        ):
+            if not api_id or not resolver.is_curated_owned(api_id):
+                continue
+            mapped = resolver.mapped(slug, entry_id.removeprefix(prefix))
+            if mapped is not None and mapped.lower() == api_id.lower():
+                continue
+            conflicts += 1
+            logger.warning(
+                "catalog_ownership_conflict",
+                source=slug,
+                entry_id=entry_id,
+                catalog_api_id=api_id,
+                api_vendor=vendor,
+                api_name=name,
+                api_version=version,
+            )
+        if conflicts:
+            metrics.record_ownership_conflicts(slug, conflicts)
+        return conflicts
+
     async def reresolve_source(self, slug: str) -> int:
         """Re-run the resolver over a source's stored rows; returns how many ids changed.
 
-        An already imported API whose entry's id changes keeps its own
-        ``catalog_api_id``; each such API is counted as an ownership conflict and
-        logged.
+        Runs under the source's apply lock (not its sync lease), so it never
+        interleaves with an apply. An already imported API keeps its own
+        ``catalog_api_id``; one that now holds a curated-owned id it is not mapped
+        to is counted as an ownership conflict. A curated source whose ids change
+        flags every non-curated source in turn.
         """
         cfg = self._sources.get(slug)
         if cfg is None:
             return 0
         changed = 0
-        conflicts = 0
-        async with self._ctx.registry_db.transaction() as session:
-            await CatalogSourceRepository.lock_for_apply(session, slug)
+        async with self._source_transaction(slug) as session:
             source = await CatalogSourceRepository.get(session, slug)
             if source is None:
                 return 0
+            previous_listing = source.listing_digest
             resolver = await self._resolver(session)
             rows = await CatalogEntryRepository.rows_for_source(session, slug, live_only=True)
-            imported = {
-                entry_id: (vendor, name, version, api_id)
-                for vendor, name, version, api_id, entry_id in (
-                    await ApiRepository.imported_from_source(session, slug)
-                )
-            }
             for row in rows:
                 resolved = resolver.resolve(
                     source_slug=slug, external_id=row.external_id, hint=row.catalog_api_id_hint
                 )
                 if resolved == row.catalog_api_id:
                     continue
-                api = imported.get(row.entry_id)
-                if api is not None:
-                    conflicts += 1
-                    logger.warning(
-                        "catalog_ownership_conflict",
-                        source=slug,
-                        entry_id=row.entry_id,
-                        previous_catalog_api_id=row.catalog_api_id,
-                        catalog_api_id=resolved,
-                        api_vendor=api[0],
-                        api_name=api[1],
-                        api_version=api[2],
-                        kept_catalog_api_id=api[3],
-                    )
                 row.catalog_api_id = resolved
                 changed += 1
             await CatalogEntryRepository.flush(session)
@@ -608,8 +703,12 @@ class CatalogSourceSync:
             source.listing_digest = digests.listing_digest(rows)
             source.reresolve_wanted_at = None
             source.resolver_inputs_digest = self.current_resolver_inputs_digest()
-        if conflicts:
-            metrics.record_ownership_conflicts(slug, conflicts)
+            await CatalogEntryRepository.flush(session)
+            if self._is_curated(cfg):
+                if source.listing_digest != previous_listing:
+                    await self._flag_conflicting(session)
+            else:
+                await self._record_ownership_conflicts(session, slug, resolver)
         if changed:
             logger.info("catalog_source_reresolved", source=slug, changed=changed)
         return changed
@@ -618,17 +717,6 @@ class CatalogSourceSync:
         """Delete staged rows left by runs that crashed before their apply."""
         async with self._ctx.registry_db.transaction() as session:
             return await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
-
-
-def _apply_rejection(
-    source: CatalogSourceRow | None, run_id: str, *, superseded: bool
-) -> tuple[str, str | None] | None:
-    """Why a staged run must not apply: its lease is gone, or a newer run already applied."""
-    if source is None or source.sync_lease_owner != run_id:
-        return RUN_STATUS_FAILED, "lease_lost"
-    if superseded:
-        return RUN_STATUS_SUPERSEDED, None
-    return None
 
 
 def is_due(cfg: CatalogSourceConfig, row: CatalogSourceRow, *, now: datetime) -> bool:
@@ -648,9 +736,29 @@ def is_due(cfg: CatalogSourceConfig, row: CatalogSourceRow, *, now: datetime) ->
     return (now - row.last_sync_at).total_seconds() > cfg.max_age_seconds
 
 
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
 def _raw(value: str | None) -> str | None:
-    """Connector text as staged: verbatim except NUL, which no database text column stores."""
-    return value.replace("\x00", "") if value is not None else None
+    """Connector text as staged: verbatim except what no database text column stores.
+
+    NUL is dropped and a lone surrogate (which cannot be encoded as UTF-8)
+    becomes U+FFFD.
+    """
+    if value is None:
+        return None
+    return _SURROGATE_RE.sub("\ufffd", value.replace("\x00", ""))
+
+
+def _raw_json(value: Any) -> Any:
+    """``_raw`` applied to every string (keys included) of a JSON value."""
+    if isinstance(value, str):
+        return _raw(value)
+    if isinstance(value, Mapping):
+        return {_raw(str(k)): _raw_json(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_raw_json(v) for v in value]
+    return value
 
 
 def _staged_row(run_id: str, change: Upserted | Removed) -> CatalogStagedEntry:
@@ -666,9 +774,9 @@ def _staged_row(run_id: str, change: Upserted | Removed) -> CatalogStagedEntry:
         catalog_api_id_hint=_raw(entry.catalog_api_id_hint),
         title=_raw(entry.title),
         version=_raw(entry.version),
-        spec_ref=dict(entry.spec_ref) if entry.spec_ref is not None else None,
+        spec_ref=_raw_json(entry.spec_ref) if entry.spec_ref is not None else None,
         human_url=_raw(entry.human_url),
-        tags=[t.replace("\x00", "") for t in entry.tags if isinstance(t, str)],
+        tags=[_raw(t) for t in entry.tags if isinstance(t, str)],
         content_hint=_raw(entry.content_hint),
     )
 

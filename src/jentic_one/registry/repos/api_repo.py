@@ -231,7 +231,7 @@ class ApiRepository:
         """``(vendor, name, version, catalog_api_id, catalog_entry_id)`` of APIs from a source."""
         result = await session.execute(
             select(Api.vendor, Api.name, Api.version, Api.catalog_api_id, Api.catalog_entry_id)
-            .where(Api.catalog_entry_id.like(f"{source_slug}/%"))
+            .where(Api.catalog_entry_id.startswith(f"{source_slug}/", autoescape=True))
             .order_by(Api.vendor, Api.name, Api.version)
         )
         return [(r[0], r[1], r[2], r[3], str(r[4])) for r in result.all()]
