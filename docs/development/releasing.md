@@ -239,6 +239,38 @@ section below.
   value); use it to find the callers to update. The generated UI and Go
   clients no longer expose the parameter.
 
+## Upgrading to the pluggable shared-state release
+
+The first release after 0.43.0 that carries the pluggable shared-state
+backend.
+
+- **The shared-state config moves to a top-level `state:` section.**
+  `broker.resilience.backend.*` becomes `state.*` (same keys: `backend`,
+  `memory.*`, `redis_url`, `redis_key_prefix`), and the env vars
+  `JENTIC__BROKER__RESILIENCE__BACKEND__*` become `JENTIC__STATE__*`. The old
+  section and env vars are still read into `state` for this release, with one
+  `config_deprecated_setting` WARNING per process (its `setting` field is
+  `broker.resilience.backend`). Keys may be split between the two paths, but a
+  key set under both to **different** values fails config loading, naming
+  the field — check Helm `extraEnv` and config files together when moving.
+- **One shared-state backend per process.** A process builds a single backend
+  shared by every surface it serves, where the combined app built one each for
+  auth and control (and a broker process one each for the broker and its auth
+  verifier). `state.memory.max_total_bytes` (192 MiB) now caps the whole
+  process's shared state; the defaults fit the shipped memory limits.
+- **One process per surface is the supported shape.** Every surface but the
+  gateway keeps its rate limits, circuit state, `Idempotency-Key` records and
+  auth anti-replay markers in its process, so a second replica or uvicorn
+  worker of a surface gets its own copy. Keep `replicas: 1`; the Helm chart's
+  install notes warn when another value is set. Multi-process shared state
+  comes from a backend registered with `register_state_backend` and selected
+  by `state.backend`
+  ([extending-jentic-one.md](extending-jentic-one.md)); an unregistered name
+  fails startup listing the registered ones.
+- **The built-in `redis` backend is deprecated.** It still works this
+  release and logs a `state_backend_deprecated` WARNING at startup; it is
+  removed in a later release (see Deprecations).
+
 ## Upgrading to 0.42.3
 
 - **`owner:access-requests:read` maps onto `credentials:connect`.** The agent
@@ -1107,6 +1139,8 @@ runtime signal an operator can watch, and the earliest removal point.
 | `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued. Keys migrated before the Phase 6b drops keep authenticating — as their successor **agents** once theme-8 Phase 1 migrates them; the `retire-toolkit-keys` command and the boot/migration retirement steps are gone with the `toolkit_keys` table (Phase 6b), so a key not migrated by then stops authenticating. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the successor agent presenting the retired key form. | Plaintext acceptance ends no earlier than **2026-12-01** (a follow-up to Phase 6b). |
 | Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent (`sak_` until 0.41.0). The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | Until Phase 4: `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter (both removed with the fallback). | **Removed.** The surface went in theme-8 Phase 2; Phase 4 (0.41.0) retires any remaining service account automatically and drops the tables. |
 | `sak_` service-account API keys (theme-8 Phase 4). No new keys could be issued; a key migrated to a successor agent authenticated as that agent through 0.40.x. Move holders to a `jak_` key for the successor agent (on 0.40.x, before upgrading, for zero downtime). | The first release carrying theme-8 Phase 1. | From 0.41.0: `retired_service_account_key_refused` INFO per refused request, and the upgrade's `service_account_keys_retired` WARNING summary. | **Removed in 0.41.0.** Every `sak_` key is refused with `401`; the detail names the retirement and the `jak_` replacement. Converted `jntc_live_` keys are unaffected (their own row). |
+| The `broker.resilience.backend` config section and its `JENTIC__BROKER__RESILIENCE__BACKEND__*` env vars. Still read into the top-level `state` section; a key set under both paths to different values fails config loading. Move to `state.*` / `JENTIC__STATE__*`. | The pluggable shared-state release. | One `config_deprecated_setting` WARNING per process with `setting=broker.resilience.backend`. | The next minor release after the one that opens the window. |
+| The built-in `redis` shared-state backend (`state.backend: redis`). Run one process per surface on `memory`, or register a shared backend with `register_state_backend`. | The pluggable shared-state release. | One `state_backend_deprecated` WARNING per process at startup. | No earlier than the next minor release after the one that opens the window. |
 
 
 ## One-time setup (repo/org admin)

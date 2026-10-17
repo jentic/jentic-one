@@ -503,8 +503,8 @@ later rollback still decrypts what was written under the new key)
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.
 
-Every subchart exposes `replicas` and `resources` in its values
-(`--set broker.replicas=3`). The defaults are sized for evaluation, not
+Every subchart exposes `replicas` and `resources` in its values (only the
+gateway's `replicas` may usefully go above 1 — see below). The defaults are sized for evaluation, not
 load: registry/control request 100m/128Mi with a 500m/256Mi limit, the
 broker requests 100m/256Mi with a 500m/512Mi limit (its default `memory`
 shared-state budgets, above), and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
@@ -514,32 +514,28 @@ OAuth client-secret verification adds 64Mi (argon2id with
 is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 512Mi.
 
-- **Broker** — stateless; run several replicas behind the Service. First set
-  the shared-state backend to Redis so rate limits, circuit breakers, and
-  idempotency records are shared across replicas: with the default `memory`
-  backend that state is per-process
-  ([config/production.yaml.example](../../config/production.yaml.example),
-  [composition-and-processes.md](../architecture/composition-and-processes.md)).
-  The keys are `broker.resilience.backend.backend: redis` and
-  `broker.resilience.backend.redis_url` (via `extraEnv`:
-  `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
-  `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own. **One hard caveat:** the Redis client is the
-  optional `redis` extra, which the published
-  `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
-  the redis backend on that image crash-loops every replica at startup. On
-  the published image today, keep `broker.replicas: 1`; scaling out means
-  building your own image with the extra baked in through the `EXTRAS`
-  build arg: `docker buildx build -f deploy/docker/app.multiarch.Dockerfile
-  --build-arg EXTRAS=redis …` (single-arch: `make build-app EXTRAS=redis`).
-  Adding `[redis]` to the image's `pip install` line does not work: the
-  wheel installs `--no-deps`, so its extras are ignored
-  ([deploy/README.md](../../deploy/README.md#reproducibility-python-dependencies-come-from-uvlock)).
-- **App** — the same shared-state backend also carries the auth surface's
-  OAuth rate limiters and consent-nonce anti-replay, so the same rule
-  applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
-  before scaling out. Multi-replica app surfaces are not part of the CI
-  smoke matrix.
+**OSS supports one process per surface.** Every Python surface (app,
+registry, admin, control, broker) keeps its rate-limit buckets,
+circuit-breaker counters, `Idempotency-Key` records and the auth surface's
+OAuth rate limiters and consent-nonce anti-replay in its process, on the
+`memory` shared-state backend. A second replica of a surface gets its own
+copy of that state, so rate limits multiply, a replay can be re-executed on
+the other replica, and a consent handle can be redeemed twice. Keep
+`replicas: 1` on every surface except the gateway (a stateless proxy); the
+chart prints a warning at install/upgrade time when any other surface asks
+for more. Multi-process shared state comes from a backend an extension
+registers with `register_state_backend`
+([extending-jentic-one.md](../development/extending-jentic-one.md)) and
+selects with `state.backend` (`JENTIC__STATE__BACKEND` via `extraEnv`); the
+built-in `redis` backend is deprecated, needs the optional `[redis]` extra
+that the published `ghcr.io/jentic/jentic-one-app` image does **not**
+include, and will be removed.
+
+- **Broker** — scale up (raise `broker.resources` and
+  `broker.resilience.max_in_flight`) rather than out.
+- **App** — the same one-replica rule applies; the auth surface's limiters and
+  anti-replay ride the same backend. Multi-replica surfaces are not part of
+  the CI smoke matrix.
 - **Bundled PostgreSQL** — a single-instance StatefulSet, dev/eval-grade by
   design; HA means an external managed database (below). Its connection ceiling
   is already raised to 200 (`postgresql.maxConnections`) because three pools per
@@ -547,9 +543,10 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   raising replicas means raising this and the subchart's memory limit together.
 - **PodDisruptionBudgets** — `podDisruptionBudget.enabled=true` renders one per
   enabled surface at `minAvailable: 1`, so node drains and cluster upgrades
-  cannot take a surface fully offline. Turn it on only *after* raising
-  `replicas` above 1: with a single replica there is no spare pod to evict and
-  the budget blocks every drain instead.
+  cannot take a surface fully offline. With a single replica there is no
+  spare pod to evict and the budget blocks every drain instead, so it only
+  helps the gateway (or a surface on a registered shared backend) once it runs
+  more than one replica.
 - **NetworkPolicy** — `networkPolicy.enabled=true` limits ingress to
   same-release pods plus the namespaces in `networkPolicy.allowFromNamespaces`.
   Put your ingress controller's namespace in that list unless it runs in this
