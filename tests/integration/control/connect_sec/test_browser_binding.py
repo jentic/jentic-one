@@ -11,6 +11,7 @@ callback without it, or with another flow's cookie, redirects with
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -20,7 +21,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from sqlalchemy import update
 
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
 from jentic_one.control.services.credentials.state import (
@@ -52,12 +55,14 @@ from tests.integration.control.connect_sec.support import (
     OAUTH_SCHEME,
     OWNER,
     RULES,
+    SIBLING_AGENT_ID,
     build_app,
     connect,
     digest,
     existing_credential,
     import_spec,
     session_row,
+    svc,
 )
 
 pytestmark = pytest.mark.integration
@@ -576,3 +581,39 @@ async def test_a_few_other_flows_cookies_are_left_alone(env: Context, vendor: li
         done_b = await _callback(browser, state_b)
     assert (_status(done_a), _status(done_b)) == ("ok", "ok")
     _assert_cookie_cleared(done_b, name_b)
+
+
+# --- an unfinished vendor sign-in expires with its callback state ------------
+
+
+async def _age(ctx: Context, session_id: str, seconds: int) -> None:
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            update(ConnectSession)
+            .where(ConnectSession.id == session_id)
+            .values(updated_at=datetime.now(UTC) - timedelta(seconds=seconds))
+        )
+
+
+async def test_sweep_expires_a_polling_session_once_its_callback_state_lapsed(
+    env: Context,
+) -> None:
+    """No callback can complete it any more, so the waiting agent learns at once."""
+    await import_spec(env, OAUTH_SCHEME)
+    lapsed = await connect(env, requested_scopes=["read"])
+    waiting = await connect(env, agent_id=SIBLING_AGENT_ID, requested_scopes=["read"])
+    async with _browser(env) as approver:
+        for created, agent_id in ((lapsed, AGENT_ID), (waiting, SIBLING_AGENT_ID)):
+            confirmed = await _confirm(
+                approver, env, created.session_id, _own_client_body(), agent_id=agent_id
+            )
+            assert confirmed.status_code == 200, confirmed.text
+    ttl = env.config.credentials.connect.state_ttl_seconds
+    await _age(env, lapsed.session_id, ttl + 120)
+    await _age(env, waiting.session_id, ttl - 60)
+
+    assert await svc(env).expire_stale_sessions() == 1
+    assert await session_row(env, lapsed.session_id) is None
+    still = await session_row(env, waiting.session_id)
+    assert still is not None
+    assert still.state == "polling"
