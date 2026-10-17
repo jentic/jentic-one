@@ -24,13 +24,14 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient, Response
+from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from pydantic import SecretStr
 from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
@@ -77,6 +78,9 @@ from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
+from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
+from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
@@ -85,6 +89,7 @@ from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.manifest_builder import catalog_api_name
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.snapshot import clear_snapshots
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
@@ -549,6 +554,65 @@ async def test_vendor_connect_follows_an_already_imported_apis_registered_name(
 
     assert (credential.api_vendor, credential.api_name) == (api.vendor, api.name)
     await _assert_binding_resolves(ctx, api, credential)
+
+
+def _testdev_catalog_client(*_args: object, **kwargs: object) -> AsyncClient:
+    """A catalog fetch client whose default manifest lists only the testdev API."""
+    manifest = "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis"
+    include = f"{manifest}/openapi/testdev.example/api.testdev.example/1.0/apis.json"
+
+    def handler(request: Request) -> Response:
+        url = str(request.url)
+        if url == f"{manifest}/openapi/apis.json":
+            return Response(200, json={"include": [{"url": include}]})
+        if url.endswith("/openapi.json"):
+            return Response(200, text=_TESTDEV_OPENAPI)
+        return Response(404)
+
+    kwargs.pop("transport", None)
+    return AsyncClient(transport=MockTransport(handler), **kwargs)  # type: ignore[arg-type]
+
+
+async def _clear_catalog(ctx: Context) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Job).where(Job.kind == "import"))
+        await session.commit()
+    async with ctx.registry_db.session() as session:
+        for table in (CatalogEntryRow, CatalogSyncRun, CatalogSourceRow):
+            await session.execute(delete(table))
+        await session.commit()
+    clear_snapshots()
+
+
+async def test_vendor_connect_auto_imports_from_the_single_default_source(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    # Single-source regression: with only the default ``public`` source, a real
+    # ``create_session`` resolves the vendor's catalog id to that source's entry
+    # and enqueues its import keyed by entry_id.
+    ctx = integration_context
+    await _clear_catalog(ctx)
+    try:
+        with patch(
+            "jentic_one.registry.services.catalog.fetch.httpx.AsyncClient",
+            _testdev_catalog_client,
+        ):
+            await ConnectSessionService(
+                ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx)
+            ).create_session(vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY)
+        async with ctx.admin_db.session() as session:
+            jobs = (await session.execute(select(Job).where(Job.kind == "import"))).scalars().all()
+        assert len(jobs) == 1
+        assert jobs[0].payload is not None
+        [source] = jobs[0].payload["sources"]
+        assert source["catalog_entry_id"] == f"public/{_TESTDEV_CATALOG_ID}"
+        assert source["vendor"] == "testdev.example"
+    finally:
+        await _clear_catalog(ctx)
 
 
 # ---------------------------------------------------------------------------
