@@ -325,10 +325,11 @@ class DatabaseSession:
         would be durable at once. The guard refuses an ORM flush with pending
         changes (including an autoflush before a query) and any
         ``INSERT``/``UPDATE``/``DELETE`` statement run through
-        ``Session.execute`` (ORM or Core DML, or textual SQL that starts with
+        ``Session.execute`` (ORM or Core DML, including DML nested in a Core
+        CTE, or textual SQL whose first verb after any comments is
         ``INSERT``/``UPDATE``/``DELETE``/``MERGE``). It runs client-side and
-        costs no round trip. SQL sent below the session (e.g.
-        ``Connection.exec_driver_sql``) is not inspected.
+        costs no round trip. DML inside a textual CTE, and SQL sent below the
+        session (e.g. ``Connection.exec_driver_sql``), are not inspected.
 
         Autocommit covers the session's first transaction only: it is applied
         to the connection that transaction checks out. A ``commit()`` or
