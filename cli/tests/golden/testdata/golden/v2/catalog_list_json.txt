@@ -5,7 +5,7 @@ exit: 0
     {
       "_links": {
         "alternates": [
-          "internal/stripe.com"
+          "/catalog/internal/stripe.com"
         ],
         "human": "https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com",
         "import": "/catalog/public/stripe.com:import",
