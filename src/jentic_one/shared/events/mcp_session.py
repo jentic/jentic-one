@@ -1,7 +1,7 @@
 """``mcp.session_started`` emission — first authenticated request per MCP session.
 
-Two transports emit this event, sharing one dedupe machine (the seen/in-flight
-sets, the events-table lookup, and the partial unique index on
+Two transports emit this event, sharing one dedupe machine (the shared-state
+claim, the events-table lookup, and the partial unique index on
 ``(type, data->>'session_id')``) but with different **keys**:
 
 - **stdio** (lane D, issue #1177): once per session UUID relayed by the Go
@@ -30,21 +30,21 @@ The event is emitted **once per session id**, on the first authenticated
 request that shows both, from **both planes** (the control plane's
 ``resolve_identity`` and the broker's ``require_broker_identity`` — a session
 whose only traffic is ``execute`` never touches the control plane). Dedupe is
-three-layered (the lane-D plan's two layers, hardened against races): a
-synchronous per-process short-circuit (the seen-set plus an in-flight set
-checked before any task is scheduled, so concurrent first requests on one
-worker schedule at most one emit), one indexed events-table lookup on
-``data.session_id`` (the table is the store shared across workers/services),
-and — because the lookup is check-then-insert and two workers can race past
-it — a partial unique index on ``(type, data->>'session_id')`` scoped to this
-event type (``uq_events_mcp_session_started_session``). The loser of a
-cross-worker race gets an ``IntegrityError`` and skips, so the store holds
-exactly one row per session id. Emission is fire-and-forget in a
-background task so the auth path never waits on it, and it rides
-``emit_event``'s existing consent gate — the telemetry wire carries at most
-the closed ``McpClient`` tag, while the internal event's ``data`` holds the
-full clientInfo, the transport, and the session id for the UI (two-plane
-pattern).
+three-layered: a claim on the process's shared-state backend
+(``Context.state_backend``, key ``mcp-session:<session id>``) taken before
+any task is scheduled, so concurrent first requests on every process sharing
+the backend schedule at most one emit and a session already emitted costs one
+backend lookup; one indexed events-table lookup on ``data.session_id`` (the
+store of record, shared by every process whatever the backend); and —
+because the lookup is check-then-insert — a partial unique index on
+``(type, data->>'session_id')`` scoped to this event type
+(``uq_events_mcp_session_started_session``). The loser of a cross-process
+race gets an ``IntegrityError`` and skips, so the store holds exactly one row
+per session id. Emission is fire-and-forget in a background task so the auth
+path never waits on the database, and it rides ``emit_event``'s existing
+consent gate — the telemetry wire carries at most the closed ``McpClient``
+tag, while the internal event's ``data`` holds the full clientInfo, the
+transport, and the session id for the UI (two-plane pattern).
 """
 
 from __future__ import annotations
@@ -132,39 +132,33 @@ MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW = 16
 #: ``mcp.session_started`` row by kilobytes of junk.
 _UA_FIELD_MAX = 128
 
-#: Per-process short-circuit: session ids already confirmed emitted (here or
-#: by another worker, via the table lookup). Bounded so a long-lived process
-#: fed unique ids can't grow it without limit — clearing only costs one extra
-#: table lookup per session, never a duplicate event.
-_seen_sessions: set[str] = set()
-_SEEN_SESSIONS_MAX = 4096
+#: Shared-state namespace of the per-session claim (``mcp-session:<id>``). A
+#: claim taken before an emit is scheduled lives :data:`_CLAIM_TTL_S`; once the
+#: event is recorded (here or, per the table lookup, by another process) it is
+#: rewritten to live :data:`_SEEN_TTL_S`, so later requests short-circuit on it.
+SESSION_NAMESPACE = "mcp-session"
+#: Shared-state namespace of the per-(agent, window) distinct-key counter behind
+#: :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` (``mcp-session-cap:<agent>:<window>``).
+CLIENT_CAP_NAMESPACE = "mcp-session-cap"
 
-#: Session ids with an emit task currently in flight on this process. Checked
-#: and added *synchronously* in :func:`schedule_mcp_session_emit`, before the
-#: task is created, so two concurrent first requests on one worker can never
-#: both schedule an emit. Entries are discarded in the task's done callback —
-#: on failure the session is not in the seen-set either, so the next request
-#: retries.
-_in_flight: set[str] = set()
+#: How long an unconfirmed claim holds a session id. An emit that fails leaves
+#: its claim to expire, so the next request after this retries it.
+_CLAIM_TTL_S = 60.0
+#: How long a recorded session id short-circuits. Its expiry only costs one
+#: table lookup for a session still sending requests, never a duplicate event.
+_SEEN_TTL_S = float(MCP_HTTP_WINDOW_SECONDS)
 
-#: Cap on concurrently in-flight emits: each entry holds a
+#: Cap on concurrently in-flight emits on this process: each holds a
 #: background task with an open admin-DB transaction, so the transient
-#: population must not be attacker-paced. At the cap new emits are *dropped*
-#: (never cleared — clearing would orphan keys whose tasks still run): the key
-#: is not in the seen-set, so a later request retries once the backlog drains.
-#: ``_background_tasks`` adds/removes in lockstep, so this bounds both sets.
+#: population must not be attacker-paced. At the cap new emits are dropped
+#: before their claim is taken, so a later request retries once the backlog
+#: drains.
 _IN_FLIGHT_MAX = 1024
 
+#: Strong references to this process's running emit tasks (the event loop
+#: holds only weak ones). Process-local by nature: a task runs where it was
+#: created. Dedupe state lives on the shared-state backend, never here.
 _background_tasks: set[asyncio.Task[None]] = set()
-
-#: Distinct dedupe keys admitted per (agent, window) on this process (review
-#: M1) — the counter behind :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW`.
-#: A count past the cap is the "warned already" sentinel, so the log fires
-#: once per (agent, window). Bounded with the seen-set clear-on-full pattern:
-#: a clear only re-opens the cap, it never mints duplicate rows (the seen-set
-#: and the unique index still dedupe identical keys).
-_agent_window_counts: dict[tuple[str, int], int] = {}
-_AGENT_WINDOW_COUNTS_MAX = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,10 +199,33 @@ def valid_session_id_or_none(session_id: str | None) -> str | None:
     return None
 
 
-def _remember(session_id: str) -> None:
-    if len(_seen_sessions) >= _SEEN_SESSIONS_MAX:
-        _seen_sessions.clear()
-    _seen_sessions.add(session_id)
+def _session_key(session_id: str) -> str:
+    return f"{SESSION_NAMESPACE}:{session_id}"
+
+
+async def _mark_recorded(ctx: Context, session_id: str) -> None:
+    """Turn the session's claim into a long-lived "recorded" marker (best-effort)."""
+    try:
+        await ctx.state_backend.set(_session_key(session_id), b"recorded", ttl_s=_SEEN_TTL_S)
+    except Exception as exc:
+        # The event is recorded; a lost marker costs one table lookup later.
+        logger.debug("mcp_session_marker_not_stored", error=type(exc).__name__)
+
+
+async def _claim(ctx: Context, session_id: str) -> bool:
+    """Claim ``session_id`` for one emit, across every process sharing the backend.
+
+    ``False`` when the id is already claimed or recorded, or the backend
+    refused or failed the write: the emit is skipped (it is telemetry, and
+    the request it rides must not fail over it).
+    """
+    try:
+        return await ctx.state_backend.set_if_absent(
+            _session_key(session_id), b"claimed", ttl_s=_CLAIM_TTL_S
+        )
+    except Exception as exc:
+        logger.debug("mcp_session_claim_skipped", error=type(exc).__name__)
+        return False
 
 
 async def record_mcp_session_started(
@@ -226,8 +243,8 @@ async def record_mcp_session_started(
     process; the once-per-session guarantee itself is held by the partial
     unique index ``uq_events_mcp_session_started_session`` — losing a
     cross-worker check-then-insert race raises ``IntegrityError``, which is
-    treated as "already emitted". Other failures are logged and the seen-set
-    is left untouched so the next request for the session retries.
+    treated as "already emitted". Other failures are logged and the claim is
+    left to expire, so a request for the session after that retries.
     """
     await _record_session_started(
         ctx,
@@ -254,8 +271,8 @@ async def _record_session_started(
 
     ``session_id`` is whatever the transport's dedupe keys on — the relayed
     session UUID for stdio, the synthetic per-window key for HTTP. Everything
-    else (table lookup, unique-index race tolerance, seen-set priming) is
-    identical.
+    else (table lookup, unique-index race tolerance, recorded-marker
+    priming) is identical.
     """
     try:
         async with ctx.admin_db.transaction() as session:
@@ -283,19 +300,19 @@ async def _record_session_started(
                     },
                     tags={client_tag},
                 )
-        _remember(session_id)
     except (DatabaseIntegrityError, IntegrityError):
         # Lost the cross-worker insert race: another worker/plane committed the
         # row between our lookup and our insert, and the unique index rejected
         # the duplicate (``transaction()`` maps the raw ``IntegrityError`` to
         # ``DatabaseIntegrityError``). The event exists — the desired end state.
         logger.debug("mcp_session_started_already_emitted", actor_id=actor_id)
-        _remember(session_id)
     except Exception:
         logger.warning("emit_mcp_session_started_failed", actor_id=actor_id)
+        return
+    await _mark_recorded(ctx, session_id)
 
 
-def schedule_mcp_session_emit(
+async def schedule_mcp_session_emit(
     ctx: Context | None,
     *,
     user_agent: str | None,
@@ -306,25 +323,23 @@ def schedule_mcp_session_emit(
     """Fire-and-forget ``mcp.session_started`` from an authenticated request.
 
     Called by both planes' identity dependencies on every request; the
-    non-MCP fast path is two header checks. Never raises and never blocks the
-    caller — the DB work runs in a background task (matching the broker's
-    auth-failure event pattern). The in-flight check-and-add happens
-    synchronously here, before the task is created, so concurrent first
-    requests for one session schedule exactly one emit on this process.
+    non-MCP fast path is two header checks, with no await. Never raises and
+    never waits on the database — the DB work runs in a background task
+    (matching the broker's auth-failure event pattern). The session's claim
+    on the shared-state backend is taken here, before the task is created,
+    so concurrent first requests for one session schedule exactly one emit
+    on every process sharing the backend.
     """
     ua = parse_mcp_user_agent(user_agent)
     if ua is None:
         return
     sid = valid_session_id_or_none(session_id)
-    if sid is None or sid in _seen_sessions or sid in _in_flight:
+    if sid is None or ctx is None:
         return
-    if ctx is None:
-        return
-    if not _in_flight_has_room():
+    if not _in_flight_has_room() or not await _claim(ctx, sid):
         return
 
     _spawn_emit(
-        sid,
         record_mcp_session_started(
             ctx, ua=ua, session_id=sid, actor_id=actor_id, actor_type=actor_type
         ),
@@ -366,7 +381,7 @@ def _digest_component(value: str | None) -> str:
     return f"{len(text)}:{text}"
 
 
-def schedule_mcp_http_session_emit(
+async def schedule_mcp_http_session_emit(
     ctx: Context | None,
     *,
     client_name: str | None,
@@ -377,15 +392,17 @@ def schedule_mcp_http_session_emit(
     """Fire-and-forget ``mcp.session_started`` from the mounted ``/mcp`` app.
 
     Called on every authenticated POST the mount serves; the
-    dedupe key is the per-window synthetic id, so within one window the fast
-    path is one set-membership check. clientInfo comes from the request's
-    ``_meta`` (``io.modelcontextprotocol/clientInfo``) and is a SHOULD — an
-    absent one still emits, degrading to client-unknown exactly like the
-    stdio path (``McpClient.OTHER`` on the wire, ``client_name: null`` in
-    ``data``). Values are capped like the UA-derived fields: they persist to
-    event ``data`` and are attacker-controlled. Distinct keys are capped per
-    (agent, window) — :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` — so an
-    agent varying clientInfo per request cannot mint a row per request.
+    dedupe key is the per-window synthetic id, so within one window the
+    repeat cost is one refused claim on the shared-state backend. clientInfo
+    comes from the request's ``_meta`` (``io.modelcontextprotocol/clientInfo``)
+    and is a SHOULD — an absent one still emits, degrading to client-unknown
+    exactly like the stdio path (``McpClient.OTHER`` on the wire,
+    ``client_name: null`` in ``data``). Values are capped like the UA-derived
+    fields: they persist to event ``data`` and are attacker-controlled.
+    Distinct keys are capped per (agent, window) —
+    :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW`, counted on the shared
+    backend — so an agent varying clientInfo per request cannot mint a row
+    per request, however many processes it spreads them over.
     """
     if ctx is None:
         return
@@ -397,16 +414,13 @@ def schedule_mcp_http_session_emit(
     )
     now = time.time()
     sid = mcp_http_window_key(actor_id, name, version, now=now)
-    if sid in _seen_sessions or sid in _in_flight:
-        return
-    if not _in_flight_has_room():
+    if not _in_flight_has_room() or not await _claim(ctx, sid):
         return
     window = int(now // MCP_HTTP_WINDOW_SECONDS)
-    if not _admit_agent_window_key(actor_id, window):
+    if not await _admit_agent_window_key(ctx, actor_id, window):
         return
 
     _spawn_emit(
-        sid,
         _record_session_started(
             ctx,
             session_id=sid,
@@ -420,62 +434,51 @@ def schedule_mcp_http_session_emit(
 
 
 def _in_flight_has_room() -> bool:
-    """Drop (never clear) new emits while the in-flight backlog is at the cap.
+    """Drop new emits while this process's in-flight backlog is at the cap.
 
-    The dropped key is not in the seen-set, so a later request retries once
-    the backlog drains — bounded memory at the cost of a delayed row under a
-    flood, never a lost one.
+    Checked before the claim is taken, so a dropped key stays unclaimed and a
+    later request retries it once the backlog drains — bounded memory at the
+    cost of a delayed row under a flood, never a lost one.
     """
-    if len(_in_flight) < _IN_FLIGHT_MAX:
+    if len(_background_tasks) < _IN_FLIGHT_MAX:
         return True
-    logger.debug("mcp_session_emit_dropped_in_flight_cap", in_flight=len(_in_flight))
+    logger.debug("mcp_session_emit_dropped_in_flight_cap", in_flight=len(_background_tasks))
     return False
 
 
-def _admit_agent_window_key(actor_id: str, window: int) -> bool:
+async def _admit_agent_window_key(ctx: Context, actor_id: str, window: int) -> bool:
     """Admit one more *distinct* HTTP dedupe key for this (agent, window).
 
-    Callers have already established the key is new (not seen, not in
-    flight). Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit is
-    skipped and a warning logged once per (agent, window) — one flooding
+    Callers have just claimed the key, so it is new. The count is an atomic
+    increment on the shared-state backend, so the cap holds across
+    processes. Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit
+    is skipped and a warning logged once per (agent, window) — one flooding
     agent stops minting rows while every other agent's counter is untouched.
-    A retried key (failed emit) re-counts, slightly tightening the cap for
-    that agent — acceptable for a defensive bound.
+    A key retried after its claim expired re-counts, slightly tightening the
+    cap for that agent — acceptable for a defensive bound. A backend that
+    refuses or fails the increment skips the emit.
     """
-    key = (actor_id, window)
-    count = _agent_window_counts.get(key, 0)
-    if count >= MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
-        if count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
-            logger.warning(
-                "mcp_http_session_client_cap_reached",
-                actor_id=actor_id,
-                window=window,
-                cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
-            )
-            _agent_window_counts[key] = count + 1
+    try:
+        count = await ctx.state_backend.incr_with_ttl(
+            f"{CLIENT_CAP_NAMESPACE}:{actor_id}:{window}", ttl_s=float(MCP_HTTP_WINDOW_SECONDS)
+        )
+    except Exception as exc:
+        logger.debug("mcp_http_session_client_cap_skipped", error=type(exc).__name__)
         return False
-    if key not in _agent_window_counts and len(_agent_window_counts) >= _AGENT_WINDOW_COUNTS_MAX:
-        _agent_window_counts.clear()
-    _agent_window_counts[key] = count + 1
-    return True
+    if count <= MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+        return True
+    if count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW + 1:
+        logger.warning(
+            "mcp_http_session_client_cap_reached",
+            actor_id=actor_id,
+            window=window,
+            cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
+        )
+    return False
 
 
-def _spawn_emit(sid: str, record: Coroutine[Any, Any, None]) -> None:
-    """Run one emit coroutine in the background, tracked under ``sid``.
-
-    The in-flight add is synchronous, before the task is created, so two
-    concurrent first requests for one dedupe key can never both schedule.
-    Callers must have checked the seen/in-flight sets already (this always
-    schedules the coroutine it is given).
-    """
-    _in_flight.add(sid)
+def _spawn_emit(record: Coroutine[Any, Any, None]) -> None:
+    """Run one emit coroutine in the background, holding a reference until it ends."""
     task = asyncio.create_task(record)
     _background_tasks.add(task)
-
-    def _cleanup(done: asyncio.Task[None]) -> None:
-        _background_tasks.discard(done)
-        # On failure the key is not in the seen-set, so dropping the
-        # in-flight entry lets the next request retry.
-        _in_flight.discard(sid)
-
-    task.add_done_callback(_cleanup)
+    task.add_done_callback(_background_tasks.discard)

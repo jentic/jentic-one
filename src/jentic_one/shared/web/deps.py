@@ -68,7 +68,7 @@ async def resolve_identity(request: Request) -> Identity:
     # (fire-and-forget; two header checks on the non-MCP fast path). This is the
     # control-plane half of the two-plane emit — the broker's identity
     # dependency mirrors it for execute-only sessions.
-    schedule_mcp_session_emit(
+    await schedule_mcp_session_emit(
         getattr(request.app.state, "ctx", None),
         user_agent=request.headers.get("user-agent"),
         session_id=request.headers.get(SESSION_ID_HEADER),
