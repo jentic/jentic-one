@@ -106,5 +106,8 @@ test('a keyboard user tabbing onto Pause still gets its tooltip', async ({ page 
 	}
 	await expect(pause).toBeFocused();
 	expect(await pause.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
-	await expect(page.getByRole('tooltip')).toBeVisible();
+	// Exactly one bubble, and it is Pause's: the one its keyboard focus opened.
+	const tooltip = page.getByRole('tooltip');
+	await expect(tooltip).toBeVisible();
+	await expect(tooltip).toHaveText(/^Pause this binding/);
 });
