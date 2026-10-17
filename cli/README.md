@@ -547,9 +547,12 @@ alone and lists the ones still installed, with the command to remove them.
   provenance) is labelled `(not written by Jentic)` and never removed.
 - A symlinked `AGENTS.md` is edited at the file it points to; the link stays.
   At project scope the link (and any symlinked skill directory) is only
-  followed when it resolves inside the current directory; one pointing
-  elsewhere, such as into your home directory, is refused and left for you to
-  edit by hand.
+  followed when it resolves inside the current directory and outside its git
+  metadata (`.git/`, or the gitdir a `.git` file names); one pointing
+  elsewhere, such as into your home directory or at `.git/config`, is refused
+  and left for you to edit by hand.
+- A skill target that is not a regular file (a FIFO, device or socket) is
+  never read or written.
 - Skills are removed only after the `~/.jentic` teardown succeeds. If a skill
   cannot be removed, uninstall still finishes, reports it, and exits non-zero.
 - To clean up by hand at any time: `jentic skill remove --all` (add `--force`
