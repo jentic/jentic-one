@@ -34,9 +34,11 @@ three-layered: a claim on the process's shared-state backend
 (``Context.state_backend``, key ``mcp-session:<session id>``) taken before
 any task is scheduled, so concurrent first requests on every process sharing
 the backend schedule at most one emit and a session already emitted costs one
-backend lookup; one indexed events-table lookup on ``data.session_id`` (the
-store of record, shared by every process whatever the backend); and —
-because the lookup is check-then-insert — a partial unique index on
+backend lookup (a backend that refuses the claim falls through to the next
+two layers rather than dropping the event); one indexed events-table lookup
+on ``data.session_id`` (the store of record, shared by every process
+whatever the backend); and — because the lookup is check-then-insert — a
+partial unique index on
 ``(type, data->>'session_id')`` scoped to this event type
 (``uq_events_mcp_session_started_session``). The loser of a cross-process
 race gets an ``IntegrityError`` and skips, so the store holds exactly one row
@@ -215,17 +217,22 @@ async def _mark_recorded(ctx: Context, session_id: str) -> None:
 async def _claim(ctx: Context, session_id: str) -> bool:
     """Claim ``session_id`` for one emit, across every process sharing the backend.
 
-    ``False`` when the id is already claimed or recorded, or the backend
-    refused or failed the write: the emit is skipped (it is telemetry, and
-    the request it rides must not fail over it).
+    ``False`` when the id is already claimed or recorded: the emit is
+    skipped. A backend that refuses (its ``mcp-session`` namespace is full)
+    or fails the write answers ``True``: the claim only saves the table
+    lookup, and the lookup plus the unique index still hold the
+    once-per-session guarantee. Failing closed instead would let one caller
+    minting session ids fill the namespace and silence every other
+    session's event until the markers expire. The in-flight cap still bounds
+    the emits a full namespace lets through.
     """
     try:
         return await ctx.state_backend.set_if_absent(
             _session_key(session_id), b"claimed", ttl_s=_CLAIM_TTL_S
         )
     except Exception as exc:
-        logger.debug("mcp_session_claim_skipped", error=type(exc).__name__)
-        return False
+        logger.debug("mcp_session_claim_unavailable", error=type(exc).__name__)
+        return True
 
 
 async def record_mcp_session_started(
@@ -454,8 +461,9 @@ async def _admit_agent_window_key(ctx: Context, actor_id: str, window: int) -> b
     processes. Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit
     is skipped and a warning logged once per (agent, window) — one flooding
     agent stops minting rows while every other agent's counter is untouched.
-    A key retried after its claim expired re-counts, slightly tightening the
-    cap for that agent — acceptable for a defensive bound. A backend that
+    A key retried after its claim expired (or while the ``mcp-session``
+    namespace refuses claims) re-counts, tightening the cap for that agent —
+    acceptable for a defensive bound. A backend that
     refuses or fails the increment skips the emit.
     """
     try:
