@@ -155,6 +155,29 @@
     "BrokerConfig": {
       "description": "Broker surface configuration.",
       "properties": {
+        "discovery_cache_max_entries": {
+          "default": 10000,
+          "description": "LRU bound on entries in the per-process route-discovery cache.",
+          "minimum": 1,
+          "title": "Discovery Cache Max Entries",
+          "type": "integer"
+        },
+        "discovery_cache_negative_ttl_s": {
+          "default": 0.0,
+          "description": "TTL (seconds) for caching an unmatched URL (the operation_not_found 404) in the route-discovery cache. Must not exceed discovery_cache_ttl_s while the cache is enabled. 0 (the default) never caches a miss, so a newly imported API is reachable on the next call.",
+          "maximum": 300.0,
+          "minimum": 0,
+          "title": "Discovery Cache Negative Ttl S",
+          "type": "number"
+        },
+        "discovery_cache_ttl_s": {
+          "default": 3.0,
+          "description": "TTL (seconds) of the per-process route-discovery cache (METHOD+URL to operation). The broker runs as its own process, so it sees a promote, archive, import or delete only once this TTL lapses; until then it can keep routing to the previous operation and injecting that API's bound credentials, even after the API is deleted or archived. Invalidation on commit applies only when the write and the broker share a process. Authorization and egress checks never read the cache. 0 disables it (every change takes effect on the next call).",
+          "maximum": 300.0,
+          "minimum": 0,
+          "title": "Discovery Cache Ttl S",
+          "type": "number"
+        },
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },

@@ -16,6 +16,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import URLIndexEntry
+from jentic_one.shared.broker.route_generation import mark_routes_changed
 from jentic_one.shared.schemas import APIReference
 
 
@@ -227,6 +228,7 @@ class UrlIndexRepository:
 
     @staticmethod
     async def delete_for_revision(session: AsyncSession, revision_id: uuid.UUID) -> None:
+        mark_routes_changed(session)
         await session.execute(
             delete(OperationURLIndex).where(OperationURLIndex.revision_id == revision_id)
         )
@@ -242,6 +244,7 @@ class UrlIndexRepository:
         entry: URLIndexEntry,
         created_by: str,
     ) -> None:
+        mark_routes_changed(session)
         stmt = insert(OperationURLIndex).values(
             operation_id=operation_id,
             revision_id=revision_id,

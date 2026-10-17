@@ -23,6 +23,7 @@ from jentic_one.shared.config import (
     AdminInviteConfig,
     AppConfig,
     AuthConfig,
+    BrokerConfig,
     CatalogConfig,
     ConfigError,
     ConnectConfig,
@@ -192,6 +193,81 @@ def test_env_coerces_float(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.services.request_timeout_s == 60.5
+
+
+def test_broker_discovery_cache_defaults_yaml_and_env_overrides(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    broker = load_config(config_file).broker
+    assert broker.discovery_cache_ttl_s == 3.0
+    assert broker.discovery_cache_negative_ttl_s == 0.0
+    assert broker.discovery_cache_max_entries == 10_000
+
+    from_yaml = tmp_path / "discovery.yaml"
+    from_yaml.write_text(
+        yaml.dump(
+            {
+                **sample_config_dict,
+                "broker": {
+                    "discovery_cache_ttl_s": 5,
+                    "discovery_cache_negative_ttl_s": 1,
+                    "discovery_cache_max_entries": 50,
+                },
+            }
+        )
+    )
+    broker = load_config(from_yaml).broker
+    assert (
+        broker.discovery_cache_ttl_s,
+        broker.discovery_cache_negative_ttl_s,
+        broker.discovery_cache_max_entries,
+    ) == (5.0, 1.0, 50)
+
+    env = {
+        "JENTIC__BROKER__DISCOVERY_CACHE_TTL_S": "10.5",
+        "JENTIC__BROKER__DISCOVERY_CACHE_NEGATIVE_TTL_S": "2.5",
+        "JENTIC__BROKER__DISCOVERY_CACHE_MAX_ENTRIES": "123",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        broker = load_config(config_file).broker
+    assert (
+        broker.discovery_cache_ttl_s,
+        broker.discovery_cache_negative_ttl_s,
+        broker.discovery_cache_max_entries,
+    ) == (10.5, 2.5, 123)
+
+
+@pytest.mark.parametrize(
+    "broker",
+    [
+        {"discovery_cache_ttl_s": "inf"},
+        {"discovery_cache_ttl_s": "nan"},
+        {"discovery_cache_ttl_s": -1},
+        {"discovery_cache_ttl_s": 300.5},
+        {"discovery_cache_negative_ttl_s": "inf"},
+        {"discovery_cache_negative_ttl_s": -1},
+        {"discovery_cache_ttl_s": 300, "discovery_cache_negative_ttl_s": 301},
+        # A cached miss may not outlive a cached hit: rejected, never clamped.
+        {"discovery_cache_ttl_s": 1, "discovery_cache_negative_ttl_s": 30},
+        {"discovery_cache_max_entries": 0},
+    ],
+)
+def test_broker_discovery_cache_rejects_invalid_values(broker: dict[str, Any]):
+    with pytest.raises(ValidationError, match="discovery_cache"):
+        BrokerConfig(**broker)
+
+
+@pytest.mark.parametrize(
+    "broker",
+    [
+        {"discovery_cache_ttl_s": 300, "discovery_cache_negative_ttl_s": 300},
+        {"discovery_cache_ttl_s": 2, "discovery_cache_negative_ttl_s": 2},
+        # With the cache off the negative TTL is unused, so any in-range value boots.
+        {"discovery_cache_ttl_s": 0, "discovery_cache_negative_ttl_s": 30},
+    ],
+)
+def test_broker_discovery_cache_accepts_boundary_values(broker: dict[str, Any]):
+    BrokerConfig(**broker)
 
 
 def test_env_indexed_keys_build_list_of_models(config_file: Path):
