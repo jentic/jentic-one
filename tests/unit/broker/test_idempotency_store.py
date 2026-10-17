@@ -243,12 +243,18 @@ async def test_a_retry_after_the_claim_ttl_does_not_rerun_when_the_record_does_n
         )
 
     assert "idempotency_record_stored_as_tombstone" in {entry["event"] for entry in logs}
+    # The tombstone references no body, so the stored body is released at
+    # once instead of spending the caller's idem-body share for an hour.
+    body_usage = backend._usage["idem-body"]
+    assert body_usage.bytes < 1_000
     clock.advance(36.0)
     retry = await store.begin("agent-1", "k", "fp")
     assert retry.state is IdempotencyState.REPLAY
     assert retry.stored is not None
     assert retry.stored.status_code == 201
     assert retry.stored.body_omitted is True
+    assert await backend.get("idem-body:agent-1:k") is None
+    assert body_usage.entries == 0 and body_usage.bytes == 0
 
 
 @pytest.mark.asyncio
@@ -313,6 +319,29 @@ async def test_long_headers_are_capped_so_records_stay_bounded() -> None:
     assert replay.stored.headers["content-type"] == "text/plain"
     assert len(json.dumps(replay.stored.headers, separators=(",", ":"))) <= MAX_RECORD_HEADER_BYTES
     assert replay.stored.body == b"ok"
+
+
+@pytest.mark.asyncio
+async def test_the_header_cap_keeps_the_headers_a_replay_needs() -> None:
+    store = _store(MemoryStateBackend(clock=_Clock()))
+    await store.begin("agent-1", "k", "fp")
+    filler = {f"x-filler-{i}": "v" * 60 for i in range(6)}
+    wanted = {
+        "Location": "/things/42",
+        "ETag": '"abc123"',
+        "Content-Location": "/things/42",
+        "Retry-After": "5",
+        "Content-Type": "application/json",
+    }
+    headers = {"server": "nginx", "date": "Sat, 17 Oct 2026 00:00:00 GMT", **filler, **wanted}
+    await store.complete("agent-1", "k", "fp", status_code=201, headers=headers, body=b"{}")
+
+    replay = await store.begin("agent-1", "k", "fp")
+    assert replay.stored is not None
+    assert wanted.items() <= replay.stored.headers.items()
+    # The priority headers come last in the response, yet fillers are dropped.
+    assert not filler.keys() <= replay.stored.headers.keys()
+    assert len(json.dumps(replay.stored.headers, separators=(",", ":"))) <= MAX_RECORD_HEADER_BYTES
 
 
 _TYPICAL_HEADERS = {
