@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import AgentNotFoundError
 from jentic_one.shared.models import ActorStatus
 
@@ -232,6 +233,36 @@ class AgentRepository:
         stmt = select(Agent).where(Agent.id == agent_id).with_for_update()
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_with_owner_active(
+        session: AsyncSession, agent_id: str, *, for_update: bool = False
+    ) -> tuple[Agent, bool] | None:
+        """The agent and whether its owner may currently act, in one statement.
+
+        The owner flag is:
+
+        - ``True`` for an ownerless agent;
+        - the owner's ``users.active`` for an owned agent (a soft-deleted user
+          has ``active`` false, so delete reads ``False``);
+        - ``False`` when the owner row is missing, so callers that gate on the
+          flag fail closed.
+
+        ``None`` means the agent row itself is missing. ``for_update`` locks
+        only the agent row, never the owner's.
+        """
+        stmt = (
+            select(Agent, User.active)
+            .outerjoin(User, User.id == Agent.owner_id)
+            .where(Agent.id == agent_id)
+        )
+        if for_update:
+            stmt = stmt.with_for_update(of=Agent)
+        row = (await session.execute(stmt)).one_or_none()
+        if row is None:
+            return None
+        agent, owner_active = row
+        return agent, agent.owner_id is None or bool(owner_active)
 
     @staticmethod
     async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:
