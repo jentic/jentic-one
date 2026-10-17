@@ -36,8 +36,9 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.config import CatalogSourceConfig
 
-#: Collapsed views kept per snapshot (keyed by visibility and registered set).
-_COLLAPSE_CACHE_SIZE = 32
+#: Collapsed views kept per snapshot (keyed by visibility and registered set),
+#: least recently used evicted first.
+_COLLAPSE_CACHE_SIZE = 8
 
 
 def name_tokens(catalog_api_id: str) -> tuple[str, ...]:
@@ -64,7 +65,8 @@ class CollapsedView:
     alternates: Mapping[str, tuple[str, ...]]
     #: Every visible collapsed-out ``entry_id`` -> its winner.
     winner_of: Mapping[str, str]
-    #: Visible ``catalog_api_id`` -> its winner's ``entry_id``.
+    #: Visible ``catalog_api_id`` -> its winner's ``entry_id`` (empty in the
+    #: ``include_alternates`` view, which picks no winners).
     winner_by_api_id: Mapping[str, str]
     #: The ``entry_id``s of ``entries``.
     ids: frozenset[str]
@@ -86,6 +88,9 @@ class CatalogSnapshot:
     #: ``entry_id``s that share their ``catalog_api_id`` with another entry.
     shared_ids: frozenset[str]
     _collapsed: dict[tuple[Any, ...], CollapsedView] = field(default_factory=dict)
+    #: The registered set (``registered & shared_ids``) the cached collapsed views
+    #: were built for; a change evicts them.
+    _registered_state: frozenset[str] | None = None
 
     def collapse(
         self,
@@ -94,31 +99,43 @@ class CatalogSnapshot:
         *,
         include_alternates: bool = False,
     ) -> CollapsedView:
-        """The caller's view; cached on the inputs that can change it."""
-        reg_key = registered & self.shared_ids
-        key = (allowed, reg_key, include_alternates)
-        cached = self._collapsed.get(key)
-        if cached is not None:
-            return cached
-        view = (
-            _uncollapsed(self, allowed) if include_alternates else _collapse(self, allowed, reg_key)
-        )
-        if len(self._collapsed) >= _COLLAPSE_CACHE_SIZE:
-            self._collapsed.pop(next(iter(self._collapsed)))
-        self._collapsed[key] = view
-        return view
+        """The caller's view; cached on the inputs that can change it.
+
+        The ``include_alternates`` view does not depend on the registered set.
+        Collapsed views built for an older registered set are evicted as soon as
+        a read sees a new one, so an import never strands a cache's worth of views.
+        """
+        reg_key = None if include_alternates else registered & self.shared_ids
+        if reg_key is not None and reg_key != self._registered_state:
+            for stale in [k for k in self._collapsed if k[1] is not None]:
+                del self._collapsed[stale]
+            self._registered_state = reg_key
+        key = (allowed, reg_key)
+        cached = self._collapsed.pop(key, None)
+        if cached is None:
+            cached = (
+                _uncollapsed(self, allowed)
+                if reg_key is None
+                else _collapse(self, allowed, reg_key)
+            )
+            while len(self._collapsed) >= _COLLAPSE_CACHE_SIZE:
+                self._collapsed.pop(next(iter(self._collapsed)))
+        self._collapsed[key] = cached
+        return cached
+
+    @property
+    def cached_views(self) -> int:
+        """How many collapsed views are cached (for tests and the perf script)."""
+        return len(self._collapsed)
 
 
 def _uncollapsed(snapshot: CatalogSnapshot, allowed: frozenset[str]) -> CollapsedView:
     visible = tuple(e for e in snapshot.entries if e.source_slug in allowed)
-    winners: dict[str, str] = {}
-    for entry in visible:
-        winners.setdefault(entry.catalog_api_id, entry.entry_id)
     return CollapsedView(
         entries=visible,
         alternates={},
         winner_of={},
-        winner_by_api_id=winners,
+        winner_by_api_id={},
         ids=frozenset(e.entry_id for e in visible),
     )
 

@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import sys
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
@@ -33,6 +34,7 @@ from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
+from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
@@ -131,6 +133,7 @@ async def _truncate(ctx: Context) -> None:
         await session.execute(delete(ApiRevision))
         await session.execute(delete(Api))
         await session.execute(delete(CatalogSnapshot))
+        await session.execute(delete(CatalogUpdateCheck))
         await session.execute(delete(CatalogEntryRow))
         await session.execute(delete(CatalogSyncRun))
         await session.execute(delete(CatalogSourceRow))
@@ -224,7 +227,7 @@ async def _register(
     name: str,
     spec_url: str,
     catalog_api_id: str,
-) -> None:
+) -> uuid.UUID:
     """A local API imported from ``entry_id`` with one draft revision (as an import leaves it).
 
     ``entry_id=None`` is an API imported before entry ids were recorded.
@@ -250,6 +253,17 @@ async def _register(
             )
         )
         await session.commit()
+        return api.id
+
+
+async def _outdate(ctx: Context, api_id: uuid.UUID, spec_url: str) -> None:
+    """Record a notified upstream update the API's served revision has not adopted."""
+    async with ctx.registry_db.transaction() as session:
+        session.add(
+            CatalogUpdateCheck(
+                local_api_id=api_id, spec_url=spec_url, last_notified_digest="sha256:upstream"
+            )
+        )
 
 
 async def _job_source(ctx: Context, job_id: str) -> dict[str, Any]:
@@ -1066,6 +1080,77 @@ async def test_collapse_winner_follows_a_finished_import(web_config: AppConfig) 
             assert only["entry_id"] == "public/stripe.com"
             assert only["alternates"] == 0
             assert only["_links"]["alternates"] == []
+
+
+async def test_registered_alternates_are_counted_and_listed(web_config: AppConfig) -> None:
+    """Two registered entries for one ``catalog_api_id`` both count and both list."""
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        both = ("public/stripe.com", "corp/stripe.com")
+        for entry_id in both:
+            source = entry_id.split("/")[0]
+            api_id = await _register(
+                ctx,
+                entry_id,
+                vendor="stripe-com",
+                name=f"stripe-{source}",
+                spec_url=_spec_url(
+                    _MANIFEST_BASE if source == "public" else _CORP_BASE, "stripe.com"
+                ),
+                catalog_api_id="stripe.com",
+            )
+            await _outdate(
+                ctx,
+                api_id,
+                _spec_url(_MANIFEST_BASE if source == "public" else _CORP_BASE, "stripe.com"),
+            )
+        with _client(ctx, ["capabilities:read", "catalog:org:read"]) as tc:
+            body = tc.get("/catalog").json()
+            assert [e["entry_id"] for e in body["data"] if "stripe" in e["entry_id"]] == [
+                "corp/stripe.com"
+            ]
+            assert (body["registered_count"], body["outdated_count"]) == (2, 2)
+            for flag in ("registered_only", "outdated_only"):
+                listed = tc.get("/catalog", params={flag: True}).json()
+                assert sorted(_ids(listed)) == sorted(both)
+                searched = tc.get("/catalog", params={flag: True, "q": "stripe"}).json()
+                assert sorted(_ids(searched)) == sorted(both)
+        # A public-only reader sees just the public one.
+        with _client(ctx, ["capabilities:read"]) as tc:
+            body = tc.get("/catalog", params={"registered_only": True}).json()
+            assert _ids(body) == ["public/stripe.com"]
+            assert body["registered_count"] == 1
+
+
+async def test_outdated_only_lists_a_newly_registered_winner(web_config: AppConfig) -> None:
+    """An import that makes the lower-precedence entry the winner lists it as outdated."""
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        with _client(ctx, ["capabilities:read", "catalog:org:read"]) as tc:
+            assert tc.get("/catalog", params={"outdated_only": True}).json()["data"] == []
+            spec_url = _spec_url(_MANIFEST_BASE, "stripe.com")
+            api_id = await _register(
+                ctx,
+                "public/stripe.com",
+                vendor="stripe-com",
+                name="stripe-com",
+                spec_url=spec_url,
+                catalog_api_id="stripe.com",
+            )
+            await _outdate(ctx, api_id, spec_url)
+            body = tc.get("/catalog", params={"outdated_only": True}).json()
+            assert _ids(body) == ["public/stripe.com"]
+            assert body["outdated_count"] == 1
+            [entry] = body["data"]
+            assert (entry["registered"], entry["update_available"]) == (True, True)
 
 
 async def test_unmapped_org_entry_is_namespaced_and_never_collapses(

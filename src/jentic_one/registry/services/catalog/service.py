@@ -848,7 +848,10 @@ class CatalogService:
         sees public sources only). Visible entries sharing a ``catalog_api_id``
         are collapsed to one winner unless ``include_alternates``. The status
         counters (``catalog_total``, ``registered_count``, ``outdated_count``)
-        cover the collapsed visible list before the list filters and the page.
+        cover the collapsed visible list before the list filters and the page;
+        ``registered_count`` and ``outdated_count`` also count registered entries
+        collapsed into a winner, and ``registered_only`` / ``outdated_only`` list
+        them, so two registered entries for one ``catalog_api_id`` both show.
 
         Browse orders by ``entry_id``; search by ``(-score, entry_id)``. A cursor
         is only meaningful for the same query and filters it was issued under,
@@ -864,7 +867,8 @@ class CatalogService:
         visible = state.view.entries
         registered = state.registered
         # The registered set is small next to the catalog: count from its side.
-        visible_registered = registered & state.view.ids
+        # A registered entry collapsed into a winner is still the caller's API.
+        visible_registered = registered & (state.view.ids | state.view.winner_of.keys())
         outdated = {
             entry_id
             for entry_id in visible_registered
@@ -875,7 +879,10 @@ class CatalogService:
 
         after_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
         if mb.has_query_tokens(q):
-            scored = mb.score_entries(visible, q, tokens=state.snapshot.tokens, ordered=True)
+            pool: Sequence[CatalogEntry] = visible
+            if registered_only or outdated_only:
+                pool = sorted((state.snapshot.by_id[i] for i in visible_registered), key=_entry_key)
+            scored = mb.score_entries(pool, q, tokens=state.snapshot.tokens, ordered=True)
             if registered_only:
                 scored = [(e, s) for e, s in scored if e.entry_id in registered]
             elif unregistered_only:
