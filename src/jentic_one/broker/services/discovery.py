@@ -15,6 +15,7 @@ from jentic_one.broker.core.exceptions import (
     InvalidRevisionPinError,
     UnauthorizedRevisionPinError,
 )
+from jentic_one.broker.core.revisions import rev_label
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     RegistryResolverProtocol,
@@ -49,27 +50,31 @@ async def resolve_pin_for_api(
 
     Looks up whether ``pins`` names the discovered ``(vendor, name, version)``; if
     not, returns ``None`` (resolve against ``current_revision_id`` as today). When
-    a pin applies, translates the ``rev_…`` label in-process via the shared
-    resolver and maps the neutral outcome to the broker taxonomy:
+    a pin applies, translates it to its ``rev_…`` label, resolves that in-process
+    via the shared resolver and maps the neutral outcome to the broker taxonomy:
 
     - ``UNKNOWN`` / ``ARCHIVED`` → :class:`InvalidRevisionPinError` (422),
     - ``FORBIDDEN`` → :class:`UnauthorizedRevisionPinError` (403),
     - ``HOST_CHANGE_HELD`` → :class:`UnauthorizedRevisionPinError` (403
       ``host_change_requires_operator``).
 
+    Each error detail names the pin as the caller wrote it (``pins`` keeps the
+    caller's spelling), so an agent that sent a ``revision_id`` finds that same
+    value in the error.
+
     The API identity uses the *discovered* ``vendor/name/version`` so a pin keyed
     on the same triple matches regardless of display-name fallbacks.
     """
-    rev_label = pins.get((api.vendor, api.name, api.version))
-    if rev_label is None:
+    revision = pins.get((api.vendor, api.name, api.version))
+    if revision is None:
         return None
 
-    pin_key = f"{api.vendor}:{api.name}:{api.version}={rev_label}"
+    pin_key = _pin_key(api.vendor, api.name, api.version, revision)
     result = await resolver.resolve_revision_pin(
         vendor=api.vendor,
         name=api.name,
         version=api.version,
-        rev_label=rev_label,
+        rev_label=rev_label(revision),
         identity=identity,
     )
 
@@ -91,6 +96,11 @@ async def resolve_pin_for_api(
         detail=f"Unknown revision pin: {pin_key}",
         type="unknown_revision_pin",
     )
+
+
+def _pin_key(vendor: str, name: str, version: str, revision: str) -> str:
+    """The pin as the caller wrote it in ``Jentic-Revision``, for error details."""
+    return f"{vendor}:{name}:{version}={revision}"
 
 
 def _host_change_held(pin_key: str) -> UnauthorizedRevisionPinError:
@@ -126,9 +136,13 @@ async def discover_via_pins(
     bound credentials to hosts no operator approved.
     """
     for vendor, name, version in sorted(pins):
-        rev_label = pins[(vendor, name, version)]
+        revision = pins[(vendor, name, version)]
         result = await resolver.resolve_revision_pin(
-            vendor=vendor, name=name, version=version, rev_label=rev_label, identity=identity
+            vendor=vendor,
+            name=name,
+            version=version,
+            rev_label=rev_label(revision),
+            identity=identity,
         )
         if result.revision_id is None or result.outcome not in (
             RevisionPinOutcome.RESOLVED,
@@ -139,6 +153,6 @@ async def discover_via_pins(
         if resolved is None:
             continue
         if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
-            raise _host_change_held(f"{vendor}:{name}:{version}={rev_label}")
+            raise _host_change_held(_pin_key(vendor, name, version, revision))
         return resolved, result.revision_id
     return None

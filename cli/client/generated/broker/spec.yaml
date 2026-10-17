@@ -257,7 +257,9 @@ paths:
       `Jentic-Revision` request header. The header is
       multi-valued — repeat it (or comma-separate) once per API
       you want to pin, with each value of the form
-      `vendor:name:version=rev_…`.
+      `vendor:name:version=<revision_id>` — the `revision_id` exactly
+      as the control plane's revision list returns it (the
+      `rev_<revision_id without hyphens>` label is equivalent).
 
       The Broker forwards the pin into the control-plane
       `POST /lookup/operation` call so URL → `operation_id`
@@ -269,7 +271,10 @@ paths:
       returns `403`. Pinning an unknown or `archived` revision
       returns `422` — `archived` revisions are deliberately not
       pinnable from the hot path; resurrect them by re-promoting
-      instead. The chosen revisions are recorded on the resulting
+      instead. Pinning the same API to two different revisions in
+      one header returns `422 invalid_revision_pin`; repeating the
+      same revision (in either form) is allowed. The chosen
+      revisions are recorded on the resulting
       `ExecutionRecord` (`pinned_revisions` field on the control
       plane) so audit can answer "did this execution use a pinned
       revision?" without parsing headers.
@@ -700,7 +705,14 @@ components:
         Pin upstream-API resolution to a specific `ApiRevision`
         instead of the API's `current_revision_id`. Multi-valued —
         repeat the header (or comma-separate) once per API you
-        want to pin. Each value is `vendor:name:version=rev_…`.
+        want to pin. Each value is `vendor:name:version=<revision_id>`:
+        `vendor`, `name` and `version` are the API's `api` reference,
+        and `<revision_id>` is the revision's `revision_id` exactly as
+        the control plane returns it (`GET
+        /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+        an import job's result, or `jentic apis revisions`). The
+        equivalent `rev_<revision_id without hyphens>` label is
+        accepted too.
 
         Use cases:
 
@@ -718,20 +730,23 @@ components:
 
         Pinning a `draft` revision the caller doesn't have
         access to returns `403`. Pinning an unknown or
-        `archived` revision returns `422`. The chosen revisions
+        `archived` revision returns `422`. Pinning the same API
+        to two different revisions in one header returns
+        `422 invalid_revision_pin`; repeating the same revision
+        (in either form) is allowed. The chosen revisions
         are recorded on the resulting `ExecutionRecord`
         (`pinned_revisions` field on the control plane).
       example:
-        - stripe:payments:2023-10-16=rev_01HMY1Q0AB
+        - stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
       schema:
         type: array
         items:
           type: string
-          pattern: ^[a-z0-9-]+:[^=:]+:[^=]+=rev_[A-Za-z0-9]+$
+          pattern: '^[a-z0-9-]+:[^=:]+:[^=]+=(?:rev_[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'
         examples:
-          - - stripe:payments:2023-10-16=rev_01HMY1Q0AB
-          - - stripe:payments:2023-10-16=rev_01HMY1Q0AB
-            - shopify:admin:2024-01=rev_01HMY7B3QN
+          - - stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+          - - stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c
+            - shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d
       style: simple
       explode: false
     JenticCredentialName:
@@ -1495,9 +1510,18 @@ components:
               summary: Jentic-Revision pins a revision that does not exist.
               value:
                 type: unknown_revision_pin
-                title: "Unknown revision pin: api.example.com/main/9.9.9"
+                title: "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
                 status: 422
-                detail: "Unknown revision pin: api.example.com/main/9.9.9"
+                detail: "Unknown revision pin: stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+                error_origin: broker
+                instance: /api.example.com/v1/users
+            invalid_revision_pin:
+              summary: A Jentic-Revision value is not of the form vendor:name:version=<revision_id>.
+              value:
+                type: invalid_revision_pin
+                title: "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)"
+                status: 422
+                detail: "Malformed Jentic-Revision value: 'stripe:payments:2023-10-16=latest' (expected vendor:name:version=<revision_id>, with the revision_id from GET /apis/{vendor}/{name}/{version}/revisions)"
                 error_origin: broker
                 instance: /api.example.com/v1/users
     TooManyRequests:
