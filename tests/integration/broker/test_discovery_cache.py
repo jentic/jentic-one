@@ -60,6 +60,7 @@ from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ORIGIN_CATALOG, ApiRevisionSourceType, ApiRevisionState
+from jentic_one.shared.schemas import APIReference
 from jentic_one.wiring import InProcessRegistryResolver, build_discovery_cache
 
 pytestmark = pytest.mark.integration
@@ -263,15 +264,16 @@ async def test_deployed_broker_serves_the_previous_route_until_the_ttl_lapses(
     live_op = await _operation_of(registry_db, seeded["live"])
     draft_op = await _operation_of(registry_db, seeded["draft"])
     ttl = BrokerConfig().discovery_cache_ttl_s
+    start = clock.now  # the entry expires at exactly ``start + ttl``
     assert await _served_operation(resolver) == live_op
 
     await RevisionService(integration_context).promote(
         VENDOR, NAME, VERSION, str(seeded["draft"]), identity=OPERATOR
     )
 
-    clock.now += ttl - 0.1
+    clock.now = start + ttl - 0.1
     assert await _served_operation(resolver) == live_op, "stale for the whole TTL"
-    clock.now += 0.1
+    clock.now = start + ttl
     assert await _served_operation(resolver) == draft_op
 
 
@@ -283,13 +285,14 @@ async def test_deployed_broker_keeps_routing_a_deleted_api_until_the_ttl_lapses(
     resolver = _deployed_broker_resolver(registry_db, clock)
     live_op = await _operation_of(registry_db, seeded["live"])
     ttl = BrokerConfig().discovery_cache_ttl_s
+    start = clock.now  # the entry expires at exactly ``start + ttl``
     assert await _served_operation(resolver) == live_op
 
     await ApiService(integration_context).delete(VENDOR, NAME, VERSION, identity=OPERATOR)
 
-    clock.now += ttl - 0.1
+    clock.now = start + ttl - 0.1
     assert await _served_operation(resolver) == live_op
-    clock.now += 0.1
+    clock.now = start + ttl
     assert await _served_operation(resolver) is None
 
 
@@ -481,27 +484,43 @@ async def test_savepoint_release_does_not_bump_before_the_outer_commit(
     assert route_generation() == start + 1
 
 
+class _OuterFailureError(Exception):
+    pass
+
+
 async def test_outer_rollback_after_a_savepoint_discards_the_mark(
     registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
 ) -> None:
+    """A write released from a SAVEPOINT is undone by the outer rollback, so nothing bumps.
+
+    ``transaction()`` opens a real outer transaction on every backend (``BEGIN
+    IMMEDIATE`` on SQLite), so the RELEASE does not commit the write.
+    """
     start = route_generation()
-    async with registry_db.session() as session, session.begin():
-        async with session.begin_nested():
-            await ApiRepository.set_current_revision(session, seeded["api_id"], seeded["draft"])
-        await session.rollback()
+    with pytest.raises(_OuterFailureError):
+        async with registry_db.transaction() as session:
+            async with session.begin_nested():
+                await ApiRepository.set_current_revision(session, seeded["api_id"], seeded["draft"])
+            assert route_generation() == start, "RELEASE SAVEPOINT must not invalidate"
+            raise _OuterFailureError
 
     assert route_generation() == start
+    async with registry_db.session() as session:
+        stmt = select(Api.current_revision_id).where(Api.id == seeded["api_id"])
+        assert (await session.execute(stmt)).scalar_one() == seeded["live"]
 
 
 # --- Through the execute route: pins are checked per caller -----------------
 
 
 class _ReachedAuthorizationError(Exception):
-    """Stops ``_handle`` at authorization, carrying the operation it was handed."""
+    """Stops ``_handle`` at authorization, carrying the route discovery handed it."""
 
-    def __init__(self, operation_id: str | None) -> None:
+    def __init__(self, operation_id: str | None, api: APIReference, path: str) -> None:
         super().__init__(operation_id)
         self.operation_id = operation_id
+        self.api = api
+        self.path = path
 
 
 @pytest.fixture()
@@ -509,15 +528,15 @@ def route_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run ``_handle`` up to authorization without DNS.
 
     The test host does not resolve, so the egress validator passes the URL
-    through (it is covered by its own tests); authorization records the operation
-    discovery handed it and stops the request there.
+    through (it is covered by its own tests); authorization records the
+    operation, API and rule path discovery handed it and stops the request there.
     """
 
     async def _validate(raw_url: str, egress: Any = None) -> str:
         return raw_url
 
     async def _authorize(**kwargs: Any) -> Any:
-        raise _ReachedAuthorizationError(kwargs["operation_id"])
+        raise _ReachedAuthorizationError(kwargs["operation_id"], kwargs["api"], kwargs["path"])
 
     monkeypatch.setattr(execute_mod, "validate_upstream_url_async", _validate)
     monkeypatch.setattr(execute_mod, "authorize_execution", _authorize)
@@ -525,8 +544,8 @@ def route_harness(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _execute(
     ctx: Context, resolver: InProcessRegistryResolver, *, url: str, sub: str, pin: str | None
-) -> str | None:
-    """Drive the broker execute route's ``_handle``; returns the authorized operation."""
+) -> _ReachedAuthorizationError:
+    """Drive the broker execute route's ``_handle``; returns what reached authorization."""
     app = FastAPI()
     app.state.broker_registry_resolver = resolver
     path = "/" + url.removeprefix("https://")
@@ -554,8 +573,11 @@ async def _execute(
             None,  # idempotency
         )
     except _ReachedAuthorizationError as reached:
-        return reached.operation_id
+        return reached
     raise AssertionError("_handle returned without reaching authorization")
+
+
+SEEDED_API = APIReference(vendor=VENDOR, name=NAME, version=VERSION)
 
 
 @pytest.mark.usefixtures("route_harness")
@@ -571,8 +593,15 @@ async def test_cached_pinned_route_never_serves_another_users_pin(
     draft_op = await _operation_of(registry_db, seeded["draft"])
 
     owner = await _execute(integration_context, resolver, url=URL, sub=OWNER, pin=pin)
-    assert owner == draft_op
+    assert owner.operation_id == draft_op
     assert len(cache) == 2  # the live route and the owner's pinned route
+
+    warm_owner = await _execute(integration_context, resolver, url=URL, sub=OWNER, pin=pin)
+    assert (warm_owner.operation_id, warm_owner.api, warm_owner.path) == (
+        draft_op,
+        SEEDED_API,
+        PATH,
+    )
 
     with (
         _count_statements(registry_db) as pin_check,
@@ -582,7 +611,9 @@ async def test_cached_pinned_route_never_serves_another_users_pin(
     assert denied.value.type == "unauthorized_revision_pin"
     assert pin_check, "the pin check reads the registry even with the route cached"
 
-    assert await _execute(integration_context, resolver, url=URL, sub=OTHER, pin=None) == live_op
+    other = await _execute(integration_context, resolver, url=URL, sub=OTHER, pin=None)
+    assert (other.operation_id, other.api, other.path) == (live_op, SEEDED_API, PATH)
+    assert len(cache) == 2, "every call after the owner's first was a cache hit"
 
 
 @pytest.mark.usefixtures("route_harness")
@@ -605,7 +636,15 @@ async def test_cached_draft_only_route_never_serves_another_users_pin(
     pin = f"{VENDOR}:{NAME}:{VERSION}=rev_{draft.hex}"
 
     owner = await _execute(integration_context, resolver, url=DRAFT_ONLY_URL, sub=OWNER, pin=pin)
-    assert owner == await _operation_of(registry_db, draft)
+    assert owner.operation_id == await _operation_of(registry_db, draft)
+    warm_owner = await _execute(
+        integration_context, resolver, url=DRAFT_ONLY_URL, sub=OWNER, pin=pin
+    )
+    assert (warm_owner.operation_id, warm_owner.api, warm_owner.path) == (
+        owner.operation_id,
+        SEEDED_API,
+        DRAFT_ONLY_PATH,
+    )
 
     for other_pin in (pin, None):
         with pytest.raises(OperationNotFoundError) as missing:
