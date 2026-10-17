@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import builtins
+import io
 import os
 import threading
 import time
@@ -1157,76 +1159,138 @@ def test_oneshot_cache_entry_with_recycled_inode_is_not_served(
         _ONESHOT_CONFIG_CACHE.clear()
 
 
-_THREAD_HANDSHAKE_TIMEOUT_S = 10.0
-# Longer than a Linux timestamp tick (one jiffy, at most 10 ms).
-_CTIME_TICK_S = 0.05
-
-
-def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, Any]):
+def test_oneshot_cache_survives_writes_after_open(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Every pipe write bumps its ctime, so a supervisor still streaming the
     document after the loaders opened the fd must not leave any of them keyed
     on a pre-drain identity: a concurrent loader waiting on the drain, and a
     repeat load after it, must both take the cached document instead of
     hitting EOF on the drained pipe."""
+    # One deadline bounds every wait and join in the test, and all threads are
+    # daemons, so a wedged loader fails the test without holding the process.
+    timeout_s = 10.0
+    deadline = time.monotonic() + timeout_s
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    # Each write lands on a later timestamp tick so it moves the ctime: a Linux
+    # tick is one jiffy (at most 10 ms), and macOS pipe timestamps are finer.
+    ctime_tick_s = 0.05
     doc = yaml.dump(sample_config_dict).encode()
     read_fd, write_fd = os.pipe()
     pipe_path = f"/dev/fd/{read_fd}"
-    # Both loaders meet inside open(): each has stat'ed the pre-write identity
-    # and holds the fd, and neither has reached the drain yet. Only then does
-    # the supervisor start streaming.
-    both_opened = threading.Event()
-    rendezvous = threading.Barrier(2, action=both_opened.set, timeout=_THREAD_HANDSHAKE_TIMEOUT_S)
-    opened = [threading.Event(), threading.Event()]
+    loaded: list[AppConfig] = []
+    errors: list[BaseException] = []
 
-    def rendezvous_path(signal: threading.Event) -> Path:
-        class _RendezvousPath(Path):
-            def open(self, *args: Any, **kwargs: Any) -> Any:
-                f = super().open(*args, **kwargs)
-                signal.set()
-                try:
-                    rendezvous.wait()
-                except threading.BrokenBarrierError:
-                    f.close()
-                    raise
-                return f
+    # The writer and both loaders meet at one barrier before any byte is
+    # written. A loader parks right after it opens the pipe (it has stat'ed the
+    # pre-write identity and holds the fd), or when it would block on the cache
+    # lock, so an implementation that opens under the lock parks too. The hooks
+    # see every open of the pipe through io.open or builtins.open (Path.open
+    # included) and every acquire of _ONESHOT_CACHE_LOCK.
+    released = threading.Event()
+    rendezvous = threading.Barrier(3, action=released.set, timeout=timeout_s)
+    parked = {name: threading.Event() for name in ("loader-0", "loader-1")}
+    read_started = threading.Event()
 
-        return _RendezvousPath(pipe_path)
+    def park() -> None:
+        signal = parked.get(threading.current_thread().name)
+        if signal is None or signal.is_set() or released.is_set():
+            return
+        signal.set()
+        rendezvous.wait(remaining())
+
+    real_open = io.open
+
+    def hooked_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        f: Any = real_open(file, *args, **kwargs)
+        if not isinstance(file, str | os.PathLike) or os.fspath(file) != pipe_path:
+            return f
+        real_read = f.read
+
+        def read(*read_args: Any) -> Any:
+            read_started.set()
+            return real_read(*read_args)
+
+        f.read = read
+        try:
+            park()
+        except BaseException:
+            f.close()
+            raise
+        return f
+
+    class _ParkingLock:
+        """Stands in for _ONESHOT_CACHE_LOCK; a loader that would block parks first."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if self._lock.acquire(blocking=False):
+                return True
+            if not blocking:
+                return False
+            park()
+            return self._lock.acquire(timeout=timeout)
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def __enter__(self) -> bool:
+            return self.acquire()
+
+        def __exit__(self, *exc_info: object) -> None:
+            self.release()
+
+    monkeypatch.setattr(config_module, "_ONESHOT_CACHE_LOCK", _ParkingLock())
+    monkeypatch.setattr(io, "open", hooked_open)
+    monkeypatch.setattr(builtins, "open", hooked_open)
 
     def stream() -> None:
         try:
-            if not both_opened.wait(_THREAD_HANDSHAKE_TIMEOUT_S):
+            rendezvous.wait(remaining())
+            # The drainer takes its in-lock fstat before read(), so holding the
+            # first write until read() starts pins that fstat to the pre-write
+            # identity: a key taken there must never be what gets stored.
+            if not read_started.wait(remaining()):
+                errors.append(AssertionError(f"no loader called read() on {pipe_path}"))
                 return
             for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
-                # Move the ctime with every write.
-                time.sleep(_CTIME_TICK_S)
+                time.sleep(ctime_tick_s)
                 os.write(write_fd, chunk)
+        except threading.BrokenBarrierError:
+            return
         finally:
             # Closing even on a failed handshake lets a blocked loader see EOF.
             os.close(write_fd)
 
-    loaded: list[AppConfig] = []
-    errors: list[BaseException] = []
-
-    def load(path: Path) -> None:
+    def load() -> None:
         try:
-            loaded.append(load_config(path))
+            loaded.append(load_config(Path(pipe_path)))
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
 
-    writer = threading.Thread(target=stream)
-    loaders = [threading.Thread(target=load, args=(rendezvous_path(e),)) for e in opened]
+    writer = threading.Thread(target=stream, name="writer", daemon=True)
+    loaders = [threading.Thread(target=load, name=name, daemon=True) for name in parked]
     threads = [writer, *loaders]
     try:
         writer.start()
-        # Start the second loader only once the first holds the fd: on macOS,
-        # stat() of /dev/fd/N can fail with EBADF while another thread is
-        # opening the same /dev/fd/N, a platform race and not the one under test.
-        for loader, signal in zip(loaders, opened, strict=True):
+        # Start the second loader only once the first has parked: on macOS,
+        # stat() of /dev/fd/N can fail with EBADF while another thread opens the
+        # same /dev/fd/N (#1803), a platform race and not the one under test.
+        for loader in loaders:
             loader.start()
-            assert signal.wait(_THREAD_HANDSHAKE_TIMEOUT_S), errors
+            assert parked[loader.name].wait(remaining()), (
+                f"{loader.name} never parked: the rendezvous needs _read_config_text to "
+                f"open {pipe_path} through io.open or builtins.open (Path.open included), "
+                f"or to block on _ONESHOT_CACHE_LOCK; errors={errors!r}"
+            )
         for t in threads:
-            t.join(_THREAD_HANDSHAKE_TIMEOUT_S)
-            assert not t.is_alive()
+            t.join(remaining())
+            assert not t.is_alive(), f"{t.name} still running after {timeout_s}s; {errors=!r}"
         assert errors == []
         loaded.append(load_config(Path(pipe_path)))
         assert {c.databases.registry.name for c in loaded} == {
@@ -1237,8 +1301,11 @@ def test_oneshot_cache_survives_writes_after_open(sample_config_dict: dict[str, 
         rendezvous.abort()
         for t in threads:
             if t.is_alive():
-                t.join(_THREAD_HANDSHAKE_TIMEOUT_S)
-        os.close(read_fd)
+                t.join(remaining())
+        # A thread still running may be reading read_fd; closing it under that
+        # thread could hand the fd number to an unrelated file, so it leaks.
+        if not any(t.is_alive() for t in threads):
+            os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
 
 
