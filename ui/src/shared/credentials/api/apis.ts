@@ -69,9 +69,9 @@ export function listCatalog(params: ListCatalogParams = {}): Promise<CatalogList
 	});
 }
 
-/** POST /catalog/{api_id}:import — enqueue an async import into the workspace. */
-export function importCatalogEntry(apiId: string): Promise<ApiImportResponse> {
-	return CatalogService.importCatalogEntry({ apiId });
+/** POST /catalog/{entry_id}:import — enqueue an async import into the workspace. */
+export function importCatalogEntry(entryId: string): Promise<ApiImportResponse> {
+	return CatalogService.importCatalogEntry({ entryId });
 }
 
 /** Result of enqueuing a spec import (`POST /apis` → 202). */
@@ -177,28 +177,32 @@ export function getApi(vendor: string, name: string, version: string): Promise<A
 }
 
 /**
- * Fetch an OpenAPI document from a public spec URL (raw.githubusercontent.com,
- * etc.) with a hard timeout. Used for catalog APIs where we don't have the
- * spec locally yet. Mirrors mini's catalog spec fetch.
- *
- * Caveats:
- *   - Subject to CORS on the public host. raw.githubusercontent.com serves
- *     `Access-Control-Allow-Origin: *` for the manifests we care about; if a
- *     given host doesn't, the picker still works but auto-shaping degrades to
- *     the manual fallback.
- *   - The 10s abort keeps the credential form from hanging on a slow host.
+ * Security schemes of a catalog entry that isn't imported yet, read from
+ * `GET /catalog/{entry_id}/operations` (the server fetches the spec, so the
+ * browser never reaches the source host). Returned as a minimal OpenAPI-shaped
+ * document (`info`, `components.securitySchemes`, and a top-level `security`
+ * listing every scheme an operation requires) so the scheme parsers read it
+ * like a served spec. The preview lists OAuth2 flows by name only, so each
+ * flow maps to an empty flow object (no URLs or scopes to prefill), and it
+ * carries no `servers`, so a catalog pick has no server variables.
  */
-export async function fetchPublicSpec(
-	specUrl: string,
-	timeoutMs = 10_000,
-): Promise<Record<string, unknown>> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	try {
-		const res = await fetch(specUrl, { signal: controller.signal });
-		if (!res.ok) throw new Error(`Failed to fetch spec (${res.status})`);
-		return (await res.json()) as Record<string, unknown>;
-	} finally {
-		clearTimeout(timer);
-	}
+export async function fetchCatalogSchemeSpec(entryId: string): Promise<Record<string, unknown>> {
+	const res = await CatalogService.previewCatalogOperations({ entryId });
+	const securitySchemes = Object.fromEntries(
+		Object.entries(res.security_schemes ?? {}).map(([name, scheme]) => {
+			const flows: unknown = scheme.flows;
+			return [
+				name,
+				Array.isArray(flows)
+					? { ...scheme, flows: Object.fromEntries(flows.map((f) => [String(f), {}])) }
+					: scheme,
+			];
+		}),
+	);
+	const required = [...new Set(res.data.flatMap((op) => op.security ?? []))];
+	return {
+		info: res.info,
+		components: { securitySchemes },
+		security: required.map((name) => ({ [name]: [] })),
+	};
 }

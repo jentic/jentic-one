@@ -19,6 +19,10 @@ export type ApiResponse = {
      */
     catalog_api_id: (string | null);
     /**
+     * Catalog entry the API was imported from (`{source_slug}/{external_id}`), the id the `/catalog/{entry_id}` routes take; null for manual imports.
+     */
+    catalog_entry_id?: (string | null);
+    /**
      * When the API was created (RFC 3339).
      */
     created_at: string;

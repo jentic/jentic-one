@@ -7,11 +7,15 @@
  */
 export type CatalogEntryLinksResponse = {
     /**
-     * Human-facing GitHub tree URL for the entry, when known.
+     * URLs of the visible entries with the same `catalog_api_id` collapsed into this one (empty when nothing was collapsed).
      */
-    github?: (string | null);
+    alternates?: Array<string>;
     /**
-     * URL of the catalog import action (`POST /catalog/{api_id}:import`).
+     * Human-facing page for the entry at its source, when known.
+     */
+    human?: (string | null);
+    /**
+     * URL of the catalog import action (`POST /catalog/{entry_id}:import`).
      */
     import: string;
     /**

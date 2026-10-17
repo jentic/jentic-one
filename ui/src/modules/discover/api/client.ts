@@ -126,7 +126,7 @@ export async function listCatalog(params: {
 			catalogTotal: res.catalog_total,
 			registeredCount: res.registered_count,
 			outdatedCount: res.outdated_count ?? 0,
-			manifestAgeSeconds: res.manifest_age_seconds ?? null,
+			manifestAgeSeconds: res.oldest_source_sync_age_seconds ?? null,
 			hasMore: res.has_more ?? false,
 			nextCursor: res.next_cursor ?? null,
 		};
@@ -140,7 +140,7 @@ export async function listCatalog(params: {
  * detail sheet's operations list without importing the API.
  */
 export async function previewOperations(params: {
-	apiId: string;
+	entryId: string;
 	offset?: number;
 	limit?: number;
 	tag?: string | null;
@@ -148,7 +148,7 @@ export async function previewOperations(params: {
 }): Promise<OperationPreviewListResponse> {
 	try {
 		return await CatalogService.previewCatalogOperations({
-			apiId: params.apiId,
+			entryId: params.entryId,
 			offset: params.offset,
 			limit: params.limit,
 			tag: params.tag ?? null,
@@ -165,9 +165,9 @@ export async function previewOperations(params: {
  * the job id so the caller can toast/track it. After the job lands, the entry's
  * `registered` flips to true on the next catalog refetch.
  */
-export async function importCatalogEntry(apiId: string): Promise<ApiImportResponse> {
+export async function importCatalogEntry(entryId: string): Promise<ApiImportResponse> {
 	try {
-		return await CatalogService.importCatalogEntry({ apiId });
+		return await CatalogService.importCatalogEntry({ entryId });
 	} catch (error) {
 		throw toDiscoverError(error, 'Failed to queue the import.');
 	}

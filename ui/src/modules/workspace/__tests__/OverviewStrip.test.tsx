@@ -10,6 +10,7 @@ function makeApi(overrides: Partial<WorkspaceApi> = {}): WorkspaceApi {
 	return {
 		api: { vendor: 'stripe.com', name: 'stripe-api', version: '1', host: 'api.stripe.com' },
 		catalogApiId: null,
+		catalogEntryId: null,
 		displayName: 'Stripe',
 		description: null,
 		iconUrl: null,

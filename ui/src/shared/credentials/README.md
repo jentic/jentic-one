@@ -77,7 +77,7 @@ API's OpenAPI `components.securitySchemes` collects the secret.
 | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Pure scheme helpers | `lib/schemes.ts`                                           | Parse `securitySchemes` into typed `SchemeOption`s; map `SchemeType` to jentic-one's `CredentialType` enum; derive apiKey `field_name`/`location`; extract raw OAuth2 scopes (`oauth2ScopesFromSchemes`)                                                                                                                                         |
 | Scope utilities     | `lib/scope-utils.ts`                                       | Ported from jentic-webapp: `EnhancedScope` enrichment, resource grouping (`groupScopesByResource`), recommended-scope detection (read-only/safe vs write/admin), search filtering, and `getRecommendedScopes` for auto-selection                                                                                                                 |
-| Data wrappers       | `api/apis.ts`                                              | Thin functions over `ApisService` + `CatalogService` (`listApis`, `getApiSpec`, `listCatalog`, `importCatalogEntry`) plus a `fetchPublicSpec` helper                                                                                                                                                                                             |
+| Data wrappers       | `api/apis.ts`                                              | Thin functions over `ApisService` + `CatalogService` (`listApis`, `getApiSpec`, `listCatalog`, `importCatalogEntry`) plus `fetchCatalogSchemeSpec`                                                                                                                                                                                               |
 | React Query hooks   | `api/apis-hooks.ts`                                        | `useApis`, `useCatalog`, `useApiSchemes`, `useImportCatalogEntry`; owns `SelectedApi`, `ServerVarDef`, and the namespaced `apiPickerKeys` cache slice                                                                                                                                                                                            |
 | Picker UI           | `components/ApiPicker.tsx`                                 | Debounced search; "In your workspace" (local) + "From the Jentic public catalog" sections; emits `SelectedApi`; "Enter manually" escape hatch                                                                                                                                                                                                    |
 | Auth type cards     | `components/AuthTypeCards.tsx`                             | Radio cards (icon + title + description, webapp-style) for the credential type — single "Detected" card in spec mode, all four in manual mode                                                                                                                                                                                                    |
@@ -97,11 +97,12 @@ API's OpenAPI `components.securitySchemes` collects the secret.
 
 - **`/apis` row `security_schemes` is a `string[]`** (just type names), so it
   isn't enough for field-level shaping. We **always fetch the full OpenAPI**
-  (`GET /apis/{v}/{n}/{ver}/openapi` for local, `spec_url` for catalog) and
-  read `components.securitySchemes` off that. Cached for 5 minutes.
-- **Catalog spec fetch is client-side** from `raw.githubusercontent.com`.
-  Subject to CORS / host availability. Mitigated by a 10s abort + react-query
-  cache + the manual-entry fallback.
+  (`GET /apis/{v}/{n}/{ver}/openapi` for local) and read
+  `components.securitySchemes` off that. Cached for 5 minutes.
+- **Catalog schemes come from the operations preview**
+  (`GET /catalog/{entry_id}/operations`): the server reads the spec, so the
+  browser never fetches from the source host. The preview lists OAuth2 flows
+  by name only, so a catalog pick has no flow URLs or scopes to prefill.
 - **`provider` discovery is still hard-coded.** The picker doesn't change the
   Pipedream-vs-static `provider` story — see the gaps section above.
 - **Two-endpoint merge.** mini had a single unified `/apis?q=` that blended

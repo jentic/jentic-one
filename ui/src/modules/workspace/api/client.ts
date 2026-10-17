@@ -216,9 +216,9 @@ export async function deleteApi(key: ApiKey): Promise<void> {
  * this thin wrapper mirrors Discover's `importCatalogEntry` against the shared
  * `CatalogService` (the repository tier is the sanctioned place to touch it).
  */
-export async function reimportCatalogEntry(apiId: string): Promise<ImportJob> {
+export async function reimportCatalogEntry(entryId: string): Promise<ImportJob> {
 	try {
-		const res = await CatalogService.importCatalogEntry({ apiId });
+		const res = await CatalogService.importCatalogEntry({ entryId });
 		return { jobId: res.job_id, status: res.status };
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to start the re-import.');
@@ -301,12 +301,12 @@ export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<
  * until a newer upstream digest lands; a value → time-boxed snooze.
  */
 export async function snoozeCatalogEntry(
-	apiId: string,
+	entryId: string,
 	snoozedUntil?: string | null,
 ): Promise<void> {
 	try {
 		await CatalogService.snoozeCatalogEntry({
-			apiId,
+			entryId,
 			requestBody: snoozedUntil !== undefined ? { snoozed_until: snoozedUntil } : undefined,
 		});
 	} catch (error) {

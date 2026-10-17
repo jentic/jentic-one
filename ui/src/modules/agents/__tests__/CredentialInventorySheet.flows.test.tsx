@@ -308,7 +308,6 @@ describe('CredentialInventorySheet — credential flows', () => {
 					entry: makeMockCatalogEntry({
 						apiId: 'acme.com',
 						vendor: 'acme',
-						path: 'acme.com/main/1.0.0',
 						registered: false,
 					}).entry,
 					spec: {

@@ -3,9 +3,12 @@
  *
  * Mocks the catalog backend surface the Discover module consumes:
  *   GET  /catalog                       — keyset-paginated browse/search/filter
- *   GET  /catalog/{api_id}/operations   — operation preview
- *   POST /catalog:refresh               — force a manifest rebuild (ack)
- *   POST /catalog/{api_id}:import       — enqueue import (202)
+ *   GET  /catalog/{entry_id}/operations — operation preview
+ *   POST /catalog:refresh               — sync the catalog sources (ack)
+ *   POST /catalog/{entry_id}:import     — enqueue import (202)
+ *
+ * Every fixture lives in the `public` source, so its `entry_id` is
+ * `public/{catalog_api_id}`.
  *
  * There is no blended `/apis` feed — Discover reads only the public catalog,
  * whose per-entry `registered` flag drives the "In your workspace" marker.
@@ -22,30 +25,39 @@ interface CatalogFixture {
 	registered: boolean;
 	github: string | null;
 	/**
-	 * `{sub}/{version}` directories under `apis/openapi/{domain}/` — the real
-	 * jentic-public-apis layout the backend's manifest builder emits (`sub` is
-	 * the umbrella sub-API, or `main` when there is none).
+	 * `{sub}/{version}` directories under `apis/openapi/{domain}/` in the
+	 * jentic-public-apis layout (`sub` is the umbrella sub-API, or `main` when
+	 * there is none); the entry's `version` is the second segment.
 	 */
 	dirs: string;
 }
 
-const PUBLIC_APIS_RAW = 'https://raw.githubusercontent.com/jentic/jentic-public-apis/main';
+/** The source every fixture belongs to. */
+const MOCK_SOURCE = 'public';
 
 function entry(f: CatalogFixture) {
-	const domain = f.api_id.split('/')[0];
-	const [sub] = f.dirs.split('/');
+	const version = f.dirs.split('/')[1] ?? null;
+	const entryId = `${MOCK_SOURCE}/${f.api_id}`;
 	return {
-		api_id: f.api_id,
+		entry_id: entryId,
+		source_slug: MOCK_SOURCE,
+		catalog_api_id: f.api_id,
 		vendor: f.vendor,
-		path: sub === 'main' ? `apis/openapi/${domain}` : `apis/openapi/${domain}/${sub}`,
-		spec_url: `${PUBLIC_APIS_RAW}/apis/openapi/${domain}/${f.dirs}/openapi.json`,
+		display_vendor: f.vendor,
+		title: null,
+		version,
+		tags: [],
+		human_url: f.github,
+		has_spec: true,
+		alternates: 0,
 		registered: f.registered,
 		update_available: false,
 		_links: {
-			self: `/catalog/${f.api_id}`,
-			operations: `/catalog/${f.api_id}/operations`,
-			import: `/catalog/${f.api_id}:import`,
-			github: f.github,
+			self: `/catalog/${entryId}`,
+			operations: `/catalog/${entryId}/operations`,
+			import: `/catalog/${entryId}:import`,
+			human: f.github,
+			alternates: [],
 		},
 	};
 }
@@ -107,7 +119,7 @@ export function patchMockCatalogEntry(
 	apiId: string,
 	fields: { registered?: boolean; update_available?: boolean },
 ): void {
-	const row = CATALOG_ENTRIES.find((e) => e.api_id === apiId);
+	const row = CATALOG_ENTRIES.find((e) => e.catalog_api_id === apiId);
 	if (row) Object.assign(row, fields);
 }
 
@@ -129,7 +141,7 @@ const GENERATED = new Map<string, MockCatalogRow>();
  */
 export function addMockCatalogEntries(rows: MockCatalogRow[]): void {
 	for (const row of rows) {
-		if (CATALOG_ENTRIES.some((e) => e.api_id === row.api_id)) continue;
+		if (CATALOG_ENTRIES.some((e) => e.catalog_api_id === row.api_id)) continue;
 		const sub = row.api_id.includes('/') ? row.api_id.split('/').slice(1).join('_') : 'main';
 		CATALOG_ENTRIES.push(
 			entry({
@@ -184,7 +196,7 @@ function generatedOperations(row: MockCatalogRow) {
 
 /** Test/mock seam: the vendor a catalog entry resolves to. */
 export function mockCatalogVendor(apiId: string): string | null {
-	return CATALOG_ENTRIES.find((e) => e.api_id === apiId)?.vendor ?? null;
+	return CATALOG_ENTRIES.find((e) => e.catalog_api_id === apiId)?.vendor ?? null;
 }
 
 const GITHUB_OPERATIONS = {
@@ -301,19 +313,19 @@ export const discoverHandlers = [
 		const registeredOnly = url.searchParams.get('registered_only') === 'true';
 		const unregisteredOnly = url.searchParams.get('unregistered_only') === 'true';
 
-		// Browse is ordered by api_id (the real service's keyset order).
+		// Browse is ordered by entry_id (the real service's keyset order).
 		let rows = q
 			? CATALOG_ENTRIES
-			: [...CATALOG_ENTRIES].sort((a, b) => (a.api_id < b.api_id ? -1 : 1));
+			: [...CATALOG_ENTRIES].sort((a, b) => (a.entry_id < b.entry_id ? -1 : 1));
 		if (registeredOnly) rows = rows.filter((r) => r.registered);
 		if (unregisteredOnly) rows = rows.filter((r) => !r.registered);
-		if (q) rows = rows.filter((r) => r.api_id.toLowerCase().includes(q));
+		if (q) rows = rows.filter((r) => r.catalog_api_id.toLowerCase().includes(q));
 		const outdatedOnly = url.searchParams.get('outdated_only') === 'true';
 		if (outdatedOnly) rows = rows.filter((r) => r.registered && r.update_available);
 
 		// Keyset paging like the real service: the cursor is base64 of
-		// `{"id": <last api_id>}` and the page starts strictly after it (so the
-		// rail's jump cursors work here too). Search order isn't api_id order,
+		// `{"id": <last entry_id>}` and the page starts strictly after it (so the
+		// rail's jump cursors work here too). Search order isn't entry_id order,
 		// so it pages by position instead.
 		const limit = Number(url.searchParams.get('limit') ?? 50);
 		const cursor = url.searchParams.get('cursor');
@@ -321,8 +333,8 @@ export const discoverHandlers = [
 		if (cursor) {
 			const after = decodeMockCursor(cursor);
 			offset = q
-				? rows.findIndex((r) => r.api_id === after) + 1
-				: rows.findIndex((r) => r.api_id > after);
+				? rows.findIndex((r) => r.entry_id === after) + 1
+				: rows.findIndex((r) => r.entry_id > after);
 			if (offset < 0) offset = rows.length;
 		}
 		const page = rows.slice(offset, offset + limit);
@@ -335,14 +347,20 @@ export const discoverHandlers = [
 			registered_count: CATALOG_ENTRIES.filter((e) => e.registered).length,
 			outdated_count: CATALOG_ENTRIES.filter((e) => e.registered && e.update_available)
 				.length,
-			manifest_age_seconds: 120,
+			oldest_source_sync_age_seconds: 120,
 			has_more: hasMore,
-			next_cursor: hasMore ? encodeMockCursor(page[page.length - 1].api_id) : null,
+			next_cursor: hasMore ? encodeMockCursor(page[page.length - 1].entry_id) : null,
 		});
 	}),
 
-	http.get('/catalog/:apiId/operations', ({ params, request }) => {
-		const apiId = String(params.apiId);
+	// Entry ids contain `/`, so match the whole `/catalog/*` tail.
+	http.get('/catalog/*', ({ request }) => {
+		const tail = decodeURIComponent(new URL(request.url).pathname.replace(/^\/catalog\//, ''));
+		if (!tail.endsWith('/operations')) return undefined;
+		const entryId = tail.slice(0, -'/operations'.length);
+		const apiId = entryId.startsWith(`${MOCK_SOURCE}/`)
+			? entryId.slice(MOCK_SOURCE.length + 1)
+			: entryId;
 		const generated = GENERATED.get(apiId);
 		if (generated) return HttpResponse.json(generatedOperations(generated));
 		if (apiId !== 'github.com') {
@@ -394,18 +412,18 @@ export const discoverHandlers = [
 	}),
 
 	http.post('/catalog/*', ({ request }) => {
-		// The import action is addressed as `/catalog/{api_id}:import` where
-		// api_id may itself contain slashes (FastAPI `:path`). Match the whole
+		// The import action is addressed as `/catalog/{entry_id}:import` where
+		// entry_id contains slashes (FastAPI `:path`). Match the whole
 		// `/catalog/*` tail and strip the `:import` action suffix to recover the
-		// api_id, rather than relying on segment params (which can't express the
-		// colon-action grammar).
+		// entry_id, rather than relying on segment params (which can't express
+		// the colon-action grammar).
 		const url = new URL(request.url);
 		const tail = decodeURIComponent(url.pathname.replace(/^\/catalog\//, ''));
 		if (!tail.endsWith(':import')) {
 			return new HttpResponse(null, { status: 404 });
 		}
-		const apiId = tail.slice(0, -':import'.length);
-		const jobId = `job_${apiId.replace(/\W/g, '_')}`;
+		const entryId = tail.slice(0, -':import'.length);
+		const jobId = `job_${entryId.replace(/\W/g, '_')}`;
 		return HttpResponse.json(
 			{ job_id: jobId, status: 'queued', _links: { self: `/jobs/${jobId}` } },
 			{ status: 202 },

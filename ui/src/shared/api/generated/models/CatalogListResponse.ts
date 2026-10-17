@@ -8,7 +8,7 @@ import type { CatalogEntryResponse } from './CatalogEntryResponse';
  */
 export type CatalogListResponse = {
     /**
-     * Total entries in the whole manifest (pre-filter, pre-page).
+     * Entries visible to the caller after collapsing (pre-filter, pre-page).
      */
     catalog_total: number;
     /**
@@ -20,19 +20,19 @@ export type CatalogListResponse = {
      */
     has_more?: boolean;
     /**
-     * Age of the cached manifest in seconds, or null when the cache is empty.
-     */
-    manifest_age_seconds?: (number | null);
-    /**
      * Opaque keyset cursor for the next page (null when done).
      */
     next_cursor?: (string | null);
     /**
-     * Count of whole-manifest registered entries with an upstream update available.
+     * Seconds since the least recently synced visible source last synced, or null when none has synced.
+     */
+    oldest_source_sync_age_seconds?: (number | null);
+    /**
+     * Count of visible registered entries with an upstream update available (pre-filter).
      */
     outdated_count?: number;
     /**
-     * Count of whole-manifest entries already imported locally.
+     * Count of visible entries already imported locally (pre-filter).
      */
     registered_count: number;
 };

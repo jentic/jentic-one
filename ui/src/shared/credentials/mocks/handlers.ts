@@ -248,8 +248,8 @@ resetCredentialsStore(devCredentialsSeed());
 
 // ---------------------------------------------------------------------------
 // Guided picker store: workspace APIs + their served OpenAPI specs, public
-// catalog entries, and the canned specs we serve when the credential form
-// fetches a catalog `spec_url`. All in-memory; reset/seed for tests.
+// catalog entries, and the canned specs whose security schemes the catalog
+// operations preview serves. All in-memory; reset/seed for tests.
 // ---------------------------------------------------------------------------
 
 export interface MockApiRow {
@@ -270,13 +270,56 @@ export function resetApisStore(
 	catalogStore = catalog.map(({ entry }) => ({ entry: { ...entry } }));
 	catalogSpecStore = {};
 	for (const c of catalog) {
-		if (c.spec && c.entry.spec_url) {
-			// We index by the URL's final slug segment so handlers can route
-			// without depending on the full URL parsing.
-			const slug = c.entry.spec_url.split('/').slice(-2, -1)[0] ?? c.entry.api_id;
-			catalogSpecStore[slug] = c.spec;
-		}
+		// Indexed by `entry_id` — the id the operations preview is addressed by.
+		if (c.spec) catalogSpecStore[c.entry.entry_id] = c.spec;
 	}
+}
+
+type MockSpecSchemes = Record<string, Record<string, unknown>>;
+
+/**
+ * The `GET /catalog/{entry_id}/operations` body the server builds from `spec`:
+ * one row per operation with the scheme names it requires (op-level security
+ * overrides the document's), plus the slim `security_schemes` projection
+ * (OAuth2 flows listed by name only).
+ */
+export function catalogPreviewOf(spec: Record<string, unknown>, title = 'mock'): object {
+	const raw =
+		(spec.components as { securitySchemes?: MockSpecSchemes } | undefined)?.securitySchemes ??
+		{};
+	const securitySchemes = Object.fromEntries(
+		Object.entries(raw).map(([name, scheme]) => [
+			name,
+			scheme.type === 'oauth2'
+				? { ...scheme, flows: Object.keys((scheme.flows as object | undefined) ?? {}) }
+				: scheme,
+		]),
+	);
+	const names = (security: unknown): string[] =>
+		Array.isArray(security)
+			? security.flatMap((req) => (req && typeof req === 'object' ? Object.keys(req) : []))
+			: [];
+	const paths = (spec.paths ?? {}) as Record<string, Record<string, { security?: unknown }>>;
+	const data = Object.entries(paths).flatMap(([path, item]) =>
+		Object.entries(item).map(([method, op]) => ({
+			method: method.toUpperCase(),
+			path,
+			operation_id: null,
+			summary: '',
+			description: '',
+			tags: [],
+			parameters: [],
+			security: names(op?.security ?? spec.security),
+		})),
+	);
+	return {
+		data,
+		total: data.length,
+		offset: 0,
+		truncated: false,
+		info: { title, version: null, description: null },
+		security_schemes: securitySchemes,
+	};
 }
 
 /** Build a mock workspace API row + spec. */
@@ -331,12 +374,12 @@ export function makeMockCatalogEntry(
 	overrides: Partial<{
 		apiId: string;
 		vendor: string;
-		path: string;
 		registered: boolean;
 		spec: Record<string, unknown>;
 	}> = {},
 ): { entry: CatalogEntryResponse; spec: Record<string, unknown> } {
 	const apiId = overrides.apiId ?? 'mock.example';
+	const entryId = `public/${apiId}`;
 	const spec =
 		overrides.spec ??
 		({
@@ -350,16 +393,16 @@ export function makeMockCatalogEntry(
 		} as Record<string, unknown>);
 	return {
 		entry: {
-			api_id: apiId,
+			entry_id: entryId,
+			source_slug: 'public',
+			catalog_api_id: apiId,
 			vendor: overrides.vendor ?? apiId.split('.')[0] ?? apiId,
-			path: overrides.path ?? `${apiId}/main/1.0.0`,
-			spec_url: `https://mock-spec.test/${apiId}/openapi.json`,
+			has_spec: true,
 			registered: overrides.registered ?? false,
 			_links: {
-				self: '',
-				operations: '',
-				import: '',
-				github: null,
+				self: `/catalog/${entryId}`,
+				operations: `/catalog/${entryId}/operations`,
+				import: `/catalog/${entryId}:import`,
 			},
 		},
 		spec,
@@ -1041,8 +1084,8 @@ export const credentialsHandlers = [
 	// ---------------------------------------------------------------------------
 	// Guided add-credential flow: workspace APIs (`/apis`), catalog
 	// (`/catalog`), per-API OpenAPI doc (`/apis/.../openapi`), catalog import
-	// (`/catalog/{id}:import`), and an in-memory passthrough for the catalog
-	// `spec_url` so tests run offline.
+	// (`/catalog/{entry_id}:import`), and the catalog operations preview that
+	// serves a seeded entry's security schemes.
 	//
 	// These handlers cooperate with the discover module's `/apis` + `/catalog`
 	// mocks: when the credentials picker store is empty (the default), each
@@ -1075,7 +1118,7 @@ export const credentialsHandlers = [
 		const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
 		const filtered = catalogStore.filter((e) => {
 			if (!q) return true;
-			return [e.entry.api_id, e.entry.vendor, e.entry.path]
+			return [e.entry.catalog_api_id, e.entry.vendor]
 				.filter(Boolean)
 				.some((v) => String(v).toLowerCase().includes(q));
 		});
@@ -1088,16 +1131,27 @@ export const credentialsHandlers = [
 		});
 	}),
 
-	http.get('/catalog/:apiId', ({ params }) => {
+	// Entry ids contain `/` (`{source_slug}/{external_id}`), so the per-entry
+	// routes match the whole `/catalog/*` tail rather than a segment param.
+	http.get('/catalog/*', ({ request }) => {
 		if (catalogStore.length === 0) return undefined;
-		const entry = catalogStore.find((c) => c.entry.api_id === params.apiId);
+		const tail = decodeURIComponent(new URL(request.url).pathname.replace(/^\/catalog\//, ''));
+		const preview = tail.endsWith('/operations');
+		const entryId = preview ? tail.slice(0, -'/operations'.length) : tail;
+		const entry = catalogStore.find((c) => c.entry.entry_id === entryId);
 		if (!entry) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json(entry.entry);
+		if (!preview) return HttpResponse.json(entry.entry);
+		return HttpResponse.json(
+			catalogPreviewOf(catalogSpecStore[entryId] ?? {}, entry.entry.catalog_api_id),
+		);
 	}),
 
-	http.post('/catalog/:apiId\\:import', ({ params }) => {
+	http.post('/catalog/*', ({ request }) => {
 		if (catalogStore.length === 0) return undefined;
-		const entry = catalogStore.find((c) => c.entry.api_id === params.apiId);
+		const tail = decodeURIComponent(new URL(request.url).pathname.replace(/^\/catalog\//, ''));
+		if (!tail.endsWith(':import')) return undefined;
+		const entryId = tail.slice(0, -':import'.length);
+		const entry = catalogStore.find((c) => c.entry.entry_id === entryId);
 		if (!entry) return new HttpResponse(null, { status: 404 });
 		entry.entry.registered = true;
 		// Mirror the real `ApiImportResponse` shape ({ job_id, status, _links })
@@ -1110,15 +1164,6 @@ export const credentialsHandlers = [
 			},
 			{ status: 202 },
 		);
-	}),
-
-	// Catalog spec URLs are public-internet (raw.githubusercontent.com in prod).
-	// The mock store keeps a canned spec per URL so the picker hook resolves
-	// schemes offline in tests.
-	http.get('https://mock-spec.test/:slug/openapi.json', ({ params }) => {
-		const spec = catalogSpecStore[String(params.slug)];
-		if (!spec) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json(spec);
 	}),
 
 	// Verified-vendor registry + agent-driven connect-session lifecycle —

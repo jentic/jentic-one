@@ -10,23 +10,31 @@
  */
 import { http, HttpResponse } from 'msw';
 
-const RAW = 'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main';
 const TREE = 'https://github.com/jentic/jentic-public-apis/tree/main';
 
 function entry(apiId: string, vendor: string, dir: string, version: string) {
-	const path = `apis/openapi/${dir}`;
+	const human = `${TREE}/apis/openapi/${dir}`;
+	const entryId = `public/${apiId}`;
 	return {
-		api_id: apiId,
+		entry_id: entryId,
+		source_slug: 'public',
+		catalog_api_id: apiId,
 		vendor,
-		path,
-		spec_url: `${RAW}/${path}/${version}/openapi.json`,
+		display_vendor: vendor,
+		title: null,
+		version,
+		tags: [],
+		human_url: human,
+		has_spec: true,
+		alternates: 0,
 		registered: false,
 		update_available: false,
 		_links: {
-			self: `/catalog/${apiId}`,
-			operations: `/catalog/${apiId}/operations`,
-			import: `/catalog/${apiId}:import`,
-			github: `${TREE}/${path}`,
+			self: `/catalog/${entryId}`,
+			operations: `/catalog/${entryId}/operations`,
+			import: `/catalog/${entryId}:import`,
+			human,
+			alternates: [],
 		},
 	};
 }
@@ -47,7 +55,7 @@ export function catalogPage(data: ReturnType<typeof entry>[], total = 6317) {
 		catalog_total: total,
 		registered_count: 0,
 		outdated_count: 0,
-		manifest_age_seconds: 120,
+		oldest_source_sync_age_seconds: 120,
 		has_more: false,
 		next_cursor: null,
 	};
@@ -57,7 +65,7 @@ export function catalogPage(data: ReturnType<typeof entry>[], total = 6317) {
 export const liveGithubCatalog = http.get('/catalog', ({ request }) => {
 	const q = (new URL(request.url).searchParams.get('q') ?? '').trim().toLowerCase();
 	return HttpResponse.json(
-		catalogPage(q ? GITHUB_SEARCH_ENTRIES.filter((e) => e.api_id.includes(q)) : []),
+		catalogPage(q ? GITHUB_SEARCH_ENTRIES.filter((e) => e.catalog_api_id.includes(q)) : []),
 	);
 });
 

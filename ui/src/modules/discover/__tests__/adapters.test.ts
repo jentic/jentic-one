@@ -2,81 +2,47 @@ import { describe, it, expect } from 'vitest';
 import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
 import type { CatalogEntryResponse } from '@/shared/api';
 
-const registeredEntry = {
-	api_id: 'stripe.com',
-	vendor: 'stripe',
-	path: 'apis/stripe.com/openapi.json',
-	spec_url: 'https://example.com/stripe.json',
-	registered: true,
-	_links: {
-		self: '/catalog/stripe.com',
-		operations: '/catalog/stripe.com/operations',
-		import: '/catalog/stripe.com:import',
-		github: null,
-	},
-} as unknown as CatalogEntryResponse;
+function catalogEntry(
+	catalogApiId: string,
+	over: Partial<CatalogEntryResponse> = {},
+): CatalogEntryResponse {
+	const entryId = `public/${catalogApiId}`;
+	return {
+		entry_id: entryId,
+		source_slug: 'public',
+		catalog_api_id: catalogApiId,
+		vendor: null,
+		has_spec: true,
+		registered: false,
+		_links: {
+			self: `/catalog/${entryId}`,
+			operations: `/catalog/${entryId}/operations`,
+			import: `/catalog/${entryId}:import`,
+		},
+		...over,
+	};
+}
 
-const availableEntry = {
-	api_id: 'slack.com',
+const registeredEntry = catalogEntry('stripe.com', { vendor: 'stripe', registered: true });
+
+const availableEntry = catalogEntry('slack.com', {
 	vendor: 'slack',
-	path: 'apis/slack.com/openapi.json',
-	spec_url: 'https://example.com/slack.json',
-	registered: false,
-	_links: {
-		self: '/catalog/slack.com',
-		operations: '/catalog/slack.com/operations',
-		import: '/catalog/slack.com:import',
-		github: 'https://github.com/jentic/catalog/slack.com.json',
-	},
-} as unknown as CatalogEntryResponse;
+	human_url: 'https://github.com/jentic/catalog/slack.com.json',
+});
 
-const noVendorEntry = {
-	api_id: 'example.org',
-	vendor: null,
-	path: null,
-	spec_url: null,
-	registered: false,
-	_links: {
-		self: '/catalog/example.org',
-		operations: '/catalog/example.org/operations',
-		import: '/catalog/example.org:import',
-		github: null,
-	},
-} as unknown as CatalogEntryResponse;
+const noVendorEntry = catalogEntry('example.org');
 
-const umbrellaSubApi = {
-	api_id: 'nytimes.com/article_search',
-	vendor: 'nytimes.com',
-	path: 'apis/nytimes.com/article_search/openapi.json',
-	spec_url: 'https://example.com/nyt-article-search.json',
-	registered: false,
-	_links: {
-		self: '/catalog/nytimes.com/article_search',
-		operations: '/catalog/nytimes.com/article_search/operations',
-		import: '/catalog/nytimes.com/article_search:import',
-		github: null,
-	},
-} as unknown as CatalogEntryResponse;
+const umbrellaSubApi = catalogEntry('nytimes.com/article_search', { vendor: 'nytimes.com' });
 
-const outdatedEntry = {
-	api_id: 'twilio.com',
+const outdatedEntry = catalogEntry('twilio.com', {
 	vendor: 'twilio',
-	path: 'apis/twilio.com/openapi.json',
-	spec_url: 'https://example.com/twilio.json',
 	registered: true,
 	update_available: true,
-	_links: {
-		self: '/catalog/twilio.com',
-		operations: '/catalog/twilio.com/operations',
-		import: '/catalog/twilio.com:import',
-		github: null,
-	},
-} as unknown as CatalogEntryResponse;
+});
 
 describe('catalogEntryToEntity', () => {
 	it('maps a registered entry to an imported entity', () => {
 		const entity = catalogEntryToEntity(registeredEntry);
-		expect(entity.id).toBe('stripe.com');
 		expect(entity.apiId).toBe('stripe.com');
 		expect(entity.registered).toBe(true);
 		expect(entity.summary).toBe('stripe.com');
@@ -84,21 +50,17 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.githubUrl).toBeUndefined();
 	});
 
-	it('reads the version off a jentic-public-apis spec_url, and omits it otherwise', () => {
-		expect(
-			catalogEntryToEntity({
-				...registeredEntry,
-				spec_url:
-					'https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
-			}).version,
-		).toBe('2024-01-01');
-		expect(
-			catalogEntryToEntity({
-				...registeredEntry,
-				spec_url:
-					'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
-			}).version,
-		).toBe('2024-01-01');
+	it('addresses the entry by entry_id and names it by catalog_api_id', () => {
+		const entity = catalogEntryToEntity(registeredEntry);
+		expect(entity.id).toBe('public/stripe.com');
+		expect(entity.entryId).toBe('public/stripe.com');
+		expect(entity.apiId).toBe('stripe.com');
+	});
+
+	it('carries the entry version, and omits it when the entry has none', () => {
+		expect(catalogEntryToEntity({ ...registeredEntry, version: '2024-01-01' }).version).toBe(
+			'2024-01-01',
+		);
 		expect(catalogEntryToEntity(registeredEntry).version).toBeUndefined();
 	});
 
@@ -115,14 +77,14 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.updateAvailable).toBe(true);
 	});
 
-	it('maps an unregistered entry with a github link', () => {
+	it('maps an unregistered entry with a human link', () => {
 		const entity = catalogEntryToEntity(availableEntry);
 		expect(entity.registered).toBe(false);
 		expect(entity.apiId).toBe('slack.com');
 		expect(entity.githubUrl).toContain('slack.com.json');
 	});
 
-	it('falls back to api_id when the entry has no vendor', () => {
+	it('falls back to catalog_api_id when the entry has no vendor', () => {
 		const entity = catalogEntryToEntity(noVendorEntry);
 		expect(entity.summary).toBe('example.org');
 		expect(entity.subtitle).toBeUndefined();
