@@ -102,6 +102,11 @@ type catalogPreviewInfo struct {
 	Description string `json:"description"`
 }
 
+// catalogPreview mirrors GET /catalog/{entry_id}/operations. security_schemes
+// passes through whole (an oauth2 scheme's flow_details included);
+// server_variables are the first server's URL variables and required_schemes
+// every scheme the spec's operations require, over the whole spec. Both are
+// never null, so an agent reads them without a presence check.
 type catalogPreview struct {
 	Data            []catalogPreviewOp        `json:"data"`
 	Total           int                       `json:"total"`
@@ -109,6 +114,8 @@ type catalogPreview struct {
 	Truncated       bool                      `json:"truncated"`
 	Info            catalogPreviewInfo        `json:"info"`
 	SecuritySchemes map[string]map[string]any `json:"security_schemes"`
+	ServerVariables map[string]map[string]any `json:"server_variables"`
+	RequiredSchemes []string                  `json:"required_schemes"`
 }
 
 type catalogJob struct {
@@ -395,6 +402,14 @@ func toCatalogPreview(p *control.OperationPreviewListResponse) *catalogPreview {
 			Description: deref(p.Info.Description),
 		},
 		SecuritySchemes: p.SecuritySchemes,
+		ServerVariables: map[string]map[string]any{},
+		RequiredSchemes: []string{},
+	}
+	if p.ServerVariables != nil {
+		out.ServerVariables = *p.ServerVariables
+	}
+	if p.RequiredSchemes != nil {
+		out.RequiredSchemes = append(out.RequiredSchemes, *p.RequiredSchemes...)
 	}
 	for _, op := range p.Data {
 		params := make([]catalogPreviewParam, 0, len(op.Parameters))

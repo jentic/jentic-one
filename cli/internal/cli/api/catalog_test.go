@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/client/generated/control"
+
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -639,5 +641,41 @@ func TestTruncate(t *testing.T) {
 	}
 	if got := truncate("short", 10); got != "short" {
 		t.Errorf("truncate should pass short strings, got %q", got)
+	}
+}
+
+// TestToCatalogPreview_CarriesServerVariablesAndOAuthFlows pins what the
+// preview carries for credential setup: server_variables and
+// required_schemes pass through (empty, never null, when absent), and an
+// oauth2 scheme's flow_details ride inside security_schemes untouched.
+func TestToCatalogPreview_CarriesServerVariablesAndOAuthFlows(t *testing.T) {
+	vars := map[string]map[string]any{"tenant": {"default": "acme", "description": "Your tenant"}}
+	required := []string{"oauth"}
+	p := toCatalogPreview(&control.OperationPreviewListResponse{
+		SecuritySchemes: map[string]map[string]any{"oauth": {
+			"type": "oauth2", "flows": []any{"authorizationCode"},
+			"flow_details": map[string]any{"authorizationCode": map[string]any{
+				"authorizationUrl": "https://idp.example/authorize", "tokenUrl": "https://idp.example/token",
+			}},
+		}},
+		ServerVariables: &vars,
+		RequiredSchemes: &required,
+	})
+	raw, _ := json.Marshal(p)
+	for _, want := range []string{
+		`"server_variables":{"tenant":{"default":"acme","description":"Your tenant"}}`,
+		`"required_schemes":["oauth"]`,
+		`"tokenUrl":"https://idp.example/token"`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("preview JSON missing %s\n%s", want, raw)
+		}
+	}
+
+	empty, _ := json.Marshal(toCatalogPreview(&control.OperationPreviewListResponse{}))
+	for _, want := range []string{`"server_variables":{}`, `"required_schemes":[]`} {
+		if !strings.Contains(string(empty), want) {
+			t.Errorf("absent members must read as empty, missing %s\n%s", want, empty)
+		}
 	}
 }
