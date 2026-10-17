@@ -16,6 +16,7 @@ from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.config import AuthConfig, PlatformClientConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 _PLATFORM_CLIENT_ID = "jentic-one-spa"
 _THIRD_PARTY_CLIENT_ID = "oc_external_app_123"
@@ -44,6 +45,7 @@ def client() -> TestClient:
     mock_ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
 
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
     return TestClient(app)
 
 

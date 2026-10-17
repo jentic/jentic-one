@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 
 from jentic_one.control.web.connect_limits import (
@@ -45,3 +46,12 @@ async def test_both_connect_limiters_use_the_process_backend() -> None:
         "rl:integrations_connect:actor-1",
         "rl:mcp_integrations_connect:actor-1",
     ]
+
+
+def test_a_missing_connect_limiter_is_a_wiring_error_not_a_private_fallback() -> None:
+    """An app assembled without ``install_connect_limiters`` fails loudly."""
+    app = FastAPI()
+
+    with pytest.raises(RuntimeError, match="install_connect_limiters"):
+        connect_limiter(app, ROUTE_LIMITER_ATTR)
+    assert getattr(app.state, ROUTE_LIMITER_ATTR, None) is None
