@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from pathlib import Path
 
@@ -18,7 +17,12 @@ from jentic_one.shared.invalidation import (
     NoopInvalidationBus,
 )
 from jentic_one.shared.provider_refresh import PROVIDER_CONFIG_TOPIC
-from jentic_one.shared.web.app_factory import _enter_invalidation_bus, create_combined_app
+from jentic_one.shared.web.app_factory import (
+    _enter_invalidation_bus,
+    _enter_provider_refresh,
+    _subscribe_provider_refresh,
+    create_combined_app,
+)
 from jentic_one.shared.web.container import AppContainer
 
 
@@ -99,35 +103,32 @@ class _CountingContext(Context):
     def __init__(self, config: AppConfig) -> None:
         super().__init__(config)
         self.refreshes = 0
-        self.refreshed = asyncio.Event()
 
     async def refresh_providers(self) -> ProviderRegistry:
         self.refreshes += 1
-        self.refreshed.set()
         return self.providers
 
 
-async def test_lifespan_refreshes_providers_on_notifications_and_reconnect(
-    tmp_path: Path,
-) -> None:
+async def test_wired_refresh_runs_on_notifications_and_reconnect(tmp_path: Path) -> None:
+    """The app factory's subscribe + lifespan-entry helpers, without a full lifespan.
+
+    (A full app lifespan instruments the process-global SQLAlchemy tracer, which
+    would leak into other tests.)
+    """
     bus = InProcessInvalidationBus()
     ctx = _CountingContext(_sqlite_ctx(tmp_path).config)
-    app = create_combined_app(
-        ctx, ["admin", "control"], container=AppContainer(ctx=ctx, invalidation_bus=bus)
-    )
-    async with app.router.lifespan_context(app):
-        await asyncio.wait_for(ctx.refreshed.wait(), timeout=5)  # boot + reconcile
-        baseline = ctx.refreshes
-        for flush in (False, True):
-            ctx.refreshed.clear()
-            if flush:
-                await bus.simulate_reconnect()
-            else:
-                await bus.publish(
-                    InvalidationMessage(topic=PROVIDER_CONFIG_TOPIC, operation="UPDATE")
-                )
-            await asyncio.wait_for(ctx.refreshed.wait(), timeout=5)
-        assert ctx.refreshes >= baseline + 2
-    refreshes_at_exit = ctx.refreshes
-    await bus.publish(InvalidationMessage(topic=PROVIDER_CONFIG_TOPIC, operation="UPDATE"))
-    assert ctx.refreshes == refreshes_at_exit, "nothing refreshes after the lifespan exits"
+    refresher = _subscribe_provider_refresh(ctx, bus)
+    assert refresher is not None
+    async with contextlib.AsyncExitStack() as stack:
+        await _enter_invalidation_bus(stack, bus)
+        await _enter_provider_refresh(stack, refresher)
+        await refresher.wait_idle()  # the reconciling refresh on a delivering bus
+        assert ctx.refreshes == 1
+        await bus.publish(InvalidationMessage(topic=PROVIDER_CONFIG_TOPIC, operation="UPDATE"))
+        await refresher.wait_idle()
+        await bus.simulate_reconnect()
+        await refresher.wait_idle()
+        assert ctx.refreshes == 3
+    refresher.request()
+    await refresher.wait_idle()
+    assert ctx.refreshes == 3, "nothing refreshes once the stack has unwound"
