@@ -286,6 +286,13 @@ def test_the_jti_record_stores_a_digest_never_the_claim() -> None:
     assert digest != assertion_service.jti_digest("some-jti2")
 
 
+def test_a_lone_surrogate_jti_hashes_rather_than_erroring() -> None:
+    """A signed claim of ``"\\ud800"`` decodes to a str strict UTF-8 cannot encode."""
+    digest = assertion_service.jti_digest("\ud800")
+    assert len(digest) == 64
+    assert digest != assertion_service.jti_digest("\ud801")
+
+
 async def test_verify_rejects_non_eddsa_algorithm() -> None:
     ctx = _make_ctx()
     svc = AssertionService(ctx)

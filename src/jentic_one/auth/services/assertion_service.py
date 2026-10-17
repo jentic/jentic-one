@@ -47,8 +47,13 @@ JTI_PRUNE_BATCH = 50
 
 
 def jti_digest(jti: str) -> str:
-    """Hex SHA-256 of a ``jti`` claim: what the replay record stores instead of the claim."""
-    return hashlib.sha256(jti.encode()).hexdigest()
+    """Hex SHA-256 of a ``jti`` claim: what the replay record stores instead of the claim.
+
+    JSON lets a claim carry a lone UTF-16 surrogate (``"\\ud800"``), which
+    strict UTF-8 cannot encode; ``surrogatepass`` keeps such a claim a
+    distinct, hashable value instead of an unhandled error.
+    """
+    return hashlib.sha256(jti.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 class AssertionService:
@@ -175,8 +180,11 @@ class AssertionService:
         """Record the assertion's ``jti`` as used for ``issuer``; ``False`` on a replay.
 
         Shared by every auth process through the admin database. The record
-        is written in the verifying transaction, so a rejected exchange (the
-        transaction rolls back) leaves no record. It lives until ``exp`` plus
+        is written in the verifying transaction, so an exchange rejected
+        there (the transaction rolls back) leaves no record. That transaction
+        commits before the token pair is minted in its own, so a failure
+        minting the pair leaves the ``jti`` used: the client retries with a
+        freshly signed assertion. It lives until ``exp`` plus
         :data:`JTI_CLOCK_SKEW_GRACE_S` on the database clock; after that the
         assertion fails the ``exp`` check everywhere, and a new assertion
         reusing the ``jti`` takes the record over. Expired records are pruned
