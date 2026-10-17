@@ -99,7 +99,7 @@ Service-level settings (immutable after boot).
 
 ## `worker`
 
-Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever.
+Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim, on the database clock), and processes it. On PostgreSQL a heartbeat renews the deadline every quarter of the timeout while the handler runs. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll; every completion, failure and requeue is fenced on the claim, so a worker whose lease lapsed cannot overwrite the newer claim's outcome. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
