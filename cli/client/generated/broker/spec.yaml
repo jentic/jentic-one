@@ -1620,6 +1620,14 @@ components:
                 status: 503
                 detail: Upstream circuit open; the broker is fast-failing to let it recover.
                 error_origin: broker
+            idempotency_unavailable:
+              summary: The Idempotency-Key claim could not be recorded, so the request was not executed.
+              value:
+                type: idempotency_unavailable
+                title: The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.
+                status: 503
+                detail: The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.
+                error_origin: broker
     PayloadTooLarge:
       description: |
         Request body exceeded the broker's per-`Content-Type` size cap
