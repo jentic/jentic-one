@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import sys
 from collections.abc import AsyncGenerator, Iterator
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, text
 
+import jentic_one.registry.services.catalog.service as service_module
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -28,8 +30,10 @@ from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import CatalogConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.pagination import encode_catalog_cursor
@@ -192,8 +196,6 @@ async def test_get_catalog_is_byte_identical_with_and_without_the_shadow_write(
     admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reads serve the snapshot only: the shadow-written tables change no byte."""
-    import jentic_one.registry.services.catalog.service as service_module
-
     assert admin_client.post("/catalog:refresh").status_code == 200
     async with web_context.registry_db.session() as session:
         assert (await session.execute(select(CatalogEntryRow.id))).first() is not None
@@ -225,8 +227,6 @@ async def test_get_catalog_is_byte_identical_with_and_without_the_shadow_write(
 async def test_refresh_force_overrides_a_suspect_empty_listing(
     admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import sys
-
     assert admin_client.post("/catalog:refresh").status_code == 200
 
     async def _live() -> list[str]:
@@ -265,9 +265,6 @@ async def test_refresh_force_overrides_a_suspect_empty_listing(
 async def test_lazy_read_flags_other_sources_and_starts_no_sync_task(
     web_config: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
-    from jentic_one.shared.config import CatalogConfig
-
     corp = {
         "slug": "corp",
         "kind": "git-manifest",
