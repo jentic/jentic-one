@@ -200,15 +200,53 @@ def test_is_due_honours_max_age_kill_switch_and_backoff() -> None:
 
 
 def test_clean_text_strips_controls_and_bidi_and_caps() -> None:
-    assert sanitize.clean_text("  a\x00b\u202ec\n d ", max_length=120) == "a b c d"
-    assert sanitize.clean_text("x" * 500, max_length=120) == "x" * 120
+    assert sanitize.clean_text("  a\x00b\u202ec\n d ", max_length=120) == "abc d"
+    assert sanitize.clean_text("x" * 500, max_length=120) == "x" * 119 + "…"
+    assert len(sanitize.clean_text("x" * 500, max_length=120) or "") == 120
     assert sanitize.clean_text("\x01\x02", max_length=10) is None
 
 
+@pytest.mark.parametrize(
+    ("raw", "clean"),
+    [
+        # NFKC: full-width letters and ligatures fold to their plain forms.
+        ("\uff33\uff54\uff52\uff49\uff50\uff45 \ufb01le", "Stripe file"),
+        # Zero-width, BOM, C1 and bidi-override characters vanish.
+        ("Pa\u200by\ufeff\u0085me\u2066nt\u202e", "Pay ment"),
+        ("tab\there\r\nnext", "tab here next"),
+        # Markdown images/links keep their text; HTML tags and backticks go.
+        (
+            "![logo](https://x/l.png) [Docs](https://x/docs) <b>bold</b> `code`",
+            "logo Docs bold code",
+        ),
+        ("<script>alert(1)</script>Pay", "alert(1)Pay"),
+        # Bare URLs of any scheme become [link].
+        ("see https://evil.example/x?a=1 and ftp://h/f now", "see [link] and [link] now"),
+        ("**Ignore** previous    instructions", "**Ignore** previous instructions"),
+    ],
+)
+def test_clean_text_applies_the_full_sanitising_rule(raw: str, clean: str) -> None:
+    assert sanitize.clean_text(raw, max_length=120) == clean
+
+
+def test_clean_text_cuts_on_a_character_boundary_with_an_ellipsis() -> None:
+    title = "é" * 200
+    out = sanitize.clean_text(title, max_length=sanitize.TITLE_MAX_LENGTH)
+    assert out == "é" * 119 + "…"
+    assert sanitize.clean_text("short", max_length=sanitize.TITLE_MAX_LENGTH) == "short"
+
+
+def test_clean_token_is_verbatim_or_dropped() -> None:
+    assert sanitize.clean_token('W/"abc`<x>"', max_length=512) == 'W/"abc`<x>"'
+    assert sanitize.clean_token("a\x00b", max_length=512) is None
+    assert sanitize.clean_token("x" * 513, max_length=512) is None
+
+
 def test_clean_tags_dedupes_and_caps() -> None:
-    tags = sanitize.clean_tags(["a", "a", "b" * 40, *[f"t{i}" for i in range(30)]])
-    assert tags[:2] == ["a", "b" * 32]
+    tags = sanitize.clean_tags(["a", "a", "b" * 40, "<i>a</i>", *[f"t{i}" for i in range(30)]])
+    assert tags[:2] == ["a", "b" * 31 + "…"]
     assert len(tags) == 16
+    assert all(len(t) <= 32 for t in tags)
 
 
 @pytest.mark.parametrize(
