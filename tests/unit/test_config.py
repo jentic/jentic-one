@@ -1137,10 +1137,26 @@ def test_oneshot_cache_survives_writes_after_open(
     document after the loaders opened the fd must not leave any of them keyed
     on a pre-drain identity: a concurrent loader waiting on the drain, and a
     repeat load after it, must both take the cached document instead of
-    hitting EOF on the drained pipe."""
+    hitting EOF on the drained pipe.
+
+    The test couples to _read_config_text at three seams, and each failure
+    message names the seam it depends on:
+
+    - open: every open of the pipe path goes through io.open or builtins.open
+      (Path.open included); the opened file is where a loader parks.
+    - lock: _ONESHOT_CACHE_LOCK is looked up at call time, so a loader that
+      would block on it parks too.
+    - read gate: the writer holds its first write until a loader starts
+      draining the opened file through read(), readline(), readlines(), or
+      iteration. The drainer's in-lock fstat runs before that, which pins it
+      to the pre-write identity. A drain that bypasses the file object (e.g.
+      os.read on its fileno) never opens the gate, and the writer reports
+      that it is still waiting for a loader to start reading."""
     # One deadline bounds every wait and join in the test, and all threads are
     # daemons, so a wedged loader fails the test without holding the process.
     timeout_s = 10.0
+    # The writer's read gate expires this long before the shared deadline.
+    gate_margin_s = 1.0
     deadline = time.monotonic() + timeout_s
 
     def remaining() -> float:
@@ -1165,6 +1181,8 @@ def test_oneshot_cache_survives_writes_after_open(
     rendezvous = threading.Barrier(3, action=released.set, timeout=timeout_s)
     parked = {name: threading.Event() for name in ("loader-0", "loader-1")}
     read_started = threading.Event()
+    # Set on teardown so the writer stops waiting on the read gate.
+    stop = threading.Event()
 
     def park() -> None:
         signal = parked.get(threading.current_thread().name)
@@ -1173,25 +1191,53 @@ def test_oneshot_cache_survives_writes_after_open(
         signal.set()
         rendezvous.wait(remaining())
 
+    class _ReadGateFile:
+        """Wraps the opened pipe so any read-style call or iteration opens the gate."""
+
+        def __init__(self, f: Any) -> None:
+            self._f = f
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._f, name)
+
+        def __enter__(self) -> _ReadGateFile:
+            self._f.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: Any) -> Any:
+            return self._f.__exit__(*exc_info)
+
+        def read(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.read(*args)
+
+        def readline(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readline(*args)
+
+        def readlines(self, *args: Any) -> Any:
+            read_started.set()
+            return self._f.readlines(*args)
+
+        def __iter__(self) -> _ReadGateFile:
+            return self
+
+        def __next__(self) -> Any:
+            read_started.set()
+            return next(self._f)
+
     real_open = io.open
 
     def hooked_open(file: Any, *args: Any, **kwargs: Any) -> Any:
         f: Any = real_open(file, *args, **kwargs)
         if not isinstance(file, str | os.PathLike) or os.fspath(file) != pipe_path:
             return f
-        real_read = f.read
-
-        def read(*read_args: Any) -> Any:
-            read_started.set()
-            return real_read(*read_args)
-
-        f.read = read
         try:
             park()
         except BaseException:
             f.close()
             raise
-        return f
+        return _ReadGateFile(f)
 
     class _ParkingLock:
         """Stands in for _ONESHOT_CACHE_LOCK; a loader that would block parks first."""
@@ -1223,12 +1269,23 @@ def test_oneshot_cache_survives_writes_after_open(
     def stream() -> None:
         try:
             rendezvous.wait(remaining())
-            # The drainer takes its in-lock fstat before read(), so holding the
-            # first write until read() starts pins that fstat to the pre-write
-            # identity: a key taken there must never be what gets stored.
-            if not read_started.wait(remaining()):
-                errors.append(AssertionError(f"no loader called read() on {pipe_path}"))
-                return
+            # The drainer takes its in-lock fstat before it reads, so holding
+            # the first write until a read starts pins that fstat to the
+            # pre-write identity: a key taken there must never be what gets
+            # stored. The gate gives up a margin before the shared deadline so
+            # its error is recorded before the main thread's joins expire.
+            while not read_started.wait(0.05):
+                if stop.is_set():
+                    return
+                if remaining() <= gate_margin_s:
+                    errors.append(
+                        AssertionError(
+                            f"writer still waiting for a loader to start reading {pipe_path}: "
+                            "the read gate needs _read_config_text to drain the opened file "
+                            "through read(), readline(), readlines(), or iteration"
+                        )
+                    )
+                    return
             for chunk in (doc[: len(doc) // 2], doc[len(doc) // 2 :]):
                 time.sleep(ctime_tick_s)
                 os.write(write_fd, chunk)
@@ -1243,6 +1300,9 @@ def test_oneshot_cache_survives_writes_after_open(
             loaded.append(load_config(Path(pipe_path)))
         except BaseException as exc:  # surfaced via the assertion below
             errors.append(exc)
+            # A loader that dies before the rendezvous breaks it, so the writer
+            # and the other loader stop waiting for a party that never arrives.
+            rendezvous.abort()
 
     writer = threading.Thread(target=stream, name="writer", daemon=True)
     loaders = [threading.Thread(target=load, name=name, daemon=True) for name in parked]
@@ -1254,14 +1314,28 @@ def test_oneshot_cache_survives_writes_after_open(
         # same /dev/fd/N (#1803), a platform race and not the one under test.
         for loader in loaders:
             loader.start()
-            assert parked[loader.name].wait(remaining()), (
+            while not parked[loader.name].wait(0.05) and loader.is_alive() and remaining():
+                pass
+            assert parked[loader.name].is_set(), (
                 f"{loader.name} never parked: the rendezvous needs _read_config_text to "
                 f"open {pipe_path} through io.open or builtins.open (Path.open included), "
                 f"or to block on _ONESHOT_CACHE_LOCK; errors={errors!r}"
             )
-        for t in threads:
-            t.join(remaining())
-            assert not t.is_alive(), f"{t.name} still running after {timeout_s}s; {errors=!r}"
+        # Loaders first: a hung loader is the thread the failure names.
+        for loader in loaders:
+            loader.join(remaining())
+            if loader.is_alive():
+                stage = (
+                    "wedged in read (a read started; the loader is stuck in it or "
+                    "behind the cache lock)"
+                    if read_started.is_set()
+                    else "and the writer is still waiting for a loader to start reading"
+                )
+                raise AssertionError(
+                    f"{loader.name} still running after {timeout_s}s, {stage}; {errors=!r}"
+                )
+        writer.join(remaining())
+        assert not writer.is_alive(), f"writer still running after {timeout_s}s; {errors=!r}"
         assert errors == []
         loaded.append(load_config(Path(pipe_path)))
         assert {c.databases.registry.name for c in loaded} == {
@@ -1270,6 +1344,7 @@ def test_oneshot_cache_survives_writes_after_open(
         assert len(loaded) == 3
     finally:
         rendezvous.abort()
+        stop.set()
         for t in threads:
             if t.is_alive():
                 t.join(remaining())
