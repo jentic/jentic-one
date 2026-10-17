@@ -1,9 +1,9 @@
-"""Shared helpers for the auth surface's pre-auth rate limiters.
+"""Shared helpers for the auth surface's rate limiters.
 
-Shared so the anonymous DCR registration router and /authorize derive the
-caller IP and
-reach the shared-state backend the same way, without cross-router imports of
-underscore-private names.
+Shared so every auth router (the token endpoint, the anonymous DCR
+registration router and /authorize) reaches the shared-state backend the same
+way, and the last two derive the caller IP the same way, without cross-router
+imports of underscore-private names.
 """
 
 from __future__ import annotations

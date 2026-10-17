@@ -9,9 +9,10 @@ process that shares the admin database.
 The ``jti`` itself is never stored, only its SHA-256 digest: the claim is
 caller-chosen and unbounded in length, and the digest keeps every row the same
 size. ``expires_at`` is the assertion's ``exp`` plus a clock-skew grace; once
-it has passed the assertion can no longer verify anywhere, so the row is only
-pruned (or overwritten by a fresh assertion reusing the ``jti``) after then.
-Append-only, so it does not use :class:`AuditableMixin`.
+it has passed the assertion can no longer verify anywhere, so only then is the
+row pruned, or taken over (its ``expires_at`` and ``created_at`` rewritten) by
+a fresh assertion reusing the ``jti``. Short-lived replay bookkeeping with no
+author or edit history, so it does not use :class:`AuditableMixin`.
 """
 
 from __future__ import annotations
