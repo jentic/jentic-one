@@ -997,7 +997,7 @@
           {
             "status": "ok",
             "surface": "broker",
-            "version": "0.43.0"
+            "version": "0.44.0"
           }
         ],
         "properties": {
@@ -1029,7 +1029,7 @@
           "version": {
             "description": "Running Jentic One release (the same version as `info.version`\nin this spec). Absent on the `not_entitled` body.\n",
             "examples": [
-              "0.43.0"
+              "0.44.0"
             ],
             "type": "string"
           }
@@ -1203,7 +1203,7 @@
     },
     "summary": "Secure execution proxy for upstream APIs — credentials never leave the Broker.",
     "title": "Broker API",
-    "version": "0.43.0"
+    "version": "0.44.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1221,7 +1221,7 @@
                     "value": {
                       "status": "ok",
                       "surface": "broker",
-                      "version": "0.43.0"
+                      "version": "0.44.0"
                     }
                   },
                   "notEntitled": {
