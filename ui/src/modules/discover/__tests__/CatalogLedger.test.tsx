@@ -485,23 +485,19 @@ describe('CatalogLedger', () => {
 		expect(loads.slice(0, 2)).toEqual([true, true]);
 		expect(scrollTo).toHaveBeenCalled();
 		expect(scrollIntoView).not.toHaveBeenCalled();
-		// Earlier sections were not re-ordered while paging: A, B, C, M lead.
-		// Only the lead is checked — the sentinel's own paging may already have
-		// appended the sections after M.
+		// Sections stay in rail order while paging: A, B, C, M at least, then
+		// whatever of N, Z, # the sentinel's own paging has already appended.
+		const order = ['A', 'B', 'C', 'M', 'N', 'Z', 'num'].map((l) => `catalog-letter-${l}`);
 		const headings = [...document.querySelectorAll('[id^="catalog-letter-"]')].map(
 			(el) => el.id,
 		);
-		expect(headings.slice(0, 4)).toEqual([
-			'catalog-letter-A',
-			'catalog-letter-B',
-			'catalog-letter-C',
-			'catalog-letter-M',
-		]);
+		expect(headings.length).toBeGreaterThanOrEqual(4);
+		expect(headings).toEqual(order.slice(0, headings.length));
 		// # (last on the rail) loads the rest; 0–9 & symbols lands after Z.
 		fireEvent.click(within(rail).getByRole('button', { name: /^0–9 & symbols — / }));
 		await waitFor(() => expect(document.getElementById('catalog-letter-num')).not.toBeNull());
 		const all = [...document.querySelectorAll('[id^="catalog-letter-"]')].map((el) => el.id);
-		expect(all.slice(-2)).toEqual(['catalog-letter-Z', 'catalog-letter-num']);
+		expect(all).toEqual(order);
 	});
 
 	it('a landing that arrives later leaves focus alone once the reader has moved on', async () => {

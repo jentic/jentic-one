@@ -30,6 +30,7 @@ async function parkRealCursor(): Promise<void> {
 
 describe('TruncateWithTooltip', () => {
 	beforeEach(parkRealCursor);
+
 	it('renders its children inline', () => {
 		renderWithProviders(<TruncateWithTooltip>short</TruncateWithTooltip>);
 		expect(screen.getByText('short')).toBeInTheDocument();
