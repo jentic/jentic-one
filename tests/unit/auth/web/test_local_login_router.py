@@ -40,7 +40,8 @@ from jentic_one.auth.web.flow import (
 )
 from jentic_one.auth.web.routers import authorize, local_login
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig, PlatformClientConfig
-from jentic_one.shared.state.backend import MemoryStateBackend
+from jentic_one.shared.state.backend import MemoryStateBackend, StateBackendCapacityError
+from jentic_one.shared.web.errors import state_backend_capacity_error_handler
 
 JWT_SECRET = "unit-test-jwt-secret"
 PLATFORM_CLIENT_ID = "platform-app"
@@ -289,6 +290,23 @@ def test_purpose_mutual_rejection_all_directions(ctx: MagicMock, client: TestCli
 
 # ---------------------------------------------------------------------------
 # GET /login — the form.
+
+
+def test_login_page_is_refused_with_503_when_csrf_nonces_are_full(ctx: MagicMock) -> None:
+    """A full ``login-csrf`` namespace refuses the render; it never evicts a live entry."""
+    app = _make_app(ctx)
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
+    app.state.auth_state_backend = MemoryStateBackend(max_entries=2)
+    client = TestClient(app)
+    ls = _signed_state(ctx)
+    assert client.get("/login", params={"ls": ls}).status_code == 200
+    assert client.get("/login", params={"ls": ls}).status_code == 200
+
+    refused = client.get("/login", params={"ls": ls})
+
+    assert refused.status_code == 503
+    assert refused.headers["content-type"] == "application/problem+json"
+    assert int(refused.headers["Retry-After"]) >= 1
 
 
 def test_login_page_renders_with_csrf_and_state(ctx: MagicMock, client: TestClient) -> None:

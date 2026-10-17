@@ -1,0 +1,105 @@
+# Broker perf-suite configuration — mounted read-only into BOTH the `app` and
+# `broker` containers of tests/perf/docker-compose.perf.yaml so they share the
+# encryption keyset and platform secrets (credentials written via the app must
+# decrypt on the broker).
+#
+# LOCAL PERF ONLY: every secret below is throwaway and must never be reused.
+# Variant toggles (streaming, retry, breaker, pool sizes, cache TTLs) are set
+# per run through JENTIC__* environment overrides — see tests/perf/README.md.
+
+databases:
+  registry:
+    host: postgres
+    port: 5432
+    name: jentic
+    user: registry_user
+    password: registry_pass  # pragma: allowlist secret
+    schema_name: registry
+  control:
+    host: postgres
+    port: 5432
+    name: jentic
+    user: control_user
+    password: control_pass  # pragma: allowlist secret
+    schema_name: control
+  admin:
+    host: postgres
+    port: 5432
+    name: jentic
+    user: admin_user
+    password: admin_pass  # pragma: allowlist secret
+    schema_name: admin
+
+runtime:
+  debug: false
+  log_level: WARNING
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  reload: false
+
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: "Zr8m0bF3kC2pQ1vH7wN4xY9tL6sJ5aE0uD3gR8iK2oM="  # pragma: allowlist secret
+  connect:
+    state_secret: "perf-connect-state-secret-0123456789abcdef"  # pragma: allowlist secret
+
+# Token lifetimes (here and `auth.access_ttl_seconds` below) are raised to 6 h,
+# perf stack only: the tools refuse to start unless every token they use
+# outlives the planned run plus 5 min, and the full overhead matrix runs
+# ~54 min per `--repeat`, so the 1 h product default can't fit `--repeat 3`.
+admin:
+  auth:
+    jwt_secret: "perf-admin-jwt-secret-0123456789abcdef0123"  # pragma: allowlist secret
+    jwt_ttl_seconds: 21600
+    # Must be >= jwt_ttl_seconds (config validator).
+    session_ttl_seconds: 43200
+  invite:
+    pepper: "perf-invite-pepper-0123456789abcdef01234567"  # pragma: allowlist secret
+
+auth:
+  # Must be localhost for the SPA's http redirect_uri. The jwt-bearer exchange
+  # also accepts the request's own base URL as an audience, so provisioning from
+  # the host (127.0.0.1:18000) still validates.
+  canonical_base_url: "http://127.0.0.1:8000"
+  # `at_` caller tokens: 6 h, perf stack only (see the note above `admin:`).
+  access_ttl_seconds: 21600
+  idp:
+    enabled: false
+
+# The upstream harness lives on the pinned compose subnet (RFC 1918), which the
+# egress guard blocks by default. A private DNS name is exempted only when it
+# matches BOTH an allowed subnet AND an allowed internal-domain suffix, so every
+# harness alias lives under `.perf.internal` and exactly that is allowlisted.
+ingest:
+  egress:
+    allowed_private_subnets: ["172.28.0.0/24"]
+    allowed_internal_domains: [".perf.internal"]
+
+broker:
+  # GET /jobs/{id} is served by the app surface, not the broker.
+  jobs_api_base_url: "http://app:8000"
+  # HS256 caller-JWT path (dev/test verifier) for the JWT caller-auth scenario.
+  jwt_secret: "perf-broker-hs256-secret-0123456789abcdef"  # pragma: allowlist secret
+  egress:
+    allowed_private_subnets: ["172.28.0.0/24"]
+    allowed_internal_domains: [".perf.internal"]
+  resilience:
+    # Off by default so single-agent load is not 429'd after the 100-req burst;
+    # the rate-limit scenario re-enables it via env.
+    rate_limit:
+      enabled: false
+
+telemetry:
+  enabled: false
+
+observability:
+  metrics:
+    # Mounts /metrics/ on every surface (scraped by the obs profile).
+    exporter: prometheus
+  tracing:
+    exporter: none

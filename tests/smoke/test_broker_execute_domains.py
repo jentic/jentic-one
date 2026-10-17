@@ -18,6 +18,7 @@ Open items resolved in-code:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from urllib.parse import urlparse
@@ -240,7 +241,8 @@ def test_edge_multipart_forwarded_intact(
     ``multipart.encode`` equivalent (a hand-assembled boundary payload) exactly as
     the Go ``mime/multipart.Writer`` would, send it with the boundary-carrying
     ``Content-Type``, and assert the harness parsed both a text field and a file
-    part — proving the boundary survived the round trip through the broker.
+    part — proving the boundary survived the round trip through the broker. The
+    per-part sha256 catches a length-preserving corruption a size check misses.
     """
     _skip_if_no_admin_surface()
 
@@ -273,7 +275,14 @@ def test_edge_multipart_forwarded_intact(
     assert status == 200, f"{status}: {raw!r}"
     parsed = json.loads(raw)
     assert parsed["fields"] == {field_name: field_value}
-    assert parsed["files"] == [{"field": file_field, "filename": filename, "size": len(file_bytes)}]
+    assert parsed["files"] == [
+        {
+            "field": file_field,
+            "filename": filename,
+            "size": len(file_bytes),
+            "sha256": hashlib.sha256(file_bytes).hexdigest(),
+        }
+    ]
 
 
 @pytest.mark.smoke

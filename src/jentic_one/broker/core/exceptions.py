@@ -144,6 +144,15 @@ class IdempotencyInProgressError(BrokerError):
     """
 
 
+class IdempotencyUnavailableError(BrokerError):
+    """The Idempotency-Key claim could not be recorded, so the call was not run (503).
+
+    Raised when the shared-state backend refuses the claim write (the
+    in-process backend's ``idem`` namespace is full). The call is refused
+    rather than run unclaimed, since an unrecorded claim cannot dedupe a retry.
+    """
+
+
 class InvalidRevisionPinError(BrokerError):
     """A ``Jentic-Revision`` pin that fails the spec regex / is unknown / is archived (422).
 

@@ -689,6 +689,16 @@
                   "type": "circuit_open"
                 }
               },
+              "idempotency_unavailable": {
+                "summary": "The Idempotency-Key claim could not be recorded, so the request was not executed.",
+                "value": {
+                  "detail": "The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.",
+                  "error_origin": "broker",
+                  "status": 503,
+                  "title": "The Idempotency-Key claim could not be recorded, so the request was not executed; retry after the indicated delay.",
+                  "type": "idempotency_unavailable"
+                }
+              },
               "server_at_capacity": {
                 "summary": "Instance shed the request at its in-flight admission cap.",
                 "value": {
