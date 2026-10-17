@@ -150,11 +150,17 @@ type catalogListParams struct {
 
 type catalogClient struct {
 	sdk *control.ClientWithResponses
+	// baseURL and verifyShape carry the gate's fallback: when /health didn't
+	// report a parseable version, List and Get check the entries they decode
+	// carry an entry_id (verifyCatalogShape) before handing them out.
+	baseURL     string
+	verifyShape bool
 }
 
 // catalogSession resolves the generated control client for the active context,
 // refuses a server too old to serve the catalog by entry_id
-// (checkCatalogServer), and wraps the client (ARCH-21 A4).
+// (checkCatalogServer), and wraps the client (ARCH-21 A4). When the server
+// doesn't report its version, the client checks the shape of what it reads.
 func (a *app) catalogSession(ctx context.Context) (*catalogClient, error) {
 	sdk, err := a.controlClient(ctx)
 	if err != nil {
@@ -164,10 +170,11 @@ func (a *app) catalogSession(ctx context.Context) (*catalogClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkCatalogServer(ctx, st.BaseURL, sdk); err != nil {
+	verdict, err := checkCatalogServer(ctx, st.BaseURL, sdk)
+	if err != nil {
 		return nil, err
 	}
-	return &catalogClient{sdk: sdk}, nil
+	return &catalogClient{sdk: sdk, baseURL: st.BaseURL, verifyShape: verdict == catalogServerUnknown}, nil
 }
 
 // rawPathEditor forces the request path to be emitted with literal slashes,
@@ -211,6 +218,15 @@ func (c *catalogClient) List(ctx context.Context, p catalogListParams) (*catalog
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
 	}
+	if c.verifyShape {
+		ids := make([]string, 0, len(resp.JSON200.Data))
+		for _, e := range resp.JSON200.Data {
+			ids = append(ids, e.EntryId)
+		}
+		if err := verifyCatalogShape(c.baseURL, ids...); err != nil {
+			return nil, err
+		}
+	}
 	return toCatalogListResult(resp.JSON200), nil
 }
 
@@ -221,6 +237,11 @@ func (c *catalogClient) Get(ctx context.Context, entryID string) (*catalogEntry,
 	}
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
+	}
+	if c.verifyShape {
+		if err := verifyCatalogShape(c.baseURL, resp.JSON200.EntryId); err != nil {
+			return nil, err
+		}
 	}
 	e := toCatalogEntry(*resp.JSON200)
 	return &e, nil
