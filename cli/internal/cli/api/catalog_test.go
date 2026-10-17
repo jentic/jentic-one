@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -362,6 +363,43 @@ func TestCatalogEntryNotFoundPrintsDidYouMean(t *testing.T) {
 				t.Errorf("details = %v, want did_you_mean", coded.Details)
 			}
 		})
+	}
+}
+
+// TestCatalogDidYouMeanIsValidatedAndShellQuoted: a malformed suggestion is
+// dropped, and a well-formed one with shell metacharacters is quoted in the
+// runnable hint (the message and details keep it verbatim).
+func TestCatalogDidYouMeanIsValidatedAndShellQuoted(t *testing.T) {
+	for _, tc := range []struct{ suggestion, wantActionable string }{
+		{"../access-requests", ""},
+		{"public/a\nb", ""},
+		{"internal/acme $(id)", "jentic catalog show 'internal/acme $(id)'"},
+		{"internal/o'brien.com", `jentic catalog show 'internal/o'\''brien.com'`},
+	} {
+		body, _ := json.Marshal(map[string]any{"status": 404, "did_you_mean": tc.suggestion})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write(body)
+		}))
+		err := testApp(t).catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "stripe.com")
+		srv.Close()
+		var coded *ux.CodedError
+		if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+			t.Fatalf("%q: want RESOLVE_FAILED, got %v", tc.suggestion, err)
+		}
+		if tc.wantActionable == "" {
+			if strings.Contains(coded.Msg, "did you mean") || coded.Details["did_you_mean"] != nil {
+				t.Errorf("%q: a malformed suggestion was relayed: %q %v", tc.suggestion, coded.Msg, coded.Details)
+			}
+			continue
+		}
+		if coded.Actionable != tc.wantActionable {
+			t.Errorf("%q: actionable = %q, want %q", tc.suggestion, coded.Actionable, tc.wantActionable)
+		}
+		if coded.Details["did_you_mean"] != tc.suggestion {
+			t.Errorf("%q: details = %v, want the suggestion verbatim", tc.suggestion, coded.Details)
+		}
 	}
 }
 

@@ -497,15 +497,32 @@ func catalogEntryErr(err error, entryID, subcommand string) error {
 	}
 	if suggestion != "" {
 		coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
-		coded.Actionable = fmt.Sprintf("jentic catalog %s %s", subcommand, suggestion)
+		coded.Actionable = fmt.Sprintf("jentic catalog %s %s", subcommand, shellQuote(suggestion))
 		coded.Details = map[string]any{"did_you_mean": suggestion}
 	}
 	return coded
 }
 
 // didYouMean reads the catalog 404 body's did_you_mean (the visible entry_id
-// for an id given in the old catalog_api_id form), or "" when absent.
+// for an id given in the old catalog_api_id form), or "" when absent. A
+// suggestion that isn't a well-formed entry_id (checkEntryID) is dropped: it
+// is relayed into a runnable hint, so only an id that can name an entry is.
 func didYouMean(he *HTTPError) string {
 	s, _ := he.Fields()["did_you_mean"].(string)
-	return strings.TrimSpace(s)
+	s = strings.TrimSpace(s)
+	if s == "" || checkEntryID(s) != nil {
+		return ""
+	}
+	return s
+}
+
+// shellQuote renders s as one POSIX shell word: bare when it holds only
+// characters no shell treats specially, else single-quoted ('\” for a quote).
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("/._-:@+=,", r)
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
