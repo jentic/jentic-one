@@ -224,6 +224,17 @@ def test_cpu_analysers_survive_a_torn_frame_name_without_corrupting_the_others(
     ]
 
 
+def test_raw_lines_split_on_newline_only(tmp_path: Path) -> None:
+    raw = tmp_path / "profile.txt"
+    # \x1c and \u2028 are str.splitlines() boundaries; a torn name can carry them.
+    raw.write_bytes("a (x.py:1);to\x1cr\u2028n (y.py:2) 4\r\nb (z.py:3) 1\n".encode())
+    assert pyspy_profile.raw_lines(raw) == [
+        "a (x.py:1);to\x1cr\u2028n (y.py:2) 4",
+        "b (z.py:3) 1",
+    ]
+    assert pyspy_profile.analyse(raw)["samples"] == 5
+
+
 def test_broker_env_drift_reports_traced_or_variant_broker() -> None:
     expected = {"PYTHONPATH": "", "PERF_TRACE": "", "JENTIC__X": "true", "EMPTY": None}
     actual = {"PYTHONPATH": "/perf-hooks", "PERF_TRACE": "sql", "JENTIC__X": "true"}

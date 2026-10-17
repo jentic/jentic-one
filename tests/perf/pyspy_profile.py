@@ -165,8 +165,12 @@ def raw_lines(raw: Path) -> list[str]:
     py-spy copies frame names out of the target's memory as raw bytes; a sample
     torn mid-update can carry invalid UTF-8. Replacement only touches the torn
     name: the ``;`` separators and the trailing count are ASCII and survive.
+    Lines split on ``\\n`` only: ``str.splitlines`` also breaks on control
+    characters (``\\x0b``, ``\\x1c``…, ``\\u2028``) that a torn name can carry,
+    which would orphan the sample count.
     """
-    return raw.read_text(encoding="utf-8", errors="replace").splitlines()
+    text = raw.read_text(encoding="utf-8", errors="replace")
+    return [line.rstrip("\r") for line in text.split("\n") if line]
 
 
 def analyse(raw: Path, top: int = 25) -> dict[str, Any]:
