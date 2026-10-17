@@ -28,6 +28,8 @@ from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_entry_id
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
+    CatalogSourceUnavailableError,
+    CatalogSpecGoneError,
     OverlaySupersedeForbiddenError,
     RevisionStateConflictError,
 )
@@ -755,6 +757,32 @@ async def test_overlay_supersede_refusal_maps_to_broker_denied(services: None) -
     assert payload["error_code"] == "BROKER_DENIED"
     assert "overlays:confirm" in payload["error"]
     assert "operator" in payload["actionable_step"]
+
+
+async def test_catalog_spec_gone_is_not_retryable(services: None) -> None:
+    """The entry's source has no spec for it: steer to another hit, never a retry."""
+    _FakeCatalogService.import_error = CatalogSpecGoneError("corp/stripe.com")
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "corp/stripe.com"})
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == "search_catalog"
+
+
+async def test_catalog_source_unavailable_is_retryable_with_wait(services: None) -> None:
+    """A throttled source is transient: retryable, with the wait the source asked for."""
+    _FakeCatalogService.import_error = CatalogSourceUnavailableError(
+        "corp/stripe.com", retry_after_s=12.2
+    )
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "corp/stripe.com"})
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["retryable"] is True
+    assert payload["retry_after_s"] == 13
 
 
 async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> None:
