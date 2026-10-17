@@ -8,19 +8,33 @@ from typing import Any
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import ActorDirectoryRepository
-from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.admin.scoping.filters import build_access_filters, build_lookup_user_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.schemas.actors import ActorView
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
+from jentic_one.shared.lookups import CredentialCreatorLookupProtocol
 from jentic_one.shared.models import ActorType
 
 
 class ActorService:
-    """Provides a unified read-only view across all actor types."""
+    """Provides a unified read-only view across all actor types.
 
-    def __init__(self, ctx: Context) -> None:
+    ``credential_creators`` resolves which users created a credential the
+    caller can read; it lives with the credentials, so the composition root
+    passes it in. Without it (an admin process that does not serve the
+    credentials), :meth:`lookup` labels no user through that relation.
+    """
+
+    def __init__(
+        self,
+        ctx: Context,
+        *,
+        credential_creators: CredentialCreatorLookupProtocol | None = None,
+    ) -> None:
         self._ctx = ctx
+        self._credential_creators = credential_creators
 
     async def list_all(
         self,
@@ -31,10 +45,9 @@ class ActorService:
     ) -> Page[ActorView]:
         """List the actor directory, scoped to the caller.
 
-        Unlike :meth:`lookup`, this enumerates, so both arms are scoped: users
-        by ``build_access_filters(identity, User)`` (a non-admin lists only
-        themselves) and agents by ``build_access_filters(identity, Agent)``.
-        ``org:admin`` lists everyone.
+        Both arms are scoped: users by ``build_access_filters(identity, User)``
+        (a non-admin lists only themselves) and agents by
+        ``build_access_filters(identity, Agent)``. ``org:admin`` lists everyone.
         """
         cursor_dt = None
         cursor_id: str | None = None
@@ -67,24 +80,49 @@ class ActorService:
     async def lookup(self, ids: Sequence[str], *, identity: Identity) -> list[ActorView]:
         """Resolve the given actor ids to display fields, scoped to the caller.
 
-        Agents are filtered by the caller's agent visibility
-        (``build_access_filters(identity, Agent)``): a non-admin resolves only
-        agents it may see, the same set ``GET /agents/{id}`` answers for, and
-        any other agent id is omitted exactly like an unknown id.
+        Only actors the caller can already see are resolved. Any other id is
+        left out exactly like an unknown id, so the response does not reveal
+        whether it exists.
 
-        Users are deliberately NOT scoped: the caller sees user ids as the
-        owner, approver or registrar of agents and as the actor on events it
-        can read, and labelling those needs the user's display name. Only the
-        display fields are returned, for ids the caller already holds; there is
-        no listing or search, so this does not enumerate users.
+        - Agents: the caller's agent visibility
+          (``build_access_filters(identity, Agent)``), the same set
+          ``GET /agents/{id}`` answers for.
+        - Users (``build_lookup_user_filters``): the caller itself, the owner
+          or approver of an agent it can see, the actor of an event or audit
+          entry it can see, and the creator of a credential it can read
+          (shared credentials included, through the credential read scoping).
+
+        ``org:admin`` resolves every actor. ``users:read`` does not widen
+        this: it reads only the caller's own user row elsewhere too. There is
+        no listing or search. Cost: one directory query, plus one credential
+        read for the creator relation, each bounded by ``ids``.
         """
         unique_ids = list(dict.fromkeys(ids))
+        if not unique_ids:
+            return []
+        creator_ids = await self._visible_credential_creators(unique_ids, identity=identity)
         agent_filters = build_access_filters(identity, Agent)
+        user_filters = build_lookup_user_filters(identity, extra_user_ids=creator_ids)
         async with self._ctx.admin_db.session() as session:
             rows = await ActorDirectoryRepository.get_by_ids(
-                session, unique_ids, agent_filters=agent_filters
+                session, unique_ids, agent_filters=agent_filters, user_filters=user_filters
             )
         return [_to_view(row) for row in rows]
+
+    async def _visible_credential_creators(
+        self, ids: Sequence[str], *, identity: Identity
+    ) -> set[str]:
+        """The ids in ``ids`` that created a credential the caller can read.
+
+        ``org:admin`` already resolves every user, and the caller always
+        resolves itself, so neither needs the credential query.
+        """
+        if self._credential_creators is None or ORG_ADMIN in identity.permissions:
+            return set()
+        candidates = [i for i in ids if i != identity.sub]
+        if not candidates:
+            return set()
+        return await self._credential_creators.visible_creator_ids(candidates, identity=identity)
 
 
 def _to_view(row: Any) -> ActorView:

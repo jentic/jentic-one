@@ -33,7 +33,10 @@ def _member_headers(ctx: Context, user_id: str) -> dict[str, str]:
 
 
 @pytest.fixture()
-async def agent_id(web_context: Context, managed_user_id: str) -> AsyncGenerator[str, None]:
+async def agent_id(
+    web_context: Context, managed_user_id: str, admin_user_id: str
+) -> AsyncGenerator[str, None]:
+    """The member's own agent, approved by the admin."""
     async with web_context.admin_db.session() as session:
         agent = await AgentRepository.create(
             session,
@@ -43,6 +46,7 @@ async def agent_id(web_context: Context, managed_user_id: str) -> AsyncGenerator
             created_by=managed_user_id,
             status=ActorStatus.ACTIVE,
         )
+        agent.approved_by = admin_user_id
         await session.commit()
         created = agent.id
     yield created
@@ -110,11 +114,13 @@ def test_member_resolves_names_by_id(
     managed_user_id: str,
     agent_id: str,
 ) -> None:
+    """The member resolves itself, its agent, and that agent's approver."""
     resp = unauthed_client.get(
         "/actors/lookup",
         params=[
             ("id", admin_user_id),
             ("id", agent_id),
+            ("id", managed_user_id),
             ("id", "usr_does_not_exist"),
             ("id", admin_user_id),
         ],
@@ -122,7 +128,7 @@ def test_member_resolves_names_by_id(
     )
     assert resp.status_code == 200, resp.text
     data = {entry["id"]: entry for entry in resp.json()["data"]}
-    assert set(data) == {admin_user_id, agent_id}
+    assert set(data) == {admin_user_id, agent_id, managed_user_id}
     assert data[admin_user_id] == {
         "id": admin_user_id,
         "actor_type": "user",
@@ -135,6 +141,27 @@ def test_member_resolves_names_by_id(
         "name": "lookup-web-agent",
         "active": True,
     }
+
+
+def test_member_lookup_of_unrelated_user_matches_unknown_id(
+    unauthed_client: TestClient,
+    authed_client: TestClient,
+    web_context: Context,
+    admin_user_id: str,
+    managed_user_id: str,
+) -> None:
+    """A user unrelated to the member answers byte-for-byte like an id that does not exist."""
+    headers = _member_headers(web_context, managed_user_id)
+    unrelated = unauthed_client.get("/actors/lookup", params={"id": admin_user_id}, headers=headers)
+    unknown = unauthed_client.get(
+        "/actors/lookup", params={"id": "usr_does_not_exist"}, headers=headers
+    )
+    assert unrelated.status_code == unknown.status_code == 200
+    assert unrelated.content == unknown.content
+    assert unrelated.json() == {"data": []}
+    # An admin resolves the same id.
+    resp = authed_client.get("/actors/lookup", params={"id": managed_user_id})
+    assert [a["id"] for a in resp.json()["data"]] == [managed_user_id]
 
 
 def test_member_cannot_list_full_directory(

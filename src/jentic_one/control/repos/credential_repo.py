@@ -223,6 +223,27 @@ class CredentialRepository:
         return {row.id: row.created_by for row in result}
 
     @staticmethod
+    async def get_creators_among(
+        session: AsyncSession,
+        actor_ids: Sequence[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> set[str]:
+        """Return the ids in ``actor_ids`` that created a credential matching ``filters``."""
+        if not actor_ids:
+            return set()
+        stmt = (
+            select(Credential.created_by)
+            .where(Credential.created_by.in_(list(actor_ids)))
+            .distinct()
+        )
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return {row for row in result.scalars().all() if row is not None}
+
+    @staticmethod
     async def get_registration_display_names(
         session: AsyncSession, ids: list[str]
     ) -> dict[str, str]:
