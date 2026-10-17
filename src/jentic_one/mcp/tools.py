@@ -936,13 +936,12 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
     try:
         return await CatalogService(env.ctx).import_entry(api_id, env.identity)
     except CatalogEntryNotFoundError as exc:
+        # Hidden and missing ids get the same text; the hint names only an
+        # entry the agent can see.
         hint = f" — did you mean {exc.did_you_mean!r}?" if exc.did_you_mean else ""
-        raise ToolError(
-            CODE_RESOLVE_FAILED,
-            f"catalog entry {api_id!r} not found{hint}",
-            actionable="Call search_catalog with a keyword for the API you need and pass "
-            "the entry_id of one of its hits as api_id.",
-            next_tool="search_catalog",
+        raise invalid_params(
+            f"catalog entry {api_id!r} not found{hint}; call search_catalog with a keyword "
+            "for the API you need and pass the entry_id of one of its hits as api_id"
         ) from None
     except OverlaySupersedeForbiddenError as exc:
         # An arm Go never sees distinctly: re-importing would supersede an

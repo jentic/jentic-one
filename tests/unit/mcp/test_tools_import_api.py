@@ -19,6 +19,7 @@ from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock
 
 import pytest
+from mcp import types as mcp_types
 from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
@@ -656,15 +657,24 @@ async def test_db_gate_refusal_is_a_soft_internal_error(services: None, blocked:
 # ── filing-time error arms ───────────────────────────────────────────────────
 
 
-async def test_unknown_catalog_entry_is_resolve_failed(services: None) -> None:
+async def test_unknown_catalog_entry_is_invalid_params(services: None) -> None:
     _FakeCatalogService.import_error = CatalogEntryNotFoundError("nope/nothing")
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "nope/nothing"})
-    assert result.is_error
-    payload = _payload(result)
-    assert payload["error_code"] == "RESOLVE_FAILED"
-    assert payload["next_tool"] == "search_catalog"
-    assert "nope/nothing" in payload["error"]
+    with pytest.raises(MCPError) as err:
+        await dispatch_tool_call(env, "import_api", {"api_id": "nope/nothing"})
+    assert err.value.error.code == mcp_types.INVALID_PARAMS
+    assert "nope/nothing" in str(err.value)
+    assert "search_catalog" in str(err.value)
+
+
+async def test_unknown_catalog_entry_carries_the_did_you_mean_hint(services: None) -> None:
+    _FakeCatalogService.import_error = CatalogEntryNotFoundError(
+        "stripe.com", did_you_mean="public/stripe.com"
+    )
+    env = _env(["catalog:import", "jobs:read"])
+    with pytest.raises(MCPError) as err:
+        await dispatch_tool_call(env, "import_api", {"api_id": "stripe.com"})
+    assert "did you mean 'public/stripe.com'" in str(err.value)
 
 
 async def test_overlay_supersede_refusal_maps_to_broker_denied(services: None) -> None:
