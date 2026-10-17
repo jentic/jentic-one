@@ -4,6 +4,10 @@ A user who opens a session without an agent picks one on confirm. An agent
 they do not own, and one that does not exist, get the same refusal as
 ``POST /integrations:connect`` gives for an unknown agent, and nothing is
 written for either.
+
+A session an agent started already names its agent, shown in the review, so
+a token holder who does not own that agent is told the approval is not
+theirs to make.
 """
 
 from __future__ import annotations
@@ -14,16 +18,19 @@ import pytest
 from httpx import Response
 from sqlalchemy import text
 
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from tests.integration.control.connect_sec.support import (
     AGENT_ID,
     API_BODY,
     FOREIGN_AGENT_ID,
     KEY_SCHEME,
+    OTHER_OWNER,
     OWNER,
     RULES,
     TARGET,
     client,
+    connect,
     import_spec,
     is_bound,
     session_row,
@@ -52,21 +59,36 @@ def _body(resp: Response, agent_id: str, *, drop_instance: bool = False) -> dict
     return normalised
 
 
-async def _late_bind(ctx: Context, session_id: str, poll_token: str, agent_id: str) -> Response:
-    review = await svc(ctx).get_review_data(session_id, poll_token=poll_token, identity=OWNER)
-    body = {
+async def _confirm(
+    ctx: Context,
+    session_id: str,
+    poll_token: str,
+    *,
+    caller: Identity = OWNER,
+    agent_id: str | None = None,
+    expected_agent_id: str | None = None,
+) -> Response:
+    review = await svc(ctx).get_review_data(session_id, poll_token=poll_token, identity=caller)
+    body: dict[str, Any] = {
         "kind": "api_key",
         "key": _CANARY,
         "permission_rules": RULES,
-        "agent_id": agent_id,
         "digest": review.digest,
     }
-    async with client(ctx, OWNER) as owner:
-        return await owner.post(
+    if agent_id is not None:
+        body["agent_id"] = agent_id
+    if expected_agent_id is not None:
+        body["expected_agent_id"] = expected_agent_id
+    async with client(ctx, caller) as http:
+        return await http.post(
             f"/connect-sessions/{session_id}:confirm",
             params={"poll_token": poll_token},
             json=body,
         )
+
+
+async def _late_bind(ctx: Context, session_id: str, poll_token: str, agent_id: str) -> Response:
+    return await _confirm(ctx, session_id, poll_token, agent_id=agent_id)
 
 
 async def _rule_count(ctx: Context, agent_id: str) -> int:
@@ -120,4 +142,35 @@ async def test_late_bound_foreign_agent_matches_a_missing_agent_and_the_create_p
     row = await session_row(env, created.session_id)
     assert row is not None and row.agent_id == AGENT_ID
     assert row.credential_id is not None
+    assert await is_bound(env, AGENT_ID, row.credential_id)
+
+
+async def test_agent_started_session_refuses_a_token_holder_who_does_not_own_the_agent(
+    env: Context,
+) -> None:
+    """The agent is already named on the session, so the refusal says the approval isn't theirs.
+
+    The agent's owner still confirms it.
+    """
+    await import_spec(env, KEY_SCHEME)
+    created = await connect(env)
+
+    refused = await _confirm(
+        env,
+        created.session_id,
+        created.poll_token,
+        caller=OTHER_OWNER,
+        expected_agent_id=AGENT_ID,
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["type"] == "connect_session_confirmation_forbidden"
+    assert _CANARY not in refused.text
+    assert await _rule_count(env, AGENT_ID) == 0
+    row = await session_row(env, created.session_id)
+    assert row is not None and row.state == "created"
+
+    own = await _confirm(env, created.session_id, created.poll_token, expected_agent_id=AGENT_ID)
+    assert own.status_code == 200, own.text
+    row = await session_row(env, created.session_id)
+    assert row is not None and row.credential_id is not None
     assert await is_bound(env, AGENT_ID, row.credential_id)
