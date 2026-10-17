@@ -102,8 +102,8 @@ func TestRegisterMCPEntriesSkipsQuietlyWithoutActiveContext(t *testing.T) {
 	stubDetect(t, app, tmp, tmp)
 
 	got := app.registerMCPEntries(t.Context(), targetsFor(t, "cursor"), false)
-	if got != nil {
-		t.Fatalf("outcomes = %v, want nil without an active context", got)
+	if got.outcomes != nil || got.results != nil || got.skippedReason != mcpSkippedNoContext {
+		t.Fatalf("registration = %+v, want no outcomes and skipped_reason %q without an active context", got, mcpSkippedNoContext)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".cursor", "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("mcp.json stat err = %v, want not-exist (nothing must be written without a context to pin)", err)
