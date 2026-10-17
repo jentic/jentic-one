@@ -240,6 +240,49 @@ These `Test*` subclasses are collected by pytest and fail loudly if your
 implementation diverges from the built-in contract — the same guard the OSS
 suite runs against its own defaults ([`tests/unit/testing/test_compliance_oss.py`](../../tests/unit/testing/test_compliance_oss.py)).
 
+#### Catalog source kinds
+
+A catalog source kind (a class registered with
+`register_catalog_source_kind`, from
+`jentic_one.registry.services.catalog.sources`) lists the entries a backend
+offers and fetches one entry's spec. Its interface is **provisional** and may
+still change. Prove a kind honours the seam by subclassing `SourceContract`:
+it checks that `is_full` is declared before iteration, `summary()` is only
+valid once the listing is drained, `NotModified` is honoured when the kind
+declares conditional fetch, `SpecGoneError` / `SourceUnavailableError` reach
+the caller unchanged, and that the kind builds no HTTP client of its own (all
+I/O goes through the `SourceDeps` it is built with). `seed_http` loads the
+in-memory `FakeSourceHttp` the kit hands your source.
+
+```python
+# my_ext/tests/test_my_source_contract.py
+from jentic_one.testing import FakeSourceHttp, SourceContract
+
+from my_ext.sources import MySource
+
+
+class TestMySourceContract(SourceContract):
+    def build_source(self, deps):
+        return MySource(MySource.config_model(url="https://index.example/apis.json"), deps=deps)
+
+    def seed_http(self, http: FakeSourceHttp) -> None:
+        http.json_responses["https://index.example/apis.json"] = {...}
+        http.bytes_responses["https://index.example/specs/a.json"] = b"{...}"
+```
+
+For sync and catalog tests that need sources without a network, call
+`register_static_source_kind()` once (the test-only `static` kind is never
+registered at import or in production) and configure `static` sources with
+`static_source_config(slug, entries)`, or generate a deterministic catalog
+with `synthetic_catalog(n, sources)`:
+
+```python
+from jentic_one.testing import register_static_source_kind, synthetic_catalog
+
+register_static_source_kind()
+config.catalog.sources = synthetic_catalog(500, ["team-a", "team-b"])
+```
+
 ### 4. (Optional) Compose your own CLI binary
 
 The Go CLI exposes an importable `pkg/core` container + root builder. Build your
