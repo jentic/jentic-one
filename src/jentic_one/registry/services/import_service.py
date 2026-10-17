@@ -138,6 +138,8 @@ class ImportHandler:
                         # Server-host change guard: kept as a draft for operator review.
                         revisions[-1]["held_for_review"] = True
                         revisions[-1]["host_change"] = held.model_dump()
+                    if result.server_url_changes is not None:
+                        revisions[-1]["server_url_changes"] = result.server_url_changes.model_dump()
                     await record_audit_best_effort(
                         self._ctx,
                         action=AuditAction.CREATE,

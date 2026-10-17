@@ -2439,3 +2439,38 @@ async def test_upsert_keeps_current_revision_loaded_in_the_session(
         assert again is not None
         assert again.current_revision is not None
         assert again.current_revision.id == locked.current_revision_id
+
+
+async def test_import_job_result_reports_server_url_changes(
+    integration_context: Context,
+    _clean_registry: None,
+) -> None:
+    """The importer sees which declared servers ingest rewrote or dropped (#1241),
+    so a server the stored spec no longer carries is never a silent change."""
+    content = json.loads(MINIMAL_OPENAPI)
+    content["servers"] = [{"url": "https://items.example.com/v1"}, {"url": "/v1"}]
+    payload = {
+        "sources": [
+            {
+                "type": "inline",
+                "content": json.dumps(content),
+                "filename": "openapi.json",
+                "vendor": "servers-vendor",
+                "api_name": "servers-api",
+                "version": "1.0.0",
+            }
+        ]
+    }
+
+    result = await ImportHandler(integration_context).execute(
+        job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_test"
+    )
+
+    assert result.body["revisions"][0]["server_url_changes"] == {
+        "resolved": [],
+        "resolved_count": 0,
+        "dropped": ["/v1"],
+        "dropped_count": 1,
+        "unresolved": [],
+        "unresolved_count": 0,
+    }
