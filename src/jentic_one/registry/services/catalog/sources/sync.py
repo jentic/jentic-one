@@ -72,8 +72,11 @@ from jentic_one.registry.services.catalog.entries import (
     resolver_inputs_digest,
 )
 from jentic_one.registry.services.catalog.sources import digests, metrics, sanitize
-from jentic_one.registry.services.catalog.sources.auth import build_source_auth
-from jentic_one.registry.services.catalog.sources.deps import SourceDeps, build_source_deps
+from jentic_one.registry.services.catalog.sources.deps import (
+    SourceDeps,
+    build_source_deps,
+    ensure_source_buckets,
+)
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
     ListStream,
@@ -226,9 +229,7 @@ class CatalogSourceSync:
         return self._sources
 
     def _default_deps(self, cfg: CatalogSourceConfig) -> SourceDeps:
-        return build_source_deps(
-            cfg.slug, ingest=self._ctx.config.ingest, auth=build_source_auth(cfg.auth)
-        )
+        return build_source_deps(self._ctx, cfg)
 
     def build_source(self, cfg: CatalogSourceConfig) -> CatalogSource:
         factory = resolve_catalog_source_kind(cfg.kind)
@@ -298,6 +299,7 @@ class CatalogSourceSync:
                     row.reresolve_wanted_at = utcnow()
                     logger.info("catalog_source_reresolve_flagged", source=cfg.slug)
             (await self._resolver(session)).report_unmatched()
+        await ensure_source_buckets(self._ctx)
 
     async def mark_stale_wanted(self) -> int:
         """Flag enabled, auto-syncing sources whose last sync is older than their max age.

@@ -29,7 +29,7 @@ from unittest import mock
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from jentic_one.registry.services.catalog.sources.deps import SourceDeps
+from jentic_one.registry.services.catalog.sources.deps import FetchLane, SourceDeps
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
     EntryChange,
@@ -83,13 +83,17 @@ class FakeSourceHttp:
         if self.fail_with is not None:
             raise self.fail_with
 
-    async def get_json(self, url: str) -> dict[str, Any]:
+    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
+        del lane
         self._check(url)
         if url not in self.json_responses:
             raise SpecGoneError(f"no canned JSON for {url}")
         return self.json_responses[url]
 
-    async def get_bytes(self, url: str, *, validator: str | None = None) -> SpecFetch:
+    async def get_bytes(
+        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+    ) -> SpecFetch:
+        del lane
         self._check(url)
         if url not in self.bytes_responses:
             raise SpecGoneError(f"no canned bytes for {url}")

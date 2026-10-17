@@ -1,29 +1,52 @@
 """Everything a catalog source connector is allowed to use for I/O.
 
 A connector gets one ``SourceDeps`` when it is built and makes every outbound
-call through ``deps.http``. The default client is a thin wrapper over the
-catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``): it shares their
-redirect, size and egress guards and classifies failures into the seam's two
-error types. ``limits`` is the per-source concurrency gate; the default never
-blocks.
+call through ``deps.http``. The production client (:func:`build_source_deps`)
+wraps the catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``) with:
+
+- one pooled ``httpx.AsyncClient`` per source per process, over the egress-pinned
+  transport, closed when the context shuts down;
+- the source's auth headers (sent only to the origin of each request URL);
+- ``CATALOG_USER_AGENT``;
+- the source's fetch limits (``limits.py``): every request holds a slot on its
+  lane, and a ``429`` blocks the source for its ``Retry-After``.
+
+Failures are classified into the seam's two error types: ``404``/``410`` is
+``SpecGoneError``, everything else ``SourceUnavailableError``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
+
+import httpx
 
 from jentic_one.registry.services.catalog.fetch import (
+    CATALOG_USER_AGENT,
     CatalogFetchError,
     fetch_bytes_conditional,
     fetch_json,
 )
-from jentic_one.registry.services.catalog.sources.auth import NoAuthResolver, SourceAuthResolver
+from jentic_one.registry.services.catalog.sources import metrics
+from jentic_one.registry.services.catalog.sources.auth import (
+    NoAuthResolver,
+    SourceAuthResolver,
+    build_source_auth,
+)
+from jentic_one.registry.services.catalog.sources.bucket import DbRateBucket
+from jentic_one.registry.services.catalog.sources.limits import (
+    FetchLane,
+    MemoryRateBucket,
+    ProcessSourceLimits,
+    RateBucket,
+)
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
     SourceUnavailableError,
@@ -31,81 +54,67 @@ from jentic_one.registry.services.catalog.sources.protocol import (
     SpecFetch,
     SpecGoneError,
 )
-from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.config import CatalogSourceConfig, IngestConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.egress import build_pinned_transport
 
-#: The ``User-Agent`` catalog source requests announce themselves with.
-CATALOG_USER_AGENT = "jentic-one-catalog/1 (+https://github.com/jentic/jentic-one)"
+__all__ = [
+    "CATALOG_USER_AGENT",
+    "FetchLane",
+    "GuardedSourceHttpClient",
+    "SourceDeps",
+    "SourceHttpClient",
+    "SourceLimits",
+    "UnboundedSourceLimits",
+    "build_source_deps",
+    "ensure_source_buckets",
+]
 
 #: Upstream statuses that mean "this spec is permanently gone".
 _GONE_STATUSES = frozenset({404, 410})
 
-FetchLane = Literal["interactive", "background"]
-
 
 class SourceHttpClient(Protocol):
-    """The only HTTP surface a connector may use."""
+    """The only HTTP surface a connector may use.
 
-    async def get_json(self, url: str) -> dict[str, Any]:
+    ``lane`` picks the fetch-limit lane: listings default to ``background``,
+    spec fetches (preview, import, the update sweep) to ``interactive``.
+    """
+
+    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
         """GET ``url`` and decode a JSON object."""
         ...
 
-    async def get_bytes(self, url: str, *, validator: str | None = None) -> SpecFetch:
+    async def get_bytes(
+        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+    ) -> SpecFetch:
         """GET ``url``'s raw bytes, conditionally on ``validator`` (an ETag)."""
         ...
 
 
 class SourceLimits(Protocol):
-    """Per-source fetch limits; ``slot`` holds one unit of capacity."""
+    """Per-source fetch limits."""
 
-    def slot(self, lane: FetchLane) -> Any: ...
+    def slot(self, lane: FetchLane) -> Any:
+        """An async context manager holding one request's capacity on ``lane``."""
+        ...
+
+    async def block(self, seconds: float | None) -> float:
+        """Block both lanes after a ``429``; returns how long."""
+        ...
 
 
 class UnboundedSourceLimits:
-    """Limits that never block."""
+    """Limits that never wait (tests and fakes)."""
 
     @asynccontextmanager
     async def slot(self, lane: FetchLane) -> AsyncIterator[None]:
         del lane
         yield
 
-
-def _classify(exc: CatalogFetchError) -> Exception:
-    if exc.status_code in _GONE_STATUSES:
-        return SpecGoneError(str(exc))
-    return SourceUnavailableError(str(exc))
-
-
-class GuardedSourceHttpClient:
-    """``SourceHttpClient`` over the SSRF-guarded catalog fetch helpers.
-
-    A 404/410 answer becomes ``SpecGoneError``; every other failure (5xx, 429,
-    timeout, guard rejection, unparsable body) becomes ``SourceUnavailableError``.
-    """
-
-    def __init__(self, ingest: IngestConfig) -> None:
-        self._ingest = ingest
-
-    async def get_json(self, url: str) -> dict[str, Any]:
-        try:
-            return await fetch_json(url, config=self._ingest)
-        except CatalogFetchError as exc:
-            raise _classify(exc) from exc
-
-    async def get_bytes(self, url: str, *, validator: str | None = None) -> SpecFetch:
-        try:
-            result = await fetch_bytes_conditional(url, config=self._ingest, etag=validator)
-        except CatalogFetchError as exc:
-            raise _classify(exc) from exc
-        if result.not_modified:
-            return NotModified(validator=result.etag or validator or "")
-        content = result.content or b""
-        return SpecBody(
-            content=content,
-            media_type=_media_type(content),
-            validator=result.etag,
-            digest=result.digest or hashlib.sha256(content).hexdigest(),
-        )
+    async def block(self, seconds: float | None) -> float:
+        return seconds or 0.0
 
 
 def _media_type(content: bytes) -> str:
@@ -114,6 +123,81 @@ def _media_type(content: bytes) -> str:
     except ValueError:
         return "application/yaml"
     return "application/json"
+
+
+class GuardedSourceHttpClient:
+    """``SourceHttpClient`` over the SSRF-guarded catalog fetch helpers."""
+
+    def __init__(
+        self,
+        slug: str,
+        ingest: IngestConfig,
+        *,
+        limits: SourceLimits | None = None,
+        auth: SourceAuthResolver | None = None,
+        client: Callable[[], httpx.AsyncClient | None] | None = None,
+        user_agent: str = CATALOG_USER_AGENT,
+    ) -> None:
+        self._slug = slug
+        self._ingest = ingest
+        self._limits: SourceLimits = limits or UnboundedSourceLimits()
+        self._auth: SourceAuthResolver = auth or NoAuthResolver()
+        self._client = client or (lambda: None)
+        self._user_agent = user_agent
+
+    async def _failed(self, exc: CatalogFetchError) -> Exception:
+        if exc.status_code in _GONE_STATUSES:
+            metrics.record_fetch(self._slug, metrics.FETCH_GONE)
+            return SpecGoneError(str(exc))
+        metrics.record_fetch(self._slug, metrics.FETCH_TRANSIENT)
+        retry_after = exc.retry_after_s
+        if exc.status_code == 429:
+            retry_after = await self._limits.block(retry_after)
+        return SourceUnavailableError(str(exc), retry_after_s=retry_after)
+
+    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
+        async with self._limits.slot(lane):
+            headers = dict(await self._auth.headers())
+            try:
+                doc = await fetch_json(
+                    url,
+                    config=self._ingest,
+                    client=self._client(),
+                    user_agent=self._user_agent,
+                    headers=headers,
+                )
+            except CatalogFetchError as exc:
+                raise await self._failed(exc) from exc
+        metrics.record_fetch(self._slug, metrics.FETCH_BODY)
+        return doc
+
+    async def get_bytes(
+        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+    ) -> SpecFetch:
+        async with self._limits.slot(lane):
+            headers = dict(await self._auth.headers())
+            try:
+                result = await fetch_bytes_conditional(
+                    url,
+                    config=self._ingest,
+                    etag=validator,
+                    client=self._client(),
+                    user_agent=self._user_agent,
+                    headers=headers,
+                )
+            except CatalogFetchError as exc:
+                raise await self._failed(exc) from exc
+        if result.not_modified:
+            metrics.record_fetch(self._slug, metrics.FETCH_NOT_MODIFIED)
+            return NotModified(validator=result.etag or validator or "")
+        metrics.record_fetch(self._slug, metrics.FETCH_BODY)
+        content = result.content or b""
+        return SpecBody(
+            content=content,
+            media_type=_media_type(content),
+            validator=result.etag,
+            digest=result.digest or hashlib.sha256(content).hexdigest(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,13 +213,138 @@ class SourceDeps:
     clock: Callable[[], datetime] = utcnow
 
 
-def build_source_deps(
-    slug: str, *, ingest: IngestConfig, auth: SourceAuthResolver | None = None
-) -> SourceDeps:
-    """The production ``SourceDeps`` for one source."""
-    return SourceDeps(
-        slug=slug,
-        http=GuardedSourceHttpClient(ingest),
-        auth=auth or NoAuthResolver(),
-        max_spec_bytes=ingest.max_spec_bytes,
+# ── per-process source runtime ────────────────────────────────────────────────
+
+
+class _SourceRuntime:
+    """The pooled client and limits one source shares across this process."""
+
+    def __init__(self, ctx: Context, cfg: CatalogSourceConfig) -> None:
+        ingest = ctx.config.ingest
+        self._ingest = ingest
+        self._concurrency = cfg.fetch_concurrency
+        self.limits = ProcessSourceLimits(
+            cfg.slug,
+            concurrency=cfg.fetch_concurrency,
+            interactive_share=cfg.interactive_share,
+            bucket=_rate_bucket(ctx, cfg),
+            max_wait_s=ingest.fetch_timeout_s,
+        )
+        self._client: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def client(self) -> httpx.AsyncClient:
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._loop is not loop or self._client.is_closed:
+            # A client is bound to the loop it first ran on; a new loop (tests,
+            # a CLI command) gets its own. The old one is dropped, not awaited.
+            self._client = httpx.AsyncClient(
+                timeout=self._ingest.fetch_timeout_s,
+                follow_redirects=False,
+                transport=build_pinned_transport(self._ingest.egress),
+                limits=httpx.Limits(
+                    max_connections=self._concurrency,
+                    max_keepalive_connections=self._concurrency,
+                ),
+            )
+            self._loop = loop
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None and self._loop is asyncio.get_running_loop():
+            await self._client.aclose()
+        self._client = None
+
+
+def _rate_bucket(ctx: Context, cfg: CatalogSourceConfig) -> RateBucket | None:
+    if cfg.requests_per_second is None:
+        return None
+    if ctx.registry_db.backend.dialect_name == "sqlite":
+        return MemoryRateBucket(
+            rate=cfg.requests_per_second,
+            burst=cfg.burst,
+            interactive_share=cfg.interactive_share,
+        )
+    return DbRateBucket(
+        ctx,
+        cfg.slug,
+        rate=cfg.requests_per_second,
+        burst=cfg.burst,
+        interactive_share=cfg.interactive_share,
     )
+
+
+class _SourceRuntimes:
+    def __init__(self) -> None:
+        self.by_key: dict[tuple[str, int, float | None, int, float], _SourceRuntime] = {}
+
+    async def close(self) -> None:
+        for runtime in self.by_key.values():
+            await runtime.close()
+        self.by_key.clear()
+
+
+def _runtimes(ctx: Context) -> _SourceRuntimes:
+    def _build() -> _SourceRuntimes:
+        runtimes = _SourceRuntimes()
+        ctx.on_shutdown(runtimes.close)
+        return runtimes
+
+    return ctx.resource("catalog.source_runtimes", _build)
+
+
+def _runtime(ctx: Context, cfg: CatalogSourceConfig) -> _SourceRuntime:
+    key = (
+        cfg.slug,
+        cfg.fetch_concurrency,
+        cfg.requests_per_second,
+        cfg.burst,
+        cfg.interactive_share,
+    )
+    runtimes = _runtimes(ctx)
+    runtime = runtimes.by_key.get(key)
+    if runtime is None:
+        runtime = _SourceRuntime(ctx, cfg)
+        runtimes.by_key[key] = runtime
+    return runtime
+
+
+def build_source_deps(
+    ctx: Context, cfg: CatalogSourceConfig, *, auth: SourceAuthResolver | None = None
+) -> SourceDeps:
+    """The production ``SourceDeps`` for one configured source.
+
+    The pooled client and the limits are shared by every ``SourceDeps`` built
+    for the same source in this process.
+    """
+    runtime = _runtime(ctx, cfg)
+    resolver = auth or build_source_auth(cfg.auth)
+    return SourceDeps(
+        slug=cfg.slug,
+        http=GuardedSourceHttpClient(
+            cfg.slug,
+            ctx.config.ingest,
+            limits=runtime.limits,
+            auth=resolver,
+            client=runtime.client,
+        ),
+        auth=resolver,
+        limits=runtime.limits,
+        max_spec_bytes=ctx.config.ingest.max_spec_bytes,
+    )
+
+
+async def ensure_source_buckets(ctx: Context) -> None:
+    """Create the rate-bucket row of every source with ``requests_per_second`` set.
+
+    Run by the registry at startup, so a process whose database role may only
+    update the bucket rows finds them in place.
+    """
+    if ctx.registry_db.backend.dialect_name == "sqlite":
+        return
+    for cfg in ctx.config.catalog.sources:
+        if cfg.requests_per_second is None:
+            continue
+        bucket = _rate_bucket(ctx, cfg)
+        if isinstance(bucket, DbRateBucket):
+            await bucket.ensure()
