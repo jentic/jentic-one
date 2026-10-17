@@ -28,6 +28,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
+from jentic_one.auth.web.ratelimit import client_ip
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -55,21 +56,6 @@ def _get_auth_backend(request: Request) -> SharedStateBackend:
         return backend
     logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
     return MemoryStateBackend()
-
-
-def _client_ip(request: Request, trusted_proxies: frozenset[str]) -> str:
-    """Extract the real client IP, honoring XFF only from trusted reverse proxies."""
-    socket_ip = request.client.host if request.client else "unknown"
-    if not trusted_proxies or socket_ip not in trusted_proxies:
-        return socket_ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if not forwarded:
-        return socket_ip
-    hops = [h.strip() for h in forwarded.split(",")]
-    for hop in reversed(hops):
-        if hop not in trusted_proxies:
-            return hop
-    return socket_ip
 
 
 def _get_token_limiter(request: Request, ctx: Context) -> RateLimiter:
@@ -102,8 +88,8 @@ async def _extract_client_id(request: Request) -> str | None:
 
 async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
     """Per-client+IP rate limiter for the token endpoint."""
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = _client_ip(request, trusted)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
+    ip = client_ip(request, trusted)
     client_id = await _extract_client_id(request)
     key = f"{client_id}:{ip}" if client_id else ip
     limiter = _get_token_limiter(request, ctx)
@@ -176,8 +162,8 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
 
 async def _check_revocation_rate_limit(request: Request, ctx: Context) -> None:
     """Per-IP rate limiter for the RFC 7009 form arm (called after the gate)."""
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = _client_ip(request, trusted)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
+    ip = client_ip(request, trusted)
     limiter = _get_revocation_limiter(request, ctx)
     outcome = await limiter.acquire(ip)
     if not outcome.allowed:
