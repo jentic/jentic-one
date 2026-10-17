@@ -85,6 +85,11 @@ class ServerUrlProblem(StrEnum):
     LEADING_VARIABLE = "leading_variable"
     #: Only a query or fragment: it would resolve to the spec document itself.
     NO_PATH = "no_path"
+    #: A network-path reference (``//``) with an empty authority: no host.
+    EMPTY_HOST = "empty_host"
+    #: The first segment is a file name (``index.php/api``). A document-relative
+    #: path like this can't be told from a mistyped host, so it is refused.
+    FILE_NAME = "file_name"
 
 
 #: Guidance per problem; it leads the message so truncation only ever cuts the URL.
@@ -96,6 +101,8 @@ _SERVER_URL_GUIDANCE: dict[ServerUrlProblem, str] = {
     ServerUrlProblem.UNSUPPORTED_SCHEME: "server URL must be http(s)",
     ServerUrlProblem.LEADING_VARIABLE: "server URL starts with a relative variable",
     ServerUrlProblem.NO_PATH: "server URL is only a query or fragment; make it absolute",
+    ServerUrlProblem.EMPTY_HOST: "server URL has an empty host; make it absolute",
+    ServerUrlProblem.FILE_NAME: "server URL starts with a file name; use /path or https://",
 }
 
 #: Longest message that survives the 128-char ``job.error`` column behind the

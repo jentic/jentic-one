@@ -8,17 +8,21 @@ would leave every operation it covers without an upstream host.
 Ingest rewrites each relative server to an absolute URL (RFC 3986 reference
 resolution against the document's retrieval URL, after redirects) when that URL
 is where the API plausibly lives. It never resolves against a file or static
-content host (:data:`STATIC_CONTENT_HOSTS`, the catalog mirror): that host is
+content host (:func:`is_static_content_url`: the built-in host list, suffixes,
+and patterns, a forge's raw-file path, and the catalog mirror): that host is
 not the API's, and resolving would send the credentials bound to the API there.
-A reference whose first segment is a host name (``api.stripe.com/v1``) is a
-missing scheme, not a path, and is never joined onto the document path.
+The list can't be complete; a manual import still lands as a draft that must be
+promoted, which is where a wrong host is caught. A reference whose first
+segment is a host name (``api.stripe.com/v1``) is a missing scheme, not a path,
+and is never joined onto the document path.
 
 What happens to a server that cannot be made absolute depends on the caller
 (:func:`resolve_relative_servers`, ``strict``). For a user import a list that is
 left with no absolute server is refused (:class:`RelativeServerUrlError`); a
 list that still has an absolute server drops the rest. For a catalog, overlay,
 or update re-ingest the unresolvable servers stay as declared, so the API
-imports inspect-only, exactly as a spec without ``servers`` does. Every level is
+imports inspect-only, exactly as a spec without ``servers`` does. An overlay
+re-ingest never resolves at all (see ``ResolveServerUrlsStage``). Every level is
 handled the same way: document, path item, and operation ``servers``.
 
 Only declared servers are considered. A spec that declares no ``servers`` keeps
@@ -51,42 +55,88 @@ from jentic_one.registry.ingest.schemas import ServerUrlChanges
 
 #: Hosts that serve files rather than APIs: a spec fetched from one of them is
 #: never the API's own host, so relative servers never resolve against it.
+#: Generic CDNs and app platforms (CloudFront, Netlify, Vercel, Firebase
+#: Hosting) are deliberately absent: they commonly front the real API.
 STATIC_CONTENT_HOSTS: frozenset[str] = frozenset(
     {
-        "raw.githubusercontent.com",
-        "gist.githubusercontent.com",
-        "objects.githubusercontent.com",
+        # Git forges and their raw-file hosts.
         "github.com",
         "gist.github.com",
+        "raw.github.com",
+        "codeload.github.com",
         "gitlab.com",
         "bitbucket.org",
-        "raw.githack.com",
-        "cdn.jsdelivr.net",
-        "unpkg.com",
+        # Spec registries and package CDNs.
         "app.swaggerhub.com",
         "api.swaggerhub.com",
+        "unpkg.com",
+        # Google Cloud Storage and Firebase Storage.
         "storage.googleapis.com",
+        "storage.cloud.google.com",
+        "firebasestorage.googleapis.com",
+        # File sharing.
+        "dropbox.com",
     }
 )
 
-#: Host suffixes of the same kind (object storage, static site hosting).
+#: Host suffixes of the same kind: every subdomain of these serves files.
 STATIC_CONTENT_HOST_SUFFIXES: tuple[str, ...] = (
-    ".s3.amazonaws.com",
-    ".blob.core.windows.net",
+    # raw, gist, media, objects, … .githubusercontent.com
+    ".githubusercontent.com",
+    # raw, rawcdn, gist, … .githack.com
+    ".githack.com",
+    # cdn, fastly, gcore, … .jsdelivr.net
+    ".jsdelivr.net",
+    # GitHub and GitLab Pages.
     ".github.io",
     ".gitlab.io",
+    # Virtual-host GCS buckets (``bucket.storage.googleapis.com``).
+    ".storage.googleapis.com",
+    # Firebase's default Storage buckets. App Engine apps share the domain; a
+    # spec served by one fails closed too, and resolves once its servers are
+    # absolute.
+    ".appspot.com",
+    # www., dl., … .dropbox.com and dl.dropboxusercontent.com.
+    ".dropbox.com",
+    ".dropboxusercontent.com",
 )
 
+#: Host patterns of the same kind that a suffix can't express.
+STATIC_CONTENT_HOST_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Amazon S3 in every addressing style: ``s3.amazonaws.com`` and
+    # ``s3.<region>.amazonaws.com`` / ``s3-<region>.amazonaws.com`` (path-style),
+    # ``<bucket>.s3[.-]<region>.amazonaws.com`` (virtual-host), dual-stack,
+    # website, and accelerate endpoints, and the China partition (``.com.cn``).
+    re.compile(r"(?:^|\.)s3(?:[.-][a-z0-9-]+)*\.amazonaws\.com(?:\.cn)?$"),
+    # Azure Storage blob, Data Lake, and static-website endpoints, in the public
+    # and sovereign clouds.
+    re.compile(r"\.(?:blob|dfs|web)\.core\.(?:windows\.net|chinacloudapi\.cn|usgovcloudapi\.net)$"),
+)
+
+#: Path segments that mark a raw-file URL on a self-hosted forge (GitLab's
+#: ``/-/raw/`` and ``/-/blob/``), whatever its host.
+_STATIC_CONTENT_PATH = re.compile(r"/-/(?:raw|blob)/")
+
 #: A first path segment shaped like ``host[:port]``: a DNS name ending in an
-#: alphabetic TLD, ``localhost``, an IPv4 address, or any name with a port.
+#: alphabetic TLD, ``localhost``, an IPv4 address, a bracketed IPv6 address, or
+#: any name with a port.
 _BARE_HOST = re.compile(
     r"^(?:"
     r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?"
     r"|localhost(?::\d+)?"
     r"|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?"
+    r"|\[[0-9a-f:.]+\](?::\d+)?"
     r"|[a-z0-9.-]+:\d+"
     r")$",
     re.IGNORECASE,
+)
+
+#: Final labels of a host-shaped segment that are file extensions, not TLDs
+#: (``index.php/api``): the segment is a file name in a path. It is refused
+#: like a bare host, since it can't be told from a mistyped one, with guidance
+#: that fits a path.
+_FILE_EXTENSIONS = frozenset(
+    {"php", "html", "htm", "json", "yaml", "yml", "xml", "asp", "aspx", "ashx", "jsp", "cgi", "txt"}
 )
 
 #: Entries kept in a log line or job result per category.
@@ -153,9 +203,22 @@ def is_static_content_host(host: str | None, extra: Iterable[str] = ()) -> bool:
     if not host:
         return False
     host = host.lower().rstrip(".")
-    if host in STATIC_CONTENT_HOSTS or host in {h.lower() for h in extra}:
+    if host in STATIC_CONTENT_HOSTS or host in {h.lower().rstrip(".") for h in extra}:
         return True
-    return host.endswith(STATIC_CONTENT_HOST_SUFFIXES)
+    if host.endswith(STATIC_CONTENT_HOST_SUFFIXES):
+        return True
+    return any(pattern.search(host) for pattern in STATIC_CONTENT_HOST_PATTERNS)
+
+
+def is_static_content_url(url: str | None, extra_hosts: Iterable[str] = ()) -> bool:
+    """Whether ``url`` is served by a file host, or is a forge's raw-file path."""
+    if is_static_content_host(url_host(url), extra_hosts):
+        return True
+    try:
+        path = urlsplit(url.strip()).path if url else ""
+    except ValueError:
+        return False
+    return bool(_STATIC_CONTENT_PATH.search(path))
 
 
 def server_base_url(source_url: str | None) -> str | None:
@@ -198,7 +261,7 @@ def document_base(
         return DocumentBase(None, ServerUrlProblem.NO_BASE)
     scheme = urlsplit(base).scheme
     hosts = list(content_hosts)
-    if any(is_static_content_host(url_host(u), hosts) for u in (source_url, final)):
+    if any(is_static_content_url(u, hosts) for u in (source_url, final)):
         return DocumentBase(None, ServerUrlProblem.CONTENT_HOST)
     requested = server_base_url(source_url)
     if requested is not None and urlsplit(requested).scheme == "https" and scheme == "http":
@@ -210,13 +273,21 @@ def _classify(url: str, variables: Any, base: DocumentBase) -> str | ServerUrlPr
     """The absolute form of ``url``, why it has none, or ``None`` to keep it as is."""
     template = url.strip()
     if template.startswith("//"):
+        # A network-path reference names its own host; with an empty authority
+        # (``//``, ``///x``) it has none, so it is never absolute.
+        if not _has_host(f"https:{expand_variable_defaults(template, variables)}"):
+            return ServerUrlProblem.EMPTY_HOST
         return f"{base.scheme}:{template}" if base.scheme else None
     if not is_hostless_server_url(template, variables):
         return None
     expanded = expand_variable_defaults(template, variables).strip()
     if expanded.startswith(("?", "#")):
         return ServerUrlProblem.NO_PATH
-    if _BARE_HOST.match(expanded.split("/", 1)[0]):
+    first = expanded.split("/", 1)[0]
+    if _BARE_HOST.match(first):
+        label = first.rsplit(":", 1)[0] if not first.startswith("[") else ""
+        if label.rsplit(".", 1)[-1].lower() in _FILE_EXTENSIONS:
+            return ServerUrlProblem.FILE_NAME
         return ServerUrlProblem.MISSING_SCHEME
     if template.startswith("{"):
         return ServerUrlProblem.LEADING_VARIABLE
@@ -229,9 +300,17 @@ def _classify(url: str, variables: Any, base: DocumentBase) -> str | ServerUrlPr
         return base.problem or ServerUrlProblem.NO_BASE
     absolute = urljoin(base.url, template or "/")
     parts = urlsplit(absolute)
-    if parts.scheme not in ("http", "https") or not parts.netloc:
+    if parts.scheme not in ("http", "https") or not _has_host(absolute):
         return ServerUrlProblem.UNSUPPORTED_SCHEME
     return absolute
+
+
+def _has_host(url: str) -> bool:
+    """Whether ``url`` parses with a non-empty host."""
+    try:
+        return bool(urlsplit(url).hostname)
+    except ValueError:
+        return False
 
 
 def _resolve_list(
@@ -309,14 +388,17 @@ def resolve_relative_servers(
 def resolved_revision_digest(raw_digest: str, resolved: list[tuple[str, str]]) -> str:
     """The revision digest of a spec whose relative servers ingest resolved.
 
-    A revision's digest identifies the content it stores. Resolved servers make
-    that content differ from the fetched bytes, so the digest folds them in:
-    re-importing the same document from the same URL yields the same digest
-    (still a duplicate), while a revision stored from the same bytes with its
-    servers host-less does not collide with it. Only resolution folds in: it
-    happens solely against a document URL that is not a content host, and the
-    catalog's update check compares raw upstream digests only for specs served
-    from the catalog mirror (a content host), so those digests stay raw.
+    Resolved servers make the stored content differ from the fetched bytes, so
+    the digest folds the ``(declared, absolute)`` pairs in: re-importing the
+    same document from the same URL yields the same digest (still a duplicate),
+    while a revision stored from the same bytes with its servers host-less does
+    not collide with it. Only resolution folds in. A rewrite that only drops
+    unresolvable entries keeps the raw digest, so the digest identifies the
+    fetched bytes plus the servers ingest resolved, not every byte stored.
+    Resolution happens solely against a document URL that is not a content
+    host, and the catalog's update check compares raw upstream digests only for
+    specs served from the catalog mirror (a content host), so those digests
+    stay raw.
     """
     rewrite = json.dumps(resolved, separators=(",", ":"))
     return hashlib.sha256(f"{raw_digest}\nresolved-servers:{rewrite}".encode()).hexdigest()

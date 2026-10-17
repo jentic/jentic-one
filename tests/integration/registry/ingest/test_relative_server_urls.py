@@ -6,19 +6,27 @@ routes by, and the stored spec file — sees the same absolute URL. A host-less
 revision ingested without the resolution stage (as rows written before it
 existed are) stays unroutable: the broker's resolver never matches it, and the
 documented remedy (re-import from the spec URL, then promote) makes it routable.
-Catalog, update, and overlay re-ingests keep unresolvable servers inspect-only.
+Catalog, update, and overlay re-ingests keep unresolvable servers inspect-only;
+an overlay never resolves, so a host-less API only gains a host through the
+re-import, which resolves against the post-redirect URL, and a promote that
+needs ``credentials:write`` when credentials are bound.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.broker.services.discovery import discover
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.core.schema.spec_files import SpecFile
@@ -27,10 +35,18 @@ from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.ingest.schemas import IngestResult
 from jentic_one.registry.ingest.stages.resolve_servers import ResolveServerUrlsStage
+from jentic_one.registry.repos.catalog_repo import CatalogRepository
+from jentic_one.registry.services.errors import HostChangeRequiresOperatorError
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType, ApiRevisionSourceType, ApiRevisionState
+from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.models import (
+    ActorType,
+    ApiRevisionSourceType,
+    ApiRevisionState,
+    StoredCredentialType,
+)
 from jentic_one.wiring import InProcessRegistryResolver
 
 pytestmark = pytest.mark.integration
@@ -41,6 +57,12 @@ MIRROR_URL = (
     "petstore3.swagger.io/main/1.0.27/openapi.json"
 )
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
+_OPERATOR = Identity(
+    sub="usr_operator",
+    actor_type=ActorType.USER,
+    permissions=["apis:write", "credentials:write"],
+)
+_AGENT_NAME = "relative-servers-agent"
 
 
 def _petstore(**spec_fields: Any) -> IngestSpecification:
@@ -164,13 +186,13 @@ async def test_host_less_revision_is_never_routed_by_the_broker(
         ) is None
 
 
-async def _promote(ctx: Context, result: IngestResult) -> None:
+async def _promote(ctx: Context, result: IngestResult, identity: Identity | None = None) -> None:
     await RevisionService(ctx).promote(
         result.api_vendor,
         result.api_name,
         result.api_version,
         str(result.revision_id),
-        identity=_WRITER,
+        identity=identity or _WRITER,
     )
 
 
@@ -289,3 +311,175 @@ async def test_overlay_over_a_legacy_host_less_inline_api_stays_inspect_only(
     assert result.state == ApiRevisionState.IMPORTED
     assert result.server_url_changes is not None
     assert result.server_url_changes.unresolved == ["/api/v3"]
+
+
+@pytest.fixture()
+async def bound_petstore(ingest_context: Context) -> AsyncGenerator[None, None]:
+    """A credential covering the petstore API, bound to an agent."""
+
+    async def _clean() -> None:
+        async with ingest_context.admin_db.session() as session:
+            agents = select(Agent.id).where(Agent.name == _AGENT_NAME)
+            await session.execute(
+                delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id.in_(agents))
+            )
+            await session.execute(delete(Agent).where(Agent.name == _AGENT_NAME))
+            await session.commit()
+        async with ingest_context.control_db.session() as session:
+            await session.execute(delete(Credential).where(Credential.api_vendor == "swagger"))
+            await session.commit()
+
+    await _clean()
+    credential_id = generate_ksuid("cred")
+    async with ingest_context.control_db.session() as session:
+        session.add(
+            Credential(
+                id=credential_id,
+                type=StoredCredentialType.API_KEY,
+                name="cred-petstore",
+                api_vendor="swagger",
+                api_name="petstore",
+                api_version="1.0.27",
+                created_by="usr_x",
+            )
+        )
+        await session.commit()
+    async with ingest_context.admin_db.session() as session:
+        agent = Agent(name=_AGENT_NAME, registered_by="usr_x")
+        session.add(agent)
+        await session.flush()
+        session.add(AgentCredentialBinding(agent_id=agent.id, credential_id=credential_id))
+        await session.commit()
+    yield
+    await _clean()
+
+
+async def test_overlay_over_a_legacy_host_less_url_api_never_gives_it_a_host(
+    ingest_context: Context,
+    clean_registry: None,
+    bound_petstore: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An overlay materialization carries the base's ``source_url``, but its
+    confirmer never saw a host and no ``credentials:write`` review runs, so it
+    keeps the servers as declared. The bound credentials go nowhere new."""
+    legacy = await _ingest_legacy(
+        ingest_context,
+        monkeypatch,
+        _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
+    )
+    await _promote(ingest_context, legacy, _OPERATOR)
+    overlay = _petstore(
+        source_type=ApiRevisionSourceType.INLINE, origin="overlay", source_url=PETSTORE_URL
+    )
+    overlay.sha = "sha-petstore-overlaid"
+
+    result = await Ingestor(ingest_context).ingest(overlay, created_by="usr_test")
+
+    assert result.state == ApiRevisionState.IMPORTED
+    assert result.server_url_changes is not None
+    assert result.server_url_changes.resolved == []
+    assert result.server_url_changes.unresolved == ["/api/v3"]
+    async with ingest_context.registry_db.session() as session:
+        servers = (
+            (
+                await session.execute(
+                    select(Server.url).where(Server.revision_id == result.revision_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        hosts = (
+            (
+                await session.execute(
+                    select(OperationURLIndex.host).where(
+                        OperationURLIndex.revision_id == result.revision_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert list(servers) == ["/api/v3"]
+    assert list(hosts) == [""]
+
+
+async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_credentials_write(
+    ingest_context: Context,
+    clean_registry: None,
+    bound_petstore: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins the runbook's gate: the re-import resolves against the URL its
+    redirects ended on, and gives the API hosts it never had, so with
+    credentials bound a promote needs ``credentials:write``."""
+    legacy = await _ingest_legacy(
+        ingest_context,
+        monkeypatch,
+        _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
+    )
+    await _promote(ingest_context, legacy, _OPERATOR)
+
+    reimport = await Ingestor(ingest_context).ingest(
+        _petstore(
+            source_type=ApiRevisionSourceType.URL,
+            source_url=PETSTORE_URL,
+            retrieval_url="https://cdn.petstore.example/api/v3/openapi.json",
+        ),
+        created_by="usr_test",
+    )
+    assert reimport.state == ApiRevisionState.DRAFT
+    assert reimport.server_url_changes is not None
+    assert reimport.server_url_changes.resolved == ["https://cdn.petstore.example/api/v3"]
+
+    with pytest.raises(HostChangeRequiresOperatorError):
+        await _promote(ingest_context, reimport)
+    assert await _state(ingest_context, reimport) == ApiRevisionState.DRAFT
+    assert await _state(ingest_context, legacy) != ApiRevisionState.ARCHIVED
+
+    await _promote(ingest_context, reimport, _OPERATOR)
+    assert await _state(ingest_context, legacy) == ApiRevisionState.ARCHIVED
+    resolver = InProcessRegistryResolver(ingest_context.registry_db)
+    resolved = await discover(
+        resolver, method="GET", url="https://cdn.petstore.example/api/v3/pet/7"
+    )
+    assert resolved is not None
+
+
+@pytest.fixture()
+async def catalog_on_a_spec_cdn(ingest_context: Context) -> AsyncGenerator[str, None]:
+    """A cached manifest whose spec files live on a host other than the manifest's."""
+    spec_url = "https://specs.cdn.example/apis/openapi/petstore3.swagger.io/openapi.json"
+
+    async def _clean() -> None:
+        async with ingest_context.registry_db.session() as session:
+            await session.execute(delete(CatalogSnapshot))
+            await session.commit()
+
+    await _clean()
+    async with ingest_context.registry_db.transaction() as session:
+        await CatalogRepository.replace(
+            session,
+            source_url="https://manifest.example/apis.json",
+            entries=[{"api_id": "petstore3.swagger.io", "spec_url": spec_url}],
+        )
+    yield spec_url
+    await _clean()
+
+
+async def test_manual_import_from_the_catalogs_spec_host_is_refused(
+    ingest_context: Context, clean_registry: None, catalog_on_a_spec_cdn: str
+) -> None:
+    """The catalog mirror is every host the cached manifest serves spec files
+    from, not only the configured manifest's host."""
+    other_spec = "https://specs.cdn.example/apis/openapi/other.example/openapi.json"
+    for url in (catalog_on_a_spec_cdn, other_spec):
+        with pytest.raises(IngestPipelineError, match="spec host serves files"):
+            await Ingestor(ingest_context).ingest(
+                _petstore(source_type=ApiRevisionSourceType.URL, source_url=url),
+                created_by="usr_test",
+            )
+
+    async with ingest_context.registry_db.session() as session:
+        assert (await session.execute(select(ApiRevision))).first() is None

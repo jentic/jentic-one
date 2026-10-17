@@ -128,16 +128,43 @@ left with no absolute URL. The job error names the reason:
 | Error starts with | Cause | Fix |
 | --- | --- | --- |
 | `relative server URL has no base` | Pasted or uploaded inline: there is no document URL. | Import from the description's URL, or make the server URL absolute. |
-| `spec host serves files` | The description is served from a file host (GitHub raw, gists, SwaggerHub, object storage, the catalog mirror), not from the API. Resolving would send the API's credentials to the file host. | Make the server URL absolute (`https://api.example.com/v3`), or import the catalog entry instead. |
-| `server URL looks like a host; add https://` | `api.example.com/v1` is a host without a scheme, not a path. | Add the scheme. |
+| `spec host serves files` | The description is served from a file host (listed below), not from the API. Resolving would send the API's credentials to the file host. | Make the server URL absolute (`https://api.example.com/v3`), or import the catalog entry instead. |
+| `server URL looks like a host; add https://` | `api.example.com/v1`, `localhost:8080`, or `[::1]:8080/v1` is a host without a scheme, not a path. | Add the scheme. |
+| `server URL starts with a file name` | A path like `index.php/api` can't be told from a mistyped host, so it is refused too. | Write it as a path from the root (`/index.php/api`), or make it absolute. |
 | `spec URL redirected to http` | An https URL redirected to plaintext http. | Import from the final https URL, or make the server URL absolute. |
-| `server URL must be http(s)`, `… only a query or fragment`, `… starts with a relative variable` | The URL can't name an http(s) API host (`file:`, `?v=3`, `{basePath}/v1` with a relative default). | Make the server URL absolute. |
+| `server URL must be http(s)`, `… only a query or fragment`, `… starts with a relative variable`, `… has an empty host` | The URL can't name an http(s) API host (`file:`, `?v=3`, `{basePath}/v1` with a relative default, `//`). | Make the server URL absolute. |
+
+A description is on a file host when the URL it was requested from, or the URL
+its redirects ended on, matches one of these:
+
+| Kind | Hosts |
+| --- | --- |
+| Git forges | `github.com`, `gist.github.com`, `raw.github.com`, `codeload.github.com`, `*.githubusercontent.com` (`raw.`, `gist.`, `media.`, `objects.`, …), `gitlab.com`, `bitbucket.org`, and any URL whose path has GitLab's `/-/raw/` or `/-/blob/` (self-hosted GitLab) |
+| Repository CDNs and registries | `*.jsdelivr.net`, `*.githack.com` (`raw.`, `rawcdn.`, …), `unpkg.com`, `app.swaggerhub.com`, `api.swaggerhub.com` |
+| Amazon S3 | `s3.amazonaws.com`, `s3.<region>.amazonaws.com`, `s3-<region>.amazonaws.com`, `<bucket>.s3.amazonaws.com`, `<bucket>.s3.<region>.amazonaws.com`, and the dual-stack, website, accelerate, and `.amazonaws.com.cn` forms |
+| Google Cloud and Firebase Storage | `storage.googleapis.com`, `<bucket>.storage.googleapis.com`, `storage.cloud.google.com`, `firebasestorage.googleapis.com`, `*.appspot.com` |
+| Azure Storage | `*.blob.core.windows.net`, `*.dfs.core.windows.net`, `*.web.core.windows.net`, and their China and US Government cloud equivalents |
+| File sharing | `dropbox.com`, `*.dropbox.com`, `*.dropboxusercontent.com` |
+| Static sites | `*.github.io`, `*.gitlab.io` |
+| The catalog mirror | the host of `catalog.manifest_url`, and every host the cached catalog manifest serves spec files from |
+
+Host matching ignores case, a trailing dot, and the port. General-purpose CDNs
+and app platforms (CloudFront, Netlify, Vercel, Firebase Hosting) are not on
+the list, since they often serve the API itself. An App Engine app on
+`*.appspot.com` is refused along with Firebase's buckets; give it absolute
+servers. No list covers every file host. For one that isn't listed, the
+remaining protection is that a manual import always lands as a draft that must
+be promoted: check the resolved host in `server_url_changes` before you promote
+it or bind a credential to the API.
 
 Unresolvable entries next to an absolute server in the same list are dropped
 instead, and listed in `server_url_changes`. Catalog imports, catalog updates,
 and overlay materializations never fail on this: an unresolvable server stays
-as declared and the operations it covers are inspect-only. Fix such
-an API with an [overlay](../guides/overlays.md) that sets an absolute server.
+as declared and the operations it covers are inspect-only. An overlay
+materialization never resolves a relative server at all, since the person
+confirming the overlay never sees the host it would get. Fix such an API with
+an [overlay](../guides/overlays.md) that sets an absolute server, or re-import
+it as described below.
 
 A resolved server is the host the description was imported from. That host
 passed the import egress policy (`ingest.egress`), but `execute` checks
