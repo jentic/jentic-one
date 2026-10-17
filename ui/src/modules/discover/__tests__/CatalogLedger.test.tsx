@@ -485,11 +485,13 @@ describe('CatalogLedger', () => {
 		expect(loads.slice(0, 2)).toEqual([true, true]);
 		expect(scrollTo).toHaveBeenCalled();
 		expect(scrollIntoView).not.toHaveBeenCalled();
-		// Earlier sections were not re-ordered while paging: A, B, C, M.
+		// Earlier sections were not re-ordered while paging: A, B, C, M lead.
+		// Only the lead is checked — the sentinel's own paging may already have
+		// appended the sections after M.
 		const headings = [...document.querySelectorAll('[id^="catalog-letter-"]')].map(
 			(el) => el.id,
 		);
-		expect(headings).toEqual([
+		expect(headings.slice(0, 4)).toEqual([
 			'catalog-letter-A',
 			'catalog-letter-B',
 			'catalog-letter-C',
