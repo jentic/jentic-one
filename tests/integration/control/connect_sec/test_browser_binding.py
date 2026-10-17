@@ -87,7 +87,8 @@ def _browser(ctx: Context, identity: Identity = OWNER, *, base: str = "https://t
 
 
 def _state_of(authorize_url: str) -> str:
-    return parse_qs(urlsplit(authorize_url).query)["state"][0]
+    # Ours is appended last, after any query the authorization endpoint had.
+    return parse_qs(urlsplit(authorize_url).query)["state"][-1]
 
 
 def _binding_set_cookie(response: httpx.Response) -> str:
@@ -555,6 +556,28 @@ async def test_cookie_path_follows_a_base_url_path(
         h for h in refused.headers.get_list("set-cookie") if h.startswith(f"{cookie_name}=")
     )
     assert "path=/jentic/credentials/oauth/callback" in cleared.lower()
+
+
+async def test_cookie_follows_our_state_when_the_authorize_url_has_its_own(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approver's authorization endpoint whose URL already carries ``state=``."""
+    prefixed = "https://app.example.com/jentic/credentials/oauth/callback"
+    monkeypatch.setattr(env.config.credentials.providers["direct_oauth2"], "redirect_uri", prefixed)
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read"])
+    body = {
+        **_own_client_body(),
+        "authorize_url": "https://idp.approver.example/authorize?tenant=t1&state=fixed",
+    }
+    async with _browser(env) as approver:
+        confirmed = await _confirm(approver, env, created.session_id, body)
+    assert confirmed.status_code == 200, confirmed.text
+    states = parse_qs(urlsplit(confirmed.json()["authorize_url"]).query)["state"]
+    assert len(states) == 2  # the endpoint's own, then ours
+    # The cookie is scoped by the session's real state (its platform callback),
+    # not the endpoint's own ``state=fixed``.
+    assert _attrs(confirmed)["path"] == "/jentic/credentials/oauth/callback"
 
 
 async def test_callback_expires_a_pile_of_abandoned_binding_cookies(
