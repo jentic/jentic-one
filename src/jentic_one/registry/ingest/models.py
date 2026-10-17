@@ -46,6 +46,10 @@ class IngestSpecification(BaseModel):
     source_id: str | None = None
     source_type: ApiRevisionSourceType | None = None
     source_url: str | None = None
+    #: Where a URL source's redirect chain ended (the document's retrieval URI).
+    #: Relative server URLs resolve against it; ``source_url`` stays the URL the
+    #: caller asked for (provenance, catalog matching). ``None`` for inline sources.
+    retrieval_url: str | None = None
     source_filename: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
