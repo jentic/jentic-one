@@ -110,11 +110,9 @@ async def test_emit_event_invalid_trace_id_raises_value_error() -> None:
 
 async def test_emit_event_valid_trace_id_accepted() -> None:
     session = AsyncMock()
-    mock_event = AsyncMock()
-    mock_event.id = "evt_test123"
     with patch(
         "jentic_one.shared.events.EventRepository.create",
-        return_value=mock_event,
+        return_value="evt_test123",
     ):
         result = await emit_event(
             session,
@@ -129,11 +127,9 @@ async def test_emit_event_valid_trace_id_accepted() -> None:
 
 async def test_emit_event_none_trace_id_accepted() -> None:
     session = AsyncMock()
-    mock_event = AsyncMock()
-    mock_event.id = "evt_test456"
     with patch(
         "jentic_one.shared.events.EventRepository.create",
-        return_value=mock_event,
+        return_value="evt_test456",
     ):
         result = await emit_event(
             session,

@@ -94,3 +94,25 @@ async def test_sqlite_try_lock_always_acquires(registry_db: DatabaseSession) -> 
     async with registry_db.try_advisory_lock(_KEY) as a, registry_db.try_advisory_lock(_KEY) as b:
         assert a is True
         assert b is True
+
+
+async def test_cancelled_holder_releases_the_lock(registry_db: DatabaseSession) -> None:
+    """Cancelling the task inside the block (e.g. shutdown) still frees the lock."""
+    _require_postgres(registry_db)
+    entered = asyncio.Event()
+
+    async def hold() -> None:
+        async with registry_db.try_advisory_lock(_KEY) as acquired:
+            assert acquired is True
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(hold())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await _holder_states(registry_db) == []
+    async with registry_db.try_advisory_lock(_KEY) as again:
+        assert again is True

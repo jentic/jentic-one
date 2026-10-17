@@ -19,6 +19,7 @@ from sqlalchemy.exc import (
     OperationalError,
 )
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -65,6 +66,23 @@ def _is_data_error(exc: DBAPIError) -> bool:
 def get_database_url(config: DatabaseConfig) -> URL:
     """Build an async SQLAlchemy database URL from a DatabaseConfig."""
     return get_backend(config).make_url(config)
+
+
+async def _release_advisory_lock(conn: AsyncConnection, key: int) -> None:
+    """Best-effort ``pg_advisory_unlock`` on the lock's dedicated connection.
+
+    A failing unlock (the connection was lost, or the releasing task was
+    cancelled again mid-unlock) discards the connection instead of handing one
+    that may still hold the lock back to the pool; closing it releases the
+    lock server-side. A cancellation is re-raised after the discard.
+    """
+    try:
+        await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    except BaseException as exc:
+        logger.warning("advisory_lock_release_failed", key=key, error=repr(exc))
+        await conn.invalidate()
+        if not isinstance(exc, Exception):
+            raise
 
 
 class DatabaseSession:
@@ -248,13 +266,7 @@ class DatabaseSession:
             try:
                 yield
             finally:
-                try:
-                    await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                except Exception as exc:  # best-effort release
-                    logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
-                    # Never hand a connection that may still hold the lock back
-                    # to the pool.
-                    await conn.invalidate()
+                await _release_advisory_lock(conn, key)
 
     @asynccontextmanager
     async def try_advisory_lock(self, key: int) -> AsyncGenerator[bool, None]:
@@ -290,11 +302,7 @@ class DatabaseSession:
                 yield acquired
             finally:
                 if acquired:
-                    try:
-                        await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
-                    except Exception as exc:  # best-effort release
-                        logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
-                        await conn.invalidate()
+                    await _release_advisory_lock(conn, key)
 
     async def run_in_transaction(
         self,
