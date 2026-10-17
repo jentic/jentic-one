@@ -57,9 +57,8 @@ class AssertionJtiRepository:
         """Delete up to ``limit`` rows that expired at or before ``now``.
 
         Bounded so it can run on the token-exchange path. On PostgreSQL rows
-        another transaction is already deleting are skipped (``SKIP LOCKED``),
-        so concurrent exchanges never wait on, or deadlock over, each other's
-        prune.
+        another transaction holds (pruning or taking over) are skipped
+        (``SKIP LOCKED``), so a prune never waits on another exchange.
         """
         expired = (
             select(AssertionJti.id)
