@@ -18,9 +18,11 @@
  * revoked history reachable on demand, and the
  * list pages through `next_cursor` behind "Load more" like the roster.
  *
- * Listing is owner-or-admin on the backend; a 403 renders as an honest quiet
- * note (a non-owner operator can see the agent but not its grants), never a
- * hard error surface.
+ * Listing is owner-or-admin on the backend, and any other caller gets the
+ * same 404 as an unknown agent. The card only renders for an agent that has
+ * already loaded, so a 404 here means "not yours to list": it renders as an
+ * honest quiet note (a non-owner operator can see the agent but not its
+ * grants), never a hard error surface.
  */
 import { useState } from 'react';
 import { Plug2, ShieldOff } from 'lucide-react';
@@ -79,7 +81,7 @@ export function ConnectedClientsCard({
 	const [revokeTarget, setRevokeTarget] = useState<OAuthGrantEntity | null>(null);
 
 	const grants = query.data?.pages.flatMap((p) => p.entities);
-	const forbidden = error instanceof AgentsApiError && error.status === 403;
+	const notListable = error instanceof AgentsApiError && error.status === 404;
 
 	return (
 		<>
@@ -102,7 +104,7 @@ export function ConnectedClientsCard({
 
 				{isPending ? (
 					<LoadingState size="sm" />
-				) : forbidden ? (
+				) : notListable ? (
 					<p className="text-muted-foreground text-sm">
 						Only the agent's owner or an admin can view its connected clients.
 					</p>
