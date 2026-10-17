@@ -807,9 +807,10 @@ async def test_request_span_budget_is_one_server_span_plus_one_per_statement(
     sqlite_ctx: Context,
 ) -> None:
     """A request that runs one statement per plane and streams its body emits
-    one server span, a ``connect`` span per checkout and exactly one span per
-    statement — no ASGI ``http send``/``http receive`` children and no second
-    driver-level span per statement — and every plane's engine is traced."""
+    one server span, one ``connect`` span per checkout and exactly one span per
+    statement — no ASGI ``http send``/``http receive`` children — and every
+    plane's engine is traced. The server span keeps its status and covers the
+    whole streamed body."""
     provider, exporter = _exporting_provider()
     app = FastAPI()
 
@@ -849,19 +850,22 @@ async def test_request_span_budget_is_one_server_span_plus_one_per_statement(
     (server,) = by_scope["opentelemetry.instrumentation.fastapi"]
     assert server.kind is trace.SpanKind.SERVER
     assert server.name == "GET /work"
-    statements = [
-        s for s in by_scope["opentelemetry.instrumentation.sqlalchemy"] if s.name != "connect"
-    ]
+    assert (server.attributes or {}).get("http.status_code") == 200
+    db_spans = by_scope["opentelemetry.instrumentation.sqlalchemy"]
+    connects = [s for s in db_spans if s.name == "connect"]
+    statements = [s for s in db_spans if s.name != "connect"]
+    assert len(connects) == 3
     assert sorted(str((s.attributes or {}).get("db.statement")) for s in statements) == [
         "SELECT 'admin'",
         "SELECT 'control'",
         "SELECT 'registry'",
     ]
+    children = [s for s in spans if s is not server]
     assert all(
-        s.parent is not None and s.parent.span_id == server.context.span_id
-        for s in spans
-        if s is not server
+        s.parent is not None and s.parent.span_id == server.context.span_id for s in children
     )
+    assert server.end_time is not None
+    assert server.end_time >= max(s.end_time or 0 for s in children)
 
 
 # --------------------------------------------------------------------------- #
@@ -924,12 +928,14 @@ def test_none_exporter_spans_are_non_recording_with_a_valid_context():
 async def test_none_exporter_honours_inbound_traceparent_without_recording():
     """A sampled inbound ``traceparent`` neither switches recording on nor
     loses its trace id: the handler, the outbound ``traceparent`` and the
-    ``jentic=`` tracestate all carry it."""
+    ``jentic=`` tracestate all carry it. The outbound sampled flag is unset
+    (``-00``) because this process records nothing."""
     seen, outbound = await _inbound_none_request(
         {"traceparent": _SAMPLED_TRACEPARENT, "tracestate": "datadog=s:1"}
     )
     assert seen == {"recording": False, "trace_id": _TRACE_ID}
     assert outbound["traceparent"].split("-")[1] == _TRACE_ID
+    assert outbound["traceparent"].endswith("-00")
     assert "jentic=exec_1:_:stripe:payments:v1" in outbound["tracestate"]
     assert "datadog=s:1" in outbound["tracestate"]
 
@@ -937,48 +943,113 @@ async def test_none_exporter_honours_inbound_traceparent_without_recording():
 @pytest.mark.asyncio
 async def test_none_exporter_mints_a_fresh_trace_id_without_traceparent():
     first, outbound = await _inbound_none_request({})
-    reset_tracing()
     second, _ = await _inbound_none_request({})
     assert first["recording"] is False
     trace_id = first["trace_id"]
     assert isinstance(trace_id, str) and len(trace_id) == 32 and trace_id != "0" * 32
     assert trace_id != second["trace_id"]
     assert outbound["traceparent"].split("-")[1] == trace_id
+    assert _sampled_bit(outbound["traceparent"]) == 0
+
+
+def _sampled_bit(traceparent: str) -> int:
+    """The W3C ``sampled`` bit of a ``traceparent`` (other flag bits, such as
+    the SDK's ``random`` trace-id bit, are ignored)."""
+    return int(traceparent.rsplit("-", 1)[1], 16) & TraceFlags.SAMPLED
+
+
+def test_none_exporter_ignores_otel_traces_sampler(monkeypatch):
+    """``OTEL_TRACES_SAMPLER`` cannot switch recording on without an exporter."""
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_on")
+    provider = configure_tracing("test-service", _NONE_CONFIG)
+    with provider.get_tracer("test").start_as_current_span("call") as span:
+        assert not span.is_recording()
 
 
 # --------------------------------------------------------------------------- #
 # observability.tracing.sample_ratio (#1821)
 # --------------------------------------------------------------------------- #
 
+# ``TraceIdRatioBased`` samples on the low 64 bits of the trace id, so at a
+# ratio of 0.5 the first id is always kept and the second always dropped.
+_LOW_TRACE_ID = 0xABC << 64 | 0x1
+_HIGH_TRACE_ID = 0xABC << 64 | 0xFFFF_FFFF_FFFF_FFFF
+
+
+def _remote_parent(trace_id: int, flags: TraceFlags) -> SpanContext:
+    return SpanContext(trace_id=trace_id, span_id=0xDEF, is_remote=True, trace_flags=flags)
+
 
 def _spans_for_one_root(ratio: float, *, parent: SpanContext | None = None) -> list[ReadableSpan]:
+    """Export a ``root`` span (child of ``parent`` when given) and a local
+    ``child`` under it, at ``ratio``."""
     exporter = InMemorySpanExporter()
     provider = configure_tracing(
         "test-service", TracingConfig(sample_ratio=ratio), exporter=exporter
     )
+    tracer = provider.get_tracer("test")
     ctx = set_span_in_context(NonRecordingSpan(parent)) if parent is not None else None
-    with provider.get_tracer("test").start_as_current_span("root", context=ctx):
+    with tracer.start_as_current_span("root", context=ctx):
         assert current_trace_id() is not None
+        with tracer.start_as_current_span("child"):
+            pass
     assert provider.force_flush()
     return list(exporter.get_finished_spans())
 
 
-@pytest.mark.parametrize(("ratio", "exported"), [(1.0, 1), (0.0, 0)])
+@pytest.mark.parametrize(("ratio", "exported"), [(1.0, 2), (0.0, 0)])
 def test_sample_ratio_governs_new_traces(ratio: float, exported: int):
     assert len(_spans_for_one_root(ratio)) == exported
 
 
-@pytest.mark.parametrize(
-    ("flags", "exported"),
-    [(TraceFlags(TraceFlags.SAMPLED), 1), (TraceFlags(TraceFlags.DEFAULT), 0)],
-)
-def test_sample_ratio_defers_to_a_remote_parents_sampled_flag(flags: TraceFlags, exported: int):
-    """Sampling is parent-based: a caller's decision wins over the ratio."""
-    parent = SpanContext(trace_id=0xABC, span_id=0xDEF, is_remote=True, trace_flags=flags)
-    ratio = 0.0 if exported else 1.0
+@pytest.mark.parametrize(("ratio", "exported"), [(1.0, 2), (0.0, 0)])
+def test_sample_ratio_caps_a_remote_sampled_parent(ratio: float, exported: int):
+    """A caller's ``-01`` cannot force recording: the ratio still applies (the
+    CLI and MCP send a sampled ``traceparent`` on every call)."""
+    parent = _remote_parent(_LOW_TRACE_ID, TraceFlags(TraceFlags.SAMPLED))
     assert len(_spans_for_one_root(ratio, parent=parent)) == exported
+
+
+@pytest.mark.parametrize(
+    ("trace_id", "exported"),
+    [pytest.param(_LOW_TRACE_ID, 2, id="kept"), pytest.param(_HIGH_TRACE_ID, 0, id="dropped")],
+)
+def test_sample_ratio_on_a_remote_parent_is_deterministic_on_the_trace_id(
+    trace_id: int, exported: int
+):
+    """The ratio keys on the trace id, so services sharing a ratio keep the
+    same traces, and a local child follows its recorded (or dropped) parent."""
+    parent = _remote_parent(trace_id, TraceFlags(TraceFlags.SAMPLED))
+    spans = _spans_for_one_root(0.5, parent=parent)
+    assert len(spans) == exported
+    if exported:
+        child, root = spans
+        assert (child.name, root.name) == ("child", "root")
+        assert child.parent is not None and child.parent.span_id == root.context.span_id
+
+
+def test_sample_ratio_keeps_a_remote_unsampled_parent_unsampled():
+    parent = _remote_parent(_LOW_TRACE_ID, TraceFlags(TraceFlags.DEFAULT))
+    assert _spans_for_one_root(1.0, parent=parent) == []
 
 
 def test_otel_traces_sampler_env_overrides_sample_ratio(monkeypatch):
     monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
     assert _spans_for_one_root(1.0) == []
+
+
+@pytest.mark.parametrize(("ratio", "warned"), [(0.1, True), (1.0, False)])
+def test_otel_traces_sampler_env_override_warns_when_ratio_is_set(
+    monkeypatch, ratio: float, warned: bool
+):
+    """A non-default ``sample_ratio`` losing to the env var is never silent."""
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_on")
+    with structlog.testing.capture_logs() as logs:
+        assert len(_spans_for_one_root(ratio)) == 2
+    expected = {
+        "event": "tracing_sampler_env_overrides_sample_ratio",
+        "sampler": "always_on",
+        "sample_ratio": ratio,
+        "log_level": "warning",
+    }
+    assert (expected in logs) is warned

@@ -465,7 +465,9 @@ class TracingConfig(BaseModel):
             "non-recording), while trace ids are still generated and propagated: "
             "an inbound ``traceparent`` is honoured, outbound requests carry "
             "``traceparent``/``tracestate``, and execution records and logs keep "
-            "their ``trace_id``."
+            "their ``trace_id``. With ``none`` the outbound ``traceparent`` has "
+            "the sampled flag unset (``-00``) even when the caller sent ``-01``, "
+            "since this process records nothing."
         ),
     )
     sample_ratio: float = Field(
@@ -473,11 +475,14 @@ class TracingConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Fraction of new traces recorded and exported when ``exporter`` is "
-            "``otlp`` (1.0 records every trace). A request that arrives with a "
-            "``traceparent`` follows the caller's sampled flag instead. Ignored "
-            "with ``exporter: none``, and overridden by the standard "
-            "``OTEL_TRACES_SAMPLER`` environment variable when that is set."
+            "Fraction of traces recorded and exported when ``exporter`` is "
+            "``otlp`` (1.0 records every trace). It caps every trace entering "
+            "the process, including requests that arrive with a sampled "
+            "``traceparent`` (the CLI and MCP send one on every call), so a "
+            "caller cannot force recording. A caller's unsampled ``traceparent`` "
+            "stays unsampled. Ignored with ``exporter: none``, and overridden by "
+            "the standard ``OTEL_TRACES_SAMPLER`` environment variable when that "
+            "is set (a warning is logged if this field is not 1.0)."
         ),
     )
 

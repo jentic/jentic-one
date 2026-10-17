@@ -121,21 +121,37 @@ to `otlp` targeting a local collector; without one, nothing is delivered
 anywhere — set `observability.metrics.exporter: none` to silence the export
 attempts.
 
-With `observability.tracing.exporter: none` no span is recorded at all, so
-tracing costs next to nothing on the request path. Trace ids still flow: an
-inbound `traceparent` is honoured (a fresh trace id is minted when there is
-none), outbound upstream requests carry `traceparent` and the `jentic=`
-`tracestate` member, and execution records, events and log lines keep their
-`trace_id`. With `otlp`, `observability.tracing.sample_ratio` (default `1.0`)
-sets the fraction of new traces recorded and exported; a request that arrives
-with a `traceparent` follows the caller's sampled flag. The standard
-`OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` variables override the ratio
-when set.
+With `observability.tracing.exporter: none` no span is recorded at all, so no
+span is built, attributed or snapshotted on the request path. Trace ids still
+flow: an inbound `traceparent` is honoured (a fresh trace id is minted when
+there is none), outbound upstream requests carry `traceparent` and the
+`jentic=` `tracestate` member, and execution records, events and log lines
+keep their `trace_id`. Because this process records nothing, the outbound
+`traceparent` always has the sampled flag unset (`-00`), even when the caller
+sent `-01`; an upstream that follows its parent's flag will not sample those
+calls.
+
+With `otlp`, `observability.tracing.sample_ratio` (default `1.0`) caps the
+fraction of traces recorded and exported. The cap also applies to a request
+that arrives with a sampled `traceparent` (the CLI and MCP send one on every
+call, and any caller can), so no caller can force full recording. The decision
+is deterministic on the trace id, so services sharing a ratio keep the same
+traces whole. A request whose `traceparent` is unsampled stays unsampled. The
+standard `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` variables replace
+the ratio when set; a `tracing_sampler_env_overrides_sample_ratio` warning is
+logged at startup if `sample_ratio` is not `1.0`. The SDK treats an
+unrecognised `OTEL_TRACES_SAMPLER` value as `parentbased_always_on`, so a typo
+means every trace is recorded.
 
 Each request yields one inbound server span (no per-message ASGI
-`http send`/`http receive` spans) and one span per SQL statement, recorded by
-the SQLAlchemy instrumentation with the statement and connection-pool
-context, plus a `connect` span per connection checkout.
+`http send`/`http receive` spans), one CLIENT span per outbound upstream call
+(the broker's dispatch to the target API), and one span per SQL statement,
+recorded by the SQLAlchemy instrumentation with the statement and
+connection-pool context, plus a `connect` span per connection checkout.
+Transaction control (COMMIT/ROLLBACK) and pool pre-ping round trips are not
+traced; pre-ping time sits inside the `connect` span. To count those round
+trips, use `make perf-dbcost` (per-call statements and transactions per DB
+plane).
 
 Exported spans never carry request material. Inbound and outbound HTTP
 spans mask query-string values in the recorded URL and query attributes

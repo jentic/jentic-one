@@ -474,16 +474,34 @@ def _sampler(cfg: TracingConfig, *, exporting: bool) -> Sampler | None:
     ``traceparent`` must not switch recording back on). The SDK still assigns
     each span a valid context — the inbound trace id, or a fresh one — so trace
     ids and ``tracestate`` propagate either way. The sampled flag on outbound
-    ``traceparent`` is then unset, since this process records nothing.
+    ``traceparent`` is unset (``-00``), even when the caller sent ``-01``: the
+    SDK derives that flag from the sampling decision alone, and a sampled
+    decision always builds a recording span, so no sampler can forward the
+    caller's flag without recording.
 
-    With an exporter, a new trace is sampled at ``sample_ratio`` and a span with
-    a parent follows the parent's sampled flag (``ParentBased``).
+    With an exporter, ``sample_ratio`` caps every trace that enters this
+    process: a new trace and a remote parent with the sampled flag set are both
+    sampled by ``TraceIdRatioBased``. First-party clients (CLI, MCP) send a
+    sampled ``traceparent`` on every call, and any external caller can, so
+    trusting a remote ``-01`` would bypass the ratio entirely. The ratio test is
+    deterministic on the trace id, so services sharing a ratio agree on the
+    same traces. A remote parent that is not sampled stays unsampled (the
+    caller opted out; following it only lowers cost), and local parents are
+    followed so an in-process trace is never split.
     """
     if not exporting:
         return ALWAYS_OFF
-    if os.getenv(_OTEL_TRACES_SAMPLER_ENV):
+    env_sampler = os.getenv(_OTEL_TRACES_SAMPLER_ENV)
+    if env_sampler:
+        if cfg.sample_ratio != 1.0:
+            _logger.warning(
+                "tracing_sampler_env_overrides_sample_ratio",
+                sampler=env_sampler,
+                sample_ratio=cfg.sample_ratio,
+            )
         return None
-    return ParentBased(TraceIdRatioBased(cfg.sample_ratio))
+    ratio = TraceIdRatioBased(cfg.sample_ratio)
+    return ParentBased(root=ratio, remote_parent_sampled=ratio)
 
 
 def configure_tracing(
@@ -500,7 +518,7 @@ def configure_tracing(
     non-recording, so the hot path pays for no attributes, events or span
     snapshots, and nothing tries to dial out. Span contexts stay valid, so
     :func:`current_trace_id`, :func:`jentic_tracestate` and the outbound
-    ``traceparent`` keep working. Idempotent.
+    ``traceparent`` keep working (with the sampled flag unset). Idempotent.
 
     ``exporter`` replaces the OTLP exporter (tests pass an in-memory one so
     they exercise the production chain) and is sampled like OTLP. Whatever
@@ -669,7 +687,7 @@ def jentic_tracestate(member_value: str) -> Iterator[None]:
     the current context so the W3C propagator serializes it onto the outbound
     ``tracestate`` for any request dispatched inside the block. Restores the
     prior context on exit. A no-op (yields unchanged) when there is no valid
-    span context (e.g. ``exporter = none`` / outside a trace), so credential
+    span context (e.g. outside a trace, or tracing never configured), so credential
     injection and dispatch still run.
     """
     span_context = trace.get_current_span().get_span_context()

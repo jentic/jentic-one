@@ -162,10 +162,13 @@ def instrument_databases(ctx: Context) -> None:
     the whole process: the underlying instrumentor is global and only the
     first call wires it up.
 
-    SQLAlchemy is the one DB instrumentor: its span carries the statement and
-    the engine's pool context. The asyncpg driver is not instrumented as well,
-    as that would trace every round trip (statement, pre-ping, BEGIN/COMMIT)
-    a second time beneath the SQLAlchemy span.
+    SQLAlchemy is the one DB instrumentor: it traces each statement, with the
+    engine's pool context, plus a ``connect`` span per checkout. Transaction
+    control (COMMIT/ROLLBACK) and pool pre-ping round trips are not traced —
+    SQLAlchemy's tracer hooks only cursor execution, and pre-ping time sits
+    inside the ``connect`` span. The asyncpg driver is not instrumented: that
+    would add a second span beneath every SQLAlchemy statement span to recover
+    those round trips.
     """
     global _db_instrumented
     if _db_instrumented:
