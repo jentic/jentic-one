@@ -5,10 +5,11 @@ response entries, ``has_more`` and each page's ``next_cursor``. Cursors are
 stored base64-decoded (``next_cursor_json``) so the fixture is reviewable and
 reads as data rather than opaque tokens; base64 is a bijection, so this still
 pins the exact cursor bytes. The fixture
-(``tests/fixtures/catalog_cursor_golden.json``) was captured before the catalog
-ranking seam existed (#1833), so a default install's responses and cursors must
-stay identical to it. Never regenerate it to make this test pass; a diff here
-means existing clients' cursors or response bytes changed.
+(``tests/fixtures/catalog_cursor_golden.json``) is the default install's
+contract for #1833: with the built-in ``token`` ranking, responses and cursors
+must stay identical to it whatever ranking seam sits in front. Never regenerate
+it to make this test pass; a diff here means existing clients' cursors or
+response bytes changed.
 
 Walks (``limit=2``):
 
