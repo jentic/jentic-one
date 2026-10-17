@@ -170,7 +170,7 @@ async def test_verify_active_agent_with_inactive_owner_stays_generic(
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
-    agent.owner_id = "usr_offboarded"
+    agent.owner_id = "usr_inactive_owner"
     mock_agent_repo.get_with_owner_active = AsyncMock(return_value=(agent, False))
 
     svc = AssertionService(ctx)
