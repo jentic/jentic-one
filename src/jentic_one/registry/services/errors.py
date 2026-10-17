@@ -310,11 +310,16 @@ class CatalogSearchUnavailableError(RegistryServiceError):
     the search without a cursor. The strategy not being registered in this
     process also raises this, as a defensive case: app assembly refuses a
     configured strategy that isn't registered.
+
+    ``reason`` is why (``timeout``, ``error``, ``invalid``, ``unregistered``).
+    ``invalid`` — a ranking with no valid row — repeats for the same request,
+    so it carries no ``Retry-After`` hint.
     """
 
-    def __init__(self, strategy: str) -> None:
+    def __init__(self, strategy: str, *, reason: str = "error") -> None:
         super().__init__(f"Catalog search strategy '{strategy}' is temporarily unavailable")
         self.strategy = strategy
+        self.reason = reason
 
 
 class StaleCatalogCursorError(InvalidCursorError):

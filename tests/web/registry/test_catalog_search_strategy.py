@@ -499,6 +499,38 @@ def test_strategy_failure_after_page_one_is_503(
 
 
 @pytest.mark.usefixtures("catalog")
+def test_partially_dropped_rows_log_at_debug(admin_client: TestClient, fake: _FakeStrategy) -> None:
+    """Dropped rows on a page that still has valid ones are not a warning."""
+    with capture_logs() as logs:
+        resp = admin_client.get("/catalog", params={"q": _Q, "limit": 2})
+
+    assert resp.status_code == 200, resp.text
+    [dropped] = [e for e in logs if e["event"] == "catalog_search_rows_dropped"]
+    assert dropped["log_level"] == "debug"
+    assert dropped["invalid"] > 0 and dropped["foreign"] == 1 and dropped["duplicate"] > 0
+
+
+@pytest.mark.usefixtures("catalog")
+def test_invalid_ranking_after_page_one_is_503_without_retry_after(
+    admin_client: TestClient, fake: _FakeStrategy, failure_metrics: InMemoryMetricReader
+) -> None:
+    """An all-invalid ranking repeats for the same request, so no retry hint."""
+    first = admin_client.get("/catalog", params={"q": _Q, "limit": 2}).json()
+    fake.all_invalid = True
+
+    resp = admin_client.get(
+        "/catalog", params={"q": _Q, "limit": 2, "cursor": first["next_cursor"]}
+    )
+
+    assert resp.status_code == 503, resp.text
+    assert "Retry-After" not in resp.headers
+    assert resp.json()["type"].endswith("catalog_search_unavailable")
+    assert _failures(failure_metrics) == [
+        ({"strategy": "fake", "reason": "invalid", "outcome": "unavailable"}, 1)
+    ]
+
+
+@pytest.mark.usefixtures("catalog")
 def test_strategy_timeout_after_page_one_is_503(
     admin_client: TestClient,
     web_context: Context,

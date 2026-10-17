@@ -184,4 +184,5 @@ configured name, or `unknown` for a client-supplied cursor), `reason`
 page answered 503; `rejected` — a stale cursor answered 400). Alert on
 `outcome="unavailable"` above zero. The matching log events are
 `catalog_search_strategy_fallback`, `catalog_search_strategy_unavailable` and
-`catalog_search_rows_dropped`.
+`catalog_search_rows_dropped` (a warning when no valid row is left, debug
+otherwise).

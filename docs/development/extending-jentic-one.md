@@ -179,7 +179,9 @@ The contract:
 - **Failure.** Raise to fail. On the first page the walk falls back to `token`
   (logged and counted). On a later page the response is 503
   `catalog_search_unavailable` with `Retry-After: 1`: the client retries the
-  page, or restarts the search without a cursor.
+  page, or restarts the search without a cursor. A later page whose ranking has
+  no valid row gets the 503 without `Retry-After`, since the same request
+  ranks the same way.
 - **Cursors.** A cursor records its walk's strategy (key `st`). A later page is
   served only while that strategy is the configured one: any other strategy in
   the cursor answers 400 (restart the search). A version suffix on `st` is not
