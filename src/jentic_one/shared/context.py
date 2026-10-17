@@ -225,9 +225,9 @@ class Context:
         guard, two in-flight sweeps can each read ``last_notified_digest=None`` for a
         first-time change and both emit a duplicate (now *actionable*)
         ``catalog.update_available`` event. Serializing on this lock collapses the in-process
-        race to a single emit. Cross-replica overlap is still possible but self-heals: the
-        losing replica's next sweep sees the persisted digest and won't re-fire. Lazily
-        created on first access so it binds to the running loop.
+        race to a single emit; ``CatalogService`` pairs it with a registry-DB advisory lock
+        for the cross-process half (other replicas/workers). Lazily created on first access
+        so it binds to the running loop.
         """
         if self._update_sweep_lock is None:
             self._update_sweep_lock = asyncio.Lock()

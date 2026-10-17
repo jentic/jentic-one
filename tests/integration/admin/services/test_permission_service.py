@@ -222,7 +222,7 @@ async def test_set_assigned(integration_context: Context, admin_user: str) -> No
     result = await service.set_assigned(
         target_id,
         [CREDENTIALS_WRITE, USERS_READ],
-        identity=Identity(sub=admin_user, email="test@local"),
+        identity=Identity(sub=admin_user, email="test@local", permissions=["org:admin"]),
     )
     assert CREDENTIALS_WRITE in result
     assert USERS_READ in result
