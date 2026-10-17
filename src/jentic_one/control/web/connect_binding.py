@@ -144,12 +144,17 @@ def flow_callback_url(request: Request, ctx: Context, state: ConnectState | None
 
 
 def _state_of(ctx: Context, authorize_url: str) -> ConnectState | None:
-    """The connect state an authorization URL carries (``None`` if it carries none)."""
+    """The connect state an authorization URL carries (``None`` if it carries none).
+
+    The flows append their signed state last, after any query the configured
+    authorization endpoint already had (which may hold its own ``state``), so
+    the last ``state`` value is ours.
+    """
     raw = parse_qs(urlsplit(authorize_url).query).get("state")
     if not raw:
         return None
     try:
-        return decode_state(ctx.config.credentials.connect.state_secret.get_secret_value(), raw[0])
+        return decode_state(ctx.config.credentials.connect.state_secret.get_secret_value(), raw[-1])
     except StateError:
         return None
 
