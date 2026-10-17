@@ -2525,7 +2525,7 @@ type CatalogEntryResponse struct {
 
 	// Match Why this entry matched the search `q`. Present only when the configured ranking strategy reports match evidence; omitted for browse and for the default ranking.
 	//
-	// Examples: {"channels":["token"]}
+	// Examples: {"channels":["alias"]}
 	Match *CatalogMatchResponse `json:"match,omitempty"`
 
 	// Path Manifest path of the entry within the public-APIs repo.
@@ -2596,11 +2596,11 @@ type CatalogListResponse struct {
 
 // CatalogMatchResponse Why a catalog entry matched a search, as reported by the ranking strategy.
 //
-// Examples: {"channels":["token"]}
+// Examples: {"channels":["alias"]}
 type CatalogMatchResponse struct {
-	// Channels Kinds of evidence behind the match (e.g. `token`). An open set: new values may appear, so clients must accept values they don't recognise.
+	// Channels Kinds of evidence behind the match, as short slugs (e.g. `alias`). An open set: new values may appear, so clients must accept values they don't recognise.
 	//
-	// Examples: ["token"]
+	// Examples: ["alias"]
 	Channels []string `json:"channels"`
 }
 
@@ -10612,10 +10612,11 @@ type ClientInterface interface {
 	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
 	// manifest, not the page, so the Discover status row stays stable while scrolling.
 	//
-	// A search walk keeps the ranking that served its first page. If that ranking
-	// is no longer available on a later page, the cursor is rejected (400) or the
-	// page answers 503 ``catalog_search_unavailable``; restart the search without
-	// a cursor.
+	// A search walk keeps the ranking that served its first page. A later page
+	// whose cursor names a ranking that is not the configured one answers 400
+	// (restart the search without a cursor); one whose ranking fails or isn't
+	// available on this replica answers 503 ``catalog_search_unavailable`` with
+	// ``Retry-After`` (retry the page, or restart the search).
 	//
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14219,10 +14220,11 @@ func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditor
 // “catalog_total“/“registered_count“/“outdated_count“ count the whole
 // manifest, not the page, so the Discover status row stays stable while scrolling.
 //
-// A search walk keeps the ranking that served its first page. If that ranking
-// is no longer available on a later page, the cursor is rejected (400) or the
-// page answers 503 “catalog_search_unavailable“; restart the search without
-// a cursor.
+// A search walk keeps the ranking that served its first page. A later page
+// whose cursor names a ranking that is not the configured one answers 400
+// (restart the search without a cursor); one whose ranking fails or isn't
+// available on this replica answers 503 “catalog_search_unavailable“ with
+// “Retry-After“ (retry the page, or restart the search).
 //
 // Corresponds with GET /catalog (the `ListCatalog` operationId).
 func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27062,10 +27064,11 @@ type ClientWithResponsesInterface interface {
 	// ``catalog_total``/``registered_count``/``outdated_count`` count the whole
 	// manifest, not the page, so the Discover status row stays stable while scrolling.
 	//
-	// A search walk keeps the ranking that served its first page. If that ranking
-	// is no longer available on a later page, the cursor is rejected (400) or the
-	// page answers 503 ``catalog_search_unavailable``; restart the search without
-	// a cursor.
+	// A search walk keeps the ranking that served its first page. A later page
+	// whose cursor names a ranking that is not the configured one answers 400
+	// (restart the search without a cursor); one whose ranking fails or isn't
+	// available on this replica answers 503 ``catalog_search_unavailable`` with
+	// ``Retry-After`` (retry the page, or restart the search).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45313,10 +45316,11 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 // “catalog_total“/“registered_count“/“outdated_count“ count the whole
 // manifest, not the page, so the Discover status row stays stable while scrolling.
 //
-// A search walk keeps the ranking that served its first page. If that ranking
-// is no longer available on a later page, the cursor is rejected (400) or the
-// page answers 503 “catalog_search_unavailable“; restart the search without
-// a cursor.
+// A search walk keeps the ranking that served its first page. A later page
+// whose cursor names a ranking that is not the configured one answers 400
+// (restart the search without a cursor); one whose ranking fails or isn't
+// available on this replica answers 503 “catalog_search_unavailable“ with
+// “Retry-After“ (retry the page, or restart the search).
 //
 // Returns a wrapper object for the known response body format(s).
 //

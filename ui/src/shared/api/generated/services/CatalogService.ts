@@ -21,10 +21,11 @@ export class CatalogService {
      * ``catalog_total``/``registered_count``/``outdated_count`` count the whole
      * manifest, not the page, so the Discover status row stays stable while scrolling.
      *
-     * A search walk keeps the ranking that served its first page. If that ranking
-     * is no longer available on a later page, the cursor is rejected (400) or the
-     * page answers 503 ``catalog_search_unavailable``; restart the search without
-     * a cursor.
+     * A search walk keeps the ranking that served its first page. A later page
+     * whose cursor names a ranking that is not the configured one answers 400
+     * (restart the search without a cursor); one whose ranking fails or isn't
+     * available on this replica answers 503 ``catalog_search_unavailable`` with
+     * ``Retry-After`` (retry the page, or restart the search).
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */

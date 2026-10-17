@@ -287,7 +287,7 @@
         },
         "search_deadline_ms": {
           "default": 300,
-          "description": "Time budget in milliseconds for one ranking call by a non-`token` search strategy. On the first page of a walk a timeout falls back to `token` for the whole walk; on a later page it answers 503.",
+          "description": "Time budget in milliseconds for one ranking call by a non-`token` search strategy. On the first page of a walk a timeout falls back to `token` for the whole walk; on a later page it answers 503. Every page re-ranks, so set it well above the strategy's tail latency.",
           "maximum": 60000,
           "minimum": 1,
           "title": "Search Deadline Ms",
@@ -295,7 +295,7 @@
         },
         "search_strategy": {
           "default": "token",
-          "description": "Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the built-in token-overlap scorer; other names must be registered by an extension, or app startup fails.",
+          "description": "Ranking strategy for `GET /catalog?q=`, by registered name. `token` is the built-in token-overlap scorer; other names must be registered by an extension (provisional extension seam; see the extending guide), or app startup fails. Register a strategy on every replica before selecting it, and switch back to `token` before downgrading.",
           "minLength": 1,
           "title": "Search Strategy",
           "type": "string"

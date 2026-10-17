@@ -7,7 +7,7 @@
  */
 export type CatalogMatchResponse = {
     /**
-     * Kinds of evidence behind the match (e.g. `token`). An open set: new values may appear, so clients must accept values they don't recognise.
+     * Kinds of evidence behind the match, as short slugs (e.g. `alias`). An open set: new values may appear, so clients must accept values they don't recognise.
      */
     channels: Array<string>;
 };
