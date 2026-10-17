@@ -449,6 +449,17 @@ Require-approval holds: held execution jobs awaiting a human reviewer. An execut
 | `held_executions.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
 | `held_executions.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
 
+## `invalidation`
+
+Cross-process cache invalidation (the `InvalidationBus`). On PostgreSQL, triggers on the admin and control source tables (tokens, API keys, actors, grants, permission rules, bindings, credentials) send a `NOTIFY` when a change commits, and a process that caches authorization state — the broker — holds one dedicated `LISTEN` connection per database server and drops the affected cache entries on receipt. A revoke made through one process therefore takes effect on every broker before the cache TTLs lapse. A process with nothing to invalidate opens no connection. SQLite has no notification channel: the bus is a no-op there and the cache TTLs bound staleness. Disable it (`enabled: false`) when the database is reached through a pooler that cannot hold a session-level `LISTEN` — for example PgBouncer in transaction pooling mode — and the TTLs apply as on SQLite.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `invalidation.enabled` | boolean | `true` | `JENTIC__INVALIDATION__ENABLED` | Listen for cross-process invalidation notifications on PostgreSQL. No effect on SQLite. |
+| `invalidation.reconnect_backoff_base_s` | number (> 0) | `0.5` | `JENTIC__INVALIDATION__RECONNECT_BACKOFF_BASE_S` | First delay before re-opening a lost LISTEN connection; doubles per failed attempt up to reconnect_backoff_max_s. |
+| `invalidation.reconnect_backoff_max_s` | number (> 0) | `30.0` | `JENTIC__INVALIDATION__RECONNECT_BACKOFF_MAX_S` | Ceiling on the delay between LISTEN reconnect attempts. |
+| `invalidation.health_check_interval_s` | number (> 0) | `15.0` | `JENTIC__INVALIDATION__HEALTH_CHECK_INTERVAL_S` | How often the LISTEN connection is probed. A probe that fails or does not answer within this interval counts as a lost connection. |
+
 ## `apps`
 
 | Key | Type | Default | Env var | Description |
