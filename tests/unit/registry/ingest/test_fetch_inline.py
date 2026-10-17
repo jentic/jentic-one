@@ -412,3 +412,13 @@ async def test_yaml_alias_depth_limit_is_exact(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(fetch, "MAX_YAML_EXPANDED_DEPTH", 3)
     with pytest.raises(IngestStageError, match="nesting limit of 3 levels"):
         await load_specification(_make_inline(spec, filename="spec.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_catalog_entry_id_carried_verbatim() -> None:
+    result = await load_specification(
+        _make_inline(_SPEC_JSON, filename="spec.json", catalog_entry_id="public/acme.com/pet")
+    )
+    assert result.catalog_entry_id == "public/acme.com/pet"
+    plain = await load_specification(_make_inline(_SPEC_JSON, filename="spec.json"))
+    assert plain.catalog_entry_id is None
