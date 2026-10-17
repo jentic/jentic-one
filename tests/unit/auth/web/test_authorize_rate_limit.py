@@ -239,6 +239,10 @@ def test_the_authorize_bucket_is_not_shared_with_the_token_endpoint() -> None:
         ("203.0.113.7:51234", "203.0.113.7"),
         ("::ffff:203.0.113.7", "203.0.113.7"),
         ("[::ffff:203.0.113.7]:443", "203.0.113.7"),
+        ("64:ff9b::203.0.113.7", "203.0.113.7"),
+        ("2002:cb00:7107:1::1", "203.0.113.7"),
+        ("2002:cb00:7107:2::1", "203.0.113.7"),
+        ("2001:0:4136:e378:8000:63bf:34ff:8ef8", "203.0.113.7"),
         ("2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"),
         ("2001:DB8:1:2::0:1", "2001:db8:1:2::/64"),
         ("[2001:db8:1:2::1]:443", "2001:db8:1:2::/64"),
@@ -250,7 +254,8 @@ def test_the_authorize_bucket_is_not_shared_with_the_token_endpoint() -> None:
     ],
 )
 def test_client_network_normalises_addresses(value: str, network: str) -> None:
-    """A port is dropped, IPv4-mapped addresses are unmapped, any other IPv6
+    """A port is dropped, an IPv6 address that embeds an IPv4 client
+    (IPv4-mapped, NAT64, 6to4, Teredo) is that IPv4 client, any other IPv6
     address (link-local and unique-local included) is grouped by its /64, and
     a non-address is passed through."""
     assert client_network(value) == network

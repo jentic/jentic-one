@@ -152,9 +152,10 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
     # and the shared store would otherwise hand it the same bucket as another
     # limiter keyed the same way with different rate/burst params. Keyed on
     # the client network only — the form's client_id is caller-chosen, so
-    # including it would let one host sidestep the bucket by rotating ids. Reuses the exchange
-    # rpm/burst knobs (config schema unchanged): revocation traffic is
-    # bounded by the same client population as /oauth/token.
+    # including it would let one host sidestep the bucket by rotating ids.
+    # Reuses the exchange rpm/burst knobs (config schema unchanged):
+    # revocation traffic is bounded by the same client population as
+    # /oauth/token.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.exchange_rpm,

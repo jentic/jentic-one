@@ -1978,11 +1978,12 @@ type OAuthRateLimitConfig struct {
 	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
 	// across the unauthenticated authorization flow: ``/authorize``, the IdP
 	// callback, the consent page and submit, and the local-login form share one
-	// bucket, whatever ``client_id`` they name. A sign-in spends two to five
-	// requests, so the defaults admit at least six back-to-back sign-ins and then at
-	// least six a minute per network; raise both for a large shared NAT or egress IP.
-	// Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every client
-	// shares the proxy's bucket.
+	// bucket, whatever ``client_id`` they name. A sign-in spends two to six requests
+	// (more after a mistyped password), so the defaults admit at least five
+	// back-to-back sign-ins and then at least five a minute per network; raise both
+	// for a large shared NAT or egress IP. Behind a proxy, set
+	// ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's
+	// bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.
