@@ -115,13 +115,13 @@ type catPageMsg struct {
 }
 
 type catPreviewMsg struct {
-	apiID   string
+	entryID string
 	preview *catalogPreview
 	err     error
 }
 
 type catImportMsg struct {
-	apiID    string
+	entryID  string
 	result   *catalogImportResult
 	promoted map[string]string
 	err      error
@@ -159,31 +159,31 @@ func (m *catalogBrowser) refreshCache() tea.Cmd {
 	}
 }
 
-func (m *catalogBrowser) loadPreview(apiID string) tea.Cmd {
+func (m *catalogBrowser) loadPreview(entryID string) tea.Cmd {
 	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		p, err := client.Preview(ctx, apiID, 0, catalogPreviewOps, "")
-		return catPreviewMsg{apiID: apiID, preview: p, err: err}
+		p, err := client.Preview(ctx, entryID, 0, catalogPreviewOps, "")
+		return catPreviewMsg{entryID: entryID, preview: p, err: err}
 	}
 }
 
-func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
+func (m *catalogBrowser) importEntry(entryID string) tea.Cmd {
 	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		jobID, err := client.Import(ctx, apiID)
+		jobID, err := client.Import(ctx, entryID)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		job, err := pollImportJobProgress(ctx, client, jobID, 2*time.Minute, nil)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		if job.Status != catJobCompleted {
-			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
+			return catImportMsg{entryID: entryID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
 		}
 		result, err := client.JobResult(ctx, jobID)
 		if err != nil {
-			return catImportMsg{apiID: apiID, err: err}
+			return catImportMsg{entryID: entryID, err: err}
 		}
 		promoted := map[string]string{}
 		for _, rev := range result.Revisions {
@@ -197,7 +197,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 			}
 			promoted[rev.RevisionID] = "live"
 		}
-		return catImportMsg{apiID: apiID, result: result, promoted: promoted}
+		return catImportMsg{entryID: entryID, result: result, promoted: promoted}
 	}
 }
 
@@ -215,13 +215,13 @@ func (m *catalogBrowser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case catPageMsg:
 		return m.onPage(msg)
 	case catPreviewMsg:
-		if m.previewLoading == msg.apiID {
+		if m.previewLoading == msg.entryID {
 			m.previewLoading = ""
 		}
 		if msg.err != nil {
-			m.previewErr[msg.apiID] = msg.err.Error()
+			m.previewErr[msg.entryID] = msg.err.Error()
 		} else {
-			m.previews[msg.apiID] = msg.preview
+			m.previews[msg.entryID] = msg.preview
 		}
 		return m, nil
 	case catImportMsg:
@@ -275,23 +275,23 @@ func (m *catalogBrowser) onPage(msg catPageMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
-	if m.importing == msg.apiID {
+	if m.importing == msg.entryID {
 		m.importing = ""
 	}
 	if msg.err != nil {
-		m.status = m.st.Warnf("import %s failed: %v", msg.apiID, msg.err)
+		m.status = m.st.Warnf("import %s failed: %v", msg.entryID, msg.err)
 		return m, nil
 	}
 	// Mark the entry as imported and bump the counter.
 	for i := range m.entries {
-		if m.entries[i].EntryID == msg.apiID {
+		if m.entries[i].EntryID == msg.entryID {
 			if !m.entries[i].Registered {
 				m.registered++
 			}
 			m.entries[i].Registered = true
 		}
 	}
-	m.status = m.st.Successf("imported %s (%d revision(s))", msg.apiID, len(msg.result.Revisions))
+	m.status = m.st.Successf("imported %s (%d revision(s))", msg.entryID, len(msg.result.Revisions))
 	return m, nil
 }
 

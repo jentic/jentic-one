@@ -32,7 +32,7 @@ func mockControl(t *testing.T) *httptest.Server {
 				`"registered":false,"update_available":false,"alternates":1,` +
 				`"_links":{"self":"/catalog/public/stripe.com","operations":"/catalog/public/stripe.com/operations",` +
 				`"import":"/catalog/public/stripe.com:import","human":"https://github.com/APIs-guru/openapi-directory/tree/main/APIs/stripe.com",` +
-				`"alternates":["internal/stripe.com"]}}` +
+				`"alternates":["/catalog/internal/stripe.com"]}}` +
 				`],"catalog_total":1,"registered_count":0,"outdated_count":0,"oldest_source_sync_age_seconds":42,` +
 				`"has_more":false,"next_cursor":""}`))
 		case strings.HasPrefix(r.URL.Path, "/catalog/"):
