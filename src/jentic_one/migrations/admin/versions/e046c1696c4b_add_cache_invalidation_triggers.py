@@ -15,7 +15,8 @@ Payload (JSON, version 1)::
 A payload over 7900 bytes (the ``NOTIFY`` limit is 8000) is replaced by
 ``{"v": 1, "s", "t", "op", "flush": true}`` — the listener then drops
 everything cached from that table. ``TRUNCATE`` always sends the flush form.
-An ``UPDATE`` that leaves the row unchanged sends nothing.
+An ``UPDATE`` that leaves the row unchanged — or changes only the
+``updated_at``/``last_used_at`` bookkeeping timestamps — sends nothing.
 
 The key columns per table are the ones the broker's caches can be keyed on
 (token/API-key digests, actor ids, OAuth client and grant ids). PostgreSQL
@@ -77,7 +78,11 @@ BEGIN
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
         new_row := to_jsonb(NEW);
     END IF;
-    IF TG_OP = 'UPDATE' AND old_row = new_row THEN
+    -- Bookkeeping timestamps never change what a cache holds: an UPDATE that
+    -- touches only those (a grant's last_used_at on every token mint) is silent.
+    IF TG_OP = 'UPDATE'
+       AND old_row - ARRAY['updated_at', 'last_used_at']
+           = new_row - ARRAY['updated_at', 'last_used_at'] THEN
         RETURN NULL;
     END IF;
     FOREACH col IN ARRAY TG_ARGV LOOP

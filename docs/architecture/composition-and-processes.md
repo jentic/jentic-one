@@ -194,7 +194,8 @@ flowchart LR
   invalidates anything, and every writer — any surface, any process, a manual
   `psql` session — publishes without application code. A payload that would
   exceed the `NOTIFY` size limit, and every `TRUNCATE`, sends a "flush this
-  table" message instead.
+  table" message instead; an `UPDATE` that changes only the `updated_at` /
+  `last_used_at` bookkeeping timestamps sends nothing.
 - **Listening is one dedicated connection per database server per process**,
   opened directly with asyncpg outside the SQLAlchemy pool (a `LISTEN` is
   session state). The bus opens it only when something subscribed — the broker
@@ -204,6 +205,9 @@ flowchart LR
   probes the connection, reconnects with capped exponential backoff
   (`invalidation.reconnect_backoff_*`), and after reconnecting flushes every
   subscribed cache, because notifications sent while it was down are gone.
+  Startup waits a bounded time for the first `LISTEN`; a database that is
+  slower than that does not hold up boot, and when its `LISTEN` lands later
+  the bus flushes too (requests may have been cached in between).
 - **SQLite runs a no-op bus**: there is no notification channel, and a
   single-file database has no second writer process. The TTLs apply. Set
   `invalidation.enabled: false` where `LISTEN` cannot work (a transaction-mode

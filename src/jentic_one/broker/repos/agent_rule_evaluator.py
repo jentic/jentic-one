@@ -231,8 +231,9 @@ class AgentRuleEvaluator:
             self._cache.move_to_end(cache_key)
             return cached.rules
 
+        generation = self._generation
+
         async def _load() -> list[PermissionRule]:
-            generation = self._generation
             rules = await self._fetch_rules(
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
             )
@@ -242,7 +243,9 @@ class AgentRuleEvaluator:
                 self._store(cache_key, _CacheEntry(rules=rules, cached_at=time.monotonic()))
             return rules
 
-        return await self._single_flight.do(cache_key, _load)
+        # Generation in the flight key: a caller arriving after an
+        # invalidation never shares a read that began before it.
+        return await self._single_flight.do(f"{cache_key}\x00{generation}", _load)
 
     async def _fetch_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None

@@ -13,6 +13,8 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
+import pytest
+
 from jentic_one.shared.config import DatabaseConfig, InvalidationConfig
 from jentic_one.shared.invalidation import (
     PG_INVALIDATION_CHANNEL,
@@ -21,6 +23,7 @@ from jentic_one.shared.invalidation import (
     PgListenTarget,
     build_trigger_payload,
     listen_targets,
+    postgres,
 )
 
 _FAST = InvalidationConfig(
@@ -89,7 +92,9 @@ async def _until(condition: Callable[[], bool]) -> None:
 
 def _bus(server: _Server) -> PgListenInvalidationBus:
     target = PgListenTarget(
-        name="db", connect=server.connect, schemas={"admin": "admin", "control": "control"}
+        name="db",
+        connect=server.connect,
+        schemas={"admin": ("admin",), "control": ("control",)},
     )
     return PgListenInvalidationBus([target], config=_FAST)
 
@@ -203,5 +208,57 @@ def test_listen_targets_group_by_server() -> None:
         }
     )
     by_name = {t.name: t for t in targets}
-    assert by_name["db:5432/jentic"].schemas == {"admin": "admin", "control": "control"}
-    assert by_name["db2:5432/jentic"].schemas == {"admin": "other"}
+    assert by_name["db:5432/jentic"].schemas == {"admin": ("admin",), "control": ("control",)}
+    assert by_name["db2:5432/jentic"].schemas == {"admin": ("other",)}
+
+
+async def test_shared_schema_feeds_every_database_on_it() -> None:
+    """Two logical databases on one schema must both keep their topics."""
+    [target] = listen_targets(
+        {
+            "admin": DatabaseConfig(host="db", name="jentic"),
+            "control": DatabaseConfig(host="db", name="jentic"),
+        }
+    )
+    assert target.schemas == {"public": ("admin", "control")}
+    server = _Server()
+    bus = PgListenInvalidationBus(
+        [PgListenTarget(name="db", connect=server.connect, schemas=target.schemas)], config=_FAST
+    )
+    admin: list[InvalidationMessage] = []
+    control: list[InvalidationMessage] = []
+    bus.subscribe("admin.access_tokens", admin.append)
+    bus.subscribe("control.credentials", control.append)
+    await bus.start()
+    try:
+        conn = server.conns[0]
+        conn.notify(build_trigger_payload(schema="public", table="access_tokens", operation="X"))
+        conn.notify(build_trigger_payload(schema="public", table="credentials", operation="Y"))
+    finally:
+        await bus.stop()
+    assert [m.operation for m in admin] == ["X"]
+    assert [m.operation for m in control] == ["Y"]
+
+
+async def test_first_listen_after_start_returned_flushes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A first LISTEN that lands once the app is serving must flush what was cached."""
+    monkeypatch.setattr(postgres, "_START_WAIT_S", 0.01)
+    release = asyncio.Event()
+
+    class _Slow(_Server):
+        async def connect(self) -> _Conn:
+            await release.wait()
+            return await super().connect()
+
+    server = _Slow()
+    bus = _bus(server)
+    got: list[InvalidationMessage] = []
+    bus.subscribe("admin.agents", got.append)
+    await bus.start()  # returns after the (shortened) start wait; nothing is listening
+    try:
+        assert not server.conns
+        release.set()
+        await _until(lambda: bool(server.conns) and bool(got))
+        assert [m.flush for m in got] == [True]
+    finally:
+        await bus.stop()

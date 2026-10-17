@@ -102,8 +102,9 @@ class CachingCredentialDeriver:
             _cache_hits.add(1)
             return cached.value
 
+        generation = self._generation
+
         async def _load() -> CredentialDerivation:
-            generation = self._generation
             result = await self._inner.derive_credentials(
                 agent_id=agent_id, vendor=vendor, name=name, version=version
             )
@@ -115,7 +116,9 @@ class CachingCredentialDeriver:
             logger.debug("credential_binding_cache_miss", agent_id=agent_id, vendor=vendor)
             return result
 
-        return await self._single_flight.do(key, _load)
+        # Generation in the flight key: a caller arriving after an
+        # invalidation never shares a read that began before it.
+        return await self._single_flight.do(f"{key}\x00{generation}", _load)
 
     def _store(self, key: str, entry: _CacheEntry) -> None:
         self._cache[key] = entry

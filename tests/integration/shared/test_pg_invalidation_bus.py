@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import secrets
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -86,21 +87,43 @@ async def _eventually(condition: Callable[[], bool], what: str) -> None:
         await asyncio.sleep(0.02)
 
 
+def _about(
+    messages: list[InvalidationMessage], key: str, operation: str | None = None
+) -> list[InvalidationMessage]:
+    """The messages that name ``key`` (and ``operation``) — other writers are ignored."""
+    return [
+        m
+        for m in messages
+        if (operation is None or m.operation == operation)
+        and any(key in values for values in m.keys.values())
+    ]
+
+
 # --- the contract, against a real LISTEN connection ------------------------
 
 
 class _PgContract(BaseInvalidationBusContract):
+    """The contract over a real LISTEN connection, isolated from real writes.
+
+    The bus maps a private, per-test schema name to ``admin``, and the contract
+    publishes under that name: trigger traffic from anything else writing to
+    the shared fixture database (other suites, other processes) is ignored by
+    the bus, so the contract's exact-count assertions cannot flake.
+    """
+
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.schema = f"inv_contract_{secrets.token_hex(4)}"
 
     async def bus_factory(self) -> InvalidationBus:
-        return _pg_bus(self.config)
+        admin = self.config.databases.admin.model_copy(update={"schema_name": self.schema})
+        return PgListenInvalidationBus(listen_targets({"admin": admin}), config=_FAST_RECONNECT)
 
     async def publish(
         self, bus: InvalidationBus, topic: str, keys: Mapping[str, Sequence[str]]
     ) -> None:
-        database, _, table = topic.partition(".")
-        schema = getattr(self.config.databases, database).schema_name
+        _database, _, table = topic.partition(".")
+        schema = self.schema
         payload = build_trigger_payload(schema=schema, table=table, operation="UPDATE", keys=keys)
         conn = await asyncpg.connect(**_raw_conn_kwargs(self.config))
         try:
@@ -165,8 +188,8 @@ async def test_trigger_notifies_on_commit_with_old_and_new_keys(
                 ),
                 {"id": agent_id},
             )
-        await _eventually(lambda: any(m.operation == "INSERT" for m in listening), "INSERT notify")
-        [insert] = [m for m in listening if m.operation == "INSERT"]
+        await _eventually(lambda: bool(_about(listening, agent_id, "INSERT")), "INSERT notify")
+        [insert] = _about(listening, agent_id, "INSERT")
         assert insert.topic == "admin.agents"
         assert insert.values("id") == (agent_id,)
 
@@ -175,8 +198,8 @@ async def test_trigger_notifies_on_commit_with_old_and_new_keys(
                 text("UPDATE agents SET id = :new WHERE id = :old"),
                 {"new": renamed, "old": agent_id},
             )
-        await _eventually(lambda: any(m.operation == "UPDATE" for m in listening), "UPDATE notify")
-        [update] = [m for m in listening if m.operation == "UPDATE"]
+        await _eventually(lambda: bool(_about(listening, renamed, "UPDATE")), "UPDATE notify")
+        [update] = _about(listening, renamed, "UPDATE")
         assert set(update.values("id")) == {agent_id, renamed}
     finally:
         async with integration_context.admin_db.transaction() as session:
@@ -198,8 +221,7 @@ async def test_trigger_is_silent_on_rollback_and_no_op_update(
                 ),
                 {"id": agent_id},
             )
-        await _eventually(lambda: bool(listening), "INSERT notify")
-        listening.clear()
+        await _eventually(lambda: bool(_about(listening, agent_id, "INSERT")), "INSERT notify")
 
         with pytest.raises(RuntimeError):
             async with integration_context.admin_db.transaction() as session:
@@ -211,9 +233,12 @@ async def test_trigger_is_silent_on_rollback_and_no_op_update(
             await session.execute(
                 text("UPDATE agents SET status = status WHERE id = :id"), {"id": agent_id}
             )
+            # Bookkeeping-only: the trigger ignores updated_at/last_used_at.
+            await session.execute(
+                text("UPDATE agents SET updated_at = now() WHERE id = :id"), {"id": agent_id}
+            )
         # A marker change proves the listener is live, so silence above is real.
         async with integration_context.control_db.transaction() as session:
-            await session.execute(text("DELETE FROM permission_rule_set_rules WHERE id = 'none'"))
             await session.execute(
                 text("SELECT pg_notify(:c, :p)"),
                 {
@@ -226,10 +251,51 @@ async def test_trigger_is_silent_on_rollback_and_no_op_update(
                 },
             )
         await _eventually(lambda: any(m.operation == "MARKER" for m in listening), "marker")
-        assert [m.operation for m in listening] == ["MARKER"]
+        assert [m.operation for m in _about(listening, agent_id)] == ["INSERT"]
     finally:
         async with integration_context.admin_db.transaction() as session:
             await session.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+
+
+@pytest.mark.parametrize(
+    ("database", "migration_module"),
+    [
+        (
+            "admin",
+            "jentic_one.migrations.admin.versions.e046c1696c4b_add_cache_invalidation_triggers",
+        ),
+        (
+            "control",
+            "jentic_one.migrations.control.versions.5a78aa331015_add_cache_invalidation_triggers",
+        ),
+    ],
+)
+async def test_every_triggered_table_carries_both_triggers(
+    integration_context: Context, database: str, migration_module: str
+) -> None:
+    """The migrated schema has the row and TRUNCATE trigger on every listed table."""
+    migration = importlib.import_module(migration_module)
+    schema = getattr(integration_context.config.databases, database).schema_name
+    db = getattr(integration_context, f"{database}_db")
+    async with db.session() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT c.relname, t.tgname FROM pg_trigger t"
+                    " JOIN pg_class c ON c.oid = t.tgrelid"
+                    " JOIN pg_namespace n ON n.oid = c.relnamespace"
+                    " WHERE n.nspname = :schema AND t.tgname LIKE '%_invalidation_%'"
+                ),
+                {"schema": schema},
+            )
+        ).all()
+    found = {(r.relname, r.tgname) for r in rows}
+    expected = {
+        (table, f"{table}_invalidation_{kind}")
+        for table in migration.TRIGGERED_TABLES
+        for kind in ("row", "truncate")
+    }
+    assert found == expected
 
 
 # --- acceptance: a revoke reaches a separate broker before the TTL ----------

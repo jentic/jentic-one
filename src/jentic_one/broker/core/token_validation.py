@@ -74,11 +74,12 @@ class CachedTokenValidator:
             self._cache.move_to_end(cache_key)
             return self._check_active(entry.resolved)
 
+        generation = self._generation
+
         async def _load() -> Identity | None:
             # Stamped with the leader's pre-lookup time, so a verdict never
             # outlives the TTL measured from when its DB read began.
             started = time.monotonic()
-            generation = self._generation
             resolved = await self.resolver.resolve_access_token(token)
             # An invalidation that lands while the read is in flight may
             # describe a commit the read did not see: answer this caller, but
@@ -89,7 +90,10 @@ class CachedTokenValidator:
 
         # Concurrent misses for one token (cold start, TTL expiry) share a single
         # resolver lookup; a raised lookup reaches every waiter and is not cached.
-        resolved = await self._single_flight.do(cache_key, _load)
+        # The generation is part of the flight key: a caller arriving after an
+        # invalidation starts a fresh read instead of sharing one that began
+        # before the change.
+        resolved = await self._single_flight.do(f"{cache_key}\x00{generation}", _load)
         return self._check_active(resolved)
 
     def _store(self, cache_key: str, entry: _CacheEntry) -> None:
