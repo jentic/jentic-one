@@ -24,6 +24,7 @@ from pydantic import SecretStr
 from sqlalchemy import update
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.repos.connect_session_outcome_repo import ConnectSessionOutcomeRepository
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
 from jentic_one.control.services.credentials.state import (
@@ -33,8 +34,10 @@ from jentic_one.control.services.credentials.state import (
     new_browser_binding,
 )
 from jentic_one.control.services.integrations import identity_echo
+from jentic_one.control.services.integrations.flow_handlers.auth_code import AuthCodeFlowHandler
 from jentic_one.control.services.integrations.flow_handlers.base import (
     DeviceAuthorizationBeginResult,
+    SuccessTokens,
 )
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
@@ -617,3 +620,73 @@ async def test_sweep_expires_a_polling_session_once_its_callback_state_lapsed(
     still = await session_row(env, waiting.session_id)
     assert still is not None
     assert still.state == "polling"
+
+
+def _tokens() -> SuccessTokens:
+    return SuccessTokens(
+        access_token="at",
+        refresh_token="rt",
+        expires_in=3600,
+        scope="read",
+        granted_scopes=["read"],
+    )
+
+
+async def _confirmed_session(env: Context, approver: AsyncClient) -> tuple[str, str]:
+    """An agent's session the approver confirmed; returns ``(session_id, state)``."""
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read"])
+    confirmed = await _confirm(approver, env, created.session_id, _own_client_body())
+    assert confirmed.status_code == 200, confirmed.text
+    return created.session_id, _state_of(confirmed.json()["authorize_url"])
+
+
+async def test_a_slow_exchange_is_not_expired_by_the_sweep(env: Context) -> None:
+    """The callback marks the session active before the (slow) token exchange."""
+    swept: list[int] = []
+
+    async with _browser(env) as approver:
+        session_id, state = await _confirmed_session(env, approver)
+        # The vendor sign-in took most of the state TTL.
+        await _age(env, session_id, env.config.credentials.connect.state_ttl_seconds + 120)
+
+        async def slow_exchange(_self: object, _row: object, *, code: str) -> SuccessTokens:
+            swept.append(await svc(env).expire_stale_sessions())  # the sweep fires meanwhile
+            return _tokens()
+
+        with patch.object(AuthCodeFlowHandler, "complete_from_callback", new=slow_exchange):
+            completed = await _callback(approver, state)
+    assert swept == [0]
+    assert _status(completed) == "ok"
+    row = await session_row(env, session_id)
+    assert row is not None
+    assert row.state == "connected"
+
+
+async def test_a_session_ended_during_the_exchange_keeps_no_grant(env: Context) -> None:
+    """Ended meanwhile (sweep, cancel): the finalise rolls back, nothing is kept."""
+    async with _browser(env) as approver:
+        session_id, state = await _confirmed_session(env, approver)
+        cookie = next(iter(approver.cookies.values()))
+    row = await session_row(env, session_id)
+    assert row is not None
+
+    async def exchange_outlived_by_the_session(
+        _self: object, _row: object, *, code: str
+    ) -> SuccessTokens:
+        assert await svc(env)._mark_terminal(session_id, "expired", "session TTL exceeded")
+        return _tokens()
+
+    with patch.object(
+        AuthCodeFlowHandler, "complete_from_callback", new=exchange_outlived_by_the_session
+    ):
+        result = await svc(env).complete_from_callback(
+            raw_state=state, code="vendor-code", browser_binding=cookie
+        )
+    assert (result.status, result.error_code) == ("failed", "session_ended")
+    assert await session_row(env, session_id) is None
+    assert await _granted(env, row.credential_id) is None
+    async with env.control_db.session() as session:
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(session, session_id)
+    assert outcome is not None
+    assert outcome.outcome == "expired"

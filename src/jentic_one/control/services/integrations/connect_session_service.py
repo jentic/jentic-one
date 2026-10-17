@@ -467,6 +467,11 @@ _SESSION_TTL_SECONDS = 30 * 60
 # already in flight).
 _CALLBACK_STATE_GRACE = timedelta(seconds=60)
 
+
+class _SessionEndedError(Exception):
+    """The session left its live states before its finalise write (nothing written)."""
+
+
 # Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
 # human completes by entering a credential, or one waiting for an OAuth app)
 # lives for ``control.connect.manual_flows_ttl_hours``.
@@ -3082,14 +3087,17 @@ class ConnectSessionService:
             # An API target on the approver's own OAuth client: no registry
             # entry, so no identity probe, and the API is already registered.
             _require_api_own_client(row)
-            await self._write_finalise(
-                credential_id=row.credential_id,
-                handler=handler,
-                tokens=tokens,
-                connected_as=None,
-                created_by=row.initiator_actor_id,
-                close_session_id=row.id,
-            )
+            try:
+                await self._write_finalise(
+                    credential_id=row.credential_id,
+                    handler=handler,
+                    tokens=tokens,
+                    connected_as=None,
+                    created_by=row.initiator_actor_id,
+                    close_session_id=row.id,
+                )
+            except _SessionEndedError:
+                return self._ended_during_finalise(row)
             self._record_connected(row)
             return StatusResult(
                 status="connected",
@@ -3143,14 +3151,17 @@ class ConnectSessionService:
                 )
                 return StatusResult(status="failed", error_code="identity_echo_failed")
 
-        await self._write_finalise(
-            credential_id=row.credential_id,
-            handler=handler,
-            tokens=tokens,
-            connected_as=connected_as,
-            created_by=row.initiator_actor_id,
-            close_session_id=row.id,
-        )
+        try:
+            await self._write_finalise(
+                credential_id=row.credential_id,
+                handler=handler,
+                tokens=tokens,
+                connected_as=connected_as,
+                created_by=row.initiator_actor_id,
+                close_session_id=row.id,
+            )
+        except _SessionEndedError:
+            return self._ended_during_finalise(row)
 
         self._record_connected(row, connected_as=connected_as)
         await self._maybe_import_catalog(
@@ -3162,6 +3173,12 @@ class ConnectSessionService:
             credential_id=row.credential_id,
             bound_scopes=tokens.granted_scopes,
         )
+
+    @staticmethod
+    def _ended_during_finalise(row: ConnectSession) -> StatusResult:
+        """The session ended while its tokens were being fetched; nothing was kept."""
+        _logger.warning("connect_session.ended_before_finalise", session_id=row.id)
+        return StatusResult(status="failed", error_code="session_ended")
 
     @staticmethod
     def _record_connected(row: ConnectSession, *, connected_as: str | None = None) -> None:
@@ -3246,6 +3263,9 @@ class ConnectSessionService:
         onto ``credential.provider_account_ref`` when non-None (session
         mode after identity echo); credential-mode passes ``None`` and the
         column stays unset.
+
+        Raises ``_SessionEndedError`` (nothing written) when
+        ``close_session_id`` is no longer live.
         """
         expires_at = (
             datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
@@ -3265,6 +3285,21 @@ class ConnectSessionService:
         )
 
         async with self._ctx.control_db.transaction() as session:
+            if close_session_id is not None:
+                # Close the session first, compare-and-swap from a live state:
+                # if it was ended meanwhile (the TTL sweep, a cancel), roll the
+                # whole write back so the grant is not kept on a credential
+                # that is being torn down. Taking the row first also makes a
+                # concurrent ``_mark_terminal`` wait for this commit and lose.
+                won = await ConnectSessionRepository.transition_state(
+                    session,
+                    close_session_id,
+                    to_state="connected",
+                    from_states=LIVE_STATES,
+                    connected_as=connected_as,
+                )
+                if not won:
+                    raise _SessionEndedError(close_session_id)
             # Look up the credential once so we can stamp the oauth_tokens
             # row with the shared-registration provenance. Nullable — legacy
             # embedded credentials just leave it NULL.
@@ -3324,12 +3359,7 @@ class ConnectSessionService:
                 credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:
-                closed = await ConnectSessionRepository.update_fields(
-                    session,
-                    close_session_id,
-                    state="connected",
-                    connected_as=connected_as,
-                )
+                closed = await ConnectSessionRepository.get_by_id(session, close_session_id)
                 if closed is not None:
                     await ConnectSessionOutcomeRepository.record(
                         session,
@@ -3704,8 +3734,13 @@ class ConnectSessionService:
             # dispatches to the standalone-credential handler for those.
             raise NoOpForFlowError("callback state missing session id")
 
-        async with self._ctx.control_db.session() as read_session:
-            row = await ConnectSessionRepository.get_by_id(read_session, state.session_id)
+        # The callback has arrived: mark the session active now, so the TTL
+        # sweep (which expires a ``polling`` auth-code session once its
+        # callback state lapses) does not end it during a slow exchange.
+        async with self._ctx.control_db.transaction() as touch_session:
+            row = await ConnectSessionRepository.update_fields(
+                touch_session, state.session_id, updated_at=datetime.now(UTC)
+            )
             if row is None:
                 raise SessionNotFoundError(state.session_id)
 
