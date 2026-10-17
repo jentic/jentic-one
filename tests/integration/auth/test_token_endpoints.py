@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+import structlog.testing
 from sqlalchemy import delete
 from sqlalchemy.exc import OperationalError
 
@@ -517,3 +518,147 @@ async def test_token_for_missing_actor_row_fails_closed(
     resolved = await token_service.resolve_access_token("at_orphaned_actor")
     assert resolved is not None
     assert resolved.active is False
+
+
+# --- owned agents follow their owner's account status ---------------------
+# An owned agent's tokens stop resolving while its owner is disabled or
+# deleted, and work again once the owner is re-enabled. The agent's own
+# status is never changed; an ownerless agent depends on its own status only.
+
+
+async def _disable_owner(ctx: Context, user_id: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await UserRepository.disable(session, user_id)
+        await session.commit()
+
+
+async def _enable_owner(ctx: Context, user_id: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await UserRepository.enable(session, user_id)
+        await session.commit()
+
+
+async def _delete_owner(ctx: Context, user_id: str) -> None:
+    """The row-level effect of ``UserService.delete`` (a soft delete)."""
+    async with ctx.admin_db.session() as session:
+        await UserRepository.update(
+            session, user_id, email=f"deleted-{user_id}@local", active=False
+        )
+        await session.commit()
+
+
+async def _agent_status(ctx: Context, agent_id: str) -> str:
+    async with ctx.admin_db.session() as session:
+        agent = await AgentRepository.get_by_id(session, agent_id)
+        assert agent is not None
+        return agent.status
+
+
+async def test_owner_disable_kills_agent_access_token_until_re_enabled(
+    token_service: TokenService, integration_context: Context, clean_tokens: None
+) -> None:
+    """Disabling the owner makes the agent's outstanding token inactive on
+    resolve and introspection; re-enabling the owner restores the same token."""
+    owner_id = await _seed_user(integration_context, "usr_own_dis")
+    agent_id = await _seed_agent(integration_context, owner_id=owner_id)
+    access, _refresh = await token_service.issue_pair(agent_id, ActorType.AGENT, [])
+
+    await _disable_owner(integration_context, owner_id)
+    with structlog.testing.capture_logs() as logs:
+        resolved = await token_service.resolve_access_token(access)
+    assert resolved is not None
+    assert resolved.active is False
+    assert (await token_service.introspect(access))["active"] is False
+    owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
+    assert len(owner_inactive) == 1
+    assert owner_inactive[0]["log_level"] == "warning"
+    assert owner_inactive[0]["agent_id"] == agent_id
+    assert owner_inactive[0]["owner_id"] == owner_id
+    assert await _agent_status(integration_context, agent_id) == ActorStatus.ACTIVE
+
+    await _enable_owner(integration_context, owner_id)
+    resolved = await token_service.resolve_access_token(access)
+    assert resolved is not None and resolved.active is True
+    assert resolved.parent_actor_id == owner_id
+    assert (await token_service.introspect(access))["active"] is True
+
+
+async def test_owner_delete_kills_agent_access_token(
+    token_service: TokenService, integration_context: Context, clean_tokens: None
+) -> None:
+    owner_id = await _seed_user(integration_context, "usr_own_del")
+    agent_id = await _seed_agent(integration_context, owner_id=owner_id)
+    access, refresh = await token_service.issue_pair(agent_id, ActorType.AGENT, [])
+
+    await _delete_owner(integration_context, owner_id)
+
+    resolved = await token_service.resolve_access_token(access)
+    assert resolved is not None and resolved.active is False
+    assert (await token_service.introspect(refresh))["active"] is False
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await token_service.refresh(refresh)
+
+
+async def test_inactive_owner_agent_cannot_refresh_until_re_enabled(
+    token_service: TokenService, integration_context: Context, clean_tokens: None
+) -> None:
+    """While the owner is disabled the agent can't rotate its refresh token;
+    the refused attempt doesn't consume it, so it rotates after re-enable."""
+    owner_id = await _seed_user(integration_context, "usr_own_rot")
+    agent_id = await _seed_agent(integration_context, owner_id=owner_id)
+    _access, refresh = await token_service.issue_pair(agent_id, ActorType.AGENT, [])
+
+    await _disable_owner(integration_context, owner_id)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await token_service.refresh(refresh)
+
+    await _enable_owner(integration_context, owner_id)
+    access2, _refresh2, _scopes2 = await token_service.refresh(refresh)
+    resolved = await token_service.resolve_access_token(access2)
+    assert resolved is not None and resolved.active is True
+
+
+async def test_ownerless_agent_access_token_is_unaffected(
+    token_service: TokenService, integration_context: Context, clean_tokens: None
+) -> None:
+    """An agent with no owner resolves on its own status alone."""
+    async with integration_context.admin_db.session() as session:
+        agent = Agent(
+            name="ownerless-agent",
+            owner_id=None,
+            registered_by=_SEED_MARKER,
+            created_by=_SEED_MARKER,
+            status=ActorStatus.ACTIVE,
+        )
+        session.add(agent)
+        await session.commit()
+        agent_id = agent.id
+    access, refresh = await token_service.issue_pair(agent_id, ActorType.AGENT, [])
+
+    resolved = await token_service.resolve_access_token(access)
+    assert resolved is not None and resolved.active is True
+    assert resolved.parent_actor_id is None
+    assert (await token_service.introspect(access))["active"] is True
+    access2, _refresh2, _scopes2 = await token_service.refresh(refresh)
+    assert access2.startswith("at_")
+
+
+async def test_user_token_is_unaffected_by_agent_owner_check(
+    token_service: TokenService, integration_context: Context, clean_tokens: None
+) -> None:
+    """A user's own token keeps resolving on the user's own status: owning an
+    agent, or another owner being disabled, changes nothing for it."""
+    user_id = await _seed_user(integration_context, "usr_own_self")
+    await _seed_agent(integration_context, owner_id=user_id)
+    other_owner = await _seed_user(integration_context, "usr_own_other")
+    await _seed_agent(integration_context, owner_id=other_owner)
+    access, refresh = await token_service.issue_pair(user_id, ActorType.USER, ["openid"])
+
+    await _disable_owner(integration_context, other_owner)
+
+    resolved = await token_service.resolve_access_token(access)
+    assert resolved is not None and resolved.active is True
+    assert resolved.parent_actor_id is None
+    assert (await token_service.introspect(access))["active"] is True
+    access2, _refresh2, _scopes2 = await token_service.refresh(refresh)
+    assert access2.startswith("at_")
