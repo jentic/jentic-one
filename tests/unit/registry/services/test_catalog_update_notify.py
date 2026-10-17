@@ -26,6 +26,7 @@ from jentic_one.registry.services.catalog.service import (
     _is_upstream_tracked,
 )
 from jentic_one.registry.services.errors import CatalogUnavailableError
+from jentic_one.shared.config import CatalogConfig
 from jentic_one.shared.models.events import EventType
 
 _API_ID = uuid.uuid4()
@@ -55,11 +56,13 @@ def _fake_try_advisory_lock(held: set[int] | None = None) -> MagicMock:
 
 def _make_ctx(*, interval: int = 86400, advisory_held: set[int] | None = None) -> MagicMock:
     ctx = MagicMock()
-    ctx.config.catalog.update_check_interval_seconds = interval
-    ctx.config.catalog.manifest_max_age_seconds = 300
-    ctx.config.catalog.manifest_url = "https://example.com/apis.json"
-    ctx.config.catalog.update_sweep_deadline_seconds = 300
-    ctx.config.catalog.update_sweep_max_concurrency = 4
+    ctx.config.catalog = CatalogConfig(
+        update_check_interval_seconds=interval,
+        manifest_max_age_seconds=300,
+        manifest_url="https://example.com/apis.json",
+        update_sweep_deadline_seconds=300,
+        update_sweep_max_concurrency=4,
+    )
     ctx.config.ingest = MagicMock()
     ctx.update_sweep_lock = asyncio.Lock()
     session = AsyncMock()

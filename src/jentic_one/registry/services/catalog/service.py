@@ -32,6 +32,7 @@ from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateChe
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
+from jentic_one.registry.services.catalog.entries import make_entry_id
 from jentic_one.registry.services.catalog.fetch import (
     CatalogFetchError,
     fetch_bytes_conditional,
@@ -159,28 +160,29 @@ class CatalogService:
     async def refresh(self) -> CatalogRefreshResult:
         """Fetch the upstream manifest and atomically replace the catalog snapshot."""
         try:
-            doc = await fetch_json(self._cfg.manifest_url, config=self._ingest_cfg)
+            doc = await fetch_json(self._cfg.legacy_manifest_url(), config=self._ingest_cfg)
         except CatalogFetchError as exc:
             raise CatalogUnavailableError(f"catalog manifest unavailable: {exc}") from exc
 
         entries = [e.to_dict() for e in mb.parse_apis_json(doc)]
         async with self._ctx.registry_db.transaction() as session:
             count = await CatalogRepository.replace(
-                session, source_url=self._cfg.manifest_url, entries=entries
+                session, source_url=self._cfg.legacy_manifest_url(), entries=entries
             )
         return CatalogRefreshResult(count=count)
 
     def _is_stale(self, fetched_at: datetime | None) -> bool:
         """Whether the cache should be lazily refreshed (D-005a option (a)).
 
-        Stale when empty or older than ``manifest_max_age_seconds``. A max-age of
-        0 disables auto-refresh (manual ``:refresh`` only).
+        Stale when empty or older than the legacy source's ``max_age_seconds``. A
+        max-age of 0 disables auto-refresh (manual ``:refresh`` only).
         """
-        if self._cfg.manifest_max_age_seconds <= 0:
+        max_age = self._cfg.legacy_max_age_seconds()
+        if max_age <= 0:
             return False
         if fetched_at is None:
             return True
-        return (utcnow() - fetched_at).total_seconds() > self._cfg.manifest_max_age_seconds
+        return (utcnow() - fetched_at).total_seconds() > max_age
 
     async def _safe_refresh(self) -> None:
         """Refresh with advisory-lock single-flight, swallowing upstream failures.
@@ -834,6 +836,9 @@ class CatalogService:
             # structure is destroyed by slugification), while this copy is
             # persisted as-is on the Api row for friendly-title derivation.
             source["catalog_api_id"] = entry.api_id
+            # The entry this import came from. Reads still key on the snapshot's
+            # api_id, which is the legacy git-manifest source's external_id.
+            source["catalog_entry_id"] = make_entry_id(self._cfg.legacy_source_slug, entry.api_id)
         return source
 
     async def _registered_identity(self, entry: CatalogEntryView) -> tuple[str, str] | None:

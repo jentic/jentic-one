@@ -23,7 +23,15 @@ from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
 class CatalogFetchError(Exception):
-    """Raised when an upstream catalog document cannot be fetched or parsed."""
+    """Raised when an upstream catalog document cannot be fetched or parsed.
+
+    ``status_code`` carries the upstream HTTP status when the failure was a
+    non-success response, and is ``None`` for transport, guard and parse failures.
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 #: Identify the catalog fetcher/update-notify poller to upstream hosts. Server-
@@ -93,7 +101,9 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
         raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
 
     if resp.status_code < 200 or resp.status_code >= 300:
-        raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
+        raise CatalogFetchError(
+            f"non-success status {resp.status_code} fetching {url}", status_code=resp.status_code
+        )
 
     content_length = resp.headers.get("content-length")
     limit_mb = max_bytes / (1024 * 1024)
@@ -172,7 +182,9 @@ async def fetch_bytes_conditional(
         )
 
     if resp.status_code < 200 or resp.status_code >= 300:
-        raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
+        raise CatalogFetchError(
+            f"non-success status {resp.status_code} fetching {url}", status_code=resp.status_code
+        )
 
     content_length = resp.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > max_bytes:
