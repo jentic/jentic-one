@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import uuid
 from base64 import b64decode, b64encode
 from dataclasses import dataclass
@@ -15,11 +16,12 @@ from pydantic import BaseModel
 T = TypeVar("T")
 
 __all__ = [
+    "CATALOG_STRATEGY_NAME_RE",
+    "MAX_CATALOG_CURSOR_LENGTH",
     "CatalogCursor",
     "InvalidCursorError",
     "InvalidSearchCursorError",
     "Page",
-    "decode_catalog_cursor",
     "decode_cursor",
     "decode_cursor_str",
     "decode_search_cursor",
@@ -125,14 +127,33 @@ class CatalogCursor:
 
     api_id: str
     #: ``None`` for a browse cursor. Integers stay ``int`` so large integer
-    #: scores compare exactly; anything else decodes as a finite ``float``.
+    #: scores compare exactly; anything else is a finite ``float``.
     score: int | float | None
     #: The search strategy that served the walk; ``None`` means the default.
     strategy: str | None = None
 
 
+#: Catalog search strategy names: written into cursors (``st``), metric labels
+#: and logs, so they are short, plain slugs.
+CATALOG_STRATEGY_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+#: Upper bound on an encoded catalog cursor. Real cursors are well under
+#: 200 characters; the bound keeps a crafted cursor from reaching the JSON
+#: decoder at a size that could exhaust its recursion limit.
+MAX_CATALOG_CURSOR_LENGTH = 1024
+
+
 def parse_catalog_cursor(cursor: str) -> CatalogCursor:
-    """Decode a catalog cursor, including its optional ``st`` strategy key."""
+    """Decode a catalog cursor, including its optional ``st`` strategy key.
+
+    Raises :class:`InvalidCursorError` for anything that is not a cursor this
+    service could have issued: over-long input, a non-string ``id``, a score
+    that is not a JSON integer or finite number (strings and booleans are
+    rejected), or an ``st`` that is not a valid strategy name. Whether ``st``
+    names a strategy that may serve this walk is the caller's decision.
+    """
+    if len(cursor) > MAX_CATALOG_CURSOR_LENGTH:
+        raise InvalidCursorError("Invalid pagination cursor")
     try:
         payload = json.loads(b64decode(cursor.encode()).decode())
         api_id = payload["id"]
@@ -142,21 +163,26 @@ def parse_catalog_cursor(cursor: str) -> CatalogCursor:
         score: int | float | None
         if raw_score is None:
             score = None
-        elif isinstance(raw_score, int) and not isinstance(raw_score, bool):
+        elif isinstance(raw_score, bool):
+            raise ValueError("score must be a number")
+        elif isinstance(raw_score, int) or (
+            isinstance(raw_score, float) and math.isfinite(raw_score)
+        ):
             score = raw_score
         else:
-            score = float(raw_score)
-            if not math.isfinite(score):
-                raise ValueError("score must be finite")
+            raise ValueError("score must be an integer or a finite number")
         strategy = payload.get("st")
-        if strategy is not None and (not isinstance(strategy, str) or not strategy):
-            raise ValueError("st must be a non-empty string")
+        if strategy is not None and (
+            not isinstance(strategy, str) or not CATALOG_STRATEGY_NAME_RE.fullmatch(strategy)
+        ):
+            raise ValueError("st must be a strategy name")
         return CatalogCursor(api_id=api_id, score=score, strategy=strategy)
-    except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        RecursionError,
+        json.JSONDecodeError,
+    ) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
-
-
-def decode_catalog_cursor(cursor: str) -> tuple[str, int | float | None]:
-    """Decode a catalog cursor into ``(api_id, score)`` (``score`` None for browse)."""
-    parsed = parse_catalog_cursor(cursor)
-    return parsed.api_id, parsed.score
