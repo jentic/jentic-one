@@ -56,7 +56,7 @@ class OAuthAppRegistration(AuditableMixin, ControlBase):
     # ``googleapis-com/gmail``). Stamped verbatim onto the credential's
     # ``catalog_api_id`` at connect time so the operations preview on the
     # rules page resolves against a real registered API.
-    catalog_api_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    catalog_api_id: Mapped[str] = mapped_column(String(320), nullable=False)
     # Vendor family label ("Gmail") — distinct from ``name``, which is the
     # admin's per-registration label ("MyOrg Prod Gmail").
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)

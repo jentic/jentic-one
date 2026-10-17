@@ -59,7 +59,7 @@ class Api(AuditableMixin, RegistryBase):
     # titles. NULL for manually-imported/inline APIs that never had one.
     # (`api_id` would shadow the ubiquitous `Api.id` UUID naming, hence the
     # `catalog_` prefix.)
-    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    catalog_api_id: Mapped[str | None] = mapped_column(String(320), nullable=True)
     # The catalog entry (`{source_slug}/{external_id}`) this API was imported
     # from. NULL for manual/inline imports and for rows the boot reconcile could
     # not map onto a catalog entry.
