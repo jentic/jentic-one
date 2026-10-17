@@ -96,6 +96,12 @@ services:
 
   broker:
     <<: *jentic
+    volumes:
+      - ./config.perf.yaml:/etc/jentic/config.yaml:ro
+      # Traced-broker hook (tests/perf/agent): inert unless PYTHONPATH points
+      # at /perf-hooks and PERF_TRACE is set (make perf-agent-sql / -stages).
+      - ./agent/hooks:/perf-hooks:ro
+      - ./results/agent/trace:/out/trace
     # Variant knobs: each PERF_* maps onto a JENTIC__* override. Defaults equal
     # config.perf.yaml / product defaults, so an unset PERF_* is a no-op.
     environment:
@@ -115,6 +121,11 @@ services:
       JENTIC__DATABASES__CONTROL__POOL_MAX: ${PERF_CONTROL_POOL:-10}
       JENTIC__DATABASES__REGISTRY__POOL_MAX: ${PERF_REGISTRY_POOL:-10}
       JENTIC__OBSERVABILITY__TRACING__EXPORTER: ${PERF_TRACING:-none}
+      PYTHONPATH: ${PERF_HOOKS_PATH:-}
+      PERF_TRACE: ${PERF_TRACE:-}
+      PERF_TRACE_FUNCS: ${PERF_TRACE_FUNCS:-}
+      PERF_TRACE_PARAMS: ${PERF_TRACE_PARAMS:-}
+      PERF_TRACE_OUT: /out/trace
       PERF_WORKERS: ${PERF_WORKERS:-1}
     # One worker runs the normal entrypoint; N>1 needs the uvicorn factory path
     # (python -m jentic_one passes an app instance, which uvicorn can't fork).

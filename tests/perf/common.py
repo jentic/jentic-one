@@ -153,6 +153,7 @@ class PerfEnv:
         run_s: float = 0.0,
         margin_s: float = TOKEN_MARGIN_S,
         now: float | None = None,
+        shorten: str = "shorten the run",
     ) -> None:
         """Refuse to start if a token the run uses expires before it can finish.
 
@@ -163,7 +164,8 @@ class PerfEnv:
 
         When a stale token's full lifetime is itself shorter than the run,
         re-provisioning can't help, so it raises ``TokenLifetimeTooShortError``
-        (saying to shorten the run) instead of a plain ``SystemExit``.
+        instead of a plain ``SystemExit``. Its message gives ``shorten``, the
+        calling tool's own way to shorten the run (its flags or env vars).
         """
         needed = run_s + margin_s
         deadline = (time.time() if now is None else now) + needed
@@ -187,8 +189,8 @@ class PerfEnv:
         if too_long:
             raise TokenLifetimeTooShortError(
                 f"the planned run (~{run_s / 60:.0f} min +{margin_s:.0f}s margin) is longer "
-                f"than the token lifetime of: {', '.join(too_long)} — split it with --only "
-                "or lower --repeat (or raise the TTLs in config.perf.yaml)"
+                f"than the token lifetime of: {', '.join(too_long)} — {shorten} "
+                "(or raise the TTLs in config.perf.yaml)"
             )
         raise SystemExit(
             f"tokens expire before this run can finish (+{margin_s:.0f}s margin): "

@@ -134,13 +134,20 @@ def build_access_filters(
     bound_credential_ids: list[str] | None = None,
     owned_agent_ids: list[str] | None = None,
     include_shared: bool = False,
+    for_write: bool = False,
 ) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
 
     Rules (evaluated in order):
     1. org:admin -> no restriction (empty list).
-    2. Agent with delegation scope + parent_actor_id -> OR filter.
+    2. Agent with delegation scope + parent_actor_id -> OR filter (reads only).
     3. Otherwise -> owner == self.
+
+    ``for_write=True`` builds the filter for a mutation: owner == self only.
+    Owner delegation (``owner:<resource>:read``) is a read permission, so it
+    lets an agent see its owner's rows but never change them. A write filter
+    takes none of the read widenings below; passing one is a programming
+    error (ValueError).
 
     ``bound_credential_ids`` widens visibility for the ``Credential`` model:
     an agent may always read a credential it holds an active (non-suspended)
@@ -170,6 +177,9 @@ def build_access_filters(
 
     Raises ValueError for an unknown model or empty sub.
     """
+    if for_write and (bound_credential_ids or owned_agent_ids or include_shared):
+        raise ValueError("read-only visibility widening passed to a write filter")
+
     if ORG_ADMIN in identity.permissions:
         return []
 
@@ -180,7 +190,8 @@ def build_access_filters(
         col = _OWNER_MODELS[model]
         delegation_permission = _DELEGATION_PERMISSIONS.get(model)
         if (
-            delegation_permission is not None
+            not for_write
+            and delegation_permission is not None
             and delegation_permission in identity.permissions
             and identity.parent_actor_id is not None
         ):
