@@ -105,9 +105,9 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         credential_deriver = binding_cache
     app.state.broker_credential_deriver = credential_deriver
 
-    bus: InvalidationBus = getattr(app.state, "invalidation_bus", None) or NoopInvalidationBus()
+    bus: InvalidationBus | None = getattr(app.state, "invalidation_bus", None)
     subscribe_broker_caches(
-        bus,
+        bus if bus is not None else NoopInvalidationBus(),
         access_tokens=opaque,
         api_keys=api_key_cached,
         rules=rule_evaluator,
