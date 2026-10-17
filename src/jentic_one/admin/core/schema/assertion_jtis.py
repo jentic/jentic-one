@@ -33,7 +33,7 @@ class AssertionJti(AdminBase):
 
     __tablename__ = "assertion_jtis"
     __table_args__ = (
-        Index("uq_assertion_jtis_issuer_jti_digest", "issuer", "jti_digest", unique=True),
+        Index("ix_assertion_jtis_issuer_jti_digest", "issuer", "jti_digest", unique=True),
         # Serves the bounded prune of expired rows.
         Index("ix_assertion_jtis_expires_at", "expires_at"),
     )
