@@ -56,6 +56,7 @@ from jentic_one.auth.services.schemas.agents import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_READ,
     ALL_PERMISSIONS,
     DEFAULT_AGENT_PERMISSIONS,
     ORG_ADMIN,
@@ -246,6 +247,23 @@ class AgentService:
             if agent is None:
                 raise ActorNotFoundError(agent_id)
             return await self._view(session, agent)
+
+    async def get_readable_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Read one agent for ``GET /agents/{id}`` and its credential bindings.
+
+        On top of :meth:`get_agent` visibility, the caller must be the agent
+        itself, its owner, ``org:admin``, or hold ``agents:read`` (the gate on
+        listing agents). Any other caller gets the same ``ActorNotFoundError``
+        as an id that does not exist, so the response does not reveal that the
+        agent exists.
+        """
+        view = await self.get_agent(agent_id, identity=identity)
+        permissions = set(identity.permissions)
+        if ORG_ADMIN in permissions or AGENTS_READ in permissions:
+            return view
+        if identity.sub in (view.id, view.owner_id):
+            return view
+        raise ActorNotFoundError(agent_id)
 
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         """Activate a pending agent.
@@ -732,8 +750,11 @@ class AgentService:
     async def list_credentials(
         self, agent_id: str, *, identity: Identity
     ) -> list[CredentialBindingView]:
-        """List direct credential bindings for an agent, name-enriched."""
-        await self.get_agent(agent_id, identity=identity)
+        """List direct credential bindings for an agent, name-enriched.
+
+        Readable like :meth:`get_readable_agent`; anyone else gets not found.
+        """
+        await self.get_readable_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
         views = [CredentialBindingView.model_validate(b) for b in bindings]
@@ -758,6 +779,22 @@ class AgentService:
                 ]
         return views
 
+    async def _load_binding_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Load the agent whose credential bindings the caller is changing.
+
+        Changing a binding is a write on the agent, so it takes the
+        owner-or-``org:admin`` check of :meth:`_load_owned_agent`, not read
+        visibility: ``owner:agents:read`` shows an agent its owner's other
+        agents but does not let it change their bindings. An agent may act on
+        its own bindings (the per-verb limits live in the callers). A missing
+        or foreign agent raises ``ActorNotFoundError``.
+        """
+        if agent_id == identity.sub:
+            return await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.session() as session:
+            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+            return await self._view(session, agent)
+
     async def bind_credential(
         self, agent_id: str, *, credential_id: str, identity: Identity
     ) -> CredentialBindingView:
@@ -766,7 +803,7 @@ class AgentService:
         Verifies the caller can see the target credential before writing the
         binding (control-DB lookup).
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         ref = None
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -829,7 +866,7 @@ class AgentService:
         admin-side delete then fails, the surviving binding has no inline
         rules and denies (fail-closed) rather than the other way round.
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
@@ -910,12 +947,13 @@ class AgentService:
 
         Resuming re-grants the agent the credential's secret at the broker,
         so it takes the same credential-ownership check as
-        :meth:`bind_credential` on top of agent visibility: a suspension set
+        :meth:`bind_credential` on top of the agent check
+        (:meth:`_load_binding_agent`): a suspension set
         by the credential's owner cannot be lifted by an agent owner who
         could not bind that credential themselves. The agent itself never
         lifts a suspension on its own binding (``org:admin`` aside).
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         if self._is_own_binding(agent_id, identity):
             raise CredentialNotVisibleError(credential_id)
         ref = None

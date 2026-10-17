@@ -69,6 +69,7 @@ def _env(
     sub: str = "agnt_1",
     catalog_auto_importer: Any = None,
     security_schemes_lookup: Any = None,
+    connect_limiter: RateLimiter | None = None,
 ) -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
@@ -82,6 +83,14 @@ def _env(
         session_id=None,
         catalog_auto_importer=catalog_auto_importer,
         security_schemes_lookup=security_schemes_lookup,
+        # A fresh limiter per env, so one test's spend never bleeds into another's.
+        connect_limiter=connect_limiter
+        or RateLimiter(
+            MemoryStateBackend(),
+            default_rpm=30,
+            burst=10,
+            namespace="test_mcp_integrations_connect",
+        ),
     )
 
 
@@ -118,18 +127,6 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeConnectSessionService.error = None
     _FakeConnectSessionService.created = _CREATED
     monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeConnectSessionService)
-    # A fresh limiter per test: the module-level one is shared process state
-    # and an earlier test's spend must never bleed into this one's budget.
-    monkeypatch.setattr(
-        tools_mod,
-        "_connect_limiter",
-        RateLimiter(
-            MemoryStateBackend(),
-            default_rpm=30,
-            burst=10,
-            namespace="test_mcp_integrations_connect",
-        ),
-    )
 
 
 # ── validation arms ──────────────────────────────────────────────────────────
@@ -503,17 +500,15 @@ async def test_vendor_not_configured_is_broker_denied_operator_action() -> None:
 async def test_rate_limit_is_retryable_transport_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        tools_mod,
-        "_connect_limiter",
-        RateLimiter(
+    env = _env(
+        ["credentials:connect"],
+        connect_limiter=RateLimiter(
             MemoryStateBackend(),
             default_rpm=1,
             burst=1,
             namespace="test_mcp_integrations_connect_tight",
         ),
     )
-    env = _env(["credentials:connect"])
     first = await dispatch_tool_call(env, "request_connection", {"vendor": "github"})
     assert not first.is_error, first.content
 

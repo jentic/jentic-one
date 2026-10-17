@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,14 +20,40 @@ import pytest
 from jentic_one.registry.repos.revision_repo import RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
-from jentic_one.registry.services.catalog.service import CatalogService, _is_upstream_tracked
+from jentic_one.registry.services.catalog.service import (
+    UPDATE_SWEEP_LOCK_KEY,
+    CatalogService,
+    _is_upstream_tracked,
+)
 from jentic_one.registry.services.errors import CatalogUnavailableError
 from jentic_one.shared.models.events import EventType
 
 _API_ID = uuid.uuid4()
 
 
-def _make_ctx(*, interval: int = 86400) -> MagicMock:
+def _fake_try_advisory_lock(held: set[int] | None = None) -> MagicMock:
+    """Stand-in for ``DatabaseSession.try_advisory_lock`` backed by a shared ``held`` set.
+
+    Contexts that share one ``held`` set behave like processes on one Postgres: the
+    first to take a key wins until it exits; the rest are told ``False``.
+    """
+    held = set() if held is None else held
+
+    @asynccontextmanager
+    async def _try(key: int) -> AsyncIterator[bool]:
+        if key in held:
+            yield False
+            return
+        held.add(key)
+        try:
+            yield True
+        finally:
+            held.discard(key)
+
+    return MagicMock(side_effect=_try)
+
+
+def _make_ctx(*, interval: int = 86400, advisory_held: set[int] | None = None) -> MagicMock:
     ctx = MagicMock()
     ctx.config.catalog.update_check_interval_seconds = interval
     ctx.config.catalog.manifest_max_age_seconds = 300
@@ -39,6 +68,7 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
         db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
         db.session.return_value.__aenter__ = AsyncMock(return_value=session)
         db.session.return_value.__aexit__ = AsyncMock(return_value=False)
+    ctx.registry_db.try_advisory_lock = _fake_try_advisory_lock(advisory_held)
     return ctx
 
 
@@ -535,6 +565,125 @@ async def test_sweep_skips_when_lock_already_held() -> None:
             specs.assert_not_called()
     finally:
         ctx.update_sweep_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_when_advisory_lock_held_elsewhere() -> None:
+    """Another process holding the sweep advisory lock makes this sweep skip quietly."""
+    ctx = _make_ctx(advisory_held={UPDATE_SWEEP_LOCK_KEY})
+    svc = CatalogService(ctx)
+    with patch(f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify") as specs:
+        await svc._run_update_notify_sweep()
+        specs.assert_not_called()
+    ctx.registry_db.try_advisory_lock.assert_called_once_with(UPDATE_SWEEP_LOCK_KEY)
+    # The in-process lock is released on the skip path, so the next trigger can run.
+    assert not ctx.update_sweep_lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_sweep_takes_advisory_lock_for_its_duration() -> None:
+    """The sweep body runs while holding the advisory lock and releases it after."""
+    held: set[int] = set()
+    ctx = _make_ctx(advisory_held=held)
+    svc = CatalogService(ctx)
+    seen: list[bool] = []
+
+    async def _specs(_session: Any) -> list[RegisteredSpec]:
+        seen.append(UPDATE_SWEEP_LOCK_KEY in held)
+        return []
+
+    with patch(f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify", side_effect=_specs):
+        await svc._run_update_notify_sweep()
+    assert seen == [True]
+    assert held == set()
+
+
+def _shared_check_store() -> tuple[dict[uuid.UUID, MagicMock], dict[str, Any]]:
+    """An in-memory ``catalog_update_checks`` table shared by fake processes."""
+    rows: dict[uuid.UUID, MagicMock] = {}
+
+    async def _get(_session: Any, api_id: uuid.UUID) -> MagicMock | None:
+        return rows.get(api_id)
+
+    async def _upsert(_session: Any, *, local_api_id: uuid.UUID, **kw: Any) -> None:
+        row = rows.get(local_api_id) or _check(last_checked_at=None, etag=None, notified=None)
+        row.last_checked_at = kw["checked_at"]
+        row.last_seen_etag = kw["etag"]
+        rows[local_api_id] = row
+
+    async def _mark(
+        _session: Any,
+        *,
+        local_api_id: uuid.UUID,
+        notified_digest: str,
+        notified_event_class: str,
+    ) -> int:
+        row = rows[local_api_id]
+        row.last_notified_digest = notified_digest
+        row.last_notified_event_class = notified_event_class
+        return 1
+
+    return rows, {"get": _get, "upsert": _upsert, "mark_notified": _mark}
+
+
+async def _slow_changed_fetch(*_a: Any, **_kw: Any) -> ConditionalFetch:
+    # Yield to the loop so concurrently started sweeps genuinely overlap.
+    await asyncio.sleep(0.01)
+    return ConditionalFetch(not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new")
+
+
+async def _run_concurrent_sweeps(ctxs: list[MagicMock]) -> AsyncMock:
+    """Run one sweep per ctx concurrently over a shared check store; return the emit mock."""
+    _rows, repo = _shared_check_store()
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[_spec(digest="local-digest")],
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.get", side_effect=repo["get"]),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", side_effect=repo["upsert"]),
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified",
+            side_effect=repo["mark_notified"],
+        ),
+        patch(f"{_SWEEP}.fetch_bytes_conditional", side_effect=_slow_changed_fetch),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
+    ):
+        await asyncio.gather(*(CatalogService(c)._run_update_notify_sweep() for c in ctxs))
+        # A later sweep (next cadence, any process) still dedupes on the persisted digest.
+        for c in ctxs:
+            await CatalogService(c)._run_update_notify_sweep()
+    return emit
+
+
+@pytest.mark.asyncio
+async def test_concurrent_in_process_sweeps_emit_once_per_digest() -> None:
+    """Scanner + request-triggered sweep in one process: one emit for a changed digest."""
+    ctx = _make_ctx(interval=1)
+    emit = await _run_concurrent_sweeps([ctx, ctx])
+    assert emit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cross_process_sweeps_emit_once_per_digest() -> None:
+    """Sweeps in two processes (own in-process locks, one shared DB) emit once."""
+    shared: set[int] = set()
+    emit = await _run_concurrent_sweeps(
+        [_make_ctx(interval=1, advisory_held=shared), _make_ctx(interval=1, advisory_held=shared)]
+    )
+    assert emit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_process_sweeps_without_shared_lock_would_double_emit() -> None:
+    """Control for the test above: without a shared advisory lock both processes emit.
+
+    Proves the cross-process lock (not the in-process one or the dedupe columns) is what
+    keeps the overlapping case to a single ``catalog.update_available``.
+    """
+    emit = await _run_concurrent_sweeps([_make_ctx(interval=1), _make_ctx(interval=1)])
+    assert emit.await_count == 2
 
 
 @pytest.mark.asyncio
