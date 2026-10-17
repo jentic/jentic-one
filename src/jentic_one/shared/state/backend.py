@@ -281,7 +281,7 @@ class MemoryStateBackend:
 
     Budgets are per namespace, so filling one key kind (for example
     unauthenticated login CSRF nonces) refuses only writes of that kind and
-    never starves idempotency claims or ``jti`` replay records, as long as
+    never starves idempotency claims or other key kinds, as long as
     the sum of the namespace budgets in use stays under ``max_total_bytes``.
     The key/value store's memory is bounded by the smaller of that sum and
     ``max_total_bytes``. Token buckets are not budgeted: each is a

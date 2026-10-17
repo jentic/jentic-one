@@ -14,8 +14,7 @@ carries its own bucket with the same policy.
 
 Both limiters run on the configured shared-state backend
 (``broker.resilience.backend``): per process on ``memory``, cluster-wide on
-``redis``. ``server.workers > 1`` with the control surface on ``memory`` is
-refused at config load.
+a shared backend.
 """
 
 from __future__ import annotations

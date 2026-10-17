@@ -209,7 +209,7 @@ auth:
 ```
 
 > **Warning: the default `memory` shared-state backend is bounded and fails
-> closed. Use `redis` in production.**
+> closed.**
 > `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
 > records, rate-limit buckets, circuit-breaker counters and the auth
 > surface's single-use markers in the process, with a fixed budget per key
@@ -242,10 +242,8 @@ auth:
 > chart's 512Mi memory limit holds. The combined app runs up to three such
 > backends (auth, broker, control) in one process.
 >
-> To raise it: switch to `redis` (`broker.resilience.backend.redis_url`;
-> the published images lack the `[redis]` extra, see #1786), raise
-> `broker.resilience.backend.memory.namespaces.idem` (and its
-> `max_owner_share`) together with `max_total_bytes`, or lower
+> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.
 

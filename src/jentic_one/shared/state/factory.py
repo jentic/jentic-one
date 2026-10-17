@@ -91,7 +91,7 @@ class MemoryBackendConfig(BaseModel):
 
     Every key belongs to a namespace, its prefix up to the first ``:``
     (``idem`` for Idempotency-Key records, ``idem-body`` for their stored
-    response bodies, ``auth`` for JWT-bearer jti replay records,
+    response bodies, ``auth`` for the auth surface's single-use markers,
     ``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,
     and so on). Each namespace has its own budget, so one key kind filling up
     never starves another. A namespace that is full of live entries refuses
