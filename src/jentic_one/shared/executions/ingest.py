@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
+from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.expression import TableClause
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.shared.db.utils import execute_core_insert
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
+
+_EXECUTION_RECORDS = cast(TableClause, ExecutionRecord.__table__)
 
 
 async def record_execution(
@@ -45,11 +50,17 @@ async def record_execution(
     ``operation`` carries the resolved operation's identity as one object;
     it is flattened onto the record's ``operation_id`` / ``operation_path`` /
     ``operation_method`` columns here (the DB shape stays flat).
+
+    The row is append-only and the caller supplies its id, so it is written
+    with a Core ``INSERT`` (no ORM instance, no unit-of-work flush, no
+    ``RETURNING``) with the failure semantics of a flush (see
+    :func:`execute_core_insert`). ``created_at`` and ``updated_at`` come from
+    their column defaults, which a Core insert applies.
     """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
 
-    record = ExecutionRecord(
+    stmt = insert(_EXECUTION_RECORDS).values(
         id=execution_id,
         toolkit_id=toolkit_id or None,
         trace_id=trace_id,
@@ -72,6 +83,5 @@ async def record_execution(
         credential_id=credential_id,
         credential_name=credential_name,
     )
-    session.add(record)
-    await session.flush()
-    return str(record.id)
+    await execute_core_insert(session, stmt)
+    return execution_id

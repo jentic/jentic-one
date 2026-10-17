@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.expression import TableClause
 
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.utils import execute_core_insert
+
+_EVENTS = cast(TableClause, Event.__table__)
 
 
 class EventRepository:
@@ -31,8 +36,19 @@ class EventRepository:
         created_by: str | None,
         actor_id: str | None = None,
         actor_type: str | None = None,
-    ) -> Event:
-        event = Event(
+    ) -> str:
+        """Insert one event and return its id.
+
+        Events are append-only and every emit site needs only the id, so this
+        is a Core ``INSERT`` (no ORM instance, no unit-of-work flush) with the
+        failure semantics of a flush (see :func:`execute_core_insert`). The id is
+        minted here, so no ``RETURNING`` is needed. ``created_at`` and
+        ``updated_at`` come from their column defaults, which a Core insert
+        applies.
+        """
+        event_id = generate_ksuid("evt")
+        stmt = insert(_EVENTS).values(
+            id=event_id,
             type=type,
             severity=severity,
             summary=summary,
@@ -46,9 +62,8 @@ class EventRepository:
             actor_id=actor_id,
             actor_type=actor_type,
         )
-        session.add(event)
-        await session.flush()
-        return event
+        await execute_core_insert(session, stmt)
+        return event_id
 
     @staticmethod
     async def get_by_id(
