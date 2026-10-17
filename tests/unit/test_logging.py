@@ -90,6 +90,22 @@ def test_configure_logging_sets_debug_level(debug_config: AppConfig):
     assert root.level == logging.DEBUG
 
 
+def test_configure_logging_turns_on_first_use_logger_caching(
+    minimal_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The test suite pins caching off globally, so the request is checked at the call."""
+    requested: list[object] = []
+    real_configure = structlog.configure
+
+    def spy(*args: object, **kwargs: object) -> None:
+        requested.append(kwargs.get("cache_logger_on_first_use"))
+        real_configure(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(structlog, "configure", spy)
+    configure_logging(minimal_config)
+    assert requested == [True]
+
+
 def test_configure_logging_clamps_httpcore_trace_logs_at_debug(debug_config: AppConfig):
     """httpcore's DEBUG trace lines repr transport exceptions (which can quote an
     outbound header value), so they stay off even when the app runs at DEBUG."""
