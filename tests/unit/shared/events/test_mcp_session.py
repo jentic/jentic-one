@@ -403,10 +403,30 @@ async def test_schedule_without_ctx_is_a_noop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_refused_claim_skips_the_emit_without_raising() -> None:
-    """A full ``mcp-session`` namespace skips the emit; the request is unaffected."""
+async def test_a_full_namespace_falls_back_to_the_table_dedupe() -> None:
+    """A full ``mcp-session`` namespace still emits (the table dedupes); nothing raises.
+
+    One caller minting session ids fills the namespace; every other session
+    must still get its event rather than be silenced until markers expire.
+    """
     backend = MemoryStateBackend(max_entries=1)
-    await backend.set(_session_key("someone-else"), b"recorded", ttl_s=60)
+    await backend.set(_session_key("flooder-sess"), b"recorded", ttl_s=60)
+    with patch(
+        "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+        new_callable=AsyncMock,
+    ) as record:
+        await _schedule(_fake_ctx(backend))
+        await _run_scheduled_tasks()
+
+    record.assert_awaited_once()
+    assert record.await_args is not None
+    assert record.await_args.kwargs["session_id"] == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_session_short_circuits_even_when_the_namespace_is_full() -> None:
+    backend = MemoryStateBackend(max_entries=1)
+    await backend.set(_session_key("sess-1"), b"recorded", ttl_s=60)
     with patch(
         "jentic_one.shared.events.mcp_session.record_mcp_session_started",
         new_callable=AsyncMock,
