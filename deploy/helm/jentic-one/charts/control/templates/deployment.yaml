@@ -31,6 +31,7 @@ spec:
 {{ include "common.runtime-env" . | indent 12 }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
+{{ include "common.tracing-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
 {{- /* extraEnv goes LAST so the operator wins on duplicate keys — see common.extra-env. */}}
 {{ include "common.extra-env" . | indent 12 }}
