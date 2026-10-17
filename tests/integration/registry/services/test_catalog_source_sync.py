@@ -466,8 +466,9 @@ async def test_staged_connector_text_is_stored_sanitised(catalog_ctx: CtxFactory
         )
         await sync.sync_source("public", stream=ScriptedStream([Upserted(dirty)]))
         row = (await _rows(ctx, "public"))["a.io"]
-        assert row.title is not None and len(row.title) <= 120
-        assert row.title.startswith("Pay ments ")
+        assert row.title is not None and len(row.title) == 120
+        assert row.title.startswith("Payments ")
+        assert row.title.endswith("…")
         assert "\u202e" not in row.title
         assert row.human_url is None
         assert row.tags[:2] == ["ok", "bell"]

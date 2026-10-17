@@ -802,7 +802,7 @@ def _upsert_entry(
         "spec_ref": staged.spec_ref,
         "human_url": sanitize.clean_human_url(staged.human_url),
         "tags": sanitize.clean_tags(staged.tags or []),
-        "content_hint": sanitize.clean_text(
+        "content_hint": sanitize.clean_token(
             staged.content_hint, max_length=sanitize.HINT_MAX_LENGTH
         ),
         "seen_at": seen_at,
