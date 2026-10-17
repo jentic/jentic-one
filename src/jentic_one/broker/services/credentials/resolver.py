@@ -19,7 +19,8 @@ from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
 from jentic_one.shared.credential_selection_cache import (
-    STALE_NEGATIVE_SELECTION,
+    RECHECK_BOUNDARY_MISMATCH,
+    RECHECK_NEGATIVE_SELECTION,
     STALE_WINNER_CHANGED,
     CredentialHeader,
     CredentialSelectionCache,
@@ -40,6 +41,32 @@ from jentic_one.shared.url import server_variables_compatible
 
 # ``Credential.state`` of a row the broker may resolve.
 _USABLE_STATE = "connected"
+
+
+def _usable(header: CredentialHeader) -> bool:
+    return header.active and header.state == _USABLE_STATE
+
+
+def _boundary_outruns(
+    cached: Sequence[CredentialHeader], allowed_credential_ids: Collection[str] | None
+) -> bool:
+    """Whether a bound id is missing from ``cached`` or cached as unusable.
+
+    Every id the binding deriver returns is an active, ``connected`` credential
+    whose ``api_vendor`` equals the request's vendor, so a fresh header read
+    (``list_by_vendor`` matches the raw vendor too) always holds it as usable.
+    The one lag is the deriver's own short-TTL cache, which can name a
+    credential deleted or disabled since; that costs one header read per call,
+    as with no cache, until the deriver's entry expires.
+    """
+    if not allowed_credential_ids:
+        return False
+    usable = {h.id for h in cached if _usable(h)}
+    return any(cid not in usable for cid in allowed_credential_ids)
+
+
+def _by_id(headers: Sequence[CredentialHeader]) -> dict[str, CredentialHeader]:
+    return {h.id: h for h in headers}
 
 
 class ResolvedCredential(BaseModel):
@@ -91,8 +118,9 @@ class CredentialResolver:
     With a ``cache``, the vendor's candidate headers come from the
     :class:`CredentialSelectionCache` while fresh. Every filter, including the
     caller's binding boundary, still runs on each call, the winner's secret
-    material is always read from the control DB, and a failed selection (no
-    match, unknown id or name, ambiguity) is re-run on a fresh read before it is
+    material is always read from the control DB, and cached headers are re-read
+    before use when a bound id is missing from them (or cached as unusable) and
+    before a failed selection (no match, unknown id or name, ambiguity) is
     raised.
     """
 
@@ -123,8 +151,8 @@ class CredentialResolver:
             allowed_credential_ids: When not ``None``, the **injection boundary**:
                 only these credential ids may resolve, filtered
                 *before* coverage matching. ``None`` means "no binding filter"
-                — only queued async payloads from before the boundary existed
-                omit the key; every live path passes the bound ids.
+                and is only for direct callers: every execution path passes
+                the bound ids (the queued worker re-derives them at run time).
                 An **empty** collection is a real, deny-all filter — the caller
                 is bound to nothing — never a wildcard.
             request_server_variables: The concrete server-variable values of
@@ -162,15 +190,30 @@ class CredentialResolver:
             )
 
         cache = self._cache
+        recheck: tuple[str, tuple[CredentialHeader, ...]] | None = None
         if cache is not None:
             cached = cache.get(api.vendor)
-            joined = False
             if cached is None:
                 # Another request is already reading this vendor's headers: use
-                # its result rather than issue the same query.
-                cached = await cache.join_fill(api.vendor)
-                joined = cached is not None
-            if cached is not None:
+                # its result rather than issue the same query. Those headers are
+                # as fresh as this request's own read would be, so a negative
+                # selection on them is raised as is.
+                joined = await cache.join_fill(api.vendor)
+                if joined is not None:
+                    resolved = await self._resolve_cached(select_winner(joined))
+                    if resolved is not None:
+                        cache.record_joined()
+                        return resolved
+                    cache.record_stale(STALE_WINNER_CHANGED)
+            elif _boundary_outruns(cached, allowed_credential_ids):
+                # The binding boundary is derived on each call and holds only
+                # active, connected credentials of this vendor, all of which the
+                # vendor's header read returns. A bound id the cached headers
+                # lack, or hold as unusable, means they predate a write, e.g. a
+                # pin or sibling created or re-enabled by another process.
+                cache.record_recheck(RECHECK_BOUNDARY_MISMATCH)
+                recheck = (RECHECK_BOUNDARY_MISMATCH, cached)
+            else:
                 try:
                     winner = select_winner(cached)
                 except (
@@ -179,15 +222,12 @@ class CredentialResolver:
                     CredentialNameNotFoundError,
                     AmbiguousCredentialError,
                 ):
-                    # Headers a concurrent read just returned are as fresh as
-                    # this request's own read would be.
-                    if joined:
-                        raise
                     # A negative outcome is never served from cached headers: a
                     # credential connected, created or deleted by another process
                     # must count on the caller's retry. Errors are rare, so the
                     # re-read costs nothing on the happy path.
-                    cache.record_stale(STALE_NEGATIVE_SELECTION)
+                    cache.record_recheck(RECHECK_NEGATIVE_SELECTION)
+                    recheck = (RECHECK_NEGATIVE_SELECTION, cached)
                 else:
                     resolved = await self._resolve_cached(winner)
                     if resolved is not None:
@@ -196,12 +236,21 @@ class CredentialResolver:
                     # The winner changed under the cached header: re-resolve fresh.
                     cache.record_stale(STALE_WINNER_CHANGED)
 
-        return await self._resolve_fresh(api.vendor, select_winner)
+        return await self._resolve_fresh(api.vendor, select_winner, recheck=recheck)
 
     async def _resolve_fresh(
-        self, vendor: str, select_winner: Callable[[Sequence[CredentialHeader]], CredentialHeader]
+        self,
+        vendor: str,
+        select_winner: Callable[[Sequence[CredentialHeader]], CredentialHeader],
+        *,
+        recheck: tuple[str, tuple[CredentialHeader, ...]] | None = None,
     ) -> ResolvedCredential:
-        """Read the vendor's headers (refreshing the cache), select, read the winner's material."""
+        """Read the vendor's headers (refreshing the cache), select, read the winner's material.
+
+        ``recheck`` is ``(reason, cached headers)`` when this read re-checks
+        cached headers; it counts as stale only when the fresh headers differ,
+        so a persistent 424/409 is a recheck, never a stale entry.
+        """
         cache = self._cache
         generation, token = cache.begin_fill(vendor) if cache is not None else (0, None)
         try:
@@ -216,6 +265,8 @@ class CredentialResolver:
                 if cache is not None:
                     cache.end_fill(vendor, token, headers, generation=generation)
                     token = None
+                    if recheck is not None and _by_id(headers) != _by_id(recheck[1]):
+                        cache.record_stale(recheck[0])
 
                 winner = select_winner(headers)
                 credential = next(row for row in rows if row.id == winner.id)
@@ -281,7 +332,7 @@ class CredentialResolver:
         for c in candidates:
             # A ``pending`` (connect flow not finished) or ``failed`` row is not
             # usable, the same rule the binding deriver applies.
-            if not c.active or c.state != _USABLE_STATE:
+            if not _usable(c):
                 continue
             scope = canonical_credential_scope(
                 vendor=c.api_vendor, name=c.api_name, version=c.api_version

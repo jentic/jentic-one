@@ -226,12 +226,13 @@ type BrokerConfig struct {
 	// TTL (seconds, at most 60) of the per-process cache of a vendor's non-secret
 	// credential headers that sync execute requests select from. Secret material, the
 	// caller's bindings and the audit event are never cached. A credential write
-	// served by this process clears the cache when its transaction ends. For a write
-	// served by another process, for up to the TTL: a newly created or re-enabled
-	// credential may not yet win over (or make ambiguous) the cached winner, and a
-	// NO_AUTH winner's disable, re-type or server_variables edit is not seen. A
-	// deleted, disabled or edited secret-bearing winner is caught on the next call. 0
-	// disables the cache.
+	// served by this process clears the cache when its transaction ends, and a bound
+	// credential missing from the cached headers forces a fresh read. For a write
+	// served by another process, for up to the TTL: an edit to an already-cached
+	// credential that changes the selection without touching the cached winner
+	// (re-scope, rename, server_variables), and a NO_AUTH winner's re-type or
+	// server_variables edit, are not seen. A deleted, disabled or edited
+	// secret-bearing winner is caught on the next call. 0 disables the cache.
 	CredentialCacheTtlS float64 `json:"credential_cache_ttl_s,omitempty,omitzero" yaml:"credential_cache_ttl_s,omitempty" mapstructure:"credential_cache_ttl_s,omitempty"`
 
 	// Egress corresponds to the JSON schema field "egress".

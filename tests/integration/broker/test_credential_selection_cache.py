@@ -113,8 +113,8 @@ class _Counter:
 
 @pytest.fixture()
 def counters(monkeypatch: pytest.MonkeyPatch) -> dict[str, _Counter]:
-    """The cache's hit/miss/stale counters, recorded in place of the OTel instruments."""
-    recorded = {name: _Counter() for name in ("hits", "misses", "stale")}
+    """The cache's counters, recorded in place of the OTel instruments."""
+    recorded = {name: _Counter() for name in ("hits", "misses", "joined", "rechecks", "stale")}
     for name, counter in recorded.items():
         monkeypatch.setattr(f"jentic_one.shared.credential_selection_cache._cache_{name}", counter)
     return recorded
@@ -495,15 +495,105 @@ async def test_a_cached_negative_selection_is_rechecked_against_the_db(
 
     await _unseen_insert(integration_context, target)
     counters["stale"].calls.clear()
+    counters["rechecks"].calls.clear()
     resolved, statements = await _resolve(
         integration_context, cache, credential_id=target if by_id else None
     )
     assert resolved.credential_id == target
     assert len(_headers(statements)) == 1, statements
+    assert counters["rechecks"].calls == [{"reason": "negative_selection"}]
+    # The re-read found a new row, so the cached headers were stale.
     assert counters["stale"].calls == [{"reason": "negative_selection"}]
     # The re-read refreshed the entry: the next call is a hit again.
     _, warm = await _resolve(integration_context, cache, credential_id=target)
     assert warm == []
+
+
+async def test_a_persistent_negative_selection_is_a_recheck_not_stale(
+    integration_context: Context,
+    clean_vendor: None,
+    cache: CredentialSelectionCache,
+    counters: dict[str, _Counter],
+) -> None:
+    """A genuine, repeated 409 re-reads each time but never counts as a stale entry."""
+    await _seed(integration_context, cred_id="cred_1714_a")
+    await _seed(integration_context, cred_id="cred_1714_b")
+    for _ in range(3):
+        with pytest.raises(AmbiguousCredentialError):
+            await _resolve(integration_context, cache)
+
+    assert counters["rechecks"].calls == [{"reason": "negative_selection"}] * 2
+    assert counters["stale"].calls == []
+    assert counters["hits"].calls == []
+
+
+async def test_a_bound_credential_missing_from_the_cache_forces_a_fresh_read(
+    integration_context: Context,
+    clean_vendor: None,
+    cache: CredentialSelectionCache,
+    counters: dict[str, _Counter],
+) -> None:
+    """A pin created by another process wins on the next call once the caller is bound to it.
+
+    The cache is warmed with a vendor-wide credential; a more specific pin is
+    inserted unseen. Bound to both, the caller's boundary names an id the
+    cached headers lack, so the resolver re-reads and the pin wins.
+    """
+    await _unseen_insert(integration_context, "cred_1714_wide", api_name=None, api_version=None)
+    allowed = {"cred_1714_wide"}
+    assert (await _resolve(integration_context, cache, allowed=allowed))[0].credential_id == (
+        "cred_1714_wide"
+    )
+    _, warm = await _resolve(integration_context, cache, allowed=allowed)
+    assert _headers(warm) == []
+
+    await _unseen_insert(integration_context, "cred_1714_pin")
+    allowed = {"cred_1714_wide", "cred_1714_pin"}
+    resolved, statements = await _resolve(integration_context, cache, allowed=allowed)
+    assert resolved.credential_id == "cred_1714_pin"
+    assert len(_headers(statements)) == 1, statements
+    assert counters["rechecks"].calls == [{"reason": "boundary_mismatch"}]
+    assert counters["stale"].calls == [{"reason": "boundary_mismatch"}]
+
+    # The re-read refreshed the entry: the same boundary is a hit again.
+    _, warm = await _resolve(integration_context, cache, allowed=allowed)
+    assert _headers(warm) == []
+
+
+async def test_a_bound_credential_cached_as_unusable_forces_a_fresh_read(
+    integration_context: Context, clean_vendor: None, cache: CredentialSelectionCache
+) -> None:
+    """A sibling re-enabled elsewhere makes the call ambiguous on the next call."""
+    await _seed(integration_context, cred_id="cred_1714_a")
+    await _seed(integration_context, cred_id="cred_1714_b")
+    await _unseen_update(integration_context, "cred_1714_b", active=False)
+    await _resolve(integration_context, cache)  # fill while b is disabled
+    assert (await _resolve(integration_context, cache))[0].credential_id == "cred_1714_a"
+
+    await _unseen_update(integration_context, "cred_1714_b", active=True)
+    with pytest.raises(AmbiguousCredentialError):
+        await _resolve(integration_context, cache, allowed={"cred_1714_a", "cred_1714_b"})
+
+
+async def test_a_boundary_id_the_db_lacks_rereads_without_counting_stale(
+    integration_context: Context,
+    clean_vendor: None,
+    cache: CredentialSelectionCache,
+    counters: dict[str, _Counter],
+) -> None:
+    """A deriver entry naming a since-deleted credential costs one header read, as uncached.
+
+    The fresh headers match the cached ones, so the read is a recheck only.
+    """
+    await _seed(integration_context, cred_id="cred_1714_one")
+    allowed = {"cred_1714_one", "cred_1714_gone"}
+    await _resolve(integration_context, cache, allowed=allowed)
+    for _ in range(2):
+        resolved, statements = await _resolve(integration_context, cache, allowed=allowed)
+        assert resolved.credential_id == "cred_1714_one"
+        assert len(_headers(statements)) == 1, statements
+    assert counters["rechecks"].calls == [{"reason": "boundary_mismatch"}] * 2
+    assert counters["stale"].calls == []
 
 
 async def test_cached_ambiguity_and_unknown_name_are_rechecked(
@@ -675,8 +765,12 @@ async def test_concurrent_misses_share_one_header_read(
     clean_vendor: None,
     cache: CredentialSelectionCache,
     monkeypatch: pytest.MonkeyPatch,
+    counters: dict[str, _Counter],
 ) -> None:
-    """After a clear, concurrent resolves of one vendor issue a single header query."""
+    """After a clear, concurrent resolves of one vendor issue a single header query.
+
+    The waiters are counted as joined, never as cache hits.
+    """
     await _seed(integration_context, cred_id="cred_1714_one")
     real_list = CredentialRepository.list_by_vendor
     calls: list[str] = []
@@ -702,6 +796,8 @@ async def test_concurrent_misses_share_one_header_read(
 
     assert calls == [_VENDOR]
     assert {r.credential_id for r in results} == {"cred_1714_one"}
+    assert len(counters["joined"].calls) == 3
+    assert counters["hits"].calls == []
 
 
 async def test_sync_execute_route_selects_from_the_cache(
