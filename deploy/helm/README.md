@@ -31,11 +31,11 @@ and smoke-test workflow.
   published app image needs `broker.extraEnv.JENTIC__APPS=broker` (the AWS
   Marketplace overlay does exactly that).
 - No pod anti-affinity, and no HorizontalPodAutoscaler. OSS supports one
-  process per surface: every surface but the gateway keeps its rate limits,
-  circuit state, `Idempotency-Key` records and auth anti-replay markers in its
-  process, so `replicas` above 1 on any of them needs a shared-state backend
-  registered with `register_state_backend` (the chart's install notes warn
-  when one is set; see
+  process per surface: the app, control and broker keep their rate limits,
+  circuit state, `Idempotency-Key` records and auth anti-replay markers in
+  the process, so `replicas` above 1 on any surface but the gateway needs a
+  shared-state backend registered with `register_state_backend` (the chart's
+  install notes warn when one is set; see
   [Scaling and HA](../../docs/installation/helm.md#scaling-and-ha)). Spread
   constraints depend on the cluster's topology labels — add them via a
   post-renderer or a wrapper chart.

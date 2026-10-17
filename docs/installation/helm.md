@@ -514,16 +514,17 @@ OAuth client-secret verification adds 64Mi (argon2id with
 is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 512Mi.
 
-**OSS supports one process per surface.** Every Python surface (app,
-registry, admin, control, broker) keeps its rate-limit buckets,
-circuit-breaker counters, `Idempotency-Key` records and the auth surface's
-OAuth rate limiters and consent-nonce anti-replay in its process, on the
-`memory` shared-state backend. A second replica of a surface gets its own
-copy of that state, so rate limits multiply, a replay can be re-executed on
-the other replica, and a consent handle can be redeemed twice. Keep
-`replicas: 1` on every surface except the gateway (a stateless proxy); the
-chart prints a warning at install/upgrade time when any other surface asks
-for more. Multi-process shared state comes from a backend an extension
+**OSS supports one process per surface.** The app (the combined process,
+which serves auth and control), control and broker keep their rate-limit
+buckets, circuit-breaker counters, `Idempotency-Key` records and the auth
+surface's OAuth rate limiters and consent-nonce anti-replay in the process,
+on the `memory` shared-state backend. A second replica of one of them gets
+its own copy of that state, so rate limits multiply, a replay can be
+re-executed on the other replica, and a consent handle can be redeemed
+twice. Registry and admin keep no such state today, but multi-replica runs
+of them are not tested either. Keep `replicas: 1` on every surface except
+the gateway (a stateless proxy); the chart prints a warning at
+install/upgrade time when any other surface asks for more. Multi-process shared state comes from a backend an extension
 registers with `register_state_backend`
 ([extending-jentic-one.md](../development/extending-jentic-one.md)) and
 selects with `state.backend` (`JENTIC__STATE__BACKEND` via `extraEnv`); the
