@@ -331,9 +331,13 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.sources.<n>.max_removal_ratio` | number (>= 0.0, <= 1.0) | `0.2` | `JENTIC__CATALOG__SOURCES__<N>__MAX_REMOVAL_RATIO` | Mass-removal guard: a sync removing more than this share is held. |
 | `catalog.sources.<n>.min_removal_count` | integer (>= 0) | `5` | `JENTIC__CATALOG__SOURCES__<N>__MIN_REMOVAL_COUNT` | The removal ratio only trips above this many removals. |
 | `catalog.sources.<n>.sync_lease_seconds` | integer (>= 3) | `60` | `JENTIC__CATALOG__SOURCES__<N>__SYNC_LEASE_SECONDS` | Cross-process sync lease, renewed every third of it. |
-| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` | Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet. |
-| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` | Reserved for credentialed source auth; not used yet. |
-| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` | Reserved for credentialed source auth; not used yet. |
+| `catalog.sources.<n>.fetch_concurrency` | integer (>= 1, <= 64) | `4` | `JENTIC__CATALOG__SOURCES__<N>__FETCH_CONCURRENCY` | Most in-flight requests to this source per process (listing and spec fetches together). |
+| `catalog.sources.<n>.requests_per_second` | number (> 0) \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__REQUESTS_PER_SECOND` | Request rate shared by every process (a database-backed token bucket). null limits concurrency only, with no bucket and no database round trip. |
+| `catalog.sources.<n>.burst` | integer (>= 1) | `4` | `JENTIC__CATALOG__SOURCES__<N>__BURST` | Token bucket capacity; only used with requests_per_second. |
+| `catalog.sources.<n>.interactive_share` | number (>= 0.0, < 1.0) | `0.5` | `JENTIC__CATALOG__SOURCES__<N>__INTERACTIVE_SHARE` | Share of the concurrency slots and of the burst kept for preview, import and the update sweep, so background listings never take the last of them. |
+| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` |  |
+| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` |  |
+| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` |  |
 | `catalog.sources.<n>.readers.permissions` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__PERMISSIONS` |  |
 | `catalog.sources.<n>.readers.actor_ids` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__ACTOR_IDS` |  |
 | `catalog.sources.<n>.settings` | object | — | `JENTIC__CATALOG__SOURCES__<N>__SETTINGS` | Kind-specific settings. |

@@ -2229,6 +2229,37 @@ class CatalogSourceConfig(BaseModel):
         ge=3,
         description="Cross-process sync lease, renewed every third of it.",
     )
+    fetch_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description=(
+            "Most in-flight requests to this source per process (listing and spec "
+            "fetches together)."
+        ),
+    )
+    requests_per_second: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Request rate shared by every process (a database-backed token bucket). "
+            "null limits concurrency only, with no bucket and no database round trip."
+        ),
+    )
+    burst: int = Field(
+        default=4,
+        ge=1,
+        description="Token bucket capacity; only used with requests_per_second.",
+    )
+    interactive_share: float = Field(
+        default=0.5,
+        ge=0.0,
+        lt=1.0,
+        description=(
+            "Share of the concurrency slots and of the burst kept for preview, import "
+            "and the update sweep, so background listings never take the last of them."
+        ),
+    )
     auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)
     readers: SourceReadersConfig | None = Field(
         default=None, description="Reader ACL; required for restricted sources only."

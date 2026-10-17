@@ -92,4 +92,31 @@ def record_ownership_conflicts(source: str, count: int) -> None:
     _gauge(
         "catalog_ownership_conflicts",
         "Imported APIs whose catalog_api_id is now owned by a curated source.",
-    ).set(count, {"source": source})
+    ).add(count, {"source": source})
+
+
+#: ``catalog_source_fetch_total`` outcomes.
+FETCH_BODY = "body"
+FETCH_NOT_MODIFIED = "not_modified"
+FETCH_TRANSIENT = "transient"
+FETCH_GONE = "gone"
+
+
+def record_fetch(source: str, outcome: str) -> None:
+    """One request to a source ended with ``outcome`` (body, not_modified, transient, gone)."""
+    _counter("catalog_source_fetch_total", "Catalog source requests by outcome.").add(
+        1, {"source": source, "outcome": outcome}
+    )
+
+
+def record_bucket_wait(source: str, lane: str, seconds: float) -> None:
+    """Time one request waited for a concurrency slot and a rate token."""
+    histogram = _histograms.get("bucket_wait")
+    if histogram is None:
+        histogram = get_meter(_METER_NAME).create_histogram(
+            "catalog_source_bucket_wait_seconds",
+            unit="s",
+            description="Time a catalog source request waited for its fetch limits.",
+        )
+        _histograms["bucket_wait"] = histogram
+    histogram.record(max(seconds, 0.0), {"source": source, "class": lane})

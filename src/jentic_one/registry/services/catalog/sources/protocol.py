@@ -125,7 +125,14 @@ SpecFetch = SpecBody | NotModified
 
 
 class SourceUnavailableError(Exception):
-    """Transient: throttled, 5xx, timeout, or an auth refresh failed. Retry later."""
+    """Transient: throttled, 5xx, timeout, or an auth refresh failed. Retry later.
+
+    ``retry_after_s`` is how long the backend asked callers to wait, when it said.
+    """
+
+    def __init__(self, message: str = "", *, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
 
 
 class SpecGoneError(Exception):
