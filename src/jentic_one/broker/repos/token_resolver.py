@@ -6,6 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
@@ -13,7 +14,11 @@ from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
+logger = structlog.get_logger(__name__)
+
 ACCESS_TOKEN_PREFIX = "at_"
+#: ``actor_status`` of an active, owned agent whose owner is not active.
+_OWNER_INACTIVE = "owner_inactive"
 
 
 class InProcessTokenResolver:
@@ -34,7 +39,8 @@ class InProcessTokenResolver:
         now = datetime.now(UTC)
 
         # actor_status re-checks the actor row on every resolve (#1136): a
-        # disabled/archived agent's outstanding token must stop resolving as
+        # disabled/archived agent's outstanding token (or an owned agent's
+        # whose owner is disabled or deleted) must stop resolving as
         # active, bounded only by the broker's short verdict-cache TTL. NULL
         # (actor row missing) fails closed; the users table models "disabled"
         # as active=false, normalised here to the same status string.
@@ -54,7 +60,17 @@ class InProcessTokenResolver:
             " t.expires_at, t.revoked_at, t.oauth_client_id, t.oauth_grant_id,"
             " CASE t.actor_type"
             "  WHEN 'agent' THEN"
-            "   (SELECT a.status FROM agents a WHERE a.id = t.actor_id)"
+            # An owned agent follows its owner's account status: while the
+            # owner is disabled or deleted (delete leaves users.active false)
+            # the agent reads 'owner_inactive'. Ownerless agents depend on
+            # their own status alone. One PK probe on agents, one on users.
+            "   (SELECT CASE"
+            "     WHEN a.status <> 'active' THEN a.status"
+            "     WHEN a.owner_id IS NULL THEN 'active'"
+            "     WHEN EXISTS (SELECT 1 FROM users o"
+            "      WHERE o.id = a.owner_id AND o.active) THEN 'active'"
+            "     ELSE 'owner_inactive' END"
+            "    FROM agents a WHERE a.id = t.actor_id)"
             # Service-account sessions are retired (theme 8; the tables were
             # dropped in Phase 4). Kept as an explicit fail-closed arm: a
             # bare deletion would drop a residual row into ELSE 'active'.
@@ -141,6 +157,19 @@ class InProcessTokenResolver:
             # A retired actor type (``toolkit``, ``service_account``) on a
             # residual row: not an identity any more. Fail closed.
             return None
+
+        if row.actor_status == _OWNER_INACTIVE:
+            # WARNING: a client-side 401, but one an operator can act on. Logged
+            # once per verdict-cache miss, not per request.
+            logger.warning(
+                "agent_owner_inactive",
+                agent_id=row.actor_id,
+                actionable_step=(
+                    "This agent's owner is disabled or deleted, so the agent cannot "
+                    "authenticate. Re-enable the owner, or transfer the agent to an "
+                    "active owner."
+                ),
+            )
 
         active = (
             revoked_at is None
