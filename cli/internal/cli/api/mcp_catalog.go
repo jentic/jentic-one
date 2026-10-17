@@ -105,6 +105,25 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 					Code: ux.CodeInternalError,
 					Msg:  fmt.Sprintf("catalog not available on this server (HTTP %d)", he.StatusCode),
 				}), nil
+			case http.StatusBadRequest:
+				// GET /catalog answers 400 only for the cursor: malformed, or
+				// from a search ranking the server no longer uses. Either way the
+				// fix is a fresh walk — a correctable call, not a backend fault
+				// (Python /mcp twin: invalid params on InvalidCursorError).
+				return nil, invalidParams(errors.New(
+					"invalid pagination cursor: call search_catalog again without a cursor to restart the search"))
+			case http.StatusServiceUnavailable:
+				// 503 catalog_search_unavailable: the walk's ranking can't serve
+				// this page right now (it failed, or this replica lacks it). Same
+				// retryable TRANSPORT_ERROR and wording as the Python /mcp handler
+				// (mcp/tools.py handle_search_catalog), without the get_started
+				// pointer — the identity and connection are fine.
+				return s.softErrorExtra(cctx, &ux.CodedError{
+					Code:       ux.CodeTransportError,
+					Msg:        "catalog search is temporarily unavailable for this page",
+					Actionable: "Retry search_catalog with the same cursor shortly, or call it again without a cursor to restart the search.",
+					Cause:      err,
+				}, "", map[string]any{"retryable": true}), nil
 			case http.StatusForbidden:
 				// A 403 on THIS route is the missing capabilities:read permission,
 				// not a revoked identity — the generic NOT_AUTHENTICATED +
