@@ -169,10 +169,6 @@ jobs:
       - name: Install syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
 
-      # uv only exports the lock for the image-vs-uv.lock check below.
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
       # Multi-arch (linux/amd64 + linux/arm64) needs QEMU (to emulate the
       # non-native arch during the python-base build/uv steps) and a buildx
       # builder. Set up BEFORE `docker login` so no third-party setup action
@@ -224,8 +220,12 @@ jobs:
               --load .
           done
 
-      # Each shipped arch must carry exactly the `uv export --frozen --no-dev`
-      # set the test suite ran against (#1819).
+      # Each shipped arch must carry exactly the `uv export --locked --no-dev`
+      # set the test suite ran against (#1819). The guard runs the export in
+      # the builder's own pinned Python + uv images via `docker run` (no
+      # environment passed in, repo mounted read-only), so this job installs
+      # no uv action alongside its id-token grant and can't drift from the
+      # image's uv version.
       - name: Check image packages match uv.lock (per arch)
         env:
           IMAGE: ${{ steps.build.outputs.image }}
