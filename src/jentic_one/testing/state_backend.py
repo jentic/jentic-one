@@ -238,6 +238,11 @@ class BaseStateBackendContract:
     # -- lifecycle -----------------------------------------------------------
 
     async def test_aclose_releases_the_backend(self) -> None:
+        """``aclose()`` completes once the backend has been used.
+
+        The process calls it exactly once, at shutdown, so it need not be
+        idempotent; a backend whose ``aclose()`` raises after use fails here.
+        """
         backend = self.backend_factory()
         await backend.set(self._key(), b"v", ttl_s=60.0)
         await backend.aclose()
