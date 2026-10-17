@@ -447,7 +447,7 @@ later rollback still decrypts what was written under the new key)
 
 > **Warning: the default `memory` shared-state backend is bounded and fails
 > closed.**
-> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> `state.backend: memory` keeps `Idempotency-Key`
 > records, rate-limit buckets, circuit-breaker counters and the auth
 > surface's single-use markers in the process, with a fixed budget per key
 > namespace. It never evicts a live entry. When a namespace (or one caller's
@@ -456,7 +456,8 @@ later rollback still decrypts what was written under the new key)
 > `Retry-After` of when its earliest entry expires.
 >
 > With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> window on memory and 24 h on any other
+> backend; the `idem` budget of 128 MiB; about
 > 1.2 KiB budgeted per record with typical response headers), one broker
 > process sustains about **30 idempotent requests per second**, and about
 > **3 per second per caller**, because each caller may hold at most 10% of
@@ -470,53 +471,58 @@ later rollback still decrypts what was written under the new key)
 > `Content-Location` and `Retry-After` first, so a replay may lack the
 > others.
 >
-> Every other namespace defaults to 16 MiB, and all namespaces of one
+> Every other namespace defaults to 16 MiB, and all namespaces of the
 > backend together are capped at
-> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> `state.memory.max_total_bytes` (192 MiB), refused the
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
 > chart's 512Mi memory limit holds. The broker always runs as its own
-> process; the combined app holds one such backend each for the auth and
-> control surfaces.
+> process. A process builds one such backend, shared by every surface it
+> serves, so in the combined app the auth and control surfaces share one
+> backend and the cap covers the whole process.
 >
-> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> To raise it: raise `state.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.
 
-Every subchart exposes `replicas` and `resources` in its values
-(`--set broker.replicas=3`). The defaults are sized for evaluation, not
-load: registry/control request 100m/128Mi with a 500m/256Mi limit, the
-broker requests 100m/256Mi with a 500m/512Mi limit (its default `memory`
-shared-state budgets, above), and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
-a hint: it boots at roughly 150Mi RSS, and every concurrent password or
+Every subchart exposes `replicas` and `resources` in its values (only the
+gateway's `replicas` may usefully go above 1 — see below). The defaults are
+sized for evaluation, not load: registry/control request 100m/128Mi with a
+500m/256Mi limit, the broker requests 100m/256Mi with a 500m/512Mi limit (its
+default `memory` shared-state budgets, above), and app/admin request 256Mi
+with a 1Gi limit. The app's floor is real, not a hint: it boots at roughly 150Mi RSS, and every concurrent password or
 OAuth client-secret verification adds 64Mi (argon2id with
 `memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit
 is an OOM-kill, not a slowdown. Do not set the app's memory limit below
 512Mi.
 
-- **Broker** — stateless; run several replicas behind the Service. First set
-  the shared-state backend to Redis so rate limits, circuit breakers, and
-  idempotency records are shared across replicas: with the default `memory`
-  backend that state is per-process
-  ([config/production.yaml.example](../../config/production.yaml.example),
-  [composition-and-processes.md](../architecture/composition-and-processes.md)).
-  The keys are `broker.resilience.backend.backend: redis` and
-  `broker.resilience.backend.redis_url` (via `extraEnv`:
-  `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
-  `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own. **One hard caveat:** the Redis client is an
-  optional extra (`pip install jentic-one[redis]`) that the published
-  `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
-  the redis backend on that image crash-loops every replica at startup. On
-  the published image today, keep `broker.replicas: 1`; scaling out means
-  building your own image with the `[redis]` extra.
-- **App** — the same shared-state backend also carries the auth surface's
-  OAuth rate limiters and consent-nonce anti-replay, so the same rule
-  applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
-  before scaling out. Multi-replica app surfaces are not part of the CI
-  smoke matrix.
+**OSS supports one process per surface.** The app (the combined process,
+whose auth and control surfaces keep shared state), control and broker keep their rate-limit
+buckets, circuit-breaker counters, `Idempotency-Key` records and the auth
+surface's OAuth rate limiters and consent-nonce anti-replay in the process,
+on the `memory` shared-state backend. A second replica of one of them gets
+its own copy of that state, so rate limits multiply, a replay can be
+re-executed on the other replica, and a consent handle can be redeemed
+twice. Registry and admin keep no such state today, but multi-replica runs
+of them are not tested either. Keep `replicas: 1` on every surface except
+the gateway (a stateless proxy); the chart prints a warning at
+install/upgrade time when any other surface asks for more. Multi-process
+shared state comes from a backend an extension registers with
+`register_state_backend`
+([extending-jentic-one.md](../development/extending-jentic-one.md)) and
+selects with `state.backend` (`JENTIC__STATE__BACKEND` via `extraEnv`); the
+built-in `redis` backend is deprecated, needs the optional `[redis]` extra
+that the published `ghcr.io/jentic/jentic-one-app` image does **not**
+include, and will be removed.
+
+- **Broker** — scale up rather than out: raise the chart's `broker.resources`
+  and the broker's `broker.resilience.max_in_flight` config key
+  (`JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` via `broker.extraEnv`).
+- **App** — the same one-replica rule applies; the auth surface's limiters and
+  anti-replay ride the same backend. Multi-replica surfaces are not part of
+  the CI smoke matrix.
 - **Bundled PostgreSQL** — a single-instance StatefulSet, dev/eval-grade by
   design; HA means an external managed database (below). Its connection ceiling
   is already raised to 200 (`postgresql.maxConnections`) because three pools per
@@ -524,9 +530,10 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   raising replicas means raising this and the subchart's memory limit together.
 - **PodDisruptionBudgets** — `podDisruptionBudget.enabled=true` renders one per
   enabled surface at `minAvailable: 1`, so node drains and cluster upgrades
-  cannot take a surface fully offline. Turn it on only *after* raising
-  `replicas` above 1: with a single replica there is no spare pod to evict and
-  the budget blocks every drain instead.
+  cannot take a surface fully offline. With a single replica there is no
+  spare pod to evict and the budget blocks every drain instead, so it only
+  helps the gateway (or a surface on a registered shared backend) once it runs
+  more than one replica.
 - **NetworkPolicy** — `networkPolicy.enabled=true` limits ingress to
   same-release pods plus the namespaces in `networkPolicy.allowFromNamespaces`.
   Put your ingress controller's namespace in that list unless it runs in this

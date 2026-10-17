@@ -1,4 +1,4 @@
-"""Shared-state backend package: role-segregated stores (memory | redis)."""
+"""Shared-state backend package: role-segregated stores and the backend registry."""
 
 from __future__ import annotations
 
@@ -14,16 +14,22 @@ from jentic_one.shared.state.backend import (
     key_namespace,
 )
 from jentic_one.shared.state.factory import (
-    BackendKind,
+    MEMORY_BACKEND,
+    REDIS_BACKEND,
     MemoryBackendConfig,
     MemoryNamespaceBudgetConfig,
+    StateBackendBuildContext,
+    StateBackendBuilder,
     StateBackendConfig,
     build_state_backend,
+    register_state_backend,
+    registered_state_backends,
 )
 
 __all__ = [
+    "MEMORY_BACKEND",
+    "REDIS_BACKEND",
     "AtomicStore",
-    "BackendKind",
     "KeyValueStore",
     "MemoryBackendConfig",
     "MemoryNamespaceBudgetConfig",
@@ -32,8 +38,12 @@ __all__ = [
     "RateLimitDecision",
     "RateLimitStore",
     "SharedStateBackend",
+    "StateBackendBuildContext",
+    "StateBackendBuilder",
     "StateBackendCapacityError",
     "StateBackendConfig",
     "build_state_backend",
     "key_namespace",
+    "register_state_backend",
+    "registered_state_backends",
 ]

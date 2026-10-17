@@ -79,12 +79,14 @@ flowchart TB
         B2 --- D2
     end
 
-    subgraph edge [Broker-scaled — hot data plane]
+    subgraph edge [Multi-process — needs a registered shared-state backend]
         A3["app (all four control-plane surfaces)"]
-        B3a["broker ×N (stateless, scale horizontally)"]
-        D3[("shared databases + Redis state backend")]
+        B3a["broker ×N"]
+        D3[("shared databases")]
+        S3[("state.backend registered with register_state_backend")]
         A3 --- D3
         B3a --- D3
+        B3a --- S3
     end
 ```
 
@@ -98,19 +100,37 @@ flowchart TB
   prefixes so the probes don't collide. Agent-discovery documents
   (`/llms.txt`, `/skills/*`) are mounted on every standalone surface so a
   split deployment still serves them.
-- **Broker-scaled** — brokers are stateless; run several behind a load
-  balancer. Set `broker.resilience.backend.backend` to `redis` (and give
-  every replica the same `broker.resilience.backend.redis_url`) so rate
-  limits, circuit breakers, and idempotency records are shared across
-  replicas. The redis client is an optional extra
-  (`pip install jentic-one[redis]`), not part of the published container
-  image — scaling out on that image means building your own with the extra.
+- **Multi-process** — not supported by OSS on its own. Each surface keeps
+  its rate-limit buckets, circuit-breaker counters, `Idempotency-Key`
+  records and the auth surface's single-use markers in its process (the
+  `memory` shared-state backend), so a second process of the same surface —
+  a replica, or a second uvicorn worker — gets its own copy: limits
+  multiply, an `Idempotency-Key` replay can be re-executed, and a consent
+  handle can be redeemed twice. **OSS supports one process per surface**
+  (the combined and parts shapes above). Running several processes of a
+  surface needs a shared backend registered with `register_state_backend`
+  and selected with `state.backend`
+  ([extending-jentic-one.md](../development/extending-jentic-one.md)). The
+  built-in `redis` backend is deprecated and will be removed; it needs the
+  optional `[redis]` extra, which the published container image does not
+  include. The Helm chart warns when any surface but the gateway asks for
+  more than one replica.
+
+## One shared-state backend per process
+
+A process builds one shared-state backend from the top-level `state:`
+section (`Context.state_backend`) while its app is assembled, so an unknown
+`state.backend` fails before the process serves, with the list of registered
+names. Every surface the process serves shares it — in the combined app the
+auth limiters and single-use markers and the control connect limiters; in a
+broker process the rate limiter, circuit breaker and idempotency store. The
+app lifespan closes it once, after every surface teardown.
 
 ## The memory shared-state backend is bounded
 
 > **Warning: the default `memory` shared-state backend is bounded and fails
 > closed.**
-> `broker.resilience.backend.backend: memory` keeps `Idempotency-Key`
+> `state.backend: memory` keeps `Idempotency-Key`
 > records, rate-limit buckets, circuit-breaker counters and the auth
 > surface's single-use markers in the process, with a fixed budget per key
 > namespace. It never evicts a live entry. When a namespace (or one caller's
@@ -119,7 +139,8 @@ flowchart TB
 > `Retry-After` of when its earliest entry expires.
 >
 > With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> window on memory and 24 h on any other
+> backend; the `idem` budget of 128 MiB; about
 > 1.2 KiB budgeted per record with typical response headers), one broker
 > process sustains about **30 idempotent requests per second**, and about
 > **3 per second per caller**, because each caller may hold at most 10% of
@@ -133,17 +154,18 @@ flowchart TB
 > `Content-Location` and `Retry-After` first, so a replay may lack the
 > others.
 >
-> Every other namespace defaults to 16 MiB, and all namespaces of one
+> Every other namespace defaults to 16 MiB, and all namespaces of the
 > backend together are capped at
-> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> `state.memory.max_total_bytes` (192 MiB), refused the
 > same way. The budgets track real memory to within about 15% (measured
 > with `tracemalloc`), so on the defaults the broker's state stays under
 > about 192 MiB on top of a ~130 MiB process baseline, which the broker
 > chart's 512Mi memory limit holds. The broker always runs as its own
-> process; the combined app holds one such backend each for the auth and
-> control surfaces.
+> process. A process builds one such backend, shared by every surface it
+> serves, so in the combined app the auth and control surfaces share one
+> backend and the cap covers the whole process.
 >
-> To raise it: raise `broker.resilience.backend.memory.namespaces.idem`
+> To raise it: raise `state.memory.namespaces.idem`
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.
@@ -161,7 +183,8 @@ load-bearing:
    reports unready (so the load balancer deregisters the instance) →
    scanners stop → the job worker drains → telemetry flushes →
    `ctx.shutdown()` → container-injected lifespans exit in reverse → the
-   surface lifespan closes the shared HTTP client. Draining the worker
+   surface lifespan closes the shared HTTP client → the shared-state
+   backend closes, last. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
    finish over a live connection pool.
 

@@ -506,10 +506,11 @@ async def _run_shutdown_handlers(app: FastAPI) -> None:
     """Run the handlers registered with ``app.router.add_event_handler("shutdown", …)``.
 
     FastAPI runs those handlers only for an app without its own ``lifespan``,
-    and every app built here has one, so the lifespan runs them itself. Surface
-    installers use them to close what they built (the auth and control
-    surfaces' shared-state backends). Best-effort: a failing handler is logged
-    and the rest still run.
+    and every app built here has one, so the lifespan runs them itself, for
+    installers (container ``extra_installers`` included) that register one to
+    close what they built. The process's shared-state backend is not closed
+    here; the lifespan closes it last (``ctx.close_state_backend()``).
+    Best-effort: a failing handler is logged and the rest still run.
     """
     for handler in list(app.router.on_shutdown):
         try:
@@ -565,6 +566,16 @@ def create_surface_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        # The process's shared-state backend closes last, after the surface's
+        # own extra_lifespan (the broker's runners) has exited.
+        try:
+            async with _surface_lifespan(app):
+                yield
+        finally:
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _surface_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
@@ -719,6 +730,15 @@ def create_combined_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        try:
+            async with _combined_lifespan(app):
+                yield
+        finally:
+            # The process's shared-state backend closes once, last.
+            await ctx.close_state_backend()
+
+    @asynccontextmanager
+    async def _combined_lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
