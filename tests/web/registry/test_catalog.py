@@ -80,6 +80,9 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 #: Manifest URL -> the ``catalog_api_id``s it lists (``{domain}`` or ``{domain}/{sub}``).
 _LISTINGS: dict[str, list[str]] = {}
 
+#: Spec URL -> a canned failure ``(status, headers)`` served instead of the spec.
+_SPEC_FAILURES: dict[str, tuple[int, dict[str, str]]] = {}
+
 
 def _include_url(base: str, api_id: str) -> str:
     domain, _, sub = api_id.partition("/")
@@ -113,6 +116,9 @@ def _spec() -> dict[str, Any]:
 def _mock_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
+        if url in _SPEC_FAILURES:
+            status, headers = _SPEC_FAILURES[url]
+            return httpx.Response(status, headers=headers)
         body = sys.modules[__name__]._manifest(url)
         if body is None and url.endswith("/openapi.json"):
             body = _spec()
@@ -135,10 +141,12 @@ def _mock_github() -> Iterator[None]:
         return real_client_cls(transport=_mock_transport(), **kwargs)  # type: ignore[arg-type]
 
     _LISTINGS.clear()
+    _SPEC_FAILURES.clear()
     _LISTINGS[_MANIFEST_URL] = ["stripe.com", "slack.com"]
     with patch("jentic_one.registry.services.catalog.fetch.httpx.AsyncClient", _factory):
         yield
     _LISTINGS.clear()
+    _SPEC_FAILURES.clear()
 
 
 async def _truncate(ctx: Context) -> None:
@@ -270,12 +278,14 @@ async def _register(
         return api.id
 
 
-async def _outdate(ctx: Context, api_id: uuid.UUID, spec_url: str) -> None:
+async def _outdate(ctx: Context, api_id: uuid.UUID, entry_id: str) -> None:
     """Record a notified upstream update the API's served revision has not adopted."""
     async with ctx.registry_db.transaction() as session:
         session.add(
             CatalogUpdateCheck(
-                local_api_id=api_id, spec_url=spec_url, last_notified_digest="sha256:upstream"
+                local_api_id=api_id,
+                catalog_entry_id=entry_id,
+                last_notified_digest="sha256:upstream",
             )
         )
 
@@ -887,6 +897,31 @@ def test_preview_operations(admin_client: TestClient) -> None:
     assert body["info"]["title"] == "Stripe"
 
 
+def test_preview_spec_gone_is_410(admin_client: TestClient) -> None:
+    """The entry is listed but its source no longer serves the spec: 410, not 404."""
+    admin_client.post("/catalog:refresh")
+    _SPEC_FAILURES[_spec_url(_MANIFEST_BASE, "stripe.com")] = (404, {})
+    r = admin_client.get("/catalog/public/stripe.com/operations")
+    assert r.status_code == 410
+    assert r.json()["type"].endswith("catalog_spec_gone")
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "retry_after"),
+    [(503, {"retry-after": "42"}, "42"), (429, {"retry-after": "7"}, "7"), (502, {}, "5")],
+)
+def test_preview_source_unavailable_is_503_with_retry_after(
+    admin_client: TestClient, status: int, headers: dict[str, str], retry_after: str
+) -> None:
+    """A throttled or failing source is transient: 503 with the wait in ``Retry-After``."""
+    admin_client.post("/catalog:refresh")
+    _SPEC_FAILURES[_spec_url(_MANIFEST_BASE, "stripe.com")] = (status, headers)
+    r = admin_client.get("/catalog/public/stripe.com/operations")
+    assert r.status_code == 503
+    assert r.json()["type"].endswith("catalog_source_unavailable")
+    assert r.headers["retry-after"] == retry_after
+
+
 def test_preview_operations_q_filters_across_spec(admin_client: TestClient) -> None:
     admin_client.post("/catalog:refresh")
     body = admin_client.get("/catalog/public/stripe.com/operations", params={"q": "create"}).json()
@@ -937,7 +972,9 @@ async def test_import_entry_enqueues_job(admin_client: TestClient, web_context: 
     source = await _job_source(web_context, body["job_id"])
     assert source["catalog_entry_id"] == "public/stripe.com"
     assert source["catalog_api_id"] == "stripe.com"
-    assert source["url"] == _spec_url(_MANIFEST_BASE, "stripe.com")
+    # The job resolves the spec through the entry's source: no URL in the payload.
+    assert source["type"] == "catalog"
+    assert "url" not in source
 
 
 def test_import_unknown_entry_404(admin_client: TestClient) -> None:
@@ -961,20 +998,18 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
     ``info.x-vendor``/``contact.name`` still resolve an api identifier."""
     identity = Identity(sub="usr_importer", email="u@test.local", permissions=[])
     assert CatalogService(web_context)._to_import_source(
-        _coincap(),
-        "https://example.test/coincap/openapi.json",
-        identity,
-        vendor=None,
-        name="coincap.io",
+        _coincap(), identity, vendor=None, name="coincap.io", switch_source=False
     ) == {
-        "type": "url",
-        "url": "https://example.test/coincap/openapi.json",
+        "type": "catalog",
+        "catalog_entry_id": "public/coincap.io",
+        "catalog_api_id": "coincap.io",
         "origin": "catalog",
         "submitted_by": "usr_importer",
         "vendor": "coincap.io",
         "api_name": "coincap.io",
-        "catalog_api_id": "coincap.io",
-        "catalog_entry_id": "public/coincap.io",
+        "supersede_active": False,
+        "host_change_approved": False,
+        "switch_source": False,
     }
 
 
@@ -1259,11 +1294,7 @@ async def test_registered_alternates_are_counted_and_listed(web_config: AppConfi
                 ),
                 catalog_api_id="stripe.com",
             )
-            await _outdate(
-                ctx,
-                api_id,
-                _spec_url(_MANIFEST_BASE if source == "public" else _CORP_BASE, "stripe.com"),
-            )
+            await _outdate(ctx, api_id, entry_id)
         with _client(ctx, ["capabilities:read", "catalog:org:read"]) as tc:
             body = tc.get("/catalog").json()
             assert [e["entry_id"] for e in body["data"] if "stripe" in e["entry_id"]] == [
@@ -1405,7 +1436,7 @@ async def test_outdated_only_lists_a_newly_registered_winner(web_config: AppConf
                 spec_url=spec_url,
                 catalog_api_id="stripe.com",
             )
-            await _outdate(ctx, api_id, spec_url)
+            await _outdate(ctx, api_id, "public/stripe.com")
             body = tc.get("/catalog", params={"outdated_only": True}).json()
             assert _ids(body) == ["public/stripe.com"]
             assert body["outdated_count"] == 1

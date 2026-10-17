@@ -1,8 +1,9 @@
 """Unit tests for the catalog update-notify sweep (Flow 3 MVP).
 
 Covers ``CatalogService._run_update_notify_sweep`` / ``_probe_one`` behaviour with
-mocked fetch + repos: the interval gate, the 304 no-op, the change-emits-once
-dedupe, the no-change no-op, and the per-API best-effort isolation.
+a mocked source fetch + repos: the interval gate, the not-modified no-op, the
+``content_hint`` short-circuit, the change-emits-once dedupe, the no-change no-op,
+and the per-API best-effort isolation.
 """
 
 from __future__ import annotations
@@ -19,18 +20,50 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.registry.repos.revision_repo import RegisteredSpec
-from jentic_one.registry.services.catalog.fetch import ConditionalFetch
 from jentic_one.registry.services.catalog.service import (
     UPDATE_SWEEP_LOCK_KEY,
     CatalogService,
-    _is_upstream_tracked,
     _ReadState,
 )
 from jentic_one.registry.services.catalog.snapshot import build_snapshot
+from jentic_one.registry.services.catalog.sources.protocol import NotModified, SpecBody
+from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.shared.config import CatalogConfig
 from jentic_one.shared.models.events import EventType
 
 _API_ID = uuid.uuid4()
+_ENTRY_ID = "public/acme.com"
+_SPEC_URL = "https://raw.githubusercontent.com/x/y/main/openapi.json"
+_SWEEP = "jentic_one.registry.services.catalog.service"
+_FETCH_ROW = "jentic_one.registry.services.catalog.spec_fetch.CatalogSpecFetcher.fetch_row"
+
+
+def _body(digest: str, validator: str | None = '"v2"') -> SpecBody:
+    return SpecBody(
+        content=b"{}", media_type="application/json", validator=validator, digest=digest
+    )
+
+
+def _entry_row(entry_id: str = _ENTRY_ID, *, content_hint: str | None = None) -> SimpleNamespace:
+    slug, external_id = entry_id.split("/", 1)
+    return SimpleNamespace(
+        entry_id=entry_id,
+        source_slug=slug,
+        external_id=external_id,
+        spec_ref={"url": _SPEC_URL},
+        content_hint=content_hint,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _live_entries() -> Any:
+    """Every candidate's entry is live in the enabled ``public`` source unless a test says not."""
+
+    async def _live(_session: Any, ids: Any) -> dict[str, SimpleNamespace]:
+        return {i: _entry_row(i) for i in ids}
+
+    with patch(f"{_SWEEP}.CatalogEntryRepository.live_entries", side_effect=_live) as live:
+        yield live
 
 
 def _fake_try_advisory_lock(held: set[int] | None = None) -> MagicMock:
@@ -63,6 +96,7 @@ def _make_ctx(*, interval: int = 86400, advisory_held: set[int] | None = None) -
         update_sweep_max_concurrency=4,
     )
     ctx.config.ingest = MagicMock()
+    ctx.config.catalog.catalog_api_id_mappings = []
     ctx.update_sweep_lock = asyncio.Lock()
     session = AsyncMock()
     for db in (ctx.registry_db, ctx.admin_db):
@@ -82,7 +116,8 @@ def _spec(
 ) -> RegisteredSpec:
     return RegisteredSpec(
         api_id=_API_ID,
-        source_url="https://raw.githubusercontent.com/x/y/main/openapi.json",
+        catalog_entry_id=_ENTRY_ID,
+        source_url=_SPEC_URL,
         spec_digest=digest,
         vendor="acme",
         name="widgets",
@@ -101,7 +136,9 @@ def _check(
 ) -> MagicMock:
     row = MagicMock()
     row.last_checked_at = last_checked_at
-    row.last_seen_etag = etag
+    row.catalog_entry_id = _ENTRY_ID
+    row.last_seen_validator = etag
+    row.last_seen_content_hint = None
     row.last_notified_digest = notified
     # Default to the plain-update class so a "already notified this digest" row dedupes
     # against a plain update (the common case). Tests exercising the overlay-conflict
@@ -114,7 +151,16 @@ def _check(
     return row
 
 
-_SWEEP = "jentic_one.registry.services.catalog.service"
+async def _probe(
+    svc: CatalogService,
+    spec: RegisteredSpec,
+    *,
+    now: datetime,
+    interval: int,
+    entry: SimpleNamespace | None = None,
+) -> None:
+    fetcher = CatalogSpecFetcher(svc._ctx)
+    await svc._probe_one(spec, entry or _entry_row(), fetcher, now=now, interval=interval)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -136,10 +182,10 @@ async def test_probe_skips_within_interval() -> None:
             new_callable=AsyncMock,
             return_value=_check(last_checked_at=recent, etag='"v1"', notified=None),
         ),
-        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock) as fetch,
+        patch(_FETCH_ROW, new_callable=AsyncMock) as fetch,
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
         fetch.assert_not_called()
         emit.assert_not_called()
 
@@ -157,16 +203,14 @@ async def test_probe_at_interval_boundary_re_probes() -> None:
             return_value=_check(last_checked_at=checked, etag='"v1"', notified=None),
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=True, etag='"v1"', content=None, digest=None
-            ),
+            return_value=NotModified(validator='"v1"'),
         ) as fetch,
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock),
     ):
-        await svc._probe_one(_spec(), now=now, interval=100)
+        await _probe(svc, _spec(), now=now, interval=100)
         fetch.assert_awaited_once()
 
 
@@ -178,16 +222,14 @@ async def test_probe_304_is_noop_but_records_check() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=True, etag='"v1"', content=None, digest=None
-            ),
+            return_value=NotModified(validator='"v1"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
         upsert.assert_awaited_once()
         upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
@@ -203,11 +245,9 @@ async def test_probe_change_emits_event_once() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(
@@ -215,7 +255,7 @@ async def test_probe_change_emits_event_once() -> None:
         ) as mark_notified,
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
@@ -238,16 +278,14 @@ async def test_probe_already_notified_digest_does_not_re_emit() -> None:
             return_value=_check(last_checked_at=None, etag=None, notified="upstream-new"),
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
 
 
@@ -260,16 +298,14 @@ async def test_probe_upstream_matches_registered_is_noop() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v1"', content=b"{}", digest="local-digest"
-            ),
+            return_value=_body("local-digest", '"v1"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
 
 
@@ -290,11 +326,9 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(
@@ -309,7 +343,7 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
     ):
         # Overlaid served digest is "overlaid"; the base it was built over is "base-old".
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
-        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        await _probe(svc, spec, now=datetime.now(UTC), interval=86400)
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
@@ -354,11 +388,9 @@ async def test_probe_suppresses_emit_when_snoozed() -> None:
             return_value=snoozed_check,
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
         patch(
@@ -366,7 +398,7 @@ async def test_probe_suppresses_emit_when_snoozed() -> None:
         ) as mark_notified,
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         # Recorded the observation and marked notified inline (snooze read-surface keys on
         # last_notified_digest), but did NOT emit.
         upsert.assert_awaited()
@@ -385,17 +417,15 @@ async def test_probe_records_notify_metric() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock),
         patch(f"{_SWEEP}.record_update_notified") as metric,
     ):
-        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        await _probe(svc, _spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         metric.assert_called_once_with(EventType.CATALOG_UPDATE_AVAILABLE)
 
 
@@ -414,17 +444,15 @@ async def test_probe_overlay_upstream_matches_base_is_plain_noop() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v1"', content=b"{}", digest="base-old"
-            ),
+            return_value=_body("base-old", '"v1"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
-        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        await _probe(svc, spec, now=datetime.now(UTC), interval=86400)
         # Upstream == base != served("overlaid"); classified plain-update, and it emits
         # once (a genuine change vs the served spec) — never the conflict class.
         emit.assert_awaited_once()
@@ -446,17 +474,15 @@ async def test_probe_overlay_unknown_base_falls_back_to_plain() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest=None)
-        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        await _probe(svc, spec, now=datetime.now(UTC), interval=86400)
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
@@ -485,11 +511,9 @@ async def test_probe_reclassified_digest_re_emits_once() -> None:
             ),
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(
@@ -504,7 +528,7 @@ async def test_probe_reclassified_digest_re_emits_once() -> None:
     ):
         # Now overlay-origin with a base the upstream digest differs from → conflict class.
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
-        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        await _probe(svc, spec, now=datetime.now(UTC), interval=86400)
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
@@ -545,7 +569,7 @@ async def test_sweep_no_candidates_is_noop() -> None:
             new_callable=AsyncMock,
             return_value=[],
         ),
-        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock) as fetch,
+        patch(_FETCH_ROW, new_callable=AsyncMock) as fetch,
     ):
         await svc._run_update_notify_sweep()
         fetch.assert_not_called()
@@ -610,7 +634,7 @@ def _shared_check_store() -> tuple[dict[uuid.UUID, MagicMock], dict[str, Any]]:
     async def _upsert(_session: Any, *, local_api_id: uuid.UUID, **kw: Any) -> None:
         row = rows.get(local_api_id) or _check(last_checked_at=None, etag=None, notified=None)
         row.last_checked_at = kw["checked_at"]
-        row.last_seen_etag = kw["etag"]
+        row.last_seen_validator = kw["validator"]
         rows[local_api_id] = row
 
     async def _mark(
@@ -628,10 +652,10 @@ def _shared_check_store() -> tuple[dict[uuid.UUID, MagicMock], dict[str, Any]]:
     return rows, {"get": _get, "upsert": _upsert, "mark_notified": _mark}
 
 
-async def _slow_changed_fetch(*_a: Any, **_kw: Any) -> ConditionalFetch:
+async def _slow_changed_fetch(*_a: Any, **_kw: Any) -> SpecBody:
     # Yield to the loop so concurrently started sweeps genuinely overlap.
     await asyncio.sleep(0.01)
-    return ConditionalFetch(not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new")
+    return _body("upstream-new", '"v2"')
 
 
 async def _run_concurrent_sweeps(ctxs: list[MagicMock]) -> AsyncMock:
@@ -649,7 +673,7 @@ async def _run_concurrent_sweeps(ctxs: list[MagicMock]) -> AsyncMock:
             f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified",
             side_effect=repo["mark_notified"],
         ),
-        patch(f"{_SWEEP}.fetch_bytes_conditional", side_effect=_slow_changed_fetch),
+        patch(_FETCH_ROW, side_effect=_slow_changed_fetch),
         patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await asyncio.gather(*(CatalogService(c)._run_update_notify_sweep() for c in ctxs))
@@ -708,11 +732,9 @@ async def test_sweep_swallows_emit_failure_per_api() -> None:
             f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
         ),
         patch(
-            f"{_SWEEP}.fetch_bytes_conditional",
+            _FETCH_ROW,
             new_callable=AsyncMock,
-            return_value=ConditionalFetch(
-                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
-            ),
+            return_value=_body("upstream-new", '"v2"'),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(
@@ -763,7 +785,7 @@ async def test_sweep_deadline_hit_is_swallowed() -> None:
     ctx.config.catalog.update_sweep_deadline_seconds = 0  # trip the deadline immediately
     svc = CatalogService(ctx)
 
-    async def _slow(_spec_arg: object, *, now: object, interval: int) -> None:
+    async def _slow(*_args: object, now: object, interval: int) -> None:
         await asyncio.sleep(0.2)
 
     with (
@@ -787,6 +809,7 @@ async def test_sweep_bounds_concurrency() -> None:
     specs = [
         RegisteredSpec(
             api_id=uuid.uuid4(),
+            catalog_entry_id=f"public/acme-{i}.com",
             source_url=f"https://raw.githubusercontent.com/x/y/main/{i}.json",
             spec_digest="d",
             vendor="acme",
@@ -799,7 +822,7 @@ async def test_sweep_bounds_concurrency() -> None:
     in_flight = 0
     peak = 0
 
-    async def _probe(_spec_arg: object, *, now: object, interval: int) -> None:
+    async def _probe_stub(*_args: object, now: object, interval: int) -> None:
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
@@ -812,55 +835,30 @@ async def test_sweep_bounds_concurrency() -> None:
             new_callable=AsyncMock,
             return_value=specs,
         ),
-        patch.object(svc, "_probe_one", side_effect=_probe),
+        patch.object(svc, "_probe_one", side_effect=_probe_stub),
     ):
         await svc._run_update_notify_sweep()
 
     assert peak <= 2
 
 
-# ── origin-scoped candidate selection (Phase 4, OQ-3) ────────────────────────
-
-
-def test_is_upstream_tracked_catalog_origin_always() -> None:
-    spec = _spec(origin="catalog")
-    assert _is_upstream_tracked(spec, set()) is True
-
-
-def test_is_upstream_tracked_overlay_only_when_source_in_manifest() -> None:
-    spec = _spec(origin="overlay")
-    assert _is_upstream_tracked(spec, set()) is False
-    assert _is_upstream_tracked(spec, {spec.source_url}) is True
-
-
-def test_is_upstream_tracked_manual_only_when_source_in_manifest() -> None:
-    spec = _spec(origin=None)
-    assert _is_upstream_tracked(spec, set()) is False
-    assert _is_upstream_tracked(spec, {spec.source_url}) is True
-
-
-def test_is_upstream_tracked_other_origin_skipped() -> None:
-    spec = _spec(origin="imported")
-    assert _is_upstream_tracked(spec, {spec.source_url}) is False
+# ── candidate selection: tracked while the entry is live ────────────────────
 
 
 @pytest.mark.asyncio
-async def test_sweep_skips_manual_spec_not_in_manifest() -> None:
-    """A manual import whose source_url is not a catalog entry is never probed."""
-    ctx = _make_ctx(interval=86400)
-    svc = CatalogService(ctx)
-    manual = _spec(origin=None)
+async def test_sweep_skips_api_whose_entry_is_no_longer_listed(_live_entries: Any) -> None:
+    """An API whose catalog entry is tombstoned (or gone) is not probed."""
+    svc = CatalogService(_make_ctx(interval=86400))
+
+    async def _none(_session: Any, _ids: Any) -> dict[str, Any]:
+        return {}
+
+    _live_entries.side_effect = _none
     with (
         patch(
             f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
             new_callable=AsyncMock,
-            return_value=[manual],
-        ),
-        patch.object(
-            svc,
-            "_snapshot",
-            new_callable=AsyncMock,
-            return_value=_snapshot_with(set()),  # not in the catalog → skipped
+            return_value=[_spec()],
         ),
         patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
     ):
@@ -869,57 +867,155 @@ async def test_sweep_skips_manual_spec_not_in_manifest() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sweep_probes_overlay_spec_in_manifest() -> None:
-    """An overlay-origin revision whose source_url is a catalog entry is probed."""
-    ctx = _make_ctx(interval=86400)
-    svc = CatalogService(ctx)
-    overlay = _spec(origin="overlay")
+async def test_sweep_skips_api_whose_source_is_disabled(_live_entries: Any) -> None:
+    """An entry of a source that is no longer enabled is not probed."""
+    svc = CatalogService(_make_ctx(interval=86400))
+
+    async def _other(_session: Any, ids: Any) -> dict[str, Any]:
+        return {i: _entry_row("gone-source/acme.com") for i in ids}
+
+    _live_entries.side_effect = _other
     with (
         patch(
             f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
             new_callable=AsyncMock,
-            return_value=[overlay],
+            return_value=[_spec()],
         ),
-        patch.object(
-            svc,
-            "_snapshot",
+        patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
+    ):
+        await svc._run_update_notify_sweep()
+    probe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_probes_overlay_api_on_its_entry() -> None:
+    """An overlay is a revision of the imported API, so it is probed on the API's entry."""
+    svc = CatalogService(_make_ctx(interval=86400))
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
             new_callable=AsyncMock,
-            return_value=_snapshot_with({overlay.source_url}),
+            return_value=[_spec(origin="overlay")],
         ),
         patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
     ):
         await svc._run_update_notify_sweep()
     probe.assert_awaited_once()
+    assert probe.await_args is not None
+    assert probe.await_args.args[1].entry_id == _ENTRY_ID
+
+
+# ── content_hint short-circuit and validator reuse ───────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_sweep_skips_manifest_query_for_pure_catalog() -> None:
-    """No manifest coverage query when every candidate is catalog-origin (common case)."""
-    ctx = _make_ctx(interval=86400)
-    svc = CatalogService(ctx)
+async def test_probe_unchanged_content_hint_skips_fetch() -> None:
+    """The entry still lists the hint last probed: unchanged, no fetch at all."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"v1"', notified=None)
+    check.last_seen_content_hint = "sha:abc"
     with (
         patch(
-            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
             new_callable=AsyncMock,
-            return_value=[_spec(origin="catalog")],
+            return_value=check,
         ),
-        patch.object(svc, "_snapshot", new_callable=AsyncMock) as spec_urls,
-        patch.object(svc, "_probe_one", new_callable=AsyncMock),
+        patch(_FETCH_ROW, new_callable=AsyncMock) as fetch,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
-        await svc._run_update_notify_sweep()
-    spec_urls.assert_not_called()
+        await _probe(
+            svc,
+            _spec(),
+            now=datetime.now(UTC),
+            interval=86400,
+            entry=_entry_row(content_hint="sha:abc"),
+        )
+    fetch.assert_not_called()
+    emit.assert_not_called()
+    assert upsert.await_args is not None
+    assert upsert.await_args.kwargs["content_hint"] == "sha:abc"
+
+
+@pytest.mark.asyncio
+async def test_probe_changed_content_hint_fetches_with_validator() -> None:
+    """A different hint means the spec may have changed: fetch, revalidating."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"v1"', notified=None)
+    check.last_seen_content_hint = "sha:old"
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=check,
+        ),
+        patch(
+            _FETCH_ROW, new_callable=AsyncMock, return_value=NotModified(validator='"v1"')
+        ) as fetch,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+    ):
+        await _probe(
+            svc,
+            _spec(),
+            now=datetime.now(UTC),
+            interval=86400,
+            entry=_entry_row(content_hint="sha:new"),
+        )
+    fetch.assert_awaited_once()
+    assert fetch.await_args is not None
+    assert fetch.await_args.kwargs["validator"] == '"v1"'
+    assert upsert.await_args is not None
+    assert upsert.await_args.kwargs["content_hint"] == "sha:new"
+
+
+@pytest.mark.asyncio
+async def test_probe_null_content_hint_always_fetches() -> None:
+    """A source that publishes no hint never short-circuits (None == None is not a match)."""
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=_check(last_checked_at=None, etag='"v1"', notified=None),
+        ),
+        patch(
+            _FETCH_ROW, new_callable=AsyncMock, return_value=NotModified(validator='"v1"')
+        ) as fetch,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+    ):
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
+    fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_probe_does_not_reuse_validator_of_another_entry() -> None:
+    """After the API switched entries, the old entry's validator and hint are not reused."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"old-entry"', notified=None)
+    check.catalog_entry_id = "other/acme.com"
+    check.last_seen_content_hint = "sha:abc"
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=check,
+        ),
+        patch(_FETCH_ROW, new_callable=AsyncMock, return_value=_body("local-digest")) as fetch,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+    ):
+        await _probe(
+            svc,
+            _spec(),
+            now=datetime.now(UTC),
+            interval=86400,
+            entry=_entry_row(content_hint="sha:abc"),
+        )
+    fetch.assert_awaited_once()
+    assert fetch.await_args is not None
+    assert fetch.await_args.kwargs["validator"] is None
 
 
 # ── catalog entry view: update_available derivation ──────────────────────────
-
-_SPEC_URL = "https://raw.githubusercontent.com/x/y/main/openapi.json"
-_ENTRY_ID = "public/acme.com"
-
-
-def _snapshot_with(spec_urls: set[str]) -> MagicMock:
-    snapshot = MagicMock()
-    snapshot.spec_urls = {f"public/{i}": url for i, url in enumerate(sorted(spec_urls))}
-    return snapshot
 
 
 def _state(registered: set[str], outdated: set[str]) -> Any:
@@ -948,7 +1044,7 @@ def _state(registered: set[str], outdated: set[str]) -> Any:
         rows={},
         allowed=allowed,
         registered=frozenset(registered),
-        outdated_urls=outdated,
+        outdated_ids=outdated,
         view=snapshot.collapse(allowed, frozenset(registered)),
     )
 
@@ -959,14 +1055,14 @@ def _view(registered: set[str], outdated: set[str]) -> Any:
 
 
 def test_to_view_update_available_only_when_registered_and_outdated() -> None:
-    v = _view({_ENTRY_ID}, {_SPEC_URL})
+    v = _view({_ENTRY_ID}, {_ENTRY_ID})
     assert v.registered is True
     assert v.update_available is True
 
 
 def test_to_view_not_outdated_when_not_registered() -> None:
     # In the outdated set but NOT registered locally → never update_available.
-    v = _view(set(), {_SPEC_URL})
+    v = _view(set(), {_ENTRY_ID})
     assert v.registered is False
     assert v.update_available is False
 
