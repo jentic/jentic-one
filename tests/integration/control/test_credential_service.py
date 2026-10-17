@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncGenerator
+import socket
+import threading
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 from sqlalchemy import delete
 
@@ -15,11 +21,14 @@ from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientC
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
+from jentic_one.control.repos import CredentialRepository, OAuthClientCredentialRepository
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
 )
+from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
+from jentic_one.control.services.credentials.providers.oauth2 import TokenExchangeError
 from jentic_one.control.services.credentials.schemas.credentials import (
     ApiKeyFull,
     ApiKeyRedacted,
@@ -34,9 +43,18 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     Sigv4Full,
     Sigv4Redacted,
 )
-from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.credentials.schemas.provision import (
+    APIReference,
+    OAuthTokenView,
+)
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import (
+    AppConfig,
+    ControlSurfaceConfig,
+    DirectOAuth2ProviderConfig,
+    EgressConfig,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseDataError
 from jentic_one.shared.db.session import DatabaseSession
@@ -787,3 +805,501 @@ async def test_server_variables_none_by_default(
     )
     redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
     assert redacted.server_variables is None
+
+
+# --- control-plane egress allowlist (issue #1704) ----------------------------
+#
+# An operator allowlists an in-network token endpoint; the OAuth2 credential
+# create/update validation and the token round-trip (pre-flight check *and* the
+# connect-time DNS pin) must honour it, under ``control.egress`` or — when that
+# is unset — the inherited ``broker.egress``. DNS answers for the internal names
+# and the token endpoint's HTTP response are the faked out-of-process seams.
+
+_INTERNAL_HOST = "idp.corp.internal"
+_INTERNAL_IP = "10.50.0.7"
+_INTERNAL_TOKEN_URL = f"https://{_INTERNAL_HOST}/oauth/token"
+_ALLOWLIST: dict[str, Any] = {
+    "allowed_private_subnets": ["10.50.0.0/16"],
+    "allowed_internal_domains": [".corp.internal"],
+}
+_STRICT: dict[str, Any] = {"allowed_private_subnets": [], "allowed_internal_domains": []}
+# Module-level so the detect-secrets keyword heuristic doesn't flag the literal.
+_ROTATED_SECRET = "rotated-fixture"  # pragma: allowlist secret
+
+
+def _egress_config(
+    base: AppConfig,
+    *,
+    broker: dict[str, Any] | None = None,
+    control: dict[str, Any] | None = None,
+) -> AppConfig:
+    """``base`` with ``broker.egress`` / ``control.egress`` replaced as given."""
+    update: dict[str, Any] = {}
+    if broker is not None:
+        update["broker"] = base.broker.model_copy(
+            update={"egress": EgressConfig.model_validate(broker)}
+        )
+    if control is not None:
+        update["control"] = ControlSurfaceConfig.model_validate({"egress": control})
+    return base.model_copy(update=update)
+
+
+@asynccontextmanager
+async def _context(config: AppConfig) -> AsyncIterator[Context]:
+    async with Context(config) as ctx:
+        yield ctx
+
+
+def _addrinfo(ip: str) -> list[tuple[Any, ...]]:
+    return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0))]
+
+
+@contextmanager
+def _internal_dns(*answers: str) -> Iterator[list[str]]:
+    """Resolve ``_INTERNAL_HOST`` to *answers* in turn (the last one repeats).
+
+    Yields the list of answers handed out so far. Every other name goes to the
+    real resolver, so the DB connection is unaffected.
+    """
+    real = socket.getaddrinfo
+    queue = list(answers)
+    served: list[str] = []
+
+    def _fake(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == _INTERNAL_HOST:
+            ip = queue.pop(0) if len(queue) > 1 else queue[0]
+            served.append(ip)
+            return _addrinfo(ip)
+        return real(host, *args, **kwargs)
+
+    with patch.object(socket, "getaddrinfo", side_effect=_fake):
+        yield served
+
+
+@contextmanager
+def _token_endpoint() -> Iterator[list[httpx.Request]]:
+    """Answer every outbound request with a token response; record what was sent.
+
+    Only the socket-level transport is replaced — the DNS-pinning wrapper still
+    resolves, validates, and pins each request before it gets here.
+    """
+    sent: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"access_token": "at-fresh", "expires_in": 3600})
+
+    with patch.object(
+        httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_handler)
+    ):
+        yield sent
+
+
+def _oauth2_create(token_url: str) -> CredentialCreate:
+    return CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name="In-network OAuth2",
+        api=_api(),
+        grant_type="client_credentials",
+        token_url=token_url,
+        client_id="client-123",
+        client_secret="secret-456",
+    )
+
+
+async def _seed_oauth2_row(ctx: Context, *, token_url: str) -> str:
+    """Write an OAuth2 credential row directly (no create-time URL validation)."""
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=CredentialType.OAUTH2,
+            name="Seeded OAuth2",
+            api_vendor="test-vendor",
+            api_name="test-api",
+            api_version="v1",
+            provider="direct_oauth2",
+            created_by=_ADMIN_IDENTITY.sub,
+        )
+        await OAuthClientCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            token_url=token_url,
+            client_id="client-123",
+            encrypted_client_secret=ctx.encryption.encrypt("secret-456"),
+            created_by=_ADMIN_IDENTITY.sub,
+        )
+        return credential.id
+
+
+async def _refresh(ctx: Context, credential_id: str) -> Any:
+    async def _decrypt() -> str:
+        return "rt-current"
+
+    token = OAuthTokenView(credential_id=credential_id, provider="direct_oauth2", decrypt=_decrypt)
+    return await DirectOAuth2Provider(DirectOAuth2ProviderConfig()).refresh(ctx, token=token)
+
+
+# (broker.egress, control.egress) pairs under which the internal token URL is allowed.
+_ALLOWED = [
+    pytest.param(_ALLOWLIST, None, id="inherited-from-broker"),
+    pytest.param(None, _ALLOWLIST, id="control-override"),
+]
+# ... and under which it is still refused.
+_REFUSED = [
+    pytest.param(None, None, id="no-allowlist"),
+    pytest.param(_ALLOWLIST, _STRICT, id="control-override-stricter-than-broker"),
+    pytest.param(
+        None,
+        {**_ALLOWLIST, "allowed_internal_domains": [".other.internal"]},
+        id="host-not-allowlisted",
+    ),
+    pytest.param(
+        None,
+        {**_ALLOWLIST, "allowed_private_subnets": ["10.60.0.0/16"]},
+        id="subnet-not-allowlisted",
+    ),
+]
+
+
+@pytest.mark.parametrize(("broker", "control"), _ALLOWED)
+async def test_create_oauth2_accepts_allowlisted_internal_token_url(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    broker: dict[str, Any] | None,
+    control: dict[str, Any] | None,
+) -> None:
+    config = _egress_config(integration_config, broker=broker, control=control)
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        with _internal_dns(_INTERNAL_IP):
+            created = await svc.create(
+                _oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY
+            )
+        redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, OAuth2Redacted)
+    assert redacted.details.token_url == _INTERNAL_TOKEN_URL
+
+
+@pytest.mark.parametrize(("broker", "control"), _REFUSED)
+async def test_create_oauth2_refuses_internal_token_url_outside_allowlist(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    broker: dict[str, Any] | None,
+    control: dict[str, Any] | None,
+) -> None:
+    config = _egress_config(integration_config, broker=broker, control=control)
+    async with _context(config) as ctx:
+        with (
+            _internal_dns(_INTERNAL_IP),
+            pytest.raises(InvalidCredentialInputError, match="blocked address range"),
+        ):
+            await CredentialService(ctx).create(
+                _oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY
+            )
+
+
+async def test_control_override_leaves_broker_egress_untouched(
+    integration_config: AppConfig, clean_credentials: None
+) -> None:
+    """A stricter ``control.egress`` refuses the URL while ``broker.egress`` still allows it."""
+    config = _egress_config(integration_config, broker=_ALLOWLIST, control=_STRICT)
+    assert config.broker.egress.allowed_private_subnets == ["10.50.0.0/16"]
+    async with _context(config) as ctx:
+        with _internal_dns(_INTERNAL_IP), pytest.raises(InvalidCredentialInputError):
+            await CredentialService(ctx).create(
+                _oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY
+            )
+    assert ctx.config.broker.egress.allowed_private_subnets == ["10.50.0.0/16"]
+    assert ctx.config.broker.egress.allowed_internal_domains == [".corp.internal"]
+
+
+@pytest.mark.parametrize(
+    ("allowlisted", "error"),
+    [(True, None), (False, InvalidCredentialInputError)],
+    ids=["allowlisted", "no-allowlist"],
+)
+async def test_update_oauth2_token_url_honours_control_egress(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    allowlisted: bool,
+    error: type[Exception] | None,
+) -> None:
+    config = _egress_config(integration_config, control=_ALLOWLIST if allowlisted else _STRICT)
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        created = await svc.create(
+            _oauth2_create("https://93.184.216.34/oauth/token"), identity=_ADMIN_IDENTITY
+        )
+        update = CredentialUpdate(
+            type=CredentialType.OAUTH2, client_secret=_ROTATED_SECRET, token_url=_INTERNAL_TOKEN_URL
+        )
+        with _internal_dns(_INTERNAL_IP):
+            if error is None:
+                await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+                redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+                assert isinstance(redacted.details, OAuth2Redacted)
+                assert redacted.details.token_url == _INTERNAL_TOKEN_URL
+            else:
+                with pytest.raises(error, match="blocked address range"):
+                    await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+
+
+@pytest.mark.parametrize(("broker", "control"), _ALLOWED)
+async def test_refresh_posts_to_allowlisted_internal_token_url(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    broker: dict[str, Any] | None,
+    control: dict[str, Any] | None,
+) -> None:
+    config = _egress_config(integration_config, broker=broker, control=control)
+    async with _context(config) as ctx:
+        credential_id = await _seed_oauth2_row(ctx, token_url=_INTERNAL_TOKEN_URL)
+        with _internal_dns(_INTERNAL_IP), _token_endpoint() as sent:
+            result = await _refresh(ctx, credential_id)
+    assert result.access_token == "at-fresh"
+    # The connection is pinned to the IP the allowlist approved, with the
+    # original name kept for the Host header and TLS SNI.
+    assert len(sent) == 1
+    assert sent[0].url.host == _INTERNAL_IP
+    assert sent[0].headers["host"] == _INTERNAL_HOST
+    assert sent[0].extensions["sni_hostname"] == _INTERNAL_HOST
+
+
+@pytest.mark.parametrize(("broker", "control"), _REFUSED)
+async def test_refresh_refuses_internal_token_url_outside_allowlist(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    broker: dict[str, Any] | None,
+    control: dict[str, Any] | None,
+) -> None:
+    config = _egress_config(integration_config, broker=broker, control=control)
+    async with _context(config) as ctx:
+        credential_id = await _seed_oauth2_row(ctx, token_url=_INTERNAL_TOKEN_URL)
+        with (
+            _internal_dns(_INTERNAL_IP),
+            _token_endpoint() as sent,
+            pytest.raises(TokenExchangeError) as exc_info,
+        ):
+            await _refresh(ctx, credential_id)
+    assert exc_info.value.status == 0
+    assert "unsafe upstream URL" in exc_info.value.body
+    assert "blocked address range" in exc_info.value.body
+    assert sent == []
+
+
+@pytest.mark.usefixtures("uncached_dns")
+async def test_refresh_refuses_rebind_outside_allowlist(
+    integration_config: AppConfig, clean_credentials: None
+) -> None:
+    """The connect-time pin re-validates against the same allowlist.
+
+    Pre-flight sees an allowlisted address; the connection-time resolution
+    answers with a private address outside ``allowed_private_subnets``.
+    """
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    async with _context(config) as ctx:
+        credential_id = await _seed_oauth2_row(ctx, token_url=_INTERNAL_TOKEN_URL)
+        with (
+            _internal_dns(_INTERNAL_IP, "10.60.0.9") as served,
+            _token_endpoint() as sent,
+            pytest.raises(TokenExchangeError) as exc_info,
+        ):
+            await _refresh(ctx, credential_id)
+    # Pre-flight accepted the first answer; the pin refused the second.
+    assert served == [_INTERNAL_IP, "10.60.0.9"]
+    assert exc_info.value.status == 0
+    assert "blocked address range" in exc_info.value.body
+    assert sent == []
+
+
+@contextmanager
+def _lookup_threads() -> Iterator[list[int]]:
+    """Record the thread every ``_INTERNAL_HOST`` lookup runs on (answer: ``_INTERNAL_IP``)."""
+    real = socket.getaddrinfo
+    threads: list[int] = []
+
+    def _fake(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == _INTERNAL_HOST:
+            threads.append(threading.get_ident())
+            return _addrinfo(_INTERNAL_IP)
+        return real(host, *args, **kwargs)
+
+    with patch.object(socket, "getaddrinfo", side_effect=_fake):
+        yield threads
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_create_oauth2_applies_control_egress_off_the_event_loop(
+    integration_config: AppConfig, clean_credentials: None, control: dict[str, Any], allowed: bool
+) -> None:
+    """Create-time ``token_url`` validation resolves off the loop under ``control.egress``."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        with _lookup_threads() as threads:
+            if allowed:
+                await svc.create(_oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY)
+            else:
+                with pytest.raises(InvalidCredentialInputError, match="blocked address range"):
+                    await svc.create(_oauth2_create(_INTERNAL_TOKEN_URL), identity=_ADMIN_IDENTITY)
+    assert threads
+    assert loop_thread not in threads
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_refresh_applies_control_egress_off_the_event_loop(
+    integration_config: AppConfig, clean_credentials: None, control: dict[str, Any], allowed: bool
+) -> None:
+    """Refresh-time validation and pin resolve off the loop under ``control.egress``."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    async with _context(config) as ctx:
+        credential_id = await _seed_oauth2_row(ctx, token_url=_INTERNAL_TOKEN_URL)
+        with _lookup_threads() as threads, _token_endpoint() as sent:
+            if allowed:
+                result = await _refresh(ctx, credential_id)
+                assert result.access_token == "at-fresh"
+            else:
+                with pytest.raises(TokenExchangeError) as exc_info:
+                    await _refresh(ctx, credential_id)
+                assert "blocked address range" in exc_info.value.body
+    assert len(sent) == (1 if allowed else 0)
+    assert threads
+    assert loop_thread not in threads
+
+
+def _track_open_transactions(ctx: Context, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the ``ctx.control_db.transaction()`` blocks open at each moment.
+
+    Wraps the real method (the transaction still runs against the database);
+    the returned one-item list holds the live count.
+    """
+    real = ctx.control_db.transaction
+    open_count = [0]
+
+    @asynccontextmanager
+    async def _tracked(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        async with real(*args, **kwargs) as session:
+            open_count[0] += 1
+            try:
+                yield session
+            finally:
+                open_count[0] -= 1
+
+    monkeypatch.setattr(ctx.control_db, "transaction", _tracked)
+    return open_count
+
+
+@contextmanager
+def _lookups_seeing(open_count: list[int]) -> Iterator[list[tuple[int, int]]]:
+    """Record ``(thread, open transactions)`` at every ``_INTERNAL_HOST`` lookup."""
+    real = socket.getaddrinfo
+    seen: list[tuple[int, int]] = []
+
+    def _fake(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == _INTERNAL_HOST:
+            seen.append((threading.get_ident(), open_count[0]))
+            return _addrinfo(_INTERNAL_IP)
+        return real(host, *args, **kwargs)
+
+    with patch.object(socket, "getaddrinfo", side_effect=_fake):
+        yield seen
+
+
+@pytest.mark.usefixtures("uncached_dns")
+async def test_create_oauth2_resolves_urls_outside_the_write_transaction(
+    integration_config: AppConfig, clean_credentials: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``token_url`` / ``authorize_url`` resolve before ``transaction()`` opens.
+
+    On SQLite the transaction holds the process-wide writer lock, so a slow
+    resolver inside it would fail concurrent writers on ``busy_timeout``.
+    Uncached so both URLs (same host) reach the resolver and are observed.
+    """
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    loop_thread = threading.get_ident()
+    payload = _oauth2_create(_INTERNAL_TOKEN_URL).model_copy(
+        update={"authorize_url": f"https://{_INTERNAL_HOST}/oauth/authorize"}
+    )
+    async with _context(config) as ctx:
+        open_count = _track_open_transactions(ctx, monkeypatch)
+        with _lookups_seeing(open_count) as seen:
+            await CredentialService(ctx).create(payload, identity=_ADMIN_IDENTITY)
+    assert len(seen) == 2
+    assert all(thread != loop_thread and opened == 0 for thread, opened in seen)
+
+
+@pytest.mark.parametrize(
+    ("control", "allowed"),
+    [pytest.param(_ALLOWLIST, True, id="allowlisted"), pytest.param(_STRICT, False, id="strict")],
+)
+async def test_update_oauth2_resolves_token_url_off_the_loop_outside_the_transaction(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    monkeypatch: pytest.MonkeyPatch,
+    control: dict[str, Any],
+    allowed: bool,
+) -> None:
+    """Update-time ``token_url`` validation: ``control.egress``, off the loop, pre-transaction."""
+    config = _egress_config(integration_config, control=control)
+    loop_thread = threading.get_ident()
+    update = CredentialUpdate(
+        type=CredentialType.OAUTH2, client_secret=_ROTATED_SECRET, token_url=_INTERNAL_TOKEN_URL
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        created = await svc.create(
+            _oauth2_create("https://93.184.216.34/oauth/token"), identity=_ADMIN_IDENTITY
+        )
+        open_count = _track_open_transactions(ctx, monkeypatch)
+        with _lookups_seeing(open_count) as seen:
+            if allowed:
+                await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+            else:
+                with pytest.raises(InvalidCredentialInputError, match="blocked address range"):
+                    await svc.update(created.credential_id, update, identity=_ADMIN_IDENTITY)
+        redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert len(seen) == 1
+    assert seen[0][0] != loop_thread
+    assert seen[0][1] == 0
+    assert isinstance(redacted.details, OAuth2Redacted)
+    expected = _INTERNAL_TOKEN_URL if allowed else "https://93.184.216.34/oauth/token"
+    assert redacted.details.token_url == expected
+
+
+@pytest.mark.parametrize("target", ["missing", "bearer"])
+async def test_update_oauth2_reports_not_found_or_type_before_token_url(
+    integration_config: AppConfig, clean_credentials: None, target: str
+) -> None:
+    """A missing or non-OAuth2 credential fails as such, before ``token_url`` resolves.
+
+    The ``strict`` case above pins the other order: on an existing OAuth2
+    credential the blocked ``token_url`` is what fails.
+    """
+    config = _egress_config(integration_config, control=_STRICT)
+    update = CredentialUpdate(
+        type=CredentialType.OAUTH2, client_secret=_ROTATED_SECRET, token_url=_INTERNAL_TOKEN_URL
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        credential_id = "cred_does_not_exist"
+        expected: type[Exception] = CredentialNotFoundError
+        if target == "bearer":
+            created = await svc.create(
+                CredentialCreate(
+                    type=CredentialType.BEARER_TOKEN, name="Bearer", api=_api(), token="tok"
+                ),
+                identity=_ADMIN_IDENTITY,
+            )
+            credential_id = created.credential_id
+            expected = ImmutableFieldError
+        with _lookups_seeing([0]) as seen, pytest.raises(expected):
+            await svc.update(credential_id, update, identity=_ADMIN_IDENTITY)
+    assert seen == []

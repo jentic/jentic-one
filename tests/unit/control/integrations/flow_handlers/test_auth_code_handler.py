@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import os
 import socket
+import threading
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -33,6 +34,8 @@ from jentic_one.control.services.integrations.flow_handlers.session_app import S
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
+    ControlEgressConfig,
+    ControlSurfaceConfig,
     CredentialsConfig,
     DatabaseConfig,
     DatabasesConfig,
@@ -49,7 +52,10 @@ _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
 
 
 def _make_context(
-    *, with_direct_oauth2_provider: bool = True, public_base_url: str = ""
+    *,
+    with_direct_oauth2_provider: bool = True,
+    public_base_url: str = "",
+    control_egress: ControlEgressConfig | None = None,
 ) -> Context:
     providers: dict[str, DirectOAuth2ProviderConfig | PipedreamProviderConfig] = {}
     if with_direct_oauth2_provider:
@@ -58,6 +64,7 @@ def _make_context(
         )
     cfg = AppConfig(
         server=ServerConfig(public_base_url=public_base_url),
+        control=ControlSurfaceConfig(egress=control_egress or ControlEgressConfig()),
         databases=DatabasesConfig(
             registry=DatabaseConfig(backend="sqlite", path=":memory:"),
             admin=DatabaseConfig(backend="sqlite", path=":memory:"),
@@ -394,6 +401,7 @@ async def test_complete_from_callback_refuses_unsafe_token_url() -> None:
 
 
 @pytest.mark.asyncio()
+@pytest.mark.usefixtures("uncached_dns")
 async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() -> None:
     # Pre-flight validation sees a public address; the connect-time resolution
     # answers with a blocked one. The pinned transport refuses before sending.
@@ -413,8 +421,53 @@ async def test_complete_from_callback_refuses_token_host_rebinding_at_connect() 
 
 
 @pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("ip", "refused"),
+    [
+        pytest.param("93.184.216.34", False, id="public"),
+        pytest.param("10.0.0.1", True, id="blocked"),
+    ],
+)
+async def test_complete_from_callback_resolves_token_host_off_the_event_loop(
+    ip: str, refused: bool
+) -> None:
+    # Pins #1734: the token host lookup runs in a worker thread, never on the
+    # event-loop thread. A blocked answer is refused before any request; a
+    # public one is resolved once, shared by the pre-flight check and the pin.
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    loop_thread = threading.get_ident()
+    lookup_threads: list[int] = []
+    seen: list[httpx.Request] = []
+
+    def _resolve(*_a: object, **_k: object) -> list[tuple[object, ...]]:
+        lookup_threads.append(threading.get_ident())
+        return _addrinfo(ip)
+
+    async def _send(_self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "at_ok"}, request=request)
+
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", side_effect=_resolve),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _send),
+    ):
+        if refused:
+            with pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"):
+                await handler.complete_from_callback(_row(), code="c")
+        else:
+            await handler.complete_from_callback(_row(), code="c")
+
+    assert len(lookup_threads) == 1
+    assert loop_thread not in lookup_threads
+    assert len(seen) == (0 if refused else 1)
+
+
+@pytest.mark.asyncio()
 async def test_complete_from_callback_connects_to_the_validated_address() -> None:
-    # The happy path goes through the strict pinned transport: the request is
+    # The happy path goes through the always-pinned transport: the request is
     # sent to the resolved public IP while Host and TLS SNI keep the vendor name.
     ctx = _make_context()
     handler = AuthCodeFlowHandler(ctx)
@@ -437,3 +490,60 @@ async def test_complete_from_callback_connects_to_the_validated_address() -> Non
     assert seen[0].url.host == "93.184.216.34"
     assert seen[0].headers["Host"] == "idp.example.com"
     assert seen[0].extensions["sni_hostname"] == "idp.example.com"
+
+
+_INTERNAL_TOKEN_URL = "https://idp.corp.internal/token"
+
+
+@pytest.mark.asyncio()
+async def test_complete_from_callback_reaches_control_egress_allowlisted_idp_pinned() -> None:
+    # The handler reads the allowlist from ``ctx.config``: an in-network token
+    # endpoint named by ``control.egress`` passes the pre-flight check and is
+    # reached at the validated IP, with Host / SNI kept as the name.
+    ctx = _make_context(
+        control_egress=ControlEgressConfig(
+            allowed_private_subnets=["10.50.0.0/16"], allowed_internal_domains=[".corp.internal"]
+        )
+    )
+    occ = _occ_for(ctx, _INTERNAL_TOKEN_URL)
+    seen: list[httpx.Request] = []
+
+    async def _send(_self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "at_ok"}, request=request)
+
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _send),
+    ):
+        tokens = await AuthCodeFlowHandler(ctx).complete_from_callback(_row(), code="c")
+
+    assert tokens.access_token == "at_ok"
+    assert [(r.url.host, r.headers["Host"]) for r in seen] == [("10.50.0.7", "idp.corp.internal")]
+
+
+@pytest.mark.parametrize(
+    "control_egress",
+    [
+        None,
+        ControlEgressConfig(
+            allowed_private_subnets=["10.60.0.0/16"], allowed_internal_domains=[".corp.internal"]
+        ),
+    ],
+    ids=["no-allowlist", "subnet-not-allowlisted"],
+)
+@pytest.mark.asyncio()
+async def test_complete_from_callback_refuses_idp_outside_control_egress(
+    control_egress: ControlEgressConfig | None,
+) -> None:
+    ctx = _make_context(control_egress=control_egress)
+    occ = _occ_for(ctx, _INTERNAL_TOKEN_URL)
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"),
+    ):
+        await AuthCodeFlowHandler(ctx).complete_from_callback(_row(), code="c")
+    mock_client_cls.assert_not_called()

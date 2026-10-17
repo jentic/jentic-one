@@ -19,8 +19,9 @@ from typing import Literal
 import httpx
 import structlog
 
-from jentic_one.shared.egress import build_strict_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.config import EgressConfig
+from jentic_one.shared.egress import build_always_pinned_transport
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -87,11 +88,14 @@ async def begin_device_authorization(
     authorization_endpoint: str,
     client_id: str,
     scopes: list[str],
+    egress: EgressConfig | None,
     timeout_seconds: float = 15.0,
 ) -> BeginResult:
     """Start a device flow session with the vendor.
 
     RFC 8628 §3.1: POST { client_id, scope } → 200 with device_code, etc.
+    ``egress`` is the control-plane egress policy, applied to the URL check and
+    the connect-time DNS pin.
     """
     payload = {"client_id": client_id}
     if scopes:
@@ -99,16 +103,15 @@ async def begin_device_authorization(
 
     # Defense-in-depth SSRF guard: the ``authorization_endpoint`` originates from
     # operator config, but a config error or compromised entry could point at a
-    # private / metadata target. Strict-default policy (``egress=None``) — OAuth
-    # device authorization endpoints are always public HTTPS in practice.
+    # private / metadata target the operator has not allowlisted.
     try:
-        safe_url = validate_upstream_url(authorization_endpoint)
+        safe_url = await validate_upstream_url_async(authorization_endpoint, egress)
     except ValueError as exc:
         raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
 
     try:
         async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_strict_pinned_transport()
+            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
         ) as client:
             response = await client.post(
                 safe_url,
@@ -156,6 +159,7 @@ async def poll_device_authorization(
     token_endpoint: str,
     client_id: str,
     device_code: str,
+    egress: EgressConfig | None,
     timeout_seconds: float = 15.0,
 ) -> PollResult:
     """Poll the vendor's token endpoint once for the device flow result.
@@ -180,13 +184,13 @@ async def poll_device_authorization(
     # ``prepare`` time from operator config; validate every poll in case
     # the DB row is tampered with post-vault.
     try:
-        safe_url = validate_upstream_url(token_endpoint)
+        safe_url = await validate_upstream_url_async(token_endpoint, egress)
     except ValueError as exc:
         raise DeviceAuthorizationUpstreamError(0, f"unsafe upstream URL: {exc}") from exc
 
     try:
         async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_strict_pinned_transport()
+            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
         ) as client:
             response = await client.post(
                 safe_url,

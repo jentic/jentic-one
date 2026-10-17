@@ -84,7 +84,7 @@ from jentic_one.control.services.credentials.typed_secrets import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
-from jentic_one.shared.config import DirectOAuth2ProviderConfig
+from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models import ActorType
@@ -104,7 +104,7 @@ from jentic_one.shared.permissions.evaluation import (
 )
 from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 logger = structlog.get_logger()
 
@@ -230,6 +230,17 @@ class CredentialService:
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
 
+        # Resolve the OAuth2 endpoints before the write transaction opens: on
+        # SQLite ``transaction()`` holds the process-wide writer lock, so a slow
+        # resolver inside it would fail concurrent writers on ``busy_timeout``.
+        validated_token_url: str | None = None
+        validated_authorize_url: str | None = None
+        if payload.type == CredentialType.OAUTH2:
+            validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
+            validated_authorize_url = await self._validated_oauth2_url(
+                "authorize_url", payload.authorize_url
+            )
+
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
                 session,
@@ -289,18 +300,6 @@ class CredentialService:
                 )
 
             elif payload.type == CredentialType.OAUTH2:
-                validated_token_url: str | None = None
-                if payload.token_url:
-                    try:
-                        validated_token_url = validate_upstream_url(payload.token_url)
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
-                validated_authorize_url: str | None = None
-                if payload.authorize_url:
-                    try:
-                        validated_authorize_url = validate_upstream_url(payload.authorize_url)
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid authorize_url: {exc}") from exc
                 grant = payload.grant_type or "client_credentials"
 
                 if grant == "device_code":
@@ -1154,23 +1153,56 @@ class CredentialService:
 
         return CredentialPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
+    async def _validated_oauth2_url(self, field: str, url: str | None) -> str | None:
+        """Check an OAuth2 endpoint against ``control.egress``; ``None``/empty passes through.
+
+        Resolves DNS, so callers run it before opening a write transaction.
+        """
+        if not url:
+            return None
+        try:
+            return await validate_upstream_url_async(url, resolved_control_egress(self._ctx.config))
+        except ValueError as exc:
+            raise InvalidCredentialInputError(f"Invalid {field}: {exc}") from exc
+
+    @staticmethod
+    async def _get_updatable(
+        session: Any,
+        credential_id: str,
+        payload: CredentialUpdate,
+        access_filters: Sequence[Any],
+    ) -> Credential:
+        """Load a credential the caller can see, rejecting a change of ``type``."""
+        credential = await CredentialRepository.get_by_id(
+            session, credential_id, filters=access_filters
+        )
+        if credential is None:
+            raise CredentialNotFoundError(credential_id)
+        if payload.type != to_wire(StoredCredentialType(credential.type)):
+            raise ImmutableFieldError("type")
+        return credential
+
     async def update(
         self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
     ) -> CredentialRedactedView:
-        """Update/rotate a credential."""
+        """Update/rotate a credential.
+
+        Not-found and type-mismatch errors take precedence over an invalid
+        ``token_url``.
+        """
         access_filters = build_access_filters(identity, Credential, for_write=True)
+        # ``token_url`` resolves DNS, so it is validated before the write
+        # transaction opens (as in ``create``), after a read-only existence and
+        # type check. The transaction repeats that check against the row it writes.
+        validated_token_url: str | None = None
+        if payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
+            async with self._ctx.control_db.session() as session:
+                await self._get_updatable(session, credential_id, payload, access_filters)
+            validated_token_url = await self._validated_oauth2_url("token_url", payload.token_url)
         async with self._ctx.control_db.transaction() as session:
-            credential = await CredentialRepository.get_by_id(
-                session, credential_id, filters=access_filters
-            )
-            if credential is None:
-                raise CredentialNotFoundError(credential_id)
+            credential = await self._get_updatable(session, credential_id, payload, access_filters)
 
             before_state = {"name": credential.name, "active": credential.active}
-
-            wire_type = to_wire(StoredCredentialType(credential.type))
-            if payload.type != wire_type:
-                raise ImmutableFieldError("type")
 
             # The api_key parameter binding (field_name/location) is derived from
             # the API spec at create time and must not drift afterwards — a wrong
@@ -1249,12 +1281,6 @@ class CredentialService:
                     changed = True
 
             elif payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
-                validated_token_url: str | None = None
-                if payload.token_url:
-                    try:
-                        validated_token_url = validate_upstream_url(payload.token_url)
-                    except ValueError as exc:
-                        raise InvalidCredentialInputError(f"Invalid token_url: {exc}") from exc
                 encrypted_secret = encryption.encrypt(payload.client_secret)
                 scope = " ".join(payload.scopes) if payload.scopes else None
                 await OAuthClientCredentialRepository.update(
@@ -1307,16 +1333,16 @@ class CredentialService:
                     )
                     changed = True
 
-            credential = await CredentialRepository.get_by_id(session, credential_id)
-            assert credential is not None
+            updated = await CredentialRepository.get_by_id(session, credential_id)
+            assert updated is not None
             if changed:
-                credential.updated_at = datetime.now(UTC)
+                updated.updated_at = datetime.now(UTC)
             await session.flush()
             names = await OAuthAppRegistrationRepository.get_names_by_ids(
-                session, _registration_ids([credential])
+                session, _registration_ids([updated])
             )
-            view = self._to_redacted(credential, registration_names=names)
-            after_state = {"name": credential.name, "active": credential.active}
+            view = self._to_redacted(updated, registration_names=names)
+            after_state = {"name": updated.name, "active": updated.active}
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
         # is a no-op — no timestamp bump and no audit noise.

@@ -53,12 +53,12 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
     SuccessTokens,
 )
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
-from jentic_one.shared.config import bind_origin
+from jentic_one.shared.config import bind_origin, resolved_control_egress
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_strict_pinned_transport
+from jentic_one.shared.egress import build_always_pinned_transport
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -265,14 +265,15 @@ class AuthCodeFlowHandler:
         if row.pkce_code_verifier:
             payload["code_verifier"] = row.pkce_code_verifier
         # Defense-in-depth SSRF guard.
+        egress = resolved_control_egress(self._ctx.config)
         try:
-            safe_url = validate_upstream_url(token_url)
+            safe_url = await validate_upstream_url_async(token_url, egress)
         except ValueError as exc:
             raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
 
         try:
             async with httpx.AsyncClient(
-                timeout=30.0, transport=build_strict_pinned_transport()
+                timeout=30.0, transport=build_always_pinned_transport(egress)
             ) as client:
                 response = await client.post(
                     safe_url,
