@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
 import httpx
@@ -11,10 +11,12 @@ import pytest
 import structlog
 import yaml
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
@@ -26,8 +28,10 @@ from opentelemetry.trace import (
     set_span_in_context,
 )
 from opentelemetry.trace.span import TraceState
+from sqlalchemy import text
 
-from jentic_one.shared.config import TracingConfig
+from jentic_one.shared.config import AppConfig, TracingConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.tracing import (
     EXCEPTION_MESSAGE_PLACEHOLDER,
     JENTIC_TRACESTATE_KEY,
@@ -38,10 +42,10 @@ from jentic_one.shared.tracing import (
     instrument_outbound_client,
     jentic_tracestate,
     pack_jentic_tracestate,
-    reset_tracing,
     scrub_span,
     scrubbing_exporter,
 )
+from jentic_one.shared.web.app_factory import instrument_databases, reset_db_instrumentation
 
 _NONE_CONFIG = TracingConfig(exporter="none")
 _OPENAPI_SPEC = Path(__file__).resolve().parents[2] / "openapi" / "broker" / "broker.openapi.yaml"
@@ -57,12 +61,20 @@ def _attr_text(key: str, value: object) -> str:
     return f"{key}={text}"
 
 
-@pytest.fixture(autouse=True)
-def _reset_tracer_provider():
-    """Reset OTel global tracer provider between tests."""
-    reset_tracing()
-    yield
-    reset_tracing()
+pytestmark = pytest.mark.usefixtures("isolated_tracer_provider")
+
+
+def _hook_recording_provider() -> tuple[TracerProvider, InMemorySpanExporter]:
+    """A bare, always-recording global provider with no scrubbing exporter.
+
+    The outbound-hook tests use it to see exactly what the request/response
+    hooks put on a span, before export-time scrubbing could mask a miss.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return provider, exporter
 
 
 def test_configure_tracing_sets_tracer_provider():
@@ -148,7 +160,8 @@ def test_pack_jentic_tracestate_fills_missing_segments_with_placeholder():
 
 
 def test_jentic_tracestate_activates_member_inside_a_span():
-    """Inside a recording span the jentic member is on the current tracestate."""
+    """Inside a span — non-recording under ``exporter: none`` — the jentic
+    member is on the current tracestate."""
     provider = configure_tracing("test-service", _NONE_CONFIG)
     tracer = provider.get_tracer("test")
     with tracer.start_as_current_span("call"):
@@ -197,9 +210,7 @@ def test_jentic_tracestate_composes_with_existing_vendor_entries():
 @pytest.mark.asyncio
 async def test_outbound_spans_redact_secrets_and_bodies():
     """A request bearing Authorization + a body must leak neither onto a span."""
-    exporter = InMemorySpanExporter()
-    provider = configure_tracing("test-service", _NONE_CONFIG)
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _, exporter = _hook_recording_provider()
 
     def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -237,9 +248,7 @@ async def test_outbound_spans_redact_secrets_and_bodies():
 async def test_outbound_span_url_masks_query_param_api_key():
     """A ``location=query`` API key rides the upstream query string; the span's
     recorded URL keeps host and path but never the value."""
-    exporter = InMemorySpanExporter()
-    provider = configure_tracing("test-service", _NONE_CONFIG)
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _, exporter = _hook_recording_provider()
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
     instrument_outbound_client(client)
@@ -263,9 +272,7 @@ async def test_outbound_span_url_masks_query_param_api_key():
 def test_sync_outbound_client_span_url_masks_query_param_api_key():
     """A sync ``httpx.Client`` gets the plain (non-coroutine) hooks — the
     instrumentor drops coroutine hooks there, which would record the raw URL."""
-    exporter = InMemorySpanExporter()
-    provider = configure_tracing("test-service", _NONE_CONFIG)
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    _, exporter = _hook_recording_provider()
 
     client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
     instrument_outbound_client(client)
@@ -751,3 +758,292 @@ def test_scrubbing_exporter_forwards_result_flush_and_shutdown():
     assert wrapped.force_flush(123) is False
     wrapped.shutdown()
     assert calls == ["export:1", "flush:123", "shutdown"]
+
+
+# --------------------------------------------------------------------------- #
+# Hot-path span budget (#1821): one server span, one span per SQL statement
+# --------------------------------------------------------------------------- #
+
+_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
+_SAMPLED_TRACEPARENT = f"00-{_TRACE_ID}-00f067aa0ba902b7-01"
+
+
+@pytest.fixture()
+async def sqlite_ctx(tmp_path: Path) -> AsyncIterator[Context]:
+    """A started Context over three real SQLite files (one per plane)."""
+    config = AppConfig.model_validate(
+        {
+            "databases": {
+                name: {"backend": "sqlite", "path": str(tmp_path / f"{name}.db")}
+                for name in ("registry", "admin", "control")
+            }
+        }
+    )
+    ctx = Context(config, refresh_providers_on_boot=False)
+    await ctx.startup()
+    try:
+        yield ctx
+    finally:
+        await ctx.shutdown()
+
+
+@pytest.fixture()
+def _db_instrumentation_reset() -> Iterator[None]:
+    reset_db_instrumentation()
+    yield
+    SQLAlchemyInstrumentor().uninstrument()
+    reset_db_instrumentation()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_db_instrumentation_reset")
+async def test_request_span_budget_is_one_server_span_plus_one_per_statement(
+    sqlite_ctx: Context,
+) -> None:
+    """A request that runs one statement per plane and streams its body emits
+    one server span, one ``connect`` span per checkout and exactly one span per
+    statement — no ASGI ``http send``/``http receive`` children — and every
+    plane's engine is traced. The server span keeps its status and covers the
+    whole streamed body."""
+    provider, exporter = _exporting_provider()
+    app = FastAPI()
+
+    @app.get("/work")
+    async def _work() -> StreamingResponse:
+        for name in ("registry", "admin", "control"):
+            async with getattr(sqlite_ctx, f"{name}_db").session() as session:
+                await session.execute(text(f"SELECT '{name}'"))
+
+        async def _chunks() -> AsyncIterator[bytes]:
+            for chunk in (b"a", b"b", b"c"):
+                yield chunk
+
+        return StreamingResponse(_chunks())
+
+    instrument_inbound_app(app)
+    instrument_databases(sqlite_ctx)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://svc"
+        ) as client:
+            response = await client.get("/work")
+        assert response.content == b"abc"
+    finally:
+        FastAPIInstrumentor.uninstrument_app(app)
+
+    spans = _exported(provider, exporter)
+    by_scope: dict[str, list[ReadableSpan]] = {}
+    for span in spans:
+        scope = span.instrumentation_scope.name if span.instrumentation_scope else ""
+        by_scope.setdefault(scope, []).append(span)
+
+    assert set(by_scope) == {
+        "opentelemetry.instrumentation.fastapi",
+        "opentelemetry.instrumentation.sqlalchemy",
+    }
+    (server,) = by_scope["opentelemetry.instrumentation.fastapi"]
+    assert server.kind is trace.SpanKind.SERVER
+    assert server.name == "GET /work"
+    assert (server.attributes or {}).get("http.status_code") == 200
+    db_spans = by_scope["opentelemetry.instrumentation.sqlalchemy"]
+    connects = [s for s in db_spans if s.name == "connect"]
+    statements = [s for s in db_spans if s.name != "connect"]
+    assert len(connects) == 3
+    assert sorted(str((s.attributes or {}).get("db.statement")) for s in statements) == [
+        "SELECT 'admin'",
+        "SELECT 'control'",
+        "SELECT 'registry'",
+    ]
+    children = [s for s in spans if s is not server]
+    assert all(
+        s.parent is not None and s.parent.span_id == server.context.span_id for s in children
+    )
+    assert server.end_time is not None
+    assert server.end_time >= max(s.end_time or 0 for s in children)
+
+
+# --------------------------------------------------------------------------- #
+# exporter = none: non-recording spans, trace ids still propagate (#1821)
+# --------------------------------------------------------------------------- #
+
+
+async def _inbound_none_request(
+    headers: dict[str, str],
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Run one request through an instrumented app under ``exporter: none``.
+
+    The handler reports what it sees (recording flag, ``current_trace_id``) and
+    makes an outbound call inside ``jentic_tracestate``; returns that report and
+    the outbound request headers.
+    """
+    configure_tracing("test-service", _NONE_CONFIG)
+    outbound_headers: dict[str, str] = {}
+
+    def _upstream(request: httpx.Request) -> httpx.Response:
+        outbound_headers.update(request.headers)
+        return httpx.Response(200)
+
+    upstream = httpx.AsyncClient(transport=httpx.MockTransport(_upstream))
+    instrument_outbound_client(upstream)
+    app = FastAPI()
+
+    @app.get("/execute")
+    async def _execute() -> dict[str, object]:
+        span = trace.get_current_span()
+        with jentic_tracestate("exec_1:_:stripe:payments:v1"):
+            await upstream.get("https://upstream.example/v1/ping")
+        return {"recording": span.is_recording(), "trace_id": current_trace_id()}
+
+    instrument_inbound_app(app)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://svc"
+        ) as client:
+            response = await client.get("/execute", headers=headers)
+    finally:
+        FastAPIInstrumentor.uninstrument_app(app)
+        await upstream.aclose()
+    assert response.status_code == 200
+    return response.json(), outbound_headers
+
+
+def test_none_exporter_spans_are_non_recording_with_a_valid_context():
+    provider = configure_tracing("test-service", _NONE_CONFIG)
+    with provider.get_tracer("test").start_as_current_span("call") as span:
+        assert isinstance(span, NonRecordingSpan)
+        assert not span.is_recording()
+        trace_id = current_trace_id()
+    assert trace_id is not None
+    assert len(trace_id) == 32
+    assert trace_id != "0" * 32
+
+
+@pytest.mark.asyncio
+async def test_none_exporter_honours_inbound_traceparent_without_recording():
+    """A sampled inbound ``traceparent`` neither switches recording on nor
+    loses its trace id: the handler, the outbound ``traceparent`` and the
+    ``jentic=`` tracestate all carry it. The outbound sampled flag is unset
+    (``-00``) because this process records nothing."""
+    seen, outbound = await _inbound_none_request(
+        {"traceparent": _SAMPLED_TRACEPARENT, "tracestate": "datadog=s:1"}
+    )
+    assert seen == {"recording": False, "trace_id": _TRACE_ID}
+    assert outbound["traceparent"].split("-")[1] == _TRACE_ID
+    assert outbound["traceparent"].endswith("-00")
+    assert "jentic=exec_1:_:stripe:payments:v1" in outbound["tracestate"]
+    assert "datadog=s:1" in outbound["tracestate"]
+
+
+@pytest.mark.asyncio
+async def test_none_exporter_mints_a_fresh_trace_id_without_traceparent():
+    first, outbound = await _inbound_none_request({})
+    second, _ = await _inbound_none_request({})
+    assert first["recording"] is False
+    trace_id = first["trace_id"]
+    assert isinstance(trace_id, str) and len(trace_id) == 32 and trace_id != "0" * 32
+    assert trace_id != second["trace_id"]
+    assert outbound["traceparent"].split("-")[1] == trace_id
+    assert _sampled_bit(outbound["traceparent"]) == 0
+
+
+def _sampled_bit(traceparent: str) -> int:
+    """The W3C ``sampled`` bit of a ``traceparent`` (other flag bits, such as
+    the SDK's ``random`` trace-id bit, are ignored)."""
+    return int(traceparent.rsplit("-", 1)[1], 16) & TraceFlags.SAMPLED
+
+
+def test_none_exporter_ignores_otel_traces_sampler(monkeypatch):
+    """``OTEL_TRACES_SAMPLER`` cannot switch recording on without an exporter."""
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_on")
+    provider = configure_tracing("test-service", _NONE_CONFIG)
+    with provider.get_tracer("test").start_as_current_span("call") as span:
+        assert not span.is_recording()
+
+
+# --------------------------------------------------------------------------- #
+# observability.tracing.sample_ratio (#1821)
+# --------------------------------------------------------------------------- #
+
+# ``TraceIdRatioBased`` samples on the low 64 bits of the trace id, so at a
+# ratio of 0.5 the first id is always kept and the second always dropped.
+_LOW_TRACE_ID = 0xABC << 64 | 0x1
+_HIGH_TRACE_ID = 0xABC << 64 | 0xFFFF_FFFF_FFFF_FFFF
+
+
+def _remote_parent(trace_id: int, flags: TraceFlags) -> SpanContext:
+    return SpanContext(trace_id=trace_id, span_id=0xDEF, is_remote=True, trace_flags=flags)
+
+
+def _spans_for_one_root(ratio: float, *, parent: SpanContext | None = None) -> list[ReadableSpan]:
+    """Export a ``root`` span (child of ``parent`` when given) and a local
+    ``child`` under it, at ``ratio``."""
+    exporter = InMemorySpanExporter()
+    provider = configure_tracing(
+        "test-service", TracingConfig(sample_ratio=ratio), exporter=exporter
+    )
+    tracer = provider.get_tracer("test")
+    ctx = set_span_in_context(NonRecordingSpan(parent)) if parent is not None else None
+    with tracer.start_as_current_span("root", context=ctx):
+        assert current_trace_id() is not None
+        with tracer.start_as_current_span("child"):
+            pass
+    assert provider.force_flush()
+    return list(exporter.get_finished_spans())
+
+
+@pytest.mark.parametrize(("ratio", "exported"), [(1.0, 2), (0.0, 0)])
+def test_sample_ratio_governs_new_traces(ratio: float, exported: int):
+    assert len(_spans_for_one_root(ratio)) == exported
+
+
+@pytest.mark.parametrize(("ratio", "exported"), [(1.0, 2), (0.0, 0)])
+def test_sample_ratio_caps_a_remote_sampled_parent(ratio: float, exported: int):
+    """A caller's ``-01`` cannot force recording: the ratio still applies (the
+    CLI and MCP send a sampled ``traceparent`` on every call)."""
+    parent = _remote_parent(_LOW_TRACE_ID, TraceFlags(TraceFlags.SAMPLED))
+    assert len(_spans_for_one_root(ratio, parent=parent)) == exported
+
+
+@pytest.mark.parametrize(
+    ("trace_id", "exported"),
+    [pytest.param(_LOW_TRACE_ID, 2, id="kept"), pytest.param(_HIGH_TRACE_ID, 0, id="dropped")],
+)
+def test_sample_ratio_on_a_remote_parent_is_deterministic_on_the_trace_id(
+    trace_id: int, exported: int
+):
+    """The ratio keys on the trace id, so services sharing a ratio keep the
+    same traces, and a local child follows its recorded (or dropped) parent."""
+    parent = _remote_parent(trace_id, TraceFlags(TraceFlags.SAMPLED))
+    spans = _spans_for_one_root(0.5, parent=parent)
+    assert len(spans) == exported
+    if exported:
+        child, root = spans
+        assert (child.name, root.name) == ("child", "root")
+        assert child.parent is not None and child.parent.span_id == root.context.span_id
+
+
+def test_sample_ratio_keeps_a_remote_unsampled_parent_unsampled():
+    parent = _remote_parent(_LOW_TRACE_ID, TraceFlags(TraceFlags.DEFAULT))
+    assert _spans_for_one_root(1.0, parent=parent) == []
+
+
+def test_otel_traces_sampler_env_overrides_sample_ratio(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
+    assert _spans_for_one_root(1.0) == []
+
+
+@pytest.mark.parametrize(("ratio", "warned"), [(0.1, True), (1.0, False)])
+def test_otel_traces_sampler_env_override_warns_when_ratio_is_set(
+    monkeypatch, ratio: float, warned: bool
+):
+    """A non-default ``sample_ratio`` losing to the env var is never silent."""
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_on")
+    with structlog.testing.capture_logs() as logs:
+        assert len(_spans_for_one_root(ratio)) == 2
+    expected = {
+        "event": "tracing_sampler_env_overrides_sample_ratio",
+        "sampler": "always_on",
+        "sample_ratio": ratio,
+        "log_level": "warning",
+    }
+    assert (expected in logs) is warned
