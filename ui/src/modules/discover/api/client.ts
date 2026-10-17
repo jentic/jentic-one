@@ -181,7 +181,7 @@ export async function importCatalogEntry(apiId: string): Promise<ApiImportRespon
  */
 export async function refreshCatalog(): Promise<CatalogRefreshResponse> {
 	try {
-		return await CatalogService.refreshCatalog();
+		return await CatalogService.refreshCatalog({});
 	} catch (error) {
 		throw toDiscoverError(error, 'Failed to refresh the catalog.');
 	}
