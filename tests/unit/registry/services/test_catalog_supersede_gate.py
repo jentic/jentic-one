@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from jentic_one.registry.services.catalog.entries import CatalogEntry, build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import (
     NothingToSnoozeError,
@@ -42,12 +43,26 @@ def _make_ctx() -> MagicMock:
     return ctx
 
 
-def _entry() -> MagicMock:
-    entry = MagicMock()
-    entry.spec_url = "https://raw.githubusercontent.com/x/y/main/openapi.json"
-    entry.vendor = "acme"
-    entry.api_id = "acme.com/widgets/1.0.0"
-    return entry
+_SPEC_URL = "https://raw.githubusercontent.com/x/y/main/openapi.json"
+_ENTRY_ID = "public/acme.com/widgets"
+
+
+def _entry() -> CatalogEntry:
+    return build_catalog_entry(
+        source_slug="public",
+        external_id="acme.com/widgets",
+        catalog_api_id="acme.com/widgets",
+        hint="acme.com/widgets",
+        title=None,
+        version=None,
+    )
+
+
+def _visible() -> AsyncMock:
+    """Stand-in for ``CatalogService._visible_entry``: the entry is visible."""
+    state = MagicMock()
+    state.snapshot.spec_urls = {_ENTRY_ID: _SPEC_URL}
+    return AsyncMock(return_value=(state, _entry()))
 
 
 def _identity(perms: list[str]) -> Identity:
@@ -63,7 +78,9 @@ async def test_no_local_api_is_ordinary_import() -> None:
         new_callable=AsyncMock,
         return_value=None,
     ):
-        result = await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
+        result = await svc._authorize_overlay_supersede(
+            _entry(), _SPEC_URL, _identity(["catalog:import"])
+        )
     assert result is None
 
 
@@ -83,7 +100,9 @@ async def test_no_live_overlay_is_ordinary_import() -> None:
             return_value=None,
         ),
     ):
-        result = await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
+        result = await svc._authorize_overlay_supersede(
+            _entry(), _SPEC_URL, _identity(["catalog:import"])
+        )
     assert result is None
 
 
@@ -106,7 +125,9 @@ async def test_collision_with_confirm_scope_authorizes_supersede() -> None:
         ),
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
     ):
-        result = await svc._authorize_overlay_supersede(_entry(), _identity(["overlays:confirm"]))
+        result = await svc._authorize_overlay_supersede(
+            _entry(), _SPEC_URL, _identity(["overlays:confirm"])
+        )
     assert result == "ovr_abc"
     emit.assert_not_awaited()  # authorized: no operator-facing refusal event
 
@@ -129,7 +150,9 @@ async def test_collision_via_org_admin_authorizes_supersede() -> None:
             return_value=overlay,
         ),
     ):
-        result = await svc._authorize_overlay_supersede(_entry(), _identity(["org:admin"]))
+        result = await svc._authorize_overlay_supersede(
+            _entry(), _SPEC_URL, _identity(["org:admin"])
+        )
     assert result == "ovr_admin"
 
 
@@ -153,7 +176,7 @@ async def test_collision_without_scope_refuses_and_reemits() -> None:
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
         pytest.raises(OverlaySupersedeForbiddenError),
     ):
-        await svc._authorize_overlay_supersede(_entry(), _identity(["catalog:import"]))
+        await svc._authorize_overlay_supersede(_entry(), _SPEC_URL, _identity(["catalog:import"]))
     emit.assert_awaited_once()
     kwargs = emit.await_args.kwargs if emit.await_args else {}
     assert kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
@@ -167,19 +190,14 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
     """import_entry threads supersede_overlay_id + supersede_active into the job payload."""
     svc = CatalogService(_make_ctx())
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value="ovr_1"
         ),
-        patch.object(
-            svc,
-            "_import_source_for",
-            new_callable=AsyncMock,
-            return_value={"type": "url", "url": "https://u", "origin": "catalog"},
-        ),
+        patch.object(svc, "_import_target", new_callable=AsyncMock, return_value=(None, "widgets")),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_1") as enqueue,
     ):
-        job_id = await svc.import_entry("acme.com/widgets/1.0.0", _identity(["overlays:confirm"]))
+        job_id = await svc.import_entry(_ENTRY_ID, _identity(["overlays:confirm"]))
     assert job_id == "job_1"
     assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
@@ -192,19 +210,14 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
     """No supersede → payload carries no supersede markers."""
     svc = CatalogService(_make_ctx())
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
-        patch.object(
-            svc,
-            "_import_source_for",
-            new_callable=AsyncMock,
-            return_value={"type": "url", "url": "https://u", "origin": "catalog"},
-        ),
+        patch.object(svc, "_import_target", new_callable=AsyncMock, return_value=(None, "widgets")),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_2") as enqueue,
     ):
-        await svc.import_entry("acme.com/widgets/1.0.0", _identity(["catalog:import"]))
+        await svc.import_entry(_ENTRY_ID, _identity(["catalog:import"]))
     assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
     assert "supersede_overlay_id" not in payload
@@ -219,11 +232,11 @@ async def test_snooze_entry_forbidden_without_events_write() -> None:
     """Snoozing requires events:write — a catalog:import-only caller is refused (403)."""
     svc = CatalogService(_make_ctx())
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch(f"{_SVC}.CatalogUpdateCheckRepository.snooze", new_callable=AsyncMock) as snooze,
         pytest.raises(SnoozeForbiddenError),
     ):
-        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["catalog:import"]))
+        await svc.snooze_entry(_ENTRY_ID, _identity(["catalog:import"]))
     snooze.assert_not_awaited()
 
 
@@ -234,7 +247,7 @@ async def test_snooze_entry_happy_path_records_metric_and_audits() -> None:
     check = MagicMock()
     check.last_notified_digest = "sha256:up"
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch.object(
             svc,
             "_resolve_local_api",
@@ -247,7 +260,7 @@ async def test_snooze_entry_happy_path_records_metric_and_audits() -> None:
         patch(f"{_SVC}.record_update_snoozed") as metric,
         patch(f"{_SVC}.record_audit_best_effort", new_callable=AsyncMock) as audit,
     ):
-        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["events:write"]))
+        await svc.snooze_entry(_ENTRY_ID, _identity(["events:write"]))
     assert snooze.await_args is not None
     assert snooze.await_args.kwargs["digest"] == "sha256:up"
     assert snooze.await_args.kwargs["until"] is None
@@ -262,14 +275,14 @@ async def test_snooze_entry_nothing_to_snooze_when_never_notified() -> None:
     check = MagicMock()
     check.last_notified_digest = None
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch.object(
             svc, "_resolve_local_api", new_callable=AsyncMock, return_value=(_API_ID, check)
         ),
         patch(f"{_SVC}.CatalogUpdateCheckRepository.snooze", new_callable=AsyncMock) as snooze,
         pytest.raises(NothingToSnoozeError),
     ):
-        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["events:write"]))
+        await svc.snooze_entry(_ENTRY_ID, _identity(["events:write"]))
     snooze.assert_not_awaited()
 
 
@@ -279,19 +292,14 @@ async def test_snooze_entry_nothing_to_snooze_when_never_notified() -> None:
 async def _import_payload(perms: list[str]) -> dict[str, Any]:
     svc = CatalogService(_make_ctx())
     with (
-        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(svc, "_visible_entry", _visible()),
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
-        patch.object(
-            svc,
-            "_import_source_for",
-            new_callable=AsyncMock,
-            return_value={"type": "url", "url": "https://u", "origin": "catalog"},
-        ),
+        patch.object(svc, "_import_target", new_callable=AsyncMock, return_value=(None, "widgets")),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_3") as enqueue,
     ):
-        await svc.import_entry("acme.com/widgets/1.0.0", _identity(perms))
+        await svc.import_entry(_ENTRY_ID, _identity(perms))
     assert enqueue.await_args is not None
     payload: dict[str, Any] = enqueue.await_args.kwargs["payload"]
     return payload

@@ -297,6 +297,7 @@
       "type": "object"
     },
     "CatalogConfig": {
+      "additionalProperties": false,
       "description": "Public API catalog settings (sources, staleness, update notify).",
       "properties": {
         "catalog_api_id_mappings": {
@@ -309,20 +310,8 @@
         },
         "legacy_source_slug": {
           "default": "public",
-          "description": "The git-manifest source the deprecated manifest_* keys map onto and that pre-existing catalog imports are reconciled against.",
+          "description": "The git-manifest source that pre-existing catalog imports are reconciled against.",
           "title": "Legacy Source Slug",
-          "type": "string"
-        },
-        "manifest_max_age_seconds": {
-          "default": 86400,
-          "description": "Deprecated alias for the legacy source's max_age_seconds.",
-          "title": "Manifest Max Age Seconds",
-          "type": "integer"
-        },
-        "manifest_url": {
-          "default": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
-          "description": "Deprecated alias for the legacy source's settings.url (catalog.sources[slug=legacy_source_slug]). Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
-          "title": "Manifest Url",
           "type": "string"
         },
         "sources": {

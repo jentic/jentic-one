@@ -1,38 +1,58 @@
-"""CatalogService — orchestrates the public API catalog (browse / preview / import).
+"""CatalogService — browse, preview and import over the configured catalog sources.
 
-Layering: this service is the only thing in the catalog slice that touches I/O —
-the upstream GitHub manifest + spec fetches (``fetch.py``), the catalog cache DB
-(``CatalogRepository``), and the import job queue (``enqueue_job``). All parsing /
-projection is delegated to the pure ``manifest_builder`` lib so this file stays
-about coordination.
+Layering: this service coordinates I/O — the process-local snapshot of
+``catalog_entries`` (``snapshot.py``), the spec fetches (``fetch.py``), the
+source syncs (``sources/sync.py``) and the import job queue (``enqueue_job``).
+Parsing and projection stay in the pure ``manifest_builder`` lib.
 
-Boundaries kept from D-005a:
-- imports always resolve to a plain url ``IngestSource`` — no ``cat_…`` opaque IDs
-  cross into the importer, no ``ApiSourceCatalog`` discriminator, no ``force_api_id``.
-- identity is the spec triple (vendor/name/version) resolved by the importer, so a
-  re-import maps onto the same local API.
-- APIs only — workflows are out of scope (D-001).
-- imports are async (job-poll), never a synchronous swap.
+Reads key on ``entry_id`` (``{source_slug}/{external_id}``). Every read first
+narrows the snapshot to the sources the caller may see (``allowed_sources``)
+and collapses entries sharing a ``catalog_api_id`` to one winner (registered
+first, then source precedence, then ``entry_id``). An entry the caller cannot
+see is answered exactly like one that does not exist.
+
+Imports:
+- resolve to a plain url ``IngestSource`` carrying the entry's
+  ``catalog_api_id`` and ``catalog_entry_id``;
+- land on the API already imported from the same entry, else on a fresh
+  identity; an entry whose ``catalog_api_id`` another entry's API already holds
+  takes a distinct name unless the caller asks to switch that API's source;
+- are async (job-poll), never a synchronous swap.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import structlog
 
+from jentic_one.registry.core.schema.catalog_sources import (
+    SOURCE_STATUS_NEVER_SYNCED,
+    CatalogSourceRow,
+)
+from jentic_one.registry.core.schema.catalog_sync_runs import (
+    RUN_STATUS_APPLIED,
+    RUN_STATUS_SUPERSEDED,
+    RUN_STATUS_SUSPECT_EMPTY,
+)
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.api_repo import ApiRepository
-from jentic_one.registry.repos.catalog_repo import CatalogRepository
+from jentic_one.registry.repos.catalog_entry_repo import CatalogEntryRepository
+from jentic_one.registry.repos.catalog_source_repo import CatalogSourceRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
-from jentic_one.registry.services.catalog.entries import make_entry_id
+from jentic_one.registry.services.catalog.entries import (
+    CatalogApiIdMapping,
+    CatalogEntry,
+    resolver_inputs_digest,
+)
 from jentic_one.registry.services.catalog.fetch import (
     CatalogFetchError,
     fetch_bytes_conditional,
@@ -43,18 +63,30 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_update_notified,
     record_update_snoozed,
 )
-from jentic_one.registry.services.catalog.sources.git_manifest import manifest_stream
-from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
+from jentic_one.registry.services.catalog.snapshot import (
+    CatalogSnapshot,
+    CollapsedView,
+    allowed_sources,
+    build_snapshot,
+    cached_snapshot,
+    store_snapshot,
+)
+from jentic_one.registry.services.catalog.sources import digests
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
     SnoozeForbiddenError,
+    SourceSwitchForbiddenError,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import CREDENTIALS_WRITE, compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
+from jentic_one.shared.catalog.api_id import NAMESPACE_SEPARATOR
+from jentic_one.shared.config import CatalogConfig, CatalogSourceConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.locks import advisory_lock_key
 from jentic_one.shared.db.utils import utcnow
@@ -72,9 +104,27 @@ logger = structlog.get_logger(__name__)
 #: is constructed per-request and GC'd when the request returns, so a task held
 #: only on ``self`` could be collected mid-flight (asyncio keeps only weak refs to
 #: tasks). Parking them here until they finish keeps them alive; the done-callback
-#: discards on completion. Bounded in practice by the max-age + advisory-lock gates
-#: on the refresh that spawns them.
+#: discards on completion.
 _SWEEP_TASKS: set[asyncio.Task[None]] = set()
+
+#: Source config digests per loaded ``CatalogConfig`` (keyed by identity; the
+#: entry holds the config, so its id can't be reused while cached). A config is
+#: immutable once loaded, and hashing a large one on every read is the costliest
+#: step of the snapshot key.
+_CONFIG_DIGESTS: dict[int, tuple[CatalogConfig, dict[str, str]]] = {}
+_CONFIG_DIGESTS_MAX = 64
+
+
+def _config_digests(cfg: CatalogConfig) -> dict[str, str]:
+    hit = _CONFIG_DIGESTS.get(id(cfg))
+    if hit is not None and hit[0] is cfg:
+        return hit[1]
+    computed = {s.slug: digests.config_digest(s) for s in cfg.sources}
+    if len(_CONFIG_DIGESTS) >= _CONFIG_DIGESTS_MAX:
+        _CONFIG_DIGESTS.pop(next(iter(_CONFIG_DIGESTS)))
+    _CONFIG_DIGESTS[id(cfg)] = (cfg, computed)
+    return computed
+
 
 #: Registry-DB advisory-lock key that single-flights the update-notify sweep across
 #: processes (scanner and request-triggered sweeps on every replica/worker).
@@ -82,14 +132,14 @@ UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sw
 
 
 def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
-    """Whether the update-notify sweep should probe this candidate (OQ-3 scope).
+    """Whether the update-notify sweep should probe this candidate.
 
-    - ``catalog``-origin revisions are always tracked (imported straight from the manifest).
+    - ``catalog``-origin revisions are always tracked (imported straight from a source).
     - ``overlay``-origin revisions are tracked when their ``source_url`` still points at a
       catalog spec — overlay materialization propagates the base revision's ``source_url``
       (#904), so a confirmed overlay over a catalog API stays upstream-tracked.
     - manual imports (``origin is None``) are tracked only if their ``source_url`` now
-      matches a catalog manifest entry (a "you could switch to the catalog source" nudge).
+      matches a catalog entry's spec (a "you could switch to the catalog source" nudge).
     - any other manual import is skipped: we have no upstream-of-record to compare against.
     """
     if spec.origin == ORIGIN_CATALOG:
@@ -101,18 +151,31 @@ def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
 
 @dataclass(frozen=True)
 class CatalogEntryView:
-    """A browsable catalog entry with derived `registered` status."""
+    """A browsable catalog entry with its derived ``registered`` status."""
 
-    api_id: str
+    entry_id: str
+    source_slug: str
+    catalog_api_id: str
+    #: Identity vendor (credentials match its slug).
     vendor: str | None
-    path: str | None
-    spec_url: str | None
-    github_url: str | None
+    #: The hint's vendor, for grouping in a UI only.
+    display_vendor: str | None
+    title: str | None
+    version: str | None
+    tags: tuple[str, ...]
+    human_url: str | None
+    has_spec: bool
     registered: bool
     #: True when this entry is registered locally AND its upstream spec has a notified
-    #: update the local revision hasn't adopted yet (Flow-3). Always False for
-    #: unregistered entries (nothing to update).
+    #: update the local revision hasn't adopted yet. Always False for unregistered entries.
     update_available: bool = False
+    #: ``entry_id``s of the visible entries collapsed into this one.
+    alternate_ids: tuple[str, ...] = ()
+
+    @property
+    def alternates(self) -> int:
+        """How many visible entries are collapsed into this one."""
+        return len(self.alternate_ids)
 
 
 @dataclass(frozen=True)
@@ -122,11 +185,11 @@ class CatalogListView:
     data: list[CatalogEntryView]
     catalog_total: int
     registered_count: int
-    manifest_age_seconds: int | None
+    #: Age of the least recently synced visible source (None when none has synced).
+    oldest_source_sync_age_seconds: int | None
     has_more: bool
     next_cursor: str | None
-    #: Count of registered entries with an upstream update available (full manifest,
-    #: pre-filter/pre-page) so the UI status row is stable across pages.
+    #: Registered entries with an upstream update available (pre-filter, pre-page).
     outdated_count: int = 0
 
 
@@ -144,102 +207,222 @@ class CatalogPreviewView:
 
 @dataclass(frozen=True)
 class CatalogRefreshResult:
-    """Outcome of a manifest refresh."""
+    """Outcome of a refresh: the live entries of the enabled sources after it."""
 
     count: int
 
 
+@dataclass(frozen=True)
+class _ReadState:
+    """One request's view of the catalog: the snapshot plus the per-request sets."""
+
+    snapshot: CatalogSnapshot
+    rows: Mapping[str, CatalogSourceRow]
+    allowed: frozenset[str]
+    registered: frozenset[str]
+    outdated_urls: set[str]
+    view: CollapsedView
+
+
+def _entry_key(entry: CatalogEntry) -> str:
+    return entry.entry_id
+
+
+def _effective(identity: Identity) -> frozenset[str]:
+    return frozenset(compute_effective(set(identity.permissions)))
+
+
 class CatalogService:
-    """Read + import operations for the public API catalog."""
+    """Read + import operations for the catalog."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
         self._cfg = ctx.config.catalog
         self._ingest_cfg = ctx.config.ingest
+        self._sources: dict[str, CatalogSourceConfig] = {s.slug: s for s in self._cfg.sources}
+        self._mappings = [
+            CatalogApiIdMapping.from_config(m) for m in self._cfg.catalog_api_id_mappings
+        ]
 
-    # ── refresh / staleness ──────────────────────────────────────────────────
+    # ── refresh ──────────────────────────────────────────────────────────────
 
-    async def refresh(
-        self, *, sync_sources: bool = False, force: bool = False
-    ) -> CatalogRefreshResult:
-        """Fetch the upstream manifest and atomically replace the catalog snapshot.
+    async def refresh(self, *, force: bool = False) -> CatalogRefreshResult:
+        """Sync every enabled source now; ``force`` overrides the mass-removal guard.
 
-        The same manifest document is also applied to the legacy catalog source
-        (a shadow write: reads keep serving the snapshot). ``sync_sources`` syncs
-        every other enabled source too; ``force`` overrides the mass-removal guard.
-        Source sync failures are logged and never fail the refresh. With no legacy
-        source configured there is no manifest to fetch: the snapshot is left as
-        it is and only the other sources sync.
+        Raises ``CatalogUnavailableError`` when no source applied and at least
+        one failed; otherwise failures are logged and the last good rows stay.
+        A run held by the mass-removal guard is not a failure: the source was
+        reachable and keeps serving its last applied rows.
         """
-        manifest_url = self._cfg.legacy_manifest_url()
-        if manifest_url is None:
-            # Reads keep serving the snapshot from the last legacy fetch, so say
-            # why it did not change (``count`` is 0, not the snapshot's size).
-            logger.info("catalog_snapshot_refresh_skipped", reason="no_legacy_source")
-            if sync_sources:
-                await self._sync_sources(None, others=True, force=force)
-            return CatalogRefreshResult(count=0)
-        try:
-            doc = await fetch_json(manifest_url, config=self._ingest_cfg)
-        except CatalogFetchError as exc:
-            raise CatalogUnavailableError(f"catalog manifest unavailable: {exc}") from exc
-
-        entries = [e.to_dict() for e in mb.parse_apis_json(doc)]
-        async with self._ctx.registry_db.transaction() as session:
-            count = await CatalogRepository.replace(
-                session, source_url=manifest_url, entries=entries
-            )
-        await self._sync_sources(doc, others=sync_sources, force=force)
-        return CatalogRefreshResult(count=count)
-
-    async def _sync_sources(self, doc: dict[str, Any] | None, *, others: bool, force: bool) -> None:
         sync = CatalogSourceSync(self._ctx)
-        legacy = self._cfg.legacy_source_slug
-        try:
-            await sync.register_sources()
-            if doc is not None and legacy in sync.sources:
-                outcome = await sync.sync_source(legacy, forced=force, stream=manifest_stream(doc))
-                logger.info("catalog_legacy_source_synced", status=outcome.status)
-            if others:
-                for slug in sync.sources:
-                    if slug != legacy:
-                        await sync.sync_source(slug, forced=force)
-            else:
-                await sync.mark_stale_wanted()
-        except Exception:
-            logger.warning("catalog_source_sync_failed", exc_info=True)
+        await sync.register_sources()
+        outcomes = await sync.sync_all(forced=force)
+        applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
+        held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
+        failed = [o for o in outcomes if o.status not in (*held, "disabled", "busy")]
+        if failed and not applied:
+            codes = ", ".join(f"{o.slug}: {o.error_code or o.status}" for o in failed)
+            raise CatalogUnavailableError(f"catalog sources unavailable ({codes})")
+        snapshot = await self._snapshot()
+        return CatalogRefreshResult(count=len(snapshot.entries))
 
-    def _is_stale(self, fetched_at: datetime | None) -> bool:
-        """Whether the cache should be lazily refreshed (D-005a option (a)).
+    # ── snapshot ─────────────────────────────────────────────────────────────
 
-        Stale when empty or older than the legacy source's ``max_age_seconds``. A
-        max-age of 0 disables auto-refresh (manual ``:refresh`` only).
+    def _enabled(self) -> list[CatalogSourceConfig]:
+        return [s for s in self._sources.values() if s.enabled]
+
+    async def _source_rows(self) -> dict[str, CatalogSourceRow]:
+        async with self._ctx.registry_db.session() as session:
+            rows = {r.slug: r for r in await CatalogSourceRepository.list_all(session)}
+        if any(s.slug not in rows for s in self._sources.values()):
+            await CatalogSourceSync(self._ctx).register_sources()
+            async with self._ctx.registry_db.session() as session:
+                rows = {r.slug: r for r in await CatalogSourceRepository.list_all(session)}
+        return rows
+
+    async def _sync_never_synced(
+        self, rows: Mapping[str, CatalogSourceRow], visible: frozenset[str] | None
+    ) -> bool:
+        """Sync a never-synced, auto-syncing ``git-manifest`` source inline.
+
+        Only such a source may hold up a read, so a fresh install's first list
+        is not empty. The wait is bounded by ``ingest.fetch_timeout_s``; a busy
+        lease or a failure leaves the source absent until the scanner syncs it.
         """
-        max_age = self._cfg.legacy_max_age_seconds()
-        if max_age <= 0:
+        due = [
+            cfg.slug
+            for cfg in self._enabled()
+            if cfg.kind == "git-manifest"
+            and cfg.max_age_seconds > 0
+            and (visible is None or cfg.slug in visible)
+            and (row := rows.get(cfg.slug)) is not None
+            and row.last_status == SOURCE_STATUS_NEVER_SYNCED
+            and row.last_applied_run_id is None
+        ]
+        if not due:
             return False
-        if fetched_at is None:
-            return True
-        return (utcnow() - fetched_at).total_seconds() > max_age
+        sync = CatalogSourceSync(self._ctx)
+        for slug in due:
+            try:
+                async with asyncio.timeout(self._ingest_cfg.fetch_timeout_s):
+                    await sync.sync_source(slug)
+            except Exception:
+                logger.warning("catalog_first_sync_failed", source=slug, exc_info=True)
+        return True
 
-    async def _safe_refresh(self) -> None:
-        """Refresh with advisory-lock single-flight, swallowing upstream failures.
+    async def _flag_stale(self, rows: Mapping[str, CatalogSourceRow]) -> None:
+        """Ask the scanner to sync sources past their max age (never syncs inline)."""
+        now = utcnow()
+        stale = [
+            cfg.slug
+            for cfg in self._enabled()
+            if (row := rows.get(cfg.slug)) is not None
+            and row.sync_wanted_at is None
+            and is_due(cfg, row, now=now)
+        ]
+        if stale:
+            async with self._ctx.registry_db.transaction() as session:
+                await CatalogSourceRepository.mark_sync_wanted(session, stale)
 
-        Only the first concurrent caller acquires the lock and performs the
-        upstream fetch; others return immediately and serve the current snapshot.
-        """
-        async with self._ctx.registry_db.transaction() as session:
-            acquired = await CatalogRepository.try_acquire_refresh_lock(session)
-            if not acquired:
-                return
-            fetched_at = await CatalogRepository.fetched_at(session)
-            if not self._is_stale(fetched_at):
-                return
-        try:
-            await self.refresh()
-        except CatalogUnavailableError:
-            return
-        self.trigger_update_notify_sweep()
+    def _snapshot_key(self, rows: Mapping[str, CatalogSourceRow]) -> tuple[str, str]:
+        config_digests = _config_digests(self._cfg)
+        inputs = [
+            digests.SourceVersionInputs(
+                slug=cfg.slug,
+                enabled=cfg.enabled,
+                visibility=cfg.visibility,
+                precedence=cfg.precedence,
+                content_digest=row.content_digest if (row := rows.get(cfg.slug)) else None,
+                listing_digest=row.listing_digest if row else None,
+                config_digest=config_digests[cfg.slug],
+            )
+            for cfg in self._sources.values()
+        ]
+        return (
+            digests.catalog_version(inputs),
+            resolver_inputs_digest(list(self._sources.values()), self._mappings),
+        )
+
+    async def _load_snapshot(self, rows: Mapping[str, CatalogSourceRow]) -> CatalogSnapshot:
+        key = self._snapshot_key(rows)
+        owner = self._ctx.registry_db
+        snapshot = cached_snapshot(owner, key)
+        if snapshot is not None:
+            return snapshot
+        async with self._ctx.registry_db.session() as session:
+            live = await CatalogEntryRepository.live_rows(
+                session, [s.slug for s in self._enabled()]
+            )
+        snapshot = build_snapshot(key, live, sources=self._sources, mappings=self._mappings)
+        store_snapshot(owner, snapshot)
+        return snapshot
+
+    async def _snapshot(self) -> CatalogSnapshot:
+        """The whole snapshot, every enabled source included (internal reads only)."""
+        return await self._load_snapshot(await self._source_rows())
+
+    async def _read(
+        self,
+        *,
+        permissions: frozenset[str],
+        actor_id: str | None,
+        include_alternates: bool = False,
+        include_snoozed: bool = False,
+    ) -> _ReadState:
+        allowed = allowed_sources(
+            self._sources.values(), permissions=permissions, actor_id=actor_id
+        )
+        rows = await self._source_rows()
+        if await self._sync_never_synced(rows, allowed):
+            rows = await self._source_rows()
+        await self._flag_stale(rows)
+        snapshot = await self._load_snapshot(rows)
+        async with self._ctx.registry_db.session() as session:
+            registered = await ApiRepository.registered_catalog_entry_ids(session)
+            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(
+                session, now=utcnow(), include_snoozed=include_snoozed
+            )
+        view = snapshot.collapse(allowed, registered, include_alternates=include_alternates)
+        return _ReadState(
+            snapshot=snapshot,
+            rows=rows,
+            allowed=allowed,
+            registered=registered,
+            outdated_urls=outdated_urls,
+            view=view,
+        )
+
+    @staticmethod
+    def _to_view(state: _ReadState, entry: CatalogEntry) -> CatalogEntryView:
+        registered = entry.entry_id in state.registered
+        spec_url = state.snapshot.spec_urls.get(entry.entry_id)
+        return CatalogEntryView(
+            entry_id=entry.entry_id,
+            source_slug=entry.source_slug,
+            catalog_api_id=entry.catalog_api_id,
+            vendor=entry.vendor,
+            display_vendor=entry.display_vendor,
+            title=entry.title,
+            version=entry.version,
+            tags=entry.tags,
+            human_url=entry.human_url,
+            has_spec=entry.has_spec,
+            registered=registered,
+            update_available=registered
+            and spec_url is not None
+            and spec_url in state.outdated_urls,
+            alternate_ids=state.view.alternates.get(entry.entry_id, ()),
+        )
+
+    def _oldest_sync_age(self, state: _ReadState) -> int | None:
+        synced = [
+            row.last_sync_at
+            for slug in state.allowed
+            if (row := state.rows.get(slug)) is not None and row.last_sync_at is not None
+        ]
+        if not synced:
+            return None
+        return max(0, int((utcnow() - min(synced)).total_seconds()))
 
     def trigger_update_notify_sweep(self) -> None:
         """Fire-and-forget the update-notify sweep off the triggering read path.
@@ -339,9 +522,9 @@ class CatalogService:
             # whose source_url still points at a catalog spec; skip the query when the
             # candidate set has no such rows (pure-catalog installs, the common case).
             needs_manifest = any(spec.origin != ORIGIN_CATALOG for spec in candidates)
-            manifest_urls = (
-                await CatalogRepository.manifest_spec_urls(session) if needs_manifest else set()
-            )
+        manifest_urls = (
+            set((await self._snapshot()).spec_urls.values()) if needs_manifest else set()
+        )
         candidates = [spec for spec in candidates if _is_upstream_tracked(spec, manifest_urls)]
         if not candidates:
             return
@@ -639,35 +822,13 @@ class CatalogService:
             )
         record_update_notified(event_class)
 
-    async def _refresh_if_stale(self) -> None:
-        """Lazy refresh-on-read seam for the single-entry reads (``get``)."""
-        async with self._ctx.registry_db.session() as session:
-            fetched_at = await CatalogRepository.fetched_at(session)
-        if self._is_stale(fetched_at):
-            await self._safe_refresh()
-
-    async def _load_snapshot(
-        self, *, include_snoozed: bool = False
-    ) -> tuple[list[dict[str, Any]], set[str], set[str], datetime | None]:
-        """Read entries, coverage URLs, outdated URLs, and freshness in one session.
-
-        ``include_snoozed=True`` (C1/C2) makes the outdated set include snoozed rows, so an
-        operator surface (``catalog outdated --include-snoozed``) can still see muted entries.
-        """
-        async with self._ctx.registry_db.session() as session:
-            raw = await CatalogRepository.entries(session)
-            registered_urls = await CatalogRepository.registered_spec_urls(session)
-            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(
-                session, now=utcnow(), include_snoozed=include_snoozed
-            )
-            fetched_at = await CatalogRepository.fetched_at(session)
-        return raw, registered_urls, outdated_urls, fetched_at
-
-    # ── browse / get ─────────────────────────────────────────────────────────
+    # ── browse / get / resolve ───────────────────────────────────────────────
 
     async def list_all(
         self,
         *,
+        permissions: frozenset[str],
+        actor_id: str | None = None,
         q: str | None = None,
         registered_only: bool = False,
         unregistered_only: bool = False,
@@ -675,114 +836,149 @@ class CatalogService:
         cursor: str | None = None,
         limit: int = 50,
         include_snoozed: bool = False,
+        include_alternates: bool = False,
     ) -> CatalogListView:
-        """List a keyset page of catalog entries (optionally filtered/ranked).
+        """List a keyset page of the entries visible to the caller.
 
-        Paging is an in-memory keyset over the cached snapshot blob: entries are
-        ordered (``api_id`` for browse, ``(-score, api_id)`` for search), the
-        registration filter is applied, then a ``limit``-sized window after the
-        ``cursor`` position is returned. ``catalog_total``/``registered_count``
-        always reflect the full manifest (pre-filter, pre-page) so the UI status
-        row is stable across pages. Raises ``InvalidCursorError`` on a bad cursor.
+        ``permissions`` is the caller's effective permission set (an empty set
+        sees public sources only). Visible entries sharing a ``catalog_api_id``
+        are collapsed to one winner unless ``include_alternates``. The status
+        counters (``catalog_total``, ``registered_count``, ``outdated_count``)
+        cover the collapsed visible list before the list filters and the page.
 
-        A cursor is only meaningful for the **same** ``(q, registered_only,
-        unregistered_only)`` it was issued under — it encodes a position in that
-        specific ordering, not the query — so callers must hold those constant
-        while paging (changing them mid-scroll yields a valid but meaningless
-        slice, never an error). Cursors are also relative to the snapshot at read
-        time: a refresh between pages may skip/repeat entries near the cursor
-        (the standard keyset-vs-mutating-snapshot trade-off), but never crashes
-        or loops. Refresh is rare (lazy, max-age gated), so this is acceptable.
+        Browse orders by ``entry_id``; search by ``(-score, entry_id)``. A cursor
+        is only meaningful for the same query and filters it was issued under,
+        and a sync between pages may skip or repeat entries near it (never an
+        error). Raises ``InvalidCursorError`` on a malformed cursor.
         """
-        raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot(
-            include_snoozed=include_snoozed
+        state = await self._read(
+            permissions=permissions,
+            actor_id=actor_id,
+            include_alternates=include_alternates,
+            include_snoozed=include_snoozed,
         )
-        if self._is_stale(fetched_at):
-            await self._safe_refresh()
-            raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot(
-                include_snoozed=include_snoozed
+        visible = state.view.entries
+        registered = state.registered
+        # The registered set is small next to the catalog: count from its side.
+        visible_registered = registered & state.view.ids
+        outdated = {
+            entry_id
+            for entry_id in visible_registered
+            if (url := state.snapshot.spec_urls.get(entry_id)) is not None
+            and url in state.outdated_urls
+        }
+        registered_count = len(visible_registered)
+
+        after_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
+        if mb.has_query_tokens(q):
+            scored = mb.score_entries(visible, q, tokens=state.snapshot.tokens, ordered=True)
+            if registered_only:
+                scored = [(e, s) for e, s in scored if e.entry_id in registered]
+            elif unregistered_only:
+                scored = [(e, s) for e, s in scored if e.entry_id not in registered]
+            if outdated_only:
+                scored = [(e, s) for e, s in scored if e.entry_id in outdated]
+            page = mb.paginate_entries(
+                scored, after_entry_id=after_id, after_score=after_score, limit=limit
             )
-
-        all_entries = [mb.ManifestEntry.from_dict(d) for d in raw]
-        catalog_total = len(all_entries)
-        registered_count = sum(1 for e in all_entries if mb.is_registered(e, registered_urls))
-        # Outdated = registered AND its spec_url is in the outdated set. Count over the
-        # whole manifest (pre-filter/pre-page) so the status row is page-stable.
-        outdated_count = sum(
-            1
-            for e in all_entries
-            if mb.is_registered(e, registered_urls) and e.spec_url in outdated_urls
-        )
-
-        scored = mb.score_entries(all_entries, q)
-        if registered_only:
-            scored = [(e, s) for e, s in scored if mb.is_registered(e, registered_urls)]
-        elif unregistered_only:
-            scored = [(e, s) for e, s in scored if not mb.is_registered(e, registered_urls)]
-        if outdated_only:
-            scored = [(e, s) for e, s in scored if e.spec_url in outdated_urls]
-
-        after_api_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
-        page = mb.paginate_entries(
-            scored, after_api_id=after_api_id, after_score=after_score, limit=limit
-        )
-        views = [self._to_view(e, registered_urls, outdated_urls) for e in page.items]
+        else:
+            browse: Sequence[CatalogEntry] = visible
+            if outdated_only:
+                browse = sorted((state.snapshot.by_id[i] for i in outdated), key=_entry_key)
+            elif registered_only:
+                browse = sorted(
+                    (state.snapshot.by_id[i] for i in visible_registered), key=_entry_key
+                )
+            elif unregistered_only:
+                browse = [e for e in visible if e.entry_id not in registered]
+            page = mb.paginate_browse(browse, after_entry_id=after_id, limit=limit)
         next_cursor = (
-            encode_catalog_cursor(page.next_api_id, page.next_score)
-            if page.has_more and page.next_api_id is not None
+            encode_catalog_cursor(page.next_entry_id, page.next_score)
+            if page.has_more and page.next_entry_id is not None
             else None
         )
-
-        age = None if fetched_at is None else int((utcnow() - fetched_at).total_seconds())
         return CatalogListView(
-            data=views,
-            catalog_total=catalog_total,
+            data=[self._to_view(state, e) for e in page.items],
+            catalog_total=len(visible),
             registered_count=registered_count,
-            manifest_age_seconds=age,
+            oldest_source_sync_age_seconds=self._oldest_sync_age(state),
             has_more=page.has_more,
             next_cursor=next_cursor,
-            outdated_count=outdated_count,
+            outdated_count=len(outdated),
         )
-
-    async def get(self, api_id: str) -> CatalogEntryView:
-        """Resolve a single catalog entry by api_id."""
-        await self._refresh_if_stale()
-        async with self._ctx.registry_db.session() as session:
-            raw = await CatalogRepository.entries(session)
-            registered_urls = await CatalogRepository.registered_spec_urls(session)
-            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
-        match = next((d for d in raw if d.get("api_id") == api_id), None)
-        if match is None:
-            raise CatalogEntryNotFoundError(api_id)
-        return self._to_view(mb.ManifestEntry.from_dict(match), registered_urls, outdated_urls)
 
     @staticmethod
-    def _to_view(
-        entry: mb.ManifestEntry,
-        registered_spec_urls: set[str],
-        outdated_spec_urls: set[str] | None = None,
+    def _lookup(state: _ReadState, entry_id: str) -> CatalogEntry:
+        """The visible entry ``entry_id``; a hidden one is answered like a missing one.
+
+        ``did_you_mean`` is set only when the id's first segment is no visible
+        source slug and the whole id is a visible ``catalog_api_id`` (an id in
+        the pre-``entry_id`` form); it names that id's collapse winner.
+        """
+        entry = state.snapshot.by_id.get(entry_id)
+        if entry is not None and entry.source_slug in state.allowed:
+            return entry
+        did_you_mean = None
+        if entry_id.split("/", 1)[0] not in state.allowed:
+            did_you_mean = state.view.winner_by_api_id.get(entry_id)
+        raise CatalogEntryNotFoundError(entry_id, did_you_mean=did_you_mean)
+
+    async def _visible_entry(
+        self, entry_id: str, *, permissions: frozenset[str], actor_id: str | None
+    ) -> tuple[_ReadState, CatalogEntry]:
+        state = await self._read(permissions=permissions, actor_id=actor_id)
+        return state, self._lookup(state, entry_id)
+
+    async def get(
+        self, entry_id: str, *, permissions: frozenset[str], actor_id: str | None = None
     ) -> CatalogEntryView:
-        registered = mb.is_registered(entry, registered_spec_urls)
-        return CatalogEntryView(
-            api_id=entry.api_id,
-            vendor=entry.vendor,
-            path=entry.path or None,
-            spec_url=entry.spec_url,
-            github_url=entry.github_url or None,
-            registered=registered,
-            update_available=(
-                registered
-                and outdated_spec_urls is not None
-                and entry.spec_url in outdated_spec_urls
-            ),
+        """The visible entry ``entry_id`` (a collapsed-out alternate included)."""
+        state, entry = await self._visible_entry(
+            entry_id, permissions=permissions, actor_id=actor_id
         )
+        return self._to_view(state, entry)
+
+    async def resolve(
+        self,
+        catalog_api_id: str,
+        *,
+        permissions: frozenset[str],
+        actor_id: str | None = None,
+    ) -> CatalogEntryView:
+        """The collapse winner for ``catalog_api_id`` among the visible entries.
+
+        Visibility follows ``permissions`` (and ``actor_id``) as in ``list_all``.
+
+        Raises ``CatalogEntryNotFoundError`` when no visible entry carries it.
+        """
+        state = await self._read(permissions=permissions, actor_id=actor_id)
+        winner = state.view.winner_by_api_id.get(catalog_api_id)
+        if winner is None:
+            raise CatalogEntryNotFoundError(catalog_api_id)
+        return self._to_view(state, state.snapshot.by_id[winner])
+
+    async def public_winner(self, catalog_api_id: str) -> str | None:
+        """The ``entry_id`` ``resolve`` returns for a caller with no permissions, if any."""
+        try:
+            return (await self.resolve(catalog_api_id, permissions=frozenset())).entry_id
+        except CatalogEntryNotFoundError:
+            return None
 
     # ── preview ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _spec_url(state: _ReadState, entry: CatalogEntry) -> str:
+        url = state.snapshot.spec_urls.get(entry.entry_id)
+        if url is None:
+            raise CatalogUnavailableError(f"catalog entry '{entry.entry_id}' has no spec url")
+        return url
+
     async def preview(
         self,
-        api_id: str,
+        entry_id: str,
         *,
+        permissions: frozenset[str],
+        actor_id: str | None = None,
         offset: int = 0,
         limit: int = mb.PREVIEW_MAX_OPERATIONS,
         tag: str | None = None,
@@ -795,11 +991,12 @@ class CatalogService:
         in the spec — not just the loaded page — and ``total`` reflects the
         filtered count the "Load more" affordance pages through.
         """
-        entry = await self.get(api_id)
-        if not entry.spec_url:
-            raise CatalogUnavailableError(f"catalog entry '{api_id}' has no spec url")
+        state, entry = await self._visible_entry(
+            entry_id, permissions=permissions, actor_id=actor_id
+        )
+        spec_url = self._spec_url(state, entry)
         try:
-            doc = await fetch_json(entry.spec_url, config=self._ingest_cfg)
+            doc = await fetch_json(spec_url, config=self._ingest_cfg)
         except CatalogFetchError as exc:
             raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
 
@@ -819,118 +1016,95 @@ class CatalogService:
 
     # ── import ───────────────────────────────────────────────────────────────
 
+    @staticmethod
     def _to_import_source(
-        self,
-        entry: CatalogEntryView,
+        entry: CatalogEntry,
+        spec_url: str,
         identity: Identity,
         *,
-        vendor: str | None = None,
-        name: str | None = None,
+        vendor: str | None,
+        name: str,
     ) -> dict[str, str]:
         """Build a plain url IngestSource payload — never a catalog-shaped one.
 
-        The catalog already knows the vendor and api_name from the manifest folder
-        structure (``apis/openapi/{domain}/{sub}/…`` → ``vendor_from_api_id(api_id)``),
-        so we pass them through as overrides. Many catalog specs (e.g. coincap)
-        omit ``x-vendor``/``contact.name`` in their ``info`` block, which would
-        otherwise fail api_identifier resolution with "missing vendor" or "missing
-        name". Threading the catalog vendor and api_name makes identity (and
-        re-import dedup) deterministic from the catalog id rather than dependent on
-        the upstream spec's info.
+        The entry's identity vendor and an ``api_name`` seed are passed as
+        overrides, because many catalog specs omit ``x-vendor``/``contact.name``
+        and identity (and re-import dedup) must follow the catalog, not the
+        upstream ``info`` block. ``vendor``/``name`` default to the entry's;
+        a re-import passes the ones already stored on the local API so it lands
+        on that API's ``(vendor, name, version)`` even when the derivation has
+        since changed, keeping the credentials and permission rules keyed on it.
 
-        The ``api_name`` override defaults to the catalog id's **sub segment**
-        (``domain/sub`` → ``sub``; a bare-domain id keeps the full id) — see
-        :func:`manifest_builder.catalog_api_name`, which callers holding the
-        manifest use to pass a clash-aware ``name`` instead.
-
-        ``submitted_by`` attributes the resulting revision to the principal who
-        triggered the (re-)import — same policy as ``POST /apis``.
-
-        ``vendor``, when given, overrides the manifest-derived vendor, and ``name``
-        likewise overrides the derived ``api_name``. A re-import passes the
-        vendor and name already stored on the local API so it lands on that API's
-        existing ``(vendor, name, version)`` identity even if the derivation has
-        since changed — in particular an API first imported under a pre-#1020
-        vendor-doubled name keeps that name, so the credentials, bindings, and
-        permission rules keyed on it are not stranded on a row the re-import
-        abandons for a fresh clean-named one.
+        ``catalog_api_id`` and ``catalog_entry_id`` are persisted verbatim on the
+        Api row; ``submitted_by`` attributes the revision to the caller.
         """
-        if not entry.spec_url:
-            raise CatalogUnavailableError(f"catalog entry '{entry.api_id}' has no spec url")
         source: dict[str, str] = {
             "type": "url",
-            "url": entry.spec_url,
+            "url": spec_url,
             "origin": ORIGIN_CATALOG,
+            "api_name": name,
+            "catalog_api_id": entry.catalog_api_id,
+            "catalog_entry_id": entry.entry_id,
         }
         if identity.sub:
             source["submitted_by"] = identity.sub
         resolved_vendor = vendor or entry.vendor
         if resolved_vendor:
             source["vendor"] = resolved_vendor
-        if entry.api_id:
-            source["api_name"] = name or mb.catalog_api_name(entry.api_id, ())
-            # The full id is also carried verbatim: `api_name` above only seeds
-            # the slugified vendor/name identity (the separable `domain/sub`
-            # structure is destroyed by slugification), while this copy is
-            # persisted as-is on the Api row for friendly-title derivation.
-            source["catalog_api_id"] = entry.api_id
-            # The entry this import came from. Reads still key on the snapshot's
-            # api_id, which is the legacy git-manifest source's external_id.
-            source["catalog_entry_id"] = make_entry_id(self._cfg.legacy_source_slug, entry.api_id)
         return source
 
-    async def _registered_identity(self, entry: CatalogEntryView) -> tuple[str, str] | None:
-        """The ``(vendor, name)`` stored on the local API already imported from this entry.
+    async def _import_target(
+        self,
+        entry: CatalogEntry,
+        *,
+        catalog_ids: Collection[str],
+        switch_source: bool,
+    ) -> tuple[str | None, str]:
+        """The ``(vendor, name)`` an import of ``entry`` lands on.
 
-        A re-import must update the API it was first imported as. Existing rows keep
-        the vendor and name they were created with (neither the hostname → vendor
-        derivation nor the #1020 sub-segment name derivation is retroactive), so
-        re-deriving either from the api_id could point the import at a new
-        ``(vendor, name, version)`` identity and leave the existing API, and the
-        credentials and permission rules keyed on it, behind. Re-slugging existing
-        doubled identities is a coordinated registry+control migration (#1079), not
-        a side effect of re-import.
+        ``catalog_ids`` are the snapshot's ``catalog_api_id``s, which the
+        clash-aware name derivation reads.
 
-        Looked up by the stored ``catalog_api_id`` first — it survives a manifest
-        ``spec_url`` move, which would otherwise make the entry read as unregistered
-        and fork a second row carrying the same catalog id — then by ``spec_url``
-        (the ``registered`` coverage key) for rows imported before the catalog id
-        was persisted.
+        1. The API already imported from this entry (``catalog_entry_id``): a
+           re-import updates it.
+        2. An API holding the entry's ``catalog_api_id`` without a recorded entry
+           (imported before entry ids were recorded): the import adopts it.
+        3. An API holding the ``catalog_api_id`` imported from another entry: with
+           ``switch_source`` the import supersedes that API (its credentials now
+           point at this entry's spec); without, it takes a distinct name seeded
+           from ``{source_slug}~…`` and leaves that API untouched.
+        4. Otherwise a fresh, clash-aware name.
         """
         async with self._ctx.registry_db.session() as session:
-            if entry.api_id:
-                by_catalog_id = await ApiRepository.identity_for_catalog_api_id(
-                    session, entry.api_id
-                )
-                if by_catalog_id is not None:
-                    return by_catalog_id
-            if not entry.registered or not entry.spec_url:
-                return None
-            return await ApiRevisionRepository.registered_identity_for_source_url(
-                session, entry.spec_url
+            own = await ApiRepository.identity_for_catalog_entry_id(session, entry.entry_id)
+            holders = (
+                []
+                if own is not None
+                else await ApiRepository.catalog_holders(session, entry.catalog_api_id)
             )
-
-    async def _derived_api_name(self, entry: CatalogEntryView) -> str:
-        """The clash-aware ``api_name`` seed for a first import of ``entry``."""
-        async with self._ctx.registry_db.session() as session:
-            raw = await CatalogRepository.entries(session)
-        manifest_ids = [d["api_id"] for d in raw if isinstance(d.get("api_id"), str)]
-        return mb.catalog_api_name(entry.api_id, manifest_ids)
-
-    async def _import_source_for(
-        self, entry: CatalogEntryView, identity: Identity
-    ) -> dict[str, str]:
-        """``_to_import_source`` landing on the stored identity, else a clash-aware name."""
-        registered = await self._registered_identity(entry)
-        if registered is not None:
-            return self._to_import_source(entry, identity, vendor=registered[0], name=registered[1])
-        derived = await self._derived_api_name(entry) if entry.api_id else None
-        return self._to_import_source(entry, identity, name=derived)
+        if own is not None:
+            return own
+        unrecorded = [h for h in holders if h.catalog_entry_id is None]
+        if unrecorded:
+            return unrecorded[0].vendor, unrecorded[0].name
+        derived = mb.catalog_api_name(entry.catalog_api_id, catalog_ids)
+        if not holders:
+            return None, derived
+        if switch_source:
+            target = next((h for h in holders if h.is_current), holders[0])
+            logger.info(
+                "catalog_source_switch",
+                entry_id=entry.entry_id,
+                api_id=str(target.id),
+                previous_entry_id=target.catalog_entry_id,
+            )
+            return target.vendor, target.name
+        return None, f"{entry.source_slug}{NAMESPACE_SEPARATOR}{derived}"
 
     async def _authorize_overlay_supersede(
-        self, entry: CatalogEntryView, identity: Identity
+        self, entry: CatalogEntry, spec_url: str, identity: Identity
     ) -> str | None:
-        """Gate a re-import that would supersede a live confirmed overlay (A4b).
+        """Gate a re-import that would supersede a live confirmed overlay.
 
         Returns the overlay id to auto-deprecate when the caller is authorized to
         supersede it (so the enqueued job can stamp ``supersede_overlay_id``), ``None``
@@ -939,17 +1113,12 @@ class CatalogService:
         caller lacks ``overlays:confirm`` — re-emitting an operator-facing conflict event
         so the fix is not silently discarded.
 
-        The check keys on the catalog entry's ``spec_url`` (the upstream provenance) to
-        find the locally-served current revision and asks whether that revision *is* a
-        confirmed overlay's materialization. Only that case is a supersede; a plain
-        catalog-origin current revision imports normally.
+        The check keys on the entry's spec URL (the upstream provenance) to find the
+        locally served current revision and asks whether that revision *is* a confirmed
+        overlay's materialization. Only that case is a supersede.
         """
-        if not entry.spec_url:
-            return None
         async with self._ctx.registry_db.session() as session:
-            current = await ApiRevisionRepository.current_revision_for_source_url(
-                session, entry.spec_url
-            )
+            current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
             if current is None:
                 return None
             api_id, current_revision_id = current
@@ -964,14 +1133,11 @@ class CatalogService:
 
         # Refuse: do not enqueue a silent revert. Re-surface the conflict for an operator
         # who can decide (confirm-scope holder), keyed on api_id so it settles on resolve.
-        # Intentionally NOT digest-deduped (unlike the sweep): each refused attempt is a
-        # distinct operator-relevant signal, and they all settle together on the eventual
-        # authorized import.
+        # Each refused attempt is a distinct operator-relevant signal, so it is not
+        # digest-deduped; they all settle together on the eventual authorized import.
         #
-        # The refusing actor is recorded via structlog (server-side, not exposed by the
-        # events API) rather than in the event ``data`` — event payloads are readable by any
-        # ``events:read`` holder, and the actor subject is attribution that belongs in logs/
-        # audit, not a broadly-readable notification.
+        # The refusing actor goes to structlog (server-side) rather than the event
+        # ``data``: event payloads are readable by any ``events:read`` holder.
         logger.info(
             "overlay_supersede_refused",
             api_id=str(api_id),
@@ -984,7 +1150,7 @@ class CatalogService:
                 type=EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
                 severity=EventSeverity.INFO,
                 summary=(
-                    f"Re-import of {entry.api_id} was refused: adopting upstream would "
+                    f"Re-import of {entry.entry_id} was refused: adopting upstream would "
                     f"supersede confirmed overlay {overlay.id} "
                     "(needs catalog:import + overlays:confirm)"
                 ),
@@ -993,29 +1159,55 @@ class CatalogService:
                 data={
                     "api_id": str(api_id),
                     "overlay_id": overlay.id,
-                    "spec_url": entry.spec_url,
+                    "spec_url": spec_url,
                     "event_class": EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
                 },
             )
-        raise OverlaySupersedeForbiddenError(entry.api_id, overlay.id)
+        raise OverlaySupersedeForbiddenError(entry.entry_id, overlay.id)
 
-    async def import_entry(self, api_id: str, identity: Identity) -> str:
-        """Enqueue an async url-import for a catalog entry; return the job id.
+    async def import_entry(
+        self,
+        entry_id: str,
+        identity: Identity,
+        *,
+        switch_source: bool = False,
+        permissions: frozenset[str] | None = None,
+    ) -> str:
+        """Enqueue an async url-import for a visible catalog entry; return the job id.
+
+        ``permissions`` is the visibility set (the caller's effective permissions
+        by default). ``switch_source`` lets the import supersede an API imported
+        from another entry with the same ``catalog_api_id``; it needs
+        ``credentials:write`` (``SourceSwitchForbiddenError`` otherwise) and is a
+        no-op when there is no such API.
 
         If re-importing would supersede a live confirmed overlay, the caller must hold
-        ``overlays:confirm`` (A4b); an authorized supersede stamps ``supersede_overlay_id``
-        on the job so the worker auto-deprecates the overlay in the re-ingest transaction.
-        An unauthorized caller is refused (``OverlaySupersedeForbiddenError``) rather than
-        silently reverting the operator's fix.
+        ``overlays:confirm``; an authorized supersede stamps ``supersede_overlay_id``
+        on the job so the worker auto-deprecates the overlay in the re-ingest
+        transaction, and an unauthorized caller is refused
+        (``OverlaySupersedeForbiddenError``) rather than silently reverting the fix.
 
         If the re-import would change the server hosts of an API with bound credentials,
         only a caller holding ``credentials:write`` makes it current; otherwise the worker
         keeps the new revision as a draft for operator review (see
         ``registry/ingest/host_change_guard.py``).
         """
-        entry = await self.get(api_id)
-        supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
-        source = await self._import_source_for(entry, identity)
+        effective = _effective(identity)
+        if switch_source and CREDENTIALS_WRITE not in effective:
+            raise SourceSwitchForbiddenError()
+        state, entry = await self._visible_entry(
+            entry_id,
+            permissions=effective if permissions is None else permissions,
+            actor_id=identity.sub or None,
+        )
+        spec_url = self._spec_url(state, entry)
+        supersede_overlay_id = await self._authorize_overlay_supersede(entry, spec_url, identity)
+        vendor, name = await self._import_target(
+            entry,
+            catalog_ids={e.catalog_api_id for e in state.snapshot.entries},
+            switch_source=switch_source,
+        )
+        source = self._to_import_source(entry, spec_url, identity, vendor=vendor, name=name)
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         if may_approve_host_change(identity.permissions):
@@ -1038,31 +1230,35 @@ class CatalogService:
         record_reimport_from_catalog()
         return job_id
 
+    # ── snooze ───────────────────────────────────────────────────────────────
+
     async def snooze_entry(
-        self, api_id: str, identity: Identity, *, until: datetime | None = None
+        self, entry_id: str, identity: Identity, *, until: datetime | None = None
     ) -> None:
-        """Snooze the outstanding update notification for a catalog entry (C1, #925).
+        """Snooze the outstanding update notification for a visible catalog entry.
 
-        Operator action: quiet the "update available" badge for a known-and-accepted upstream
-        change without adopting it. Requires ``events:write`` (the existing operator scope for
-        managing platform events; not held by default agents) — a low-privilege agent must not
-        be able to hide a real upstream drift. Resolves the catalog entry's ``spec_url`` to the
-        local ``api_id`` via the served revision, pins the snooze to the digest the sweep last
-        notified for (so a genuinely newer change re-lights the badge), and audits it.
+        Operator action: quiet the "update available" badge for a known-and-accepted
+        upstream change without adopting it. Requires ``events:write`` — a
+        low-privilege agent must not be able to hide a real upstream drift. Resolves
+        the entry's spec URL to the local API via the served revision, pins the snooze
+        to the digest the sweep last notified for (so a genuinely newer change
+        re-lights the badge), and audits it.
 
-        ``until=None`` mutes until a newer upstream digest lands (mute-per-API, the primary
-        affordance); a future ``until`` is a time-boxed snooze.
+        ``until=None`` mutes until a newer upstream digest lands; a future ``until`` is
+        a time-boxed snooze.
         """
         self._require_snooze_permission(identity)
-        entry = await self.get(api_id)
+        state, entry = await self._visible_entry(
+            entry_id, permissions=_effective(identity), actor_id=identity.sub or None
+        )
         async with self._ctx.registry_db.transaction() as session:
-            resolved = await self._resolve_local_api(session, entry)
+            resolved = await self._resolve_local_api(session, state, entry)
             if resolved is None:
-                raise CatalogEntryNotFoundError(api_id)
+                raise CatalogEntryNotFoundError(entry_id)
             local_api_id, check = resolved
             digest = check.last_notified_digest if check is not None else None
             if digest is None:
-                raise NothingToSnoozeError(api_id)
+                raise NothingToSnoozeError(entry_id)
             await CatalogUpdateCheckRepository.snooze(
                 session, local_api_id, digest=digest, until=until
             )
@@ -1081,14 +1277,16 @@ class CatalogService:
             origin=None,
         )
 
-    async def unsnooze_entry(self, api_id: str, identity: Identity) -> None:
-        """Clear a snooze for a catalog entry (C1). Operator-gated (``events:write``)."""
+    async def unsnooze_entry(self, entry_id: str, identity: Identity) -> None:
+        """Clear a snooze for a visible catalog entry. Operator-gated (``events:write``)."""
         self._require_snooze_permission(identity)
-        entry = await self.get(api_id)
+        state, entry = await self._visible_entry(
+            entry_id, permissions=_effective(identity), actor_id=identity.sub or None
+        )
         async with self._ctx.registry_db.transaction() as session:
-            resolved = await self._resolve_local_api(session, entry)
+            resolved = await self._resolve_local_api(session, state, entry)
             if resolved is None:
-                raise CatalogEntryNotFoundError(api_id)
+                raise CatalogEntryNotFoundError(entry_id)
             local_api_id, _ = resolved
             await CatalogUpdateCheckRepository.unsnooze(session, local_api_id)
         await record_audit_best_effort(
@@ -1108,43 +1306,21 @@ class CatalogService:
         if not has_effective_permission(identity.permissions, "events:write"):
             raise SnoozeForbiddenError()
 
+    @staticmethod
     async def _resolve_local_api(
-        self, session: Any, entry: CatalogEntryView
+        session: Any, state: _ReadState, entry: CatalogEntry
     ) -> tuple[uuid.UUID, Any] | None:
-        """Resolve a catalog entry to its local ``(api_id, check_row)`` via the served spec_url.
+        """Resolve an entry to its local ``(api_id, check_row)`` via the served spec URL.
 
-        Returns ``None`` when the entry isn't registered locally (no served revision whose
-        ``source_url`` matches the manifest ``spec_url``) — the caller maps that to a 404.
+        ``None`` when no served revision's ``source_url`` matches the entry's spec
+        URL — the caller maps that to a 404.
         """
-        if entry.spec_url is None:
+        spec_url = state.snapshot.spec_urls.get(entry.entry_id)
+        if spec_url is None:
             return None
-        current = await ApiRevisionRepository.current_revision_for_source_url(
-            session, entry.spec_url
-        )
+        current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
         if current is None:
             return None
         local_api_id, _revision_id = current
         check = await CatalogUpdateCheckRepository.get(session, local_api_id)
         return local_api_id, check
-
-    async def ensure_imported(self, api_id: str, identity: Identity) -> str | None:
-        """Hand-off seam for the Credentials PR (B6, deferred).
-
-        Idempotently enqueue an import for ``api_id`` unless it is already
-        registered locally (its ``spec_url`` already backs a non-archived
-        revision — the same coverage key ``GET /catalog`` uses, not a vendor
-        guess). Returns the job id when enqueued, ``None`` when the entry is
-        already registered (no-op). APIs only — no workflow side effects.
-        """
-        entry = await self.get(api_id)
-        if entry.registered:
-            return None
-        source = await self._import_source_for(entry, identity)
-        async with self._ctx.admin_db.transaction() as session:
-            return await enqueue_job(
-                session,
-                JobKind.IMPORT,
-                created_by=identity.sub,
-                actor_type=identity.actor_type,
-                payload={"sources": [source]},
-            )

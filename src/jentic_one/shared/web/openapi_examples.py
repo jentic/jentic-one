@@ -76,6 +76,7 @@ API_VERSION = "2024-04-10"
 API_REF = f"{API_VENDOR}:{API_NAME}:{API_VERSION}"  # ``vendor[:name[:version]]`` filter
 API_VENDOR_NAME = f"{API_VENDOR}/{API_NAME}"  # ``vendor/name`` monitoring filter
 CATALOG_API_ID = "stripe.com"  # catalog manifest identity: ``domain[/sub-api]``
+CATALOG_ENTRY_ID = f"public/{CATALOG_API_ID}"  # ``{source_slug}/{external_id}``
 OPERATION_ID = "listCharges"
 OPERATION_METHOD_URL = "GET https://api.stripe.com/v1/charges"
 VENDOR_KEY = "github"  # vendor-registry key (connect flow / auth capabilities)
@@ -127,6 +128,7 @@ _VALUE_SUMMARIES: dict[str, str] = {
     RULE_SET_ID: "Permission rule set ID",
     OVERLAY_ID: "Overlay ID",
     CONNECT_SESSION_ID: "Connect session ID",
+    CATALOG_ENTRY_ID: "Catalog entry ID",
     OAUTH_APP_REGISTRATION_ID: "OAuth app registration ID",
     OAUTH_CLIENT_RECORD_ID: "OAuth client record ID",
     OAUTH_GRANT_ID: "OAuth consent grant ID",

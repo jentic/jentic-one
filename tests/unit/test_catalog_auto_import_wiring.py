@@ -18,7 +18,7 @@ from jentic_one.wiring import InProcessCatalogAutoImporter
 
 def _catalog_service() -> MagicMock:
     svc = MagicMock()
-    svc.get = AsyncMock(return_value=MagicMock(registered=False))
+    svc.resolve = AsyncMock(return_value=MagicMock(entry_id="public/stripe.com"))
     svc.import_entry = AsyncMock(return_value="job_1")
     return svc
 
@@ -29,12 +29,16 @@ def _catalog_service() -> MagicMock:
 )
 async def test_auto_import_attributes_live_actor(initiator: str, actor_type: ActorType) -> None:
     svc = _catalog_service()
-    with patch("jentic_one.wiring.CatalogService", return_value=svc):
+    with (
+        patch("jentic_one.wiring.CatalogService", return_value=svc),
+        patch.object(InProcessCatalogAutoImporter, "_holder", AsyncMock(return_value=None)),
+    ):
         job_id = await InProcessCatalogAutoImporter(MagicMock()).ensure_imported(
-            api_id="stripe.com", initiator_actor_id=initiator
+            catalog_api_id="stripe.com", initiator_actor_id=initiator
         )
     assert job_id == "job_1"
     assert svc.import_entry.await_args is not None
+    assert svc.import_entry.await_args.args[0] == "public/stripe.com"
     identity = svc.import_entry.await_args.args[1]
     assert identity.sub == initiator
     assert identity.actor_type == actor_type
@@ -44,10 +48,11 @@ async def test_auto_import_skips_retired_service_account_initiator() -> None:
     svc = _catalog_service()
     with (
         patch("jentic_one.wiring.CatalogService", return_value=svc),
+        patch.object(InProcessCatalogAutoImporter, "_holder", AsyncMock(return_value=None)),
         structlog.testing.capture_logs() as logs,
     ):
         job_id = await InProcessCatalogAutoImporter(MagicMock()).ensure_imported(
-            api_id="stripe.com", initiator_actor_id="sva_legacy"
+            catalog_api_id="stripe.com", initiator_actor_id="sva_legacy"
         )
     assert job_id is None
     svc.import_entry.assert_not_awaited()

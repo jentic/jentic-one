@@ -174,9 +174,7 @@ class CatalogSourceSync:
     def __init__(self, ctx: Context, *, deps_factory: DepsFactory | None = None) -> None:
         self._ctx = ctx
         self._catalog = ctx.config.catalog
-        self._sources: dict[str, CatalogSourceConfig] = {
-            s.slug: s for s in self._catalog.effective_sources()
-        }
+        self._sources: dict[str, CatalogSourceConfig] = {s.slug: s for s in self._catalog.sources}
         self._mappings = [
             CatalogApiIdMapping.from_config(m) for m in self._catalog.catalog_api_id_mappings
         ]
@@ -268,18 +266,14 @@ class CatalogSourceSync:
         """Flag enabled, auto-syncing sources whose last sync is older than their max age.
 
         The read path calls this instead of syncing inline; the scanner drains it.
-        The legacy source is never flagged here: the catalog snapshot refresh,
-        which already fetches its manifest, syncs it in the same pass.
         """
         now = utcnow()
-        legacy = self._catalog.legacy_source_slug
         async with self._ctx.registry_db.transaction() as session:
             rows = {r.slug: r for r in await CatalogSourceRepository.list_all(session)}
             stale = [
                 cfg.slug
                 for cfg in self._sources.values()
-                if cfg.slug != legacy
-                and (row := rows.get(cfg.slug)) is not None
+                if (row := rows.get(cfg.slug)) is not None
                 and is_due(cfg, row, now=now)
                 and row.sync_wanted_at is None
             ]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
@@ -34,6 +36,7 @@ from jentic_one.registry.services.errors import (
     RevisionStateConflictError,
     SearchUnavailableError,
     SnoozeForbiddenError,
+    SourceSwitchForbiddenError,
     SpecFileMissingError,
     TooManyCandidatesError,
 )
@@ -63,7 +66,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # is an operator action requiring overlays:confirm. A caller with only apis:write is
     # refused with 403 rather than silently rewriting what the platform serves.
     OverlayRematerializeForbiddenError: (403, "overlay_rematerialize_forbidden"),
-    # Snooze/mute (C1): quieting a real upstream-drift notification is an operator
+    # Re-pointing an API (and its credentials) at another catalog source is an
+    # operator action (credentials:write).
+    SourceSwitchForbiddenError: (403, "source_switch_forbidden"),
+    # Snooze/mute: quieting a real upstream-drift notification is an operator
     # event-management action (events:write). A caller without it gets 403.
     SnoozeForbiddenError: (403, "snooze_forbidden"),
     OverlayStateConflictError: (409, "overlay_conflict"),
@@ -119,9 +125,15 @@ _SAFE_DETAILS: dict[type[Exception], str] = {
 def _add_allow_header(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
-    """Add Allow header for 405 responses when the exception carries allowed_methods."""
+    """Add Allow header for 405s; add ``did_you_mean`` to a catalog-entry 404 that has one."""
     if status_code == 405 and hasattr(exc, "allowed_methods"):
         response.headers["Allow"] = ", ".join(exc.allowed_methods)
+    if isinstance(exc, CatalogEntryNotFoundError) and exc.did_you_mean is not None:
+        body = json.loads(bytes(response.body))
+        body["did_you_mean"] = exc.did_you_mean
+        return JSONResponse(
+            status_code=status_code, content=body, media_type="application/problem+json"
+        )
     return response
 
 
