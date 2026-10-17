@@ -106,12 +106,17 @@ sequenceDiagram
    agent signs a short-lived assertion (≤ 5 minutes, single-use `jti`) with
    its private key; the auth surface verifies it against the registered
    JWKS and mints an opaque access/refresh token pair, recorded in the
-   admin DB. Two scope caveats: the `jti` replay cache is **process-local**
-   (an in-memory dict, not the shared-state backend), so with multiple auth
-   replicas an assertion is single-use per replica, not per instance; and
-   the `exp`/`iat` checks run with **zero clock leeway**, so a client clock
-   more than a few seconds fast produces `iat` rejections — keep both ends
-   on NTP.
+   admin DB. The `jti` is single-use per issuing agent across the whole
+   instance: the exchange records it in the admin DB's `assertion_jtis`
+   table (a SHA-256 digest of the claim, never the claim or the assertion),
+   in the same transaction that verifies it, and a second exchange with the
+   same `(agent, jti)` is refused by any auth replica. A record lives until
+   the assertion's `exp` plus a 120-second grace on the database clock, so
+   an auth host whose clock lags the database by up to that much still
+   refuses a replay; expired records are pruned in small batches on each
+   exchange. The `exp`/`iat` checks run with **zero clock leeway**, so a
+   client clock more than a few seconds fast produces `iat` rejections —
+   keep agents, auth hosts and the database on NTP.
 
 Operators and the SPA use session JWTs minted at login; agent API
 keys (`jak_`, plus legacy `jntc_live_` plaintexts that resolve as their
