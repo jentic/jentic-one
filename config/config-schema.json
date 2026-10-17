@@ -155,6 +155,27 @@
     "BrokerConfig": {
       "description": "Broker surface configuration.",
       "properties": {
+        "discovery_cache_max_entries": {
+          "default": 10000,
+          "description": "LRU bound on entries in the per-process route-discovery cache.",
+          "minimum": 1,
+          "title": "Discovery Cache Max Entries",
+          "type": "integer"
+        },
+        "discovery_cache_negative_ttl_s": {
+          "default": 0.0,
+          "description": "TTL (seconds) for caching an unmatched URL (the operation_not_found 404) in the route-discovery cache, capped at discovery_cache_ttl_s. 0 (the default) never caches a miss, so a newly imported API is reachable on the next call.",
+          "minimum": 0,
+          "title": "Discovery Cache Negative Ttl S",
+          "type": "number"
+        },
+        "discovery_cache_ttl_s": {
+          "default": 3.0,
+          "description": "TTL (seconds) of the per-process route-discovery cache (METHOD+URL to operation). A promote, archive, import or delete committed in the same process invalidates it at once; other processes see the change once the TTL lapses. Authorization and egress checks never read it. 0 disables the cache.",
+          "minimum": 0,
+          "title": "Discovery Cache Ttl S",
+          "type": "number"
+        },
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },

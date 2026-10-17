@@ -1699,6 +1699,32 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    discovery_cache_ttl_s: float = Field(
+        default=3.0,
+        ge=0,
+        description=(
+            "TTL (seconds) of the per-process route-discovery cache (METHOD+URL "
+            "to operation). A promote, archive, import or delete committed in the "
+            "same process invalidates it at once; other processes see the change "
+            "once the TTL lapses. Authorization and egress checks never read it. "
+            "0 disables the cache."
+        ),
+    )
+    discovery_cache_negative_ttl_s: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "TTL (seconds) for caching an unmatched URL (the operation_not_found "
+            "404) in the route-discovery cache, capped at discovery_cache_ttl_s. "
+            "0 (the default) never caches a miss, so a newly imported API is "
+            "reachable on the next call."
+        ),
+    )
+    discovery_cache_max_entries: int = Field(
+        default=10_000,
+        ge=1,
+        description="LRU bound on entries in the per-process route-discovery cache.",
+    )
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.

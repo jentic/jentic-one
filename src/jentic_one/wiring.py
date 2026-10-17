@@ -27,6 +27,7 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy import select
 
+from jentic_one.broker.core.discovery_cache import DiscoveryCache
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
     install_mcp_mount,
@@ -40,6 +41,7 @@ from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
+from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.actors import actor_type_from_id
@@ -54,14 +56,37 @@ class InProcessRegistryResolver:
     Opens a short-lived read-only session against the registry DB per call and
     delegates to the registry's ``RegistryService``. Holds the ``DatabaseSession``
     factory (not a live session) so it is safe to share across requests.
+
+    With a ``discovery_cache``, ``resolve_operation`` is served from it (no
+    session) while the cached route is fresh. ``resolve_revision_pin`` decides
+    the caller's pin rights, so it always reads the DB.
     """
 
-    def __init__(self, registry_db: DatabaseSession, *, ctx: Context | None = None) -> None:
+    def __init__(
+        self,
+        registry_db: DatabaseSession,
+        *,
+        ctx: Context | None = None,
+        discovery_cache: DiscoveryCache | None = None,
+    ) -> None:
         self._registry_db = registry_db
         self._ctx = ctx
+        self._discovery_cache = discovery_cache
 
     async def resolve_operation(
         self, *, method: str, url: str, revision_id: uuid.UUID | None = None
+    ) -> ResolveResult | None:
+        if self._discovery_cache is None:
+            return await self._lookup_operation(method=method, url=url, revision_id=revision_id)
+        return await self._discovery_cache.resolve(
+            method=method,
+            url=url,
+            revision_id=revision_id,
+            load=lambda: self._lookup_operation(method=method, url=url, revision_id=revision_id),
+        )
+
+    async def _lookup_operation(
+        self, *, method: str, url: str, revision_id: uuid.UUID | None
     ) -> ResolveResult | None:
         async with self._registry_db.session() as session:
             return await RegistryService(session).resolve_operation(
@@ -88,8 +113,25 @@ class InProcessRegistryResolver:
 
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
-    """Inject the in-process registry resolver onto the broker app state."""
-    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
+    """Inject the in-process registry resolver onto the broker app state.
+
+    Route discovery is cached per process unless ``broker.discovery_cache_ttl_s``
+    is 0.
+    """
+    app.state.broker_registry_resolver = InProcessRegistryResolver(
+        ctx.registry_db, ctx=ctx, discovery_cache=build_discovery_cache(ctx.config.broker)
+    )
+
+
+def build_discovery_cache(broker: BrokerConfig) -> DiscoveryCache | None:
+    """The route-discovery cache the broker config asks for, or ``None`` when disabled."""
+    if broker.discovery_cache_ttl_s <= 0:
+        return None
+    return DiscoveryCache(
+        ttl_s=broker.discovery_cache_ttl_s,
+        negative_ttl_s=broker.discovery_cache_negative_ttl_s,
+        max_entries=broker.discovery_cache_max_entries,
+    )
 
 
 class InProcessCatalogAutoImporter:

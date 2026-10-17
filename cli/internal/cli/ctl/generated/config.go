@@ -217,6 +217,20 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
+	// LRU bound on entries in the per-process route-discovery cache.
+	DiscoveryCacheMaxEntries int `json:"discovery_cache_max_entries,omitempty,omitzero" yaml:"discovery_cache_max_entries,omitempty" mapstructure:"discovery_cache_max_entries,omitempty"`
+
+	// TTL (seconds) for caching an unmatched URL (the operation_not_found 404) in the
+	// route-discovery cache, capped at discovery_cache_ttl_s. 0 (the default) never
+	// caches a miss, so a newly imported API is reachable on the next call.
+	DiscoveryCacheNegativeTtlS float64 `json:"discovery_cache_negative_ttl_s,omitempty,omitzero" yaml:"discovery_cache_negative_ttl_s,omitempty" mapstructure:"discovery_cache_negative_ttl_s,omitempty"`
+
+	// TTL (seconds) of the per-process route-discovery cache (METHOD+URL to
+	// operation). A promote, archive, import or delete committed in the same process
+	// invalidates it at once; other processes see the change once the TTL lapses.
+	// Authorization and egress checks never read it. 0 disables the cache.
+	DiscoveryCacheTtlS float64 `json:"discovery_cache_ttl_s,omitempty,omitzero" yaml:"discovery_cache_ttl_s,omitempty" mapstructure:"discovery_cache_ttl_s,omitempty"`
+
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -270,6 +284,24 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["discovery_cache_max_entries"]; !ok || v == nil {
+		plain.DiscoveryCacheMaxEntries = 10000
+	}
+	if 1 > plain.DiscoveryCacheMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_max_entries", 1)
+	}
+	if v, ok := raw["discovery_cache_negative_ttl_s"]; !ok || v == nil {
+		plain.DiscoveryCacheNegativeTtlS = 0.0
+	}
+	if 0 > plain.DiscoveryCacheNegativeTtlS {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_negative_ttl_s", 0)
+	}
+	if v, ok := raw["discovery_cache_ttl_s"]; !ok || v == nil {
+		plain.DiscoveryCacheTtlS = 3.0
+	}
+	if 0 > plain.DiscoveryCacheTtlS {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_ttl_s", 0)
 	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0
