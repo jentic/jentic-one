@@ -20,6 +20,7 @@ the ini ``error`` filter still applies.
 from __future__ import annotations
 
 import warnings
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -31,15 +32,17 @@ from sqlalchemy.exc import SADeprecationWarning
 def fail_on_sqlalchemy_deprecations() -> Iterator[None]:
     """Record SQLAlchemy deprecation warnings in the block and fail if any occurred.
 
-    Raises ``AssertionError`` on exit listing each ``file:line: message``.
+    Raises ``AssertionError`` on exit listing each distinct ``file:line: message``
+    once, in first-seen order, with a ``(x N)`` count when it fired more than once
+    (a deprecated call in a loop records one warning per iteration).
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", SADeprecationWarning)
         yield
-    hits: list[str] = []
+    hits: Counter[str] = Counter()
     for record in caught:
         if issubclass(record.category, SADeprecationWarning):
-            hits.append(f"{record.filename}:{record.lineno}: {record.message}")
+            hits[f"{record.filename}:{record.lineno}: {record.message}"] += 1
         else:
             warnings.warn_explicit(
                 record.message,
@@ -48,7 +51,11 @@ def fail_on_sqlalchemy_deprecations() -> Iterator[None]:
                 record.lineno,
                 source=record.source,
             )
-    assert not hits, "SQLAlchemy deprecation warning(s) raised during the test:\n" + "\n".join(hits)
+    if hits:
+        raise AssertionError(
+            "SQLAlchemy deprecation warning(s) raised during the test:\n"
+            + "\n".join(hit if n == 1 else f"{hit} (x {n})" for hit, n in hits.items())
+        )
 
 
 @pytest.fixture(autouse=True)
