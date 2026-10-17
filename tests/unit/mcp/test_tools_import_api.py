@@ -24,7 +24,7 @@ from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
-from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_api_id
+from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_entry_id
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
@@ -135,10 +135,10 @@ class _FakeCatalogService:
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
 
-    async def import_entry(self, api_id: str, identity: Identity) -> str:
+    async def import_entry(self, entry_id: str, identity: Identity) -> str:
         if _FakeCatalogService.import_error is not None:
             raise _FakeCatalogService.import_error
-        _FakeCatalogService.filed.append(api_id)
+        _FakeCatalogService.filed.append(entry_id)
         return "job_9"
 
 
@@ -220,13 +220,14 @@ def services(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tools_mod, "_IMPORT_POLL_MAX_SECONDS", 0.002)
 
 
-# ── validation arms (Go: MissingAPIID / TraversalAPIID) ──────────────────────
+# ── validation arms (Go: MissingEntryID / TraversalEntryID) ──────────────────
 
 
-async def test_missing_api_id_is_invalid_params(services: None) -> None:
+async def test_missing_entry_id_is_invalid_params(services: None) -> None:
     with pytest.raises(MCPError) as err:
         await tools_mod.handle_import_api(_env(["catalog:import", "jobs:read"]), {})
-    assert "api_id" in str(err.value)
+    for spelling in ("entry_id", "api_id", '"id"', '"api"'):
+        assert spelling in str(err.value)
     assert "search_catalog" in str(err.value)
 
 
@@ -237,21 +238,38 @@ async def test_missing_api_id_is_invalid_params(services: None) -> None:
         "/catalog/x",
         "a//b",
         "a/./b",
-        "googleapis.com/sheets/..",
-        "googleapis.com/",
+        "public/googleapis.com/sheets/..",
+        "public/googleapis.com/",
+        "public/a\x00b",
+        "public/a\x7fb",
+        "public/" + "x" * 320,
     ],
 )
-async def test_traversal_api_id_is_invalid_params(services: None, bad: str) -> None:
-    """The Go ``validateAPIID`` contract: traversal-shaped ids are refused as
-    a correctable protocol error before any service call."""
+async def test_malformed_entry_id_is_invalid_params(services: None, bad: str) -> None:
+    """The Go ``checkEntryID`` contract: traversal-shaped, control-character
+    and oversized ids are refused as a correctable protocol error before any
+    service call."""
     with pytest.raises(MCPError) as err:
-        await tools_mod.handle_import_api(_env(["catalog:import", "jobs:read"]), {"api_id": bad})
+        await tools_mod.handle_import_api(_env(["catalog:import", "jobs:read"]), {"entry_id": bad})
     assert "search_catalog" in str(err.value)
     assert _FakeCatalogService.filed == []
 
 
-def test_umbrella_api_id_with_literal_slash_stays_accepted() -> None:
-    validate_api_id("googleapis.com/sheets")  # must not raise
+@pytest.mark.parametrize(
+    "good", ["public/googleapis.com/sheets", "internal/aws-prod~stripe.com", "stripe.com"]
+)
+def test_real_entry_ids_stay_accepted(good: str) -> None:
+    validate_entry_id(good)  # must not raise
+
+
+@pytest.mark.parametrize("spelling", ["entry_id", "api_id", "id", "api"])
+async def test_every_alias_files_the_same_entry(services: None, spelling: str) -> None:
+    """``entry_id`` with ``api_id``/``id``/``api`` aliases (Go: AcceptsEveryAlias)."""
+    _FakeJobService.statuses = [_job("running")]
+    env = _env(["catalog:import"])
+    result = await dispatch_tool_call(env, "import_api", {spelling: "public/googleapis.com/sheets"})
+    assert not result.is_error, result.content
+    assert _FakeCatalogService.filed == ["public/googleapis.com/sheets"]
 
 
 # ── scope gate (Go: 403IsOperatorScopeGrant) ─────────────────────────────────
@@ -260,11 +278,13 @@ def test_umbrella_api_id_with_literal_slash_stays_accepted() -> None:
 async def test_missing_scope_is_broker_denied_routed_to_operator(
     services: None,
 ) -> None:
-    """The same gate as POST /catalog/{api_id}:import (catalog:import).
+    """The same gate as POST /catalog/{entry_id}:import (catalog:import).
     Access requests are retired: the scope grant is an operator action in the
     dashboard, so the denial carries an ask-your-operator step and no tool
     pointer."""
-    result = await dispatch_tool_call(_env([]), "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        _env([]), "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
@@ -284,15 +304,17 @@ async def test_missing_jobs_read_degrades_to_the_filed_envelope_without_polling(
     (the filing succeeded) — and the job service is never touched. Both
     permissions ride DEFAULT_AGENT_PERMISSIONS, so defaults are unaffected."""
     env = _env(["catalog:import"])  # no jobs:read
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, "a missing poll scope degrades; the filing still succeeded"
     payload = _payload(result)
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["job_id"] == "job_9"
     assert payload["status"] == "queued"
     assert "revisions" not in payload
     assert "promoted" not in payload
-    assert _FakeCatalogService.filed == ["googleapis.com/sheets"]
+    assert _FakeCatalogService.filed == ["public/googleapis.com/sheets"]
     assert _FakeJobService.polls == 0, "no jobs:read → no job polling"
 
 
@@ -303,18 +325,18 @@ async def test_completed_import_promotes_and_returns_the_go_envelope(services: N
     """The happy path: track to completion, fetch the result, promote the
     draft revision live — {schema_version, job_id, status, revisions,
     promoted} with the instance stamp joined. Uses the ``id`` alias and an
-    umbrella api_id with its literal slash, like the Go test."""
+    entry_id with its literal slashes, like the Go test."""
     _FakeJobService.statuses = [_job("running"), _job("completed")]
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(env, "import_api", {"id": "public/googleapis.com/sheets"})
     assert not result.is_error, result.content
     payload = _payload(result)
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["job_id"] == "job_9"
     assert payload["status"] == "completed"
     assert payload["revisions"] == [_DRAFT_REVISION]
     assert payload["promoted"] == {"rev_1": "live"}
-    assert _FakeCatalogService.filed == ["googleapis.com/sheets"]
+    assert _FakeCatalogService.filed == ["public/googleapis.com/sheets"]
     assert _FakeRevisionService.promotes == [("googleapis.com", "sheets", "v4", "rev_1")]
     assert "instance" in payload
 
@@ -327,7 +349,9 @@ async def test_budget_lapse_returns_the_running_job_as_a_normal_result(
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.0)
     _FakeJobService.statuses = [_job("running")]
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, result.content
     payload = _payload(result)
     assert payload["job_id"] == "job_9"
@@ -343,7 +367,9 @@ async def test_job_poll_failure_is_a_soft_error_never_still_running(services: No
     watching THIS job."""
     _FakeJobService.poll_error = RuntimeError("job store down")
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error, "a job-poll failure must never look like still-running"
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -368,7 +394,9 @@ async def test_hung_poll_trips_the_hard_ceiling_and_maps_to_the_poll_failure_arm
 
     monkeypatch.setattr(_FakeJobService, "get_by_id", _hang)
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error, "a ceiling lapse must never look like still-running"
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -389,13 +417,15 @@ async def test_hung_filing_trips_the_hard_ceiling_as_a_retryable_transport_lapse
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.01)
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_GRACE_SECONDS", 0.02)
 
-    async def _hang(self: Any, api_id: str, identity: Identity) -> str:
+    async def _hang(self: Any, entry_id: str, identity: Identity) -> str:
         await asyncio.Event().wait()  # never set — a filing that never returns
         raise AssertionError("unreachable")
 
     monkeypatch.setattr(_FakeCatalogService, "import_entry", _hang)
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error, "a filing lapse must never look like a clean filing"
     payload = _payload(result)
     assert payload["error_code"] == "TRANSPORT_ERROR"
@@ -412,7 +442,9 @@ async def test_hung_filing_trips_the_hard_ceiling_as_a_retryable_transport_lapse
 async def test_failed_job_is_internal_error_with_job_extras(services: None, terminal: str) -> None:
     _FakeJobService.statuses = [_job(terminal, error="spec fetch failed")]
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -446,10 +478,12 @@ async def test_duplicate_content_short_circuits_on_a_non_terminal_requeued_job(
     requeued state — and short-circuits instead of burning the wait budget."""
     _FakeJobService.statuses = [_job("queued", error=_real_duplicate_job_error())]
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, "already-present content is a convergence, not a failure"
     payload = _payload(result)
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["job_id"] == "job_9"
     assert payload["status"] == "already_imported"
     assert "already present" in payload["note"]
@@ -468,7 +502,9 @@ async def test_completed_job_with_stale_duplicate_error_reports_the_completed_re
     leg — never already_imported."""
     _FakeJobService.statuses = [_job("completed", error=_real_duplicate_job_error())]
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, result.content
     payload = _payload(result)
     assert payload["status"] == "completed", "a stale requeue error must not mask completion"
@@ -548,7 +584,9 @@ async def test_multi_source_dead_letter_never_short_circuits_the_import_tracker(
     would surface the honest failed-job arm, never already_imported."""
     _FakeJobService.statuses = [_job("dead_letter", error=_multi_source_duplicate_job_error())]
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error, "a partial duplicate is a failure, not a convergence"
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -570,7 +608,9 @@ async def test_promote_without_apis_write_soft_fails_without_calling_the_service
     touched; the import itself still succeeds."""
     _FakeJobService.statuses = [_job("completed")]
     env = _env(["catalog:import", "jobs:read"])  # no apis:write
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, "a promote failure is never a hard error"
     payload = _payload(result)
     assert payload["promoted"] == {"rev_1": "promote failed: missing apis:write permission"}
@@ -583,7 +623,9 @@ async def test_org_admin_implies_apis_write_via_the_implication_map(services: No
     string is absent from their grants."""
     _FakeJobService.statuses = [_job("completed")]
     env = _env(["org:admin"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error, result.content
     assert _payload(result)["promoted"] == {"rev_1": "live"}
 
@@ -597,7 +639,9 @@ async def test_promote_state_conflict_is_a_soft_map_entry(services: None) -> Non
         "rev_1", "imported", ["draft"], "promote"
     )
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error
     promoted = _payload(result)["promoted"]
     assert promoted["rev_1"].startswith("promote failed: ")
@@ -612,7 +656,9 @@ async def test_non_draft_revisions_map_to_their_state_verbatim(services: None) -
     _FakeJobService.statuses = [_job("completed")]
     _FakeJobResultService.body = {"revisions": [{**_DRAFT_REVISION, "state": "imported"}]}
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error
     assert _payload(result)["promoted"] == {"rev_1": "imported"}
     assert _FakeRevisionService.promotes == []
@@ -625,7 +671,9 @@ async def test_malformed_revision_entries_get_explicit_promote_failures(services
     _FakeJobService.statuses = [_job("completed")]
     _FakeJobResultService.body = {"revisions": ["not-a-dict", {"state": "draft"}]}
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert not result.is_error
     assert _payload(result)["promoted"] == {
         "revision[0]": "promote failed: malformed revision entry",
@@ -646,7 +694,9 @@ async def test_db_gate_refusal_is_a_soft_internal_error(services: None, blocked:
     truthy.)"""
     env = _env(["catalog:import", "jobs:read"])
     cast(MagicMock, env.ctx).is_db_allowed.side_effect = lambda db: db != blocked
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"
@@ -661,7 +711,7 @@ async def test_unknown_catalog_entry_is_invalid_params(services: None) -> None:
     _FakeCatalogService.import_error = CatalogEntryNotFoundError("nope/nothing")
     env = _env(["catalog:import", "jobs:read"])
     with pytest.raises(MCPError) as err:
-        await dispatch_tool_call(env, "import_api", {"api_id": "nope/nothing"})
+        await dispatch_tool_call(env, "import_api", {"entry_id": "nope/nothing"})
     assert err.value.error.code == mcp_types.INVALID_PARAMS
     assert "nope/nothing" in str(err.value)
     assert "search_catalog" in str(err.value)
@@ -685,7 +735,9 @@ async def test_overlay_supersede_refusal_maps_to_broker_denied(services: None) -
         "googleapis.com/sheets", "ovl_1"
     )
     env = _env(["catalog:import", "jobs:read"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
@@ -699,7 +751,9 @@ async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> No
     _FakeJobService.statuses = [_job("completed")]
     _FakeJobResultService.error = RuntimeError("result store down")
     env = _env(["catalog:import", "jobs:read", "apis:write"])
-    result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
+    result = await dispatch_tool_call(
+        env, "import_api", {"entry_id": "public/googleapis.com/sheets"}
+    )
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "INTERNAL_ERROR"

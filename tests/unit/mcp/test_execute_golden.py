@@ -198,7 +198,7 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
 
     payload = decode_tool_json(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["agent_directive"] == directive
     assert payload["actionable_step"] == directive["human_readable_instruction"]
     assert payload["details"] == {"http_status": 403}
