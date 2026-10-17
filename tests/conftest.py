@@ -8,7 +8,10 @@ import pytest
 
 from jentic_one.shared.dns_cache import clear_resolution_cache
 
-pytest_plugins = ("tests.harness.logging_isolation",)
+pytest_plugins = (
+    "tests.harness.logging_isolation",
+    "tests.harness.sqlalchemy_deprecations",
+)
 
 
 @pytest.fixture(autouse=True)
