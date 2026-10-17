@@ -1068,7 +1068,9 @@ class CatalogService:
         1. The API already imported from this entry (``catalog_entry_id``): a
            re-import updates it.
         2. An API holding the entry's ``catalog_api_id`` without a recorded entry
-           (imported before entry ids were recorded): the import adopts it.
+           (imported before entry ids were recorded, so from the legacy source):
+           an import of a legacy-source entry adopts it. For any other source it
+           counts as imported from another entry (step 3).
         3. An API holding the ``catalog_api_id`` imported from another entry: with
            ``switch_source`` the import supersedes that API (its credentials now
            point at this entry's spec); without, it takes a distinct name seeded
@@ -1084,9 +1086,10 @@ class CatalogService:
             )
         if own is not None:
             return own
-        unrecorded = [h for h in holders if h.catalog_entry_id is None]
-        if unrecorded:
-            return unrecorded[0].vendor, unrecorded[0].name
+        if entry.source_slug == self._cfg.legacy_source_slug:
+            unrecorded = [h for h in holders if h.catalog_entry_id is None]
+            if unrecorded:
+                return unrecorded[0].vendor, unrecorded[0].name
         derived = mb.catalog_api_name(entry.catalog_api_id, catalog_ids)
         if not holders:
             return None, derived
