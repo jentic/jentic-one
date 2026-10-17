@@ -41,6 +41,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
+from jentic_one.shared.web.auth_state import close_auth_state_backend
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.errors import (
     request_validation_error_handler,
@@ -577,6 +578,7 @@ def create_surface_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await close_auth_state_backend(app)
                 await ctx.shutdown()
 
     # ``server.public_base_url`` names the control/auth surfaces' origin; a
@@ -707,6 +709,7 @@ def create_combined_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await close_auth_state_backend(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))

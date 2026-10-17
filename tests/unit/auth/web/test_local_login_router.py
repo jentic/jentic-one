@@ -39,7 +39,12 @@ from jentic_one.auth.web.flow import (
     verify_payload,
 )
 from jentic_one.auth.web.routers import authorize, local_login
-from jentic_one.shared.config import AuthConfig, LocalLoginConfig, PlatformClientConfig
+from jentic_one.shared.config import (
+    AdminLoginRateLimitConfig,
+    AuthConfig,
+    LocalLoginConfig,
+    PlatformClientConfig,
+)
 from jentic_one.shared.state.backend import MemoryStateBackend
 
 JWT_SECRET = "unit-test-jwt-secret"
@@ -59,6 +64,8 @@ def _make_ctx(*, local_login_enabled: bool = True, idp_enabled: bool = False) ->
     )
     ctx.config.auth.idp.enabled = idp_enabled
     ctx.config.admin.auth.jwt_secret = SecretStr(JWT_SECRET)
+    # The submit spends the shared password-login buckets (real defaults).
+    ctx.config.admin.auth.login_rate_limit = AdminLoginRateLimitConfig()
     return ctx
 
 

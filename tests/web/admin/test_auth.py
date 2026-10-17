@@ -69,8 +69,12 @@ async def test_login_locked_account_indistinguishable_from_wrong_password(
         "/auth/login", json={"email": "nobody@nowhere.com", "password": "wrong-password"}
     )
     async with web_context.admin_db.transaction() as session:
-        await UserSecretRepository.lock_until(
-            session, admin_user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        await UserSecretRepository.record_failed_login(
+            session,
+            admin_user_id,
+            lockout_threshold=1,
+            locked_until=datetime.now(UTC) + timedelta(minutes=15),
+            now=datetime.now(UTC),
         )
     locked = unauthed_client.post(
         "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}

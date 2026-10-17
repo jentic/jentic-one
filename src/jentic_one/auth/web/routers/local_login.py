@@ -61,6 +61,7 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
+from jentic.problem_details import TooManyRequests
 
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import (
@@ -102,6 +103,7 @@ from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.login_rate_limit import enforce_login_rate_limit
 from jentic_one.shared.web.openapi_responses import problem, route_not_found
 from jentic_one.shared.web.sensitive import SENSITIVE
 
@@ -113,6 +115,9 @@ logger = structlog.get_logger(__name__)
 _CSRF_TTL_SECONDS = CONSENT_STATE_MAX_AGE_SECONDS
 
 _GENERIC_FAILURE_MESSAGE = "Invalid email or password."
+
+#: Shown when the per-IP or per-email password-login bucket is exhausted.
+_RATE_LIMITED_MESSAGE = "Too many sign-in attempts — wait a moment, then try again."
 
 #: Shown after a *successful* credential check when the account carries
 #: ``must_change_password`` — post-authentication, so it opens no
@@ -489,7 +494,10 @@ async def login_submit(
     state, unknown email, and wrong password are indistinguishable (no
     user-enumeration response oracle), while the shared
     ``AuthService.authenticate`` core still increments the failed-login count
-    and applies the lockout threshold. An account flagged
+    and applies the lockout threshold. Before the credential check the submit
+    spends the shared per-IP and per-email password-login buckets
+    (``admin.auth.login_rate_limit``, the same ones ``POST /auth/login``
+    spends); a dry bucket re-renders the form with a ``429``. An account flagged
     ``must_change_password`` authenticates but is told to rotate via the UI
     first — the OAuth plane must not hand a fully-scoped token to a
     temporary-password principal the UI would have boxed into
@@ -531,6 +539,19 @@ async def login_submit(
                 "oauth_client_gate_failed_midflow", client_id=client_id, stage="local_login"
             )
             return RedirectResponse(url="/error?error=access_denied", status_code=302)
+
+    try:
+        # The same per-IP + per-email buckets as POST /auth/login, so neither
+        # password door outpaces the other (#1441).
+        await enforce_login_rate_limit(request, ctx, email=email)
+    except TooManyRequests as exc:
+        # A browser form: answer in HTML with the limiter's 429 status and
+        # Retry-After, and a fresh nonce (the submitted one is spent).
+        fresh = await _mint_csrf_nonce(request, ls)
+        page = _render_login_page(ls, fresh, email=email, error=_RATE_LIMITED_MESSAGE)
+        page.status_code = exc.status_code
+        page.headers.update(exc.headers or {})
+        return page
 
     auth_svc = AuthService(ctx)
     try:

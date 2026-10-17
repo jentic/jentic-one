@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.shared.state import MemoryStateBackend
+from jentic_one.shared.state.backend import _BUCKET_SWEEP_FLOOR
 
 
 class FakeClock:
@@ -125,3 +126,30 @@ async def test_incr_ttl_not_extended_by_later_increments(
 
 async def test_aclose_is_noop(backend: MemoryStateBackend) -> None:
     await backend.aclose()
+
+
+async def test_token_bucket_sweeps_refilled_buckets(
+    backend: MemoryStateBackend, clock: FakeClock
+) -> None:
+    """Caller-chosen keys cannot pin buckets forever: refilled ones are swept.
+
+    A bucket back at capacity is indistinguishable from a fresh one, so a sweep
+    drops it; a still-draining bucket keeps its state. Memory then tracks the
+    keys active within one refill window, not every key ever seen.
+    """
+    floor = _BUCKET_SWEEP_FLOOR
+    # One bucket kept below capacity (slow refill) throughout.
+    await backend.token_bucket("hot", rate=0.001, burst=2)
+    peak = 0
+    for batch in range(10):
+        for i in range(floor):
+            await backend.token_bucket(f"cold-{batch}-{i}", rate=1.0, burst=1)
+            peak = max(peak, len(backend._buckets))
+        clock.advance(5.0)  # this batch refills; "hot" does not
+
+    assert peak <= 2 * floor + 1
+    assert "hot" in backend._buckets
+    assert "cold-0-0" not in backend._buckets
+    # The surviving bucket kept its drained state.
+    assert (await backend.token_bucket("hot", rate=0.001, burst=2)).allowed is True
+    assert (await backend.token_bucket("hot", rate=0.001, burst=2)).allowed is False

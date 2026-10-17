@@ -37,6 +37,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.auth_state import install_auth_state_backend
 from jentic_one.shared.web.static import mount_spa
 
 
@@ -85,9 +86,14 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the admin token verifier on the app for shared identity resolution."""
+    """Install the admin token verifier and the pre-auth state backend.
+
+    ``POST /auth/login``'s rate limiter needs the backend; it is shared with
+    the auth surface when both ride one app (built once, whatever the order).
+    """
     if not hasattr(app.state, "verify_token"):
         app.state.verify_token = _make_verifier(ctx)
+    install_auth_state_backend(app, ctx)
 
 
 def _make_verifier(ctx: Context) -> Any:

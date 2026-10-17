@@ -90,10 +90,21 @@ class _Entry:
 
 @dataclass(slots=True)
 class _Bucket:
-    """Token-bucket state: current token count and last-refill timestamp."""
+    """Token-bucket state: token count, last-refill timestamp, and its refill params."""
 
     tokens: float
     updated_at: float
+    rate: float
+    burst: int
+
+    def is_full_at(self, now: float) -> bool:
+        """Whether the bucket has refilled to capacity by ``now``."""
+        elapsed = max(0.0, now - self.updated_at)
+        return self.tokens + elapsed * self.rate >= self.burst
+
+
+#: Bucket count below which :class:`MemoryStateBackend` never sweeps.
+_BUCKET_SWEEP_FLOOR = 1024
 
 
 class MemoryStateBackend:
@@ -106,17 +117,29 @@ class MemoryStateBackend:
     A ``clock`` callable (defaulting to :func:`time.monotonic`) can be injected
     to make TTL and token-bucket refill behaviour deterministic in tests.
 
-    Eviction is **lazy**: expired entries are dropped on access (see
-    :meth:`_live_entry`), so keys that are written once and never read again hold
-    memory until process exit. For the per-process, autoscaled scope this targets
-    that is acceptable; a periodic background sweep is a possible follow-up if a
-    workload accumulates many write-only short-TTL keys.
+    Eviction of key/value entries is **lazy**: expired entries are dropped on
+    access (see :meth:`_live_entry`), so keys that are written once and never
+    read again hold memory until process exit. For the per-process, autoscaled
+    scope this targets that is acceptable; a periodic background sweep is a
+    possible follow-up if a workload accumulates many write-only short-TTL keys.
+
+    Token buckets are swept instead: rate-limit keys are often caller-chosen
+    (an IP, an email), so every distinct key would otherwise pin a bucket
+    forever. A bucket that has refilled to capacity is indistinguishable from
+    a fresh one, so once the bucket count doubles past the last sweep (and
+    passes a floor) every full bucket is dropped — amortised O(1) per call,
+    and memory tracks the keys active within one refill window.
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._kv: dict[str, _Entry] = {}
         self._buckets: dict[str, _Bucket] = {}
+        self._next_bucket_sweep = _BUCKET_SWEEP_FLOOR
+
+    def _sweep_full_buckets(self, now: float) -> None:
+        self._buckets = {k: b for k, b in self._buckets.items() if not b.is_full_at(now)}
+        self._next_bucket_sweep = max(_BUCKET_SWEEP_FLOOR, 2 * len(self._buckets))
 
     def _live_entry(self, key: str) -> _Entry | None:
         """Return the entry for *key* if present and not expired, else evict it."""
@@ -163,8 +186,13 @@ class MemoryStateBackend:
         now = self._clock()
         bucket = self._buckets.get(key)
         if bucket is None:
-            bucket = _Bucket(tokens=float(burst), updated_at=now)
+            if len(self._buckets) >= self._next_bucket_sweep:
+                self._sweep_full_buckets(now)
+            bucket = _Bucket(tokens=float(burst), updated_at=now, rate=rate, burst=burst)
             self._buckets[key] = bucket
+        else:
+            bucket.rate = rate
+            bucket.burst = burst
 
         # Refill by elapsed time * rate, capped at burst.
         elapsed = max(0.0, now - bucket.updated_at)

@@ -18943,7 +18943,12 @@ paths:
   /auth/login:
     description: '`POST`: Log in.'
     post:
-      description: Authenticate and return a JWT token bundle.
+      description: |-
+        Authenticate and return a JWT token bundle.
+
+        Attempts are rate limited per caller IP and per account email
+        (``admin.auth.login_rate_limit``); an exhausted bucket answers ``429
+        rate_limit_exceeded`` with ``Retry-After`` before any credential check.
       operationId: login
       requestBody:
         content:
@@ -18975,6 +18980,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unprocessable Entity
+        '429':
+          content:
+            application/problem+json:
+              example:
+                detail: Too many login attempts; retry after the indicated delay.
+                instance: /auth/login
+                status: 429
+                title: Too Many Requests
+                type: rate_limit_exceeded
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Too many login attempts from this caller IP or for this account email; retry after the `Retry-After` delay.
+          headers:
+            RateLimit-Limit:
+              description: Bucket capacity (burst) of the limit that was exceeded.
+              schema:
+                type: integer
+            RateLimit-Remaining:
+              description: Tokens left in the bucket (always 0 on a 429).
+              schema:
+                type: integer
+            Retry-After:
+              description: Seconds to wait before the bucket holds a token again.
+              schema:
+                minimum: 1.0
+                type: integer
         '500':
           content:
             application/problem+json:
