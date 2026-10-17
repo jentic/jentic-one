@@ -84,10 +84,14 @@ def test_set_non_grantable_permission(authed_client: TestClient, admin_user_id: 
     assert resp.status_code == 422
 
 
-def test_set_permissions_on_more_privileged_user_forbidden(
+def test_set_permissions_on_another_user_not_found(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str, managed_user_id: str
 ) -> None:
-    """A users:write holder cannot change the permissions of an org:admin."""
+    """A users:write holder cannot change another user's permissions (404, like GET).
+
+    The target is outside a non-admin caller's ``User`` scope, so its grants
+    stay as they are; the caller can still set their own.
+    """
 
     async def _grant() -> None:
         async with web_context.admin_db.transaction() as session:
@@ -114,8 +118,24 @@ def test_set_permissions_on_more_privileged_user_forbidden(
         json={"permissions": ["users:read"]},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
-    assert resp.json()["type"] == "user_management_forbidden"
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "user_not_found"
+
+    async def _assigned(user_id: str) -> set[str]:
+        async with web_context.admin_db.session() as session:
+            sets = await UserPermissionGrantRepository.get_permission_sets(session, [user_id])
+        return sets[user_id]
+
+    assert asyncio.get_event_loop().run_until_complete(_assigned(admin_user_id)) == {"org:admin"}
+
+    resp = unauthed_client.put(
+        f"/users/{managed_user_id}/permissions",
+        json={"permissions": ["users:write"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == managed_user_id
+    assert resp.json()["permissions"]["assigned"] == ["users:write"]
 
 
 def test_removing_org_admin_from_last_active_admin_conflicts(

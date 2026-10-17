@@ -33,6 +33,7 @@ from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
 from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
 from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
@@ -43,6 +44,7 @@ from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.errors import (
     request_validation_error_handler,
+    state_backend_capacity_error_handler,
     unhandled_exception_handler,
 )
 from jentic_one.shared.web.health import RootHealthResponse
@@ -669,6 +671,7 @@ def create_surface_app(
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
     attach_http_observability(app, mount_metrics=False)
     install_openapi_metadata(app)
@@ -742,6 +745,7 @@ def create_combined_app(
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(StateBackendCapacityError, state_backend_capacity_error_handler)  # type: ignore[arg-type]
     root.add_exception_handler(Exception, unhandled_exception_handler)
 
     @root.get(

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response
-from jentic.problem_details import Forbidden
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
@@ -144,7 +143,6 @@ async def list_agents(
 @router.get("/agents/{agent_id}", summary="Get an agent")
 async def get_agent(
     agent_id: AgentIdPath,
-    request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
@@ -155,8 +153,7 @@ async def get_agent(
     Readable by the agent itself, its owner, and `org:admin`; an agent outside
     the caller's visibility answers 404.
     """
-    view = await agent_svc.get_agent(agent_id, identity=identity)
-    _check_read_access(identity, view, request)
+    view = await agent_svc.get_readable_agent(agent_id, identity=identity)
     return _agent_response(view)
 
 
@@ -355,7 +352,6 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
 )
 async def list_credentials(
     agent_id: AgentIdPath,
-    request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> CredentialBindingListResponse:
@@ -367,8 +363,6 @@ async def list_credentials(
     agent itself, its owner, and `org:admin` (404 otherwise). The list is not
     paginated.
     """
-    view = await agent_svc.get_agent(agent_id, identity=identity)
-    _check_read_access(identity, view, request)
     bindings = await agent_svc.list_credentials(agent_id, identity=identity)
     return CredentialBindingListResponse(data=[_credential_binding_response(b) for b in bindings])
 
@@ -563,18 +557,4 @@ async def get_agent_api_key_history(
             )
             for e in entries
         ]
-    )
-
-
-def _check_read_access(identity: Identity, view: AgentView, request: Request) -> None:
-    """Allow if caller has agents:read, is org:admin, or is the agent itself."""
-    caller_perms = set(identity.permissions)
-    if "org:admin" in caller_perms or "agents:read" in caller_perms:
-        return
-    if identity.sub == view.id or identity.sub == view.owner_id:
-        return
-    raise Forbidden(
-        detail="You do not have access to this agent",
-        instance=request.url.path,
-        type="forbidden",
     )

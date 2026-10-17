@@ -384,7 +384,11 @@ def main(argv: list[str] | None = None) -> int:
     selected = [c for c in all_cases if not wanted or c.name in wanted]
     selected.sort(key=lambda c: list(VARIANTS).index(c.variant))
     plan = [(case, rate) for case in selected for rate in case_rates(case, rates, args.quick)]
-    env.check_fresh(callers={case.caller for case, _ in plan}, run_s=estimate_s(plan, args))
+    env.check_fresh(
+        callers={case.caller for case, _ in plan},
+        run_s=estimate_s(plan, args),
+        shorten="split it with --only or lower --repeat",
+    )
     ensure_bodies()
 
     rows: list[dict[str, Any]] = []
