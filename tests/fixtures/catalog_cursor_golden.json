@@ -1,0 +1,614 @@
+{
+  "browse": [
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/api.pay.io",
+            "import": "http://testserver/catalog/api.pay.io:import",
+            "operations": "http://testserver/catalog/api.pay.io/operations",
+            "self": "http://testserver/catalog/api.pay.io"
+          },
+          "api_id": "api.pay.io",
+          "path": "apis/openapi/api.pay.io",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/api.pay.io/openapi.json",
+          "update_available": false,
+          "vendor": "pay.io"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/apiary.io",
+            "import": "http://testserver/catalog/apiary.io:import",
+            "operations": "http://testserver/catalog/apiary.io/operations",
+            "self": "http://testserver/catalog/apiary.io"
+          },
+          "api_id": "apiary.io",
+          "path": "apis/openapi/apiary.io",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apiary.io/openapi.json",
+          "update_available": false,
+          "vendor": "apiary.io"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"apiary.io\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/openpay.dev",
+            "import": "http://testserver/catalog/openpay.dev:import",
+            "operations": "http://testserver/catalog/openpay.dev/operations",
+            "self": "http://testserver/catalog/openpay.dev"
+          },
+          "api_id": "openpay.dev",
+          "path": "apis/openapi/openpay.dev",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/openpay.dev/openapi.json",
+          "update_available": false,
+          "vendor": "openpay.dev"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay-api.com",
+            "import": "http://testserver/catalog/pay-api.com:import",
+            "operations": "http://testserver/catalog/pay-api.com/operations",
+            "self": "http://testserver/catalog/pay-api.com"
+          },
+          "api_id": "pay-api.com",
+          "path": "apis/openapi/pay-api.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay-api.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay-api.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"pay-api.com\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay.com",
+            "import": "http://testserver/catalog/pay.com:import",
+            "operations": "http://testserver/catalog/pay.com/operations",
+            "self": "http://testserver/catalog/pay.com"
+          },
+          "api_id": "pay.com",
+          "path": "apis/openapi/pay.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/payments-api.net",
+            "import": "http://testserver/catalog/payments-api.net:import",
+            "operations": "http://testserver/catalog/payments-api.net/operations",
+            "self": "http://testserver/catalog/payments-api.net"
+          },
+          "api_id": "payments-api.net",
+          "path": "apis/openapi/payments-api.net",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/payments-api.net/openapi.json",
+          "update_available": false,
+          "vendor": "payments-api.net"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"payments-api.net\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/paypal.com",
+            "import": "http://testserver/catalog/paypal.com:import",
+            "operations": "http://testserver/catalog/paypal.com/operations",
+            "self": "http://testserver/catalog/paypal.com"
+          },
+          "api_id": "paypal.com",
+          "path": "apis/openapi/paypal.com",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/paypal.com/openapi.json",
+          "update_available": false,
+          "vendor": "paypal.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/stripe.com",
+            "import": "http://testserver/catalog/stripe.com:import",
+            "operations": "http://testserver/catalog/stripe.com/operations",
+            "self": "http://testserver/catalog/stripe.com"
+          },
+          "api_id": "stripe.com",
+          "path": "apis/openapi/stripe.com",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/openapi.json",
+          "update_available": false,
+          "vendor": "stripe.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"stripe.com\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/unrelated.org",
+            "import": "http://testserver/catalog/unrelated.org:import",
+            "operations": "http://testserver/catalog/unrelated.org/operations",
+            "self": "http://testserver/catalog/unrelated.org"
+          },
+          "api_id": "unrelated.org",
+          "path": "apis/openapi/unrelated.org",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/unrelated.org/openapi.json",
+          "update_available": false,
+          "vendor": "unrelated.org"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/weather.gov",
+            "import": "http://testserver/catalog/weather.gov:import",
+            "operations": "http://testserver/catalog/weather.gov/operations",
+            "self": "http://testserver/catalog/weather.gov"
+          },
+          "api_id": "weather.gov",
+          "path": "apis/openapi/weather.gov",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/weather.gov/openapi.json",
+          "update_available": false,
+          "vendor": "weather.gov"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"weather.gov\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/zapi.com",
+            "import": "http://testserver/catalog/zapi.com:import",
+            "operations": "http://testserver/catalog/zapi.com/operations",
+            "self": "http://testserver/catalog/zapi.com"
+          },
+          "api_id": "zapi.com",
+          "path": "apis/openapi/zapi.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/zapi.com/openapi.json",
+          "update_available": false,
+          "vendor": "zapi.com"
+        }
+      ],
+      "has_more": false,
+      "next_cursor_json": null
+    }
+  ],
+  "filtered": [
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/api.pay.io",
+            "import": "http://testserver/catalog/api.pay.io:import",
+            "operations": "http://testserver/catalog/api.pay.io/operations",
+            "self": "http://testserver/catalog/api.pay.io"
+          },
+          "api_id": "api.pay.io",
+          "path": "apis/openapi/api.pay.io",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/api.pay.io/openapi.json",
+          "update_available": false,
+          "vendor": "pay.io"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay-api.com",
+            "import": "http://testserver/catalog/pay-api.com:import",
+            "operations": "http://testserver/catalog/pay-api.com/operations",
+            "self": "http://testserver/catalog/pay-api.com"
+          },
+          "api_id": "pay-api.com",
+          "path": "apis/openapi/pay-api.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay-api.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay-api.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"pay-api.com\", \"s\": 8}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay.com",
+            "import": "http://testserver/catalog/pay.com:import",
+            "operations": "http://testserver/catalog/pay.com/operations",
+            "self": "http://testserver/catalog/pay.com"
+          },
+          "api_id": "pay.com",
+          "path": "apis/openapi/pay.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/openpay.dev",
+            "import": "http://testserver/catalog/openpay.dev:import",
+            "operations": "http://testserver/catalog/openpay.dev/operations",
+            "self": "http://testserver/catalog/openpay.dev"
+          },
+          "api_id": "openpay.dev",
+          "path": "apis/openapi/openpay.dev",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/openpay.dev/openapi.json",
+          "update_available": false,
+          "vendor": "openpay.dev"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"openpay.dev\", \"s\": 3}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/zapi.com",
+            "import": "http://testserver/catalog/zapi.com:import",
+            "operations": "http://testserver/catalog/zapi.com/operations",
+            "self": "http://testserver/catalog/zapi.com"
+          },
+          "api_id": "zapi.com",
+          "path": "apis/openapi/zapi.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/zapi.com/openapi.json",
+          "update_available": false,
+          "vendor": "zapi.com"
+        }
+      ],
+      "has_more": false,
+      "next_cursor_json": null
+    }
+  ],
+  "no_tokens": [
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/api.pay.io",
+            "import": "http://testserver/catalog/api.pay.io:import",
+            "operations": "http://testserver/catalog/api.pay.io/operations",
+            "self": "http://testserver/catalog/api.pay.io"
+          },
+          "api_id": "api.pay.io",
+          "path": "apis/openapi/api.pay.io",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/api.pay.io/openapi.json",
+          "update_available": false,
+          "vendor": "pay.io"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/apiary.io",
+            "import": "http://testserver/catalog/apiary.io:import",
+            "operations": "http://testserver/catalog/apiary.io/operations",
+            "self": "http://testserver/catalog/apiary.io"
+          },
+          "api_id": "apiary.io",
+          "path": "apis/openapi/apiary.io",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apiary.io/openapi.json",
+          "update_available": false,
+          "vendor": "apiary.io"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"apiary.io\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/openpay.dev",
+            "import": "http://testserver/catalog/openpay.dev:import",
+            "operations": "http://testserver/catalog/openpay.dev/operations",
+            "self": "http://testserver/catalog/openpay.dev"
+          },
+          "api_id": "openpay.dev",
+          "path": "apis/openapi/openpay.dev",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/openpay.dev/openapi.json",
+          "update_available": false,
+          "vendor": "openpay.dev"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay-api.com",
+            "import": "http://testserver/catalog/pay-api.com:import",
+            "operations": "http://testserver/catalog/pay-api.com/operations",
+            "self": "http://testserver/catalog/pay-api.com"
+          },
+          "api_id": "pay-api.com",
+          "path": "apis/openapi/pay-api.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay-api.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay-api.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"pay-api.com\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay.com",
+            "import": "http://testserver/catalog/pay.com:import",
+            "operations": "http://testserver/catalog/pay.com/operations",
+            "self": "http://testserver/catalog/pay.com"
+          },
+          "api_id": "pay.com",
+          "path": "apis/openapi/pay.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/payments-api.net",
+            "import": "http://testserver/catalog/payments-api.net:import",
+            "operations": "http://testserver/catalog/payments-api.net/operations",
+            "self": "http://testserver/catalog/payments-api.net"
+          },
+          "api_id": "payments-api.net",
+          "path": "apis/openapi/payments-api.net",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/payments-api.net/openapi.json",
+          "update_available": false,
+          "vendor": "payments-api.net"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"payments-api.net\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/paypal.com",
+            "import": "http://testserver/catalog/paypal.com:import",
+            "operations": "http://testserver/catalog/paypal.com/operations",
+            "self": "http://testserver/catalog/paypal.com"
+          },
+          "api_id": "paypal.com",
+          "path": "apis/openapi/paypal.com",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/paypal.com/openapi.json",
+          "update_available": false,
+          "vendor": "paypal.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/stripe.com",
+            "import": "http://testserver/catalog/stripe.com:import",
+            "operations": "http://testserver/catalog/stripe.com/operations",
+            "self": "http://testserver/catalog/stripe.com"
+          },
+          "api_id": "stripe.com",
+          "path": "apis/openapi/stripe.com",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/openapi.json",
+          "update_available": false,
+          "vendor": "stripe.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"stripe.com\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/unrelated.org",
+            "import": "http://testserver/catalog/unrelated.org:import",
+            "operations": "http://testserver/catalog/unrelated.org/operations",
+            "self": "http://testserver/catalog/unrelated.org"
+          },
+          "api_id": "unrelated.org",
+          "path": "apis/openapi/unrelated.org",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/unrelated.org/openapi.json",
+          "update_available": false,
+          "vendor": "unrelated.org"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/weather.gov",
+            "import": "http://testserver/catalog/weather.gov:import",
+            "operations": "http://testserver/catalog/weather.gov/operations",
+            "self": "http://testserver/catalog/weather.gov"
+          },
+          "api_id": "weather.gov",
+          "path": "apis/openapi/weather.gov",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/weather.gov/openapi.json",
+          "update_available": false,
+          "vendor": "weather.gov"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"weather.gov\"}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/zapi.com",
+            "import": "http://testserver/catalog/zapi.com:import",
+            "operations": "http://testserver/catalog/zapi.com/operations",
+            "self": "http://testserver/catalog/zapi.com"
+          },
+          "api_id": "zapi.com",
+          "path": "apis/openapi/zapi.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/zapi.com/openapi.json",
+          "update_available": false,
+          "vendor": "zapi.com"
+        }
+      ],
+      "has_more": false,
+      "next_cursor_json": null
+    }
+  ],
+  "token": [
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/api.pay.io",
+            "import": "http://testserver/catalog/api.pay.io:import",
+            "operations": "http://testserver/catalog/api.pay.io/operations",
+            "self": "http://testserver/catalog/api.pay.io"
+          },
+          "api_id": "api.pay.io",
+          "path": "apis/openapi/api.pay.io",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/api.pay.io/openapi.json",
+          "update_available": false,
+          "vendor": "pay.io"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay-api.com",
+            "import": "http://testserver/catalog/pay-api.com:import",
+            "operations": "http://testserver/catalog/pay-api.com/operations",
+            "self": "http://testserver/catalog/pay-api.com"
+          },
+          "api_id": "pay-api.com",
+          "path": "apis/openapi/pay-api.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay-api.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay-api.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"pay-api.com\", \"s\": 8}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/payments-api.net",
+            "import": "http://testserver/catalog/payments-api.net:import",
+            "operations": "http://testserver/catalog/payments-api.net/operations",
+            "self": "http://testserver/catalog/payments-api.net"
+          },
+          "api_id": "payments-api.net",
+          "path": "apis/openapi/payments-api.net",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/payments-api.net/openapi.json",
+          "update_available": false,
+          "vendor": "payments-api.net"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/pay.com",
+            "import": "http://testserver/catalog/pay.com:import",
+            "operations": "http://testserver/catalog/pay.com/operations",
+            "self": "http://testserver/catalog/pay.com"
+          },
+          "api_id": "pay.com",
+          "path": "apis/openapi/pay.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/pay.com/openapi.json",
+          "update_available": false,
+          "vendor": "pay.com"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"pay.com\", \"s\": 4}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/apiary.io",
+            "import": "http://testserver/catalog/apiary.io:import",
+            "operations": "http://testserver/catalog/apiary.io/operations",
+            "self": "http://testserver/catalog/apiary.io"
+          },
+          "api_id": "apiary.io",
+          "path": "apis/openapi/apiary.io",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apiary.io/openapi.json",
+          "update_available": false,
+          "vendor": "apiary.io"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/openpay.dev",
+            "import": "http://testserver/catalog/openpay.dev:import",
+            "operations": "http://testserver/catalog/openpay.dev/operations",
+            "self": "http://testserver/catalog/openpay.dev"
+          },
+          "api_id": "openpay.dev",
+          "path": "apis/openapi/openpay.dev",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/openpay.dev/openapi.json",
+          "update_available": false,
+          "vendor": "openpay.dev"
+        }
+      ],
+      "has_more": true,
+      "next_cursor_json": "{\"id\": \"openpay.dev\", \"s\": 3}"
+    },
+    {
+      "data": [
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/paypal.com",
+            "import": "http://testserver/catalog/paypal.com:import",
+            "operations": "http://testserver/catalog/paypal.com/operations",
+            "self": "http://testserver/catalog/paypal.com"
+          },
+          "api_id": "paypal.com",
+          "path": "apis/openapi/paypal.com",
+          "registered": false,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/paypal.com/openapi.json",
+          "update_available": false,
+          "vendor": "paypal.com"
+        },
+        {
+          "_links": {
+            "github": "https://github.com/jentic/jentic-public-apis/tree/main/zapi.com",
+            "import": "http://testserver/catalog/zapi.com:import",
+            "operations": "http://testserver/catalog/zapi.com/operations",
+            "self": "http://testserver/catalog/zapi.com"
+          },
+          "api_id": "zapi.com",
+          "path": "apis/openapi/zapi.com",
+          "registered": true,
+          "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/zapi.com/openapi.json",
+          "update_available": false,
+          "vendor": "zapi.com"
+        }
+      ],
+      "has_more": false,
+      "next_cursor_json": null
+    }
+  ]
+}
