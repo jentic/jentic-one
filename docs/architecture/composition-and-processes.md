@@ -217,8 +217,9 @@ flowchart LR
   `last_used_at` bookkeeping timestamps sends nothing.
 - **Listening is one dedicated connection per database server per process**,
   opened directly with asyncpg outside the SQLAlchemy pool (a `LISTEN` is
-  session state). The bus opens it only when something subscribed — the broker
-  and any process that resolves credential providers (below) do; a process
+  session state). The bus opens it only when something subscribed, and only
+  to a server that carries a subscribed topic's database — the broker and any
+  process that resolves credential providers (below) subscribe; a process
   serving only registry, admin or auth opens nothing. It is visible in
   `pg_stat_activity` as `application_name = 'jentic-one-invalidation'`.
 - **A lost connection degrades to TTLs, never to stale forever.** The bus
@@ -247,7 +248,8 @@ flowchart LR
   provider stays an in-memory lookup: the database is read only on a
   rebuild. A rebuild reuses every provider whose config is unchanged; a
   replaced provider stays usable by the requests that already resolved it
-  and is closed (if it holds resources) after a grace period, or at shutdown.
+  and is closed (if it holds resources) by the first rebuild after a grace
+  period, or at shutdown.
   With a bus that never delivers (SQLite's single process, or
   `invalidation.enabled: false`) only the writing process rebuilds, and the
   others merge the stored configs at their next boot.

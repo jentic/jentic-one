@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import structlog
@@ -28,6 +28,16 @@ from jentic_one.shared.config import (
 _PROVIDER_CONFIG_ADAPTER: TypeAdapter[ProviderConfig] = TypeAdapter(ProviderConfig)
 
 logger = structlog.get_logger(__name__)
+
+#: Providers every registry registers regardless of configuration (name -> factory).
+_BUILTINS: dict[str, Callable[[], CredentialProvider]] = {
+    "static": StaticProvider,
+    # ``device_authorization`` is the ``credential.provider`` value written by
+    # both the connect-session ``create_session`` path and the raw
+    # manual-create + grant_type=device_code path — always registered
+    # so ``POST /credentials/{id}/connect`` can find it.
+    "device_authorization": DeviceAuthorizationConnectProvider,
+}
 
 
 def _build_provider(name: str, pc: ProviderConfig) -> CredentialProvider:
@@ -96,7 +106,7 @@ class ProviderRegistry:
         ``dynamic`` maps provider name to an already-decoded config dict whose
         secret fields hold **plaintext** values (decryption happens before this
         is called). Dynamic entries override YAML entries of the same name.
-        Always includes the built-in ``static`` provider.
+        Always includes the built-in providers (``static``, ``device_authorization``).
 
         ``previous`` is the registry being replaced: its built-ins, and every
         provider whose config compares equal (secrets included), are carried
@@ -108,21 +118,14 @@ class ProviderRegistry:
             # shadowed a built-in name is rebuilt (or dropped) like any other.
             providers = {
                 name: previous._providers[name]
-                for name in _BUILTIN_NAMES
+                for name in _BUILTINS
                 if name in previous._providers and name not in previous._configs
             }
         else:
             providers = {}
-        builtins: dict[str, CredentialProvider] = {
-            "static": StaticProvider(),
-            # ``device_authorization`` is the ``credential.provider`` value written by
-            # both the connect-session ``create_session`` path and the raw
-            # manual-create + grant_type=device_code path — always registered
-            # so ``POST /credentials/{id}/connect`` can find it.
-            "device_authorization": DeviceAuthorizationConnectProvider(),
-        }
-        for name, provider in builtins.items():
-            providers.setdefault(name, provider)
+        for name, factory in _BUILTINS.items():
+            if name not in providers:
+                providers[name] = factory()
         merged: dict[str, ProviderConfig] = dict(cfg.providers)
         for name, raw in dynamic.items():
             merged[name] = _PROVIDER_CONFIG_ADAPTER.validate_python(raw)
@@ -132,10 +135,6 @@ class ProviderRegistry:
             else:
                 providers[name] = _build_provider(name, pc)
         return cls(providers, merged)
-
-
-#: Providers every registry registers regardless of configuration.
-_BUILTIN_NAMES: tuple[str, ...] = ("static", "device_authorization")
 
 
 async def aclose_providers(providers: Iterable[CredentialProvider]) -> None:

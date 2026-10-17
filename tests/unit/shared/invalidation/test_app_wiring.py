@@ -83,6 +83,13 @@ def test_app_that_resolves_no_provider_does_not_subscribe(tmp_path: Path) -> Non
     assert PROVIDER_CONFIG_TOPIC not in bus.topics
 
 
+def test_provider_resolving_context_without_admin_db_does_not_subscribe(tmp_path: Path) -> None:
+    """The refresh reads the admin DB: a process that may not open it never subscribes."""
+    ctx = Context(_sqlite_ctx(tmp_path).config, allowed_dbs={"control"})
+    assert ctx.resolves_providers
+    assert _subscribe_provider_refresh(ctx, _RecordingBus()) is None
+
+
 def test_default_bus_on_sqlite_is_noop(tmp_path: Path) -> None:
     ctx = _sqlite_ctx(tmp_path)
     app = create_combined_app(ctx, ["registry", "admin", "control", "auth"])

@@ -2339,10 +2339,9 @@ class InvalidationConfig(BaseModel):
     SQLite has no notification channel: the bus is a no-op there and the cache
     TTLs bound staleness; a provider config write then reaches only the
     process that served it (other processes merge it at their next boot).
-    Disable it (``enabled: false``) when the database is
-    reached through a pooler that cannot hold a session-level ``LISTEN`` — for
-    example PgBouncer in transaction pooling mode — and the TTLs apply as on
-    SQLite.
+    Disable it (``enabled: false``) when the database is reached through a
+    pooler that cannot hold a session-level ``LISTEN`` — for example PgBouncer
+    in transaction pooling mode — and everything behaves as on SQLite.
     """
 
     enabled: bool = Field(
