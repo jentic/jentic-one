@@ -226,7 +226,7 @@ section below.
 
 ## Upgrading to 0.44.0
 
-- **`toolkit_id` is no longer a filter on `GET /executions` or
+- **Breaking: `toolkit_id` is no longer a filter on `GET /executions` or
   `GET /monitoring/usage` (#1745).** A request that still sends
   `?toolkit_id=` is served normally (`200`) and the parameter is ignored, so
   the result is unfiltered: a dashboard or script that narrowed by toolkit
