@@ -1,9 +1,14 @@
 """Extension seam: pluggable ranking for ``GET /catalog?q=``.
 
-A *catalog search strategy* turns a query plus the already-filtered manifest
-entries into a ranked candidate list. ``CatalogService.list_all`` owns
-everything around that call — browse-vs-search routing, filtering, validation,
-ordering, keyset paging, cursors and fallback — so a strategy only ranks.
+**Provisional.** This is a public extension seam, but its shape may still change
+before 1.0; pin the ``jentic-one`` version an extension is built against. See
+``docs/development/extending-jentic-one.md`` for the author-facing guide.
+
+A *catalog search strategy* turns a :class:`CatalogSearchRequest` (the query
+plus the already-filtered manifest entries) into a ranked candidate list.
+``CatalogService.list_all`` owns everything around that call — browse-vs-search
+routing, filtering, validation, ordering, keyset paging, cursors and fallback —
+so a strategy only ranks.
 
 OSS ships one strategy, :class:`TokenSearchStrategy` (``name = "token"``), the
 built-in token-overlap scorer. It is registered at import time and is the
@@ -12,53 +17,74 @@ and cursors are exactly the token scorer's.
 
 Contract for a strategy:
 
-- ``rank()`` is only called for a **search**: ``q`` has at least one token
-  under the catalog tokeniser (see :func:`manifest_builder.has_query_tokens`).
-  Empty or token-free queries are served on the browse path and never reach a
-  strategy.
-- ``entries`` is already narrowed by the list filters. Return the **full**
-  ranked candidate list — the service pages it, so never apply a limit.
+- ``rank(request)`` is only called for a **search**: ``request.q`` has at least
+  one token under the catalog tokeniser (see
+  :func:`manifest_builder.has_query_tokens`). Empty or token-free queries are
+  served on the browse path and never reach a strategy.
+- ``request.entries`` is already narrowed by the list filters. Return the
+  **full** ranked candidate list — the service pages it, so never apply a
+  limit. An empty list means "no matches".
 - The service, not the strategy, owns the final order and validity: it drops
   rows whose score is not a finite ``int``/``float``, rows whose entry is not
   in ``entries`` (matched by ``api_id``; the service's own entry is served),
   and duplicate ``api_id`` rows (the best-scoring one is kept), then sorts by
-  ``(-score, api_id)``. Higher scores rank first.
-- Ranking must be deterministic for a fixed ``(q, entries)``: a walk re-ranks
-  on every page and resumes after the cursor's ``(score, api_id)`` position.
+  ``(-score, api_id)``. Higher scores rank first. A non-empty result with no
+  valid row counts as a failure.
+- Ranking must be deterministic for a fixed request: a walk re-ranks on every
+  page and resumes after the cursor's exact ``(score, api_id)`` position, so
+  scores must be bit-for-bit stable across calls. ``rank()`` runs once per
+  page; cache per ``(q, manifest_revision)`` if ranking is expensive.
 - Raise to signal failure. On the first page of a walk the service falls back
   to ``token`` for the whole walk; on a later page it answers 503 (the walk's
   order can't be continued by a different ranker).
-- ``deadline_ms`` is the service-enforced budget for the call (the service
-  cancels an awaiting ``rank()`` once it passes, which counts as a failure).
-  Keep CPU-bound work short or offload it: cancellation can only interrupt an
-  ``await``.
-- ``context`` is reserved for request-scoped hints; ``CatalogService`` passes
-  ``None``. Strategies must tolerate ``None`` and ignore unknown keys.
+- ``request.deadline_ms`` is the service-enforced budget for the call (the
+  service cancels an awaiting ``rank()`` once it passes, which counts as a
+  failure). Cancellation can only interrupt an ``await``: offload CPU-bound
+  work (e.g. ``asyncio.to_thread``).
+- ``request.options`` is reserved for request-scoped hints and is empty today;
+  ignore keys you don't know. New request fields are added with defaults, so
+  a strategy keeps working when the request grows.
 - ``RankedEntry.match`` is optional evidence returned to clients as each
-  item's ``match``. Leave it ``None`` to omit it.
+  item's ``match``. Channel names must be slugs (``^[a-z][a-z0-9_-]{0,31}$``,
+  at most 8); anything else is dropped. Leave it ``None`` to omit it.
 
 Registration mirrors the other process-global seams
 (``registry/repos/search/registry.py``, ``registry/ingest/pipeline/stage_registry.py``):
 call :func:`register_catalog_search_strategy` at import time, before the app
-is assembled; select it with ``catalog.search_strategy``. App assembly fails
-with a ``ConfigError`` when the configured name is not registered.
+is assembled, with either a strategy **class** (built per config, through an
+optional ``from_config(catalog_config, *, app_config)`` classmethod — see
+:class:`ConfigurableCatalogSearchStrategy`) or a ready-made **instance**.
+Select it with ``catalog.search_strategy``. App assembly fails with a
+``ConfigError`` when the configured name is not registered or can't be built.
+
+A cursor records the strategy that served its walk (key ``st``; reserved to
+gain a version suffix later). A later page is served only by that strategy and
+only while it is the configured one: a cursor naming any other strategy is
+rejected (400, restart the search); one naming the configured strategy on a
+process where it isn't registered answers 503 (another replica may serve it).
 """
 
 from __future__ import annotations
 
+import inspect
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from jentic_one.registry.services.catalog import manifest_builder as mb
-from jentic_one.shared.config import AppConfig, ConfigError
+from jentic_one.shared.config import AppConfig, CatalogConfig, ConfigError
+from jentic_one.shared.pagination import CATALOG_STRATEGY_NAME_RE
 
 __all__ = [
     "TOKEN_STRATEGY_NAME",
     "CatalogMatch",
+    "CatalogSearchRequest",
     "CatalogSearchStrategy",
+    "ConfigurableCatalogSearchStrategy",
     "NormalizedRanking",
     "RankedEntry",
     "TokenSearchStrategy",
@@ -66,6 +92,7 @@ __all__ = [
     "normalize_ranking",
     "register_catalog_search_strategy",
     "registered_catalog_search_strategies",
+    "registered_catalog_search_strategy",
     "resolve_catalog_search_strategy",
     "validate_catalog_search_config",
 ]
@@ -74,8 +101,11 @@ __all__ = [
 #: strategy key, so their bytes are the token scorer's.
 TOKEN_STRATEGY_NAME = "token"
 
-#: Strategy names are written into cursors, so keep them short and plain.
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+#: ``match`` channel names: short slugs, so strategy text can't reach clients as prose.
+_CHANNEL_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_MAX_MATCH_CHANNELS = 8
+
+_EMPTY_OPTIONS: Mapping[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -83,7 +113,7 @@ class CatalogMatch:
     """Why an entry matched. Optional, returned to clients as ``match``.
 
     ``channels`` names the kinds of evidence behind the match (e.g.
-    ``("token",)``). It is an open set: clients must accept values they don't
+    ``("alias",)``). It is an open set: clients must accept values they don't
     know.
     """
 
@@ -99,6 +129,28 @@ class RankedEntry:
     match: CatalogMatch | None = None
 
 
+@dataclass(frozen=True)
+class CatalogSearchRequest:
+    """Everything a strategy may use to rank one search page.
+
+    Fields are only ever added (with defaults), so strategies keep working as
+    the request grows.
+    """
+
+    #: The search text; always has at least one catalog token.
+    q: str
+    #: The filtered candidates, in manifest order.
+    entries: Sequence[mb.ManifestEntry]
+    #: Budget for this call in milliseconds (``None`` when unbounded).
+    deadline_ms: int | None = None
+    #: Reserved for request-scoped hints; empty today.
+    options: Mapping[str, str] = field(default_factory=lambda: _EMPTY_OPTIONS)
+    #: Opaque identifier of the manifest snapshot ``entries`` came from; it
+    #: changes whenever the snapshot is replaced. ``None`` when unknown. Use it
+    #: as a cache key, never parse it.
+    manifest_revision: str | None = None
+
+
 @runtime_checkable
 class CatalogSearchStrategy(Protocol):
     """Ranks filtered catalog entries for a search query (see the module contract)."""
@@ -106,15 +158,29 @@ class CatalogSearchStrategy(Protocol):
     #: Stable registry key, recorded in cursors of walks this strategy served.
     name: str
 
-    async def rank(
-        self,
-        q: str,
-        entries: Sequence[mb.ManifestEntry],
-        *,
-        deadline_ms: int | None = None,
-        context: Mapping[str, object] | None = None,
-    ) -> list[RankedEntry]:
+    async def rank(self, request: CatalogSearchRequest) -> Sequence[RankedEntry]:
         """Return the full ranked candidate list (no limit). Raise to fall back."""
+        ...
+
+
+@runtime_checkable
+class ConfigurableCatalogSearchStrategy(Protocol):
+    """Optional construction hook for a strategy class registered by type.
+
+    A registered class that defines ``from_config`` is built through it;
+    one without it is built zero-arg. The service builds once per booted
+    config and reuses the instance across requests, so construction may be
+    expensive (clients, models) but the instance must be safe to share.
+    """
+
+    @classmethod
+    def from_config(cls, config: CatalogConfig, *, app_config: AppConfig) -> CatalogSearchStrategy:
+        """Build the strategy from the ``catalog`` section and the booted config.
+
+        Reach an extension's own config section through
+        ``app_config.extension(name)``. Raise to refuse the config; app assembly
+        reports it as a ``ConfigError``.
+        """
         ...
 
 
@@ -127,18 +193,11 @@ class TokenSearchStrategy:
 
     name = TOKEN_STRATEGY_NAME
 
-    async def rank(
-        self,
-        q: str,
-        entries: Sequence[mb.ManifestEntry],
-        *,
-        deadline_ms: int | None = None,
-        context: Mapping[str, object] | None = None,
-    ) -> list[RankedEntry]:
+    async def rank(self, request: CatalogSearchRequest) -> list[RankedEntry]:
         """Rank ``entries`` by token overlap with ``q``; non-matches are omitted."""
         return [
             RankedEntry(entry=entry, score=score)
-            for entry, score in mb.score_entries(list(entries), q)
+            for entry, score in mb.score_entries(list(request.entries), request.q)
             if score is not None
         ]
 
@@ -151,75 +210,148 @@ class UnknownCatalogSearchStrategyError(LookupError):
         self.name = name
 
 
-_STRATEGIES: dict[str, CatalogSearchStrategy] = {TOKEN_STRATEGY_NAME: TokenSearchStrategy()}
+#: A registration: a ready-made instance, or a class built per config.
+_Registered = CatalogSearchStrategy | type
+
+_STRATEGIES: dict[str, _Registered] = {TOKEN_STRATEGY_NAME: TokenSearchStrategy()}
+
+#: Strategies built from registered classes, keyed by ``(name, id(app_config))``.
+#: The config is held alongside so its ``id`` can't be reused while cached.
+_BUILT: dict[tuple[str, int], tuple[AppConfig, CatalogSearchStrategy]] = {}
+_MAX_BUILT = 16
 
 
-def register_catalog_search_strategy(strategy: CatalogSearchStrategy) -> None:
-    """Register a catalog search strategy under ``strategy.name``.
+def _has_async_rank(target: object) -> bool:
+    return inspect.iscoroutinefunction(getattr(target, "rank", None))
 
-    Call at import time, before the app is assembled. Idempotent for the same
-    (or an equal) strategy object, so a double import is safe; raises
-    ``ValueError`` when the name is already bound to a different strategy — an
+
+def register_catalog_search_strategy(strategy: CatalogSearchStrategy | type) -> None:
+    """Register a catalog search strategy (instance or class) under its ``name``.
+
+    Call at import time, before the app is assembled. A class is built once
+    per booted config (via ``from_config`` when it defines one); an instance
+    is used as is. ``name`` must match ``^[a-z][a-z0-9_]{0,31}$`` and ``rank``
+    must be ``async``.
+
+    Idempotent for the same object, so a double import is safe; raises
+    ``ValueError`` when the name is already bound to a different object — an
     extension can't silently shadow ``token`` or another extension's strategy.
     Same posture as ``register_strategy`` and ``register_pipeline_stage``.
     """
     name = getattr(strategy, "name", None)
-    if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+    if not isinstance(name, str) or not CATALOG_STRATEGY_NAME_RE.fullmatch(name):
         msg = (
             f"Catalog search strategy name {name!r} is invalid "
             "(expected lowercase letters, digits and '_', starting with a letter, max 32)"
         )
         raise ValueError(msg)
-    if not isinstance(strategy, CatalogSearchStrategy):
-        msg = f"Catalog search strategy {name!r} does not implement rank()"
+    if not _has_async_rank(strategy):
+        msg = f"Catalog search strategy {name!r} must define an async rank(request)"
         raise TypeError(msg)
     existing = _STRATEGIES.get(name)
-    if existing is not None and existing is not strategy and existing != strategy:
+    if existing is not None and existing is not strategy:
         msg = (
             f"Catalog search strategy {name!r} is already registered by "
-            f"{type(existing).__module__}.{type(existing).__qualname__}; refusing to "
-            f"shadow it with {type(strategy).__module__}.{type(strategy).__qualname__}"
+            f"{_describe(existing)}; refusing to shadow it with {_describe(strategy)}"
         )
         raise ValueError(msg)
-    if existing is None:
-        _STRATEGIES[name] = strategy
+    _STRATEGIES[name] = strategy
 
 
-def registered_catalog_search_strategies() -> Mapping[str, CatalogSearchStrategy]:
-    """Snapshot of the registered strategies, keyed by name (registration order)."""
+def _describe(registered: object) -> str:
+    cls = registered if isinstance(registered, type) else type(registered)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def registered_catalog_search_strategies() -> Mapping[str, CatalogSearchStrategy | type]:
+    """Snapshot of the registrations (instance or class), keyed by name."""
     return dict(_STRATEGIES)
 
 
-def resolve_catalog_search_strategy(name: str) -> CatalogSearchStrategy:
-    """Return the strategy registered as ``name``.
+@contextmanager
+def registered_catalog_search_strategy(
+    strategy: CatalogSearchStrategy | type,
+) -> Iterator[None]:
+    """Register ``strategy`` for the duration of a ``with`` block (test helper).
+
+    For extension test suites: registers like
+    :func:`register_catalog_search_strategy`, then removes the registration and
+    any instance built from it on exit, so tests don't leak strategies into the
+    process-global registry. A strategy that was already registered before the
+    block stays registered.
+    """
+    name: str = getattr(strategy, "name", "")
+    already = _STRATEGIES.get(name) is strategy
+    register_catalog_search_strategy(strategy)
+    try:
+        yield
+    finally:
+        if not already:
+            _STRATEGIES.pop(name, None)
+            for key in [k for k in _BUILT if k[0] == name]:
+                del _BUILT[key]
+
+
+def resolve_catalog_search_strategy(name: str, config: AppConfig) -> CatalogSearchStrategy:
+    """Return the strategy registered as ``name``, built for ``config``.
+
+    A registered instance is returned as is. A registered class is built once
+    per ``config`` object (``from_config(config.catalog, app_config=config)``
+    when it defines the hook, else zero-arg) and the instance is reused.
 
     Raises :class:`UnknownCatalogSearchStrategyError` when nothing is registered
-    under that name.
+    under that name; anything the class's construction raises propagates, as
+    does a ``TypeError`` when it doesn't produce a strategy with an async
+    ``rank``.
     """
-    strategy = _STRATEGIES.get(name)
-    if strategy is None:
+    registered = _STRATEGIES.get(name)
+    if registered is None:
         raise UnknownCatalogSearchStrategyError(name)
-    return strategy
+    if not isinstance(registered, type):
+        return registered
+    key = (name, id(config))
+    cached = _BUILT.get(key)
+    if cached is not None and cached[0] is config:
+        return cached[1]
+    built = _build(registered, config)
+    if len(_BUILT) >= _MAX_BUILT:
+        del _BUILT[next(iter(_BUILT))]
+    _BUILT[key] = (config, built)
+    return built
+
+
+def _build(cls: type, config: AppConfig) -> CatalogSearchStrategy:
+    if isinstance(cls, ConfigurableCatalogSearchStrategy):
+        built: object = cls.from_config(config.catalog, app_config=config)
+    else:
+        built = cls()
+    if not isinstance(built, CatalogSearchStrategy) or not _has_async_rank(built):
+        msg = f"{_describe(cls)} did not build a catalog search strategy with an async rank()"
+        raise TypeError(msg)
+    return built
 
 
 def validate_catalog_search_config(config: AppConfig) -> None:
-    """Fail app assembly when ``catalog.search_strategy`` names no registered strategy.
+    """Fail app assembly when ``catalog.search_strategy`` can't serve searches.
 
-    Raises ``ConfigError`` naming the registered strategies, so a typo or a
-    missing extension is a boot error rather than a silent switch to ``token``.
+    Raises ``ConfigError`` when the name is not registered (naming the
+    registered strategies) or its class can't be built for ``config``, so a
+    typo, a missing extension or a bad extension config is a boot error
+    rather than a silent switch to ``token``. Builds (and caches) the
+    strategy as a side effect.
     """
     name = config.catalog.search_strategy
-    if name not in _STRATEGIES:
+    try:
+        resolve_catalog_search_strategy(name, config)
+    except UnknownCatalogSearchStrategyError:
         msg = (
             f"catalog.search_strategy {name!r} is not a registered catalog search "
             f"strategy (registered: {sorted(_STRATEGIES)})"
         )
-        raise ConfigError(msg)
-
-
-#: Bounds on client-facing ``match`` evidence a strategy may attach.
-_MAX_MATCH_CHANNELS = 8
-_MAX_CHANNEL_LEN = 32
+        raise ConfigError(msg) from None
+    except Exception as exc:
+        msg = f"catalog.search_strategy {name!r} could not be built: {exc}"
+        raise ConfigError(msg) from exc
 
 
 @dataclass(frozen=True)
@@ -236,20 +368,28 @@ class NormalizedRanking:
     #: Lower-scoring repeats of an ``api_id`` already kept.
     dropped_duplicate: int = 0
 
+    @property
+    def dropped(self) -> int:
+        """Total rows dropped for any reason."""
+        return self.dropped_invalid + self.dropped_foreign + self.dropped_duplicate
+
 
 def _valid_score(score: object) -> bool:
     if isinstance(score, bool) or not isinstance(score, int | float):
         return False
-    return math.isfinite(score)
+    try:
+        return math.isfinite(score)
+    except OverflowError:  # an int too large to convert to float
+        return False
 
 
 def _clean_match(match: object) -> CatalogMatch | None:
-    """Keep well-formed, bounded ``match`` evidence; drop anything else."""
+    """Keep well-formed slug channels (at most 8); drop anything else."""
     if not isinstance(match, CatalogMatch) or not isinstance(match.channels, tuple):
         return None
-    channels = tuple(
-        c for c in match.channels if isinstance(c, str) and 0 < len(c) <= _MAX_CHANNEL_LEN
-    )[:_MAX_MATCH_CHANNELS]
+    channels = tuple(c for c in match.channels if isinstance(c, str) and _CHANNEL_RE.fullmatch(c))[
+        :_MAX_MATCH_CHANNELS
+    ]
     return CatalogMatch(channels=channels) if channels else None
 
 

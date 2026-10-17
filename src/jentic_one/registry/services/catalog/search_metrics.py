@@ -2,8 +2,9 @@
 
 Goes through the sanctioned facade in ``shared/metrics.py`` (``get_meter``).
 The counter is created lazily on first use so importing this module has no
-side effects. Attributes are bounded: ``strategy`` is a registered strategy
-name (or the configured one), ``reason`` and ``outcome`` are closed sets.
+side effects. Attributes are bounded: ``strategy`` is the configured strategy
+name (or ``unknown`` for a client-supplied cursor name), ``reason`` and
+``outcome`` are closed sets.
 """
 
 from __future__ import annotations
@@ -17,11 +18,13 @@ if TYPE_CHECKING:
 
 _METER_NAME = "jentic_one.catalog_search"
 
-#: Why a strategy call did not produce a ranking.
-FailureReason = Literal["timeout", "error", "unregistered"]
+#: Why a strategy call did not produce a ranking: it timed out, raised, isn't
+#: registered in this process, returned rows none of which were valid, or (a
+#: later page) its cursor names a strategy other than the configured one.
+FailureReason = Literal["timeout", "error", "unregistered", "invalid", "not_configured"]
 #: What the service did about it: served the walk with ``token`` (first page),
 #: answered 503 (a later page), or rejected the cursor as invalid (a later page
-#: whose strategy is no longer registered).
+#: whose cursor names a strategy that isn't the configured one).
 FailureOutcome = Literal["fallback", "unavailable", "rejected"]
 
 _failure_counter: Counter | None = None

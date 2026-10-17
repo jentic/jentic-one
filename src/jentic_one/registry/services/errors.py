@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from jentic_one.shared.pagination import InvalidCursorError
+
 
 class RegistryServiceError(Exception):
     """Base for all registry service errors."""
@@ -299,16 +301,35 @@ class CatalogUnavailableError(RegistryServiceError):
 
 
 class CatalogSearchUnavailableError(RegistryServiceError):
-    """Raised when a catalog search walk's strategy fails after its first page.
+    """Raised when a catalog search walk's strategy can't serve a later page.
 
-    The walk's order belongs to the strategy recorded in its cursor, so it can't
-    be continued by a different ranker; the caller retries the page or restarts
-    the search without a cursor.
+    The strategy failed (error, timeout, no valid rows) or is the configured
+    one but isn't registered in this process (e.g. mid rolling deploy). The
+    walk's order belongs to the strategy recorded in its cursor, so it can't
+    be continued by a different ranker; the caller retries the page (another
+    replica may serve it) or restarts the search without a cursor.
     """
 
     def __init__(self, strategy: str) -> None:
         super().__init__(f"Catalog search strategy '{strategy}' is temporarily unavailable")
         self.strategy = strategy
+
+
+class StaleCatalogCursorError(InvalidCursorError):
+    """Raised when a catalog cursor's walk can't be continued by this deployment.
+
+    The cursor is well-formed but names a ranking strategy other than the
+    configured ``catalog.search_strategy`` (or the default ranking while
+    another is configured). Not retryable: the caller restarts the search
+    without a cursor. A subclass of ``InvalidCursorError``, so callers that
+    only know that type still answer 400.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Pagination cursor belongs to a search ranking that is not in use; "
+            "restart the search without a cursor"
+        )
 
 
 class OverlaySupersedeForbiddenError(RegistryServiceError):

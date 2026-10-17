@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.errors import StaleCatalogCursorError
 from jentic_one.registry.web.deps import get_catalog_service
 from jentic_one.registry.web.schemas.apis import ApiImportLinksResponse, ApiImportResponse
 from jentic_one.registry.web.schemas.catalog import (
@@ -41,7 +42,7 @@ from jentic_one.registry.web.schemas.catalog import (
     PreviewParameterResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.pagination import InvalidCursorError
+from jentic_one.shared.pagination import MAX_CATALOG_CURSOR_LENGTH, InvalidCursorError
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -112,6 +113,7 @@ async def list_catalog(
     ),
     cursor: str | None = Query(
         default=None,
+        max_length=MAX_CATALOG_CURSOR_LENGTH,
         description=(
             "Opaque cursor from a previous page's `next_cursor`; keep the other filters "
             "unchanged while paging."
@@ -133,10 +135,11 @@ async def list_catalog(
     ``catalog_total``/``registered_count``/``outdated_count`` count the whole
     manifest, not the page, so the Discover status row stays stable while scrolling.
 
-    A search walk keeps the ranking that served its first page. If that ranking
-    is no longer available on a later page, the cursor is rejected (400) or the
-    page answers 503 ``catalog_search_unavailable``; restart the search without
-    a cursor.
+    A search walk keeps the ranking that served its first page. A later page
+    whose cursor names a ranking that is not the configured one answers 400
+    (restart the search without a cursor); one whose ranking fails or isn't
+    available on this replica answers 503 ``catalog_search_unavailable`` with
+    ``Retry-After`` (retry the page, or restart the search).
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(
@@ -165,6 +168,8 @@ async def list_catalog(
             limit=limit,
             include_snoozed=include_snoozed,
         )
+    except StaleCatalogCursorError as exc:
+        raise BadRequest(detail=str(exc), instance="/catalog") from None
     except InvalidCursorError:
         raise BadRequest(detail="Invalid pagination cursor", instance="/catalog") from None
 
