@@ -203,7 +203,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Idle window + measured window per combo, plus a broker recreate each.
     env.check_fresh(
-        callers={c for _, c in combos}, run_s=len(combos) * (2 * args.n / args.rate + 60)
+        callers={c for _, c in combos},
+        run_s=len(combos) * (2 * args.n / args.rate + 60),
+        shorten="lower -n, raise --rate, or drop --all",
     )
     rows: list[dict[str, Any]] = []
     state: dict[str, str | None] = {"variant": None}
