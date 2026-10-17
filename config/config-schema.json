@@ -1663,12 +1663,21 @@
       "properties": {
         "exporter": {
           "default": "otlp",
+          "description": "Where spans go. ``none`` records no spans at all (every span is non-recording), while trace ids are still generated and propagated: an inbound ``traceparent`` is honoured, outbound requests carry ``traceparent``/``tracestate``, and execution records and logs keep their ``trace_id``.",
           "enum": [
             "otlp",
             "none"
           ],
           "title": "Exporter",
           "type": "string"
+        },
+        "sample_ratio": {
+          "default": 1.0,
+          "description": "Fraction of new traces recorded and exported when ``exporter`` is ``otlp`` (1.0 records every trace). A request that arrives with a ``traceparent`` follows the caller's sampled flag instead. Ignored with ``exporter: none``, and overridden by the standard ``OTEL_TRACES_SAMPLER`` environment variable when that is set.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Sample Ratio",
+          "type": "number"
         }
       },
       "title": "TracingConfig",

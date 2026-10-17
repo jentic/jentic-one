@@ -159,7 +159,8 @@ Observability settings (metrics, tracing knobs).
 | --- | ---- | ------- | ------- | ----------- |
 | `observability.metrics.exporter` | "otlp" \| "prometheus" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__METRICS__EXPORTER` |  |
 | `observability.metrics.export_interval_seconds` | integer | `15` | `JENTIC__OBSERVABILITY__METRICS__EXPORT_INTERVAL_SECONDS` |  |
-| `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` |  |
+| `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` | Where spans go. `none` records no spans at all (every span is non-recording), while trace ids are still generated and propagated: an inbound `traceparent` is honoured, outbound requests carry `traceparent`/`tracestate`, and execution records and logs keep their `trace_id`. |
+| `observability.tracing.sample_ratio` | number (>= 0.0, <= 1.0) | `1.0` | `JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO` | Fraction of new traces recorded and exported when `exporter` is `otlp` (1.0 records every trace). A request that arrives with a `traceparent` follows the caller's sampled flag instead. Ignored with `exporter: none`, and overridden by the standard `OTEL_TRACES_SAMPLER` environment variable when that is set. |
 
 ## `admin`
 

@@ -128,6 +128,27 @@ def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     assert config.logging.http_wire_trace is True
 
 
+@pytest.mark.parametrize("ratio", ["-0.1", "1.5"])
+def test_tracing_sample_ratio_default_yaml_env_and_bounds(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any], ratio: str
+):
+    assert load_config(config_file).observability.tracing.sample_ratio == 1.0
+
+    from_yaml = tmp_path / "ratio.yaml"
+    from_yaml.write_text(
+        yaml.dump({**sample_config_dict, "observability": {"tracing": {"sample_ratio": 0.25}}})
+    )
+    assert load_config(from_yaml).observability.tracing.sample_ratio == 0.25
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": "0.1"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).observability.tracing.sample_ratio == 0.1
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": ratio}
+    with patch.dict(os.environ, env, clear=False), pytest.raises(ConfigError, match="sample_ratio"):
+        load_config(config_file)
+
+
 def test_control_connect_manual_flows_default_on_and_env_overrides(
     config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any]
 ):

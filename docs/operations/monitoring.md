@@ -121,6 +121,22 @@ to `otlp` targeting a local collector; without one, nothing is delivered
 anywhere — set `observability.metrics.exporter: none` to silence the export
 attempts.
 
+With `observability.tracing.exporter: none` no span is recorded at all, so
+tracing costs next to nothing on the request path. Trace ids still flow: an
+inbound `traceparent` is honoured (a fresh trace id is minted when there is
+none), outbound upstream requests carry `traceparent` and the `jentic=`
+`tracestate` member, and execution records, events and log lines keep their
+`trace_id`. With `otlp`, `observability.tracing.sample_ratio` (default `1.0`)
+sets the fraction of new traces recorded and exported; a request that arrives
+with a `traceparent` follows the caller's sampled flag. The standard
+`OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` variables override the ratio
+when set.
+
+Each request yields one inbound server span (no per-message ASGI
+`http send`/`http receive` spans) and one span per SQL statement, recorded by
+the SQLAlchemy instrumentation with the statement and connection-pool
+context, plus a `connect` span per connection checkout.
+
 Exported spans never carry request material. Inbound and outbound HTTP
 spans mask query-string values in the recorded URL and query attributes
 (`http.url`, `url.full`, `http.target`, `url.query`), keeping parameter names,
