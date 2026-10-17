@@ -24,7 +24,8 @@ logger = structlog.get_logger(__name__)
 
 #: How long a provider replaced by a registry rebuild stays open before it is
 #: closed. A request that resolved it just before the swap keeps using it, so
-#: this outlasts the longest provider call (the provider HTTP timeouts are 30 s).
+#: this outlasts a whole provider operation (a connect makes a few sequential
+#: upstream calls, each under a 30 s HTTP timeout).
 PROVIDER_RETIRE_GRACE_S = 120.0
 
 ALL_DB_NAMES: frozenset[str] = frozenset(("registry", "admin", "control"))

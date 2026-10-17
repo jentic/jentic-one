@@ -218,6 +218,14 @@ def test_rebuild_reuses_unchanged_providers_and_replaces_changed_ones() -> None:
     assert rotated.superseded_by(removed) == [rotated.get("pipedream")]
 
 
+def test_configured_provider_shadowing_a_builtin_name_is_not_carried_over() -> None:
+    shadowing = CredentialsConfig.model_validate({"providers": {"static": {**_pipedream("s1")}}})
+    first = ProviderRegistry.from_config_and_dynamic(shadowing, {})
+    assert isinstance(first.get("static"), PipedreamProvider)
+    rebuilt = ProviderRegistry.from_config_and_dynamic(CredentialsConfig(), {}, previous=first)
+    assert isinstance(rebuilt.get("static"), StaticProvider)
+
+
 class _ClosingProvider(StaticProvider):
     """A provider owning a resource: records when, relative to the swap, it closed."""
 

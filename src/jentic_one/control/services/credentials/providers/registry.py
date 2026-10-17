@@ -104,10 +104,12 @@ class ProviderRegistry:
         provider keeps whatever that provider holds in memory.
         """
         if previous is not None:
+            # Only a genuine built-in carries over: a configured provider that
+            # shadowed a built-in name is rebuilt (or dropped) like any other.
             providers = {
                 name: previous._providers[name]
                 for name in _BUILTIN_NAMES
-                if name in previous._providers
+                if name in previous._providers and name not in previous._configs
             }
         else:
             providers = {}

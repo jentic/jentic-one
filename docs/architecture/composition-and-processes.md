@@ -170,12 +170,13 @@ load-bearing:
 1. **Startup:** `ctx.startup()` → DB instrumentation → telemetry → the
    surface's own `extra_lifespan` (the broker opens its shared outbound
    `httpx.AsyncClient` here) → the invalidation bus starts (below) → the
-   provider-config refresher starts → container-injected lifespans (the `/mcp` session manager) → background
-   workers.
+   provider-config refresher starts → container-injected lifespans (the
+   `/mcp` session manager) → background workers.
 2. **Shutdown**, with a drain step first: the broker's admission gate
    reports unready (so the load balancer deregisters the instance) →
    scanners stop → the job worker drains → telemetry flushes → the
-   provider-config refresher stops → `ctx.shutdown()` (closes the providers) → container-injected lifespans exit in reverse → the
+   provider-config refresher stops → `ctx.shutdown()` (closes the
+   providers) → container-injected lifespans exit in reverse → the
    invalidation bus stops → the surface lifespan closes the shared HTTP
    client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
