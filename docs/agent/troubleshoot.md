@@ -111,16 +111,48 @@ control-plane URL. Re-register with both URLs.
 The database must live on a named volume, not a host bind mount — Docker
 Desktop's file sharing lacks the locking semantics SQLite needs.
 
-## Import fails: `relative server URL '…' has no base URL`
+## Import fails: server URL can't be made absolute
 
-The description's `servers` list holds only relative URLs (`/api/v3`), which
-are relative to wherever the document is served. They resolve when the API is
-imported from the description's own URL; an inline paste or upload, or a
-catalog entry, has no usable base. Import from the URL instead, or edit the
-description so its server URL is absolute (`https://api.example.com/api/v3`).
-APIs imported before relative servers were resolved keep host-relative
-operations that `execute` refuses with `RESOLVE_FAILED` ("has no upstream
-host"); re-import them the same way.
+The broker routes every call by its upstream host, so ingest makes each
+relative server URL (`url: /api/v3`, as in the stock Petstore) absolute. It
+resolves against the URL the description was retrieved from, after redirects:
+importing `https://petstore3.swagger.io/api/v3/openapi.json` gives
+`https://petstore3.swagger.io/api/v3`. The import job's result lists the
+servers it resolved (`server_url_changes`) — check the host before you bind a
+credential to the API. A description that declares no `servers` at all imports
+as inspect-only: `execute` refuses its operations with `RESOLVE_FAILED`.
+
+A manual import (URL, paste, or upload) is refused when a `servers` list is
+left with no absolute URL. The job error names the reason:
+
+| Error starts with | Cause | Fix |
+| --- | --- | --- |
+| `relative server URL has no base` | Pasted or uploaded inline: there is no document URL. | Import from the description's URL, or make the server URL absolute. |
+| `spec host serves files` | The description is served from a file host (GitHub raw, gists, SwaggerHub, object storage, the catalog mirror), not from the API. Resolving would send the API's credentials to the file host. | Make the server URL absolute (`https://api.example.com/v3`), or import the catalog entry instead. |
+| `server URL looks like a host; add https://` | `api.example.com/v1` is a host without a scheme, not a path. | Add the scheme. |
+| `spec URL redirected to http` | An https URL redirected to plaintext http. | Import from the final https URL, or make the server URL absolute. |
+| `server URL must be http(s)`, `… only a query or fragment`, `… starts with a relative variable` | The URL can't name an http(s) API host (`file:`, `?v=3`, `{basePath}/v1` with a relative default). | Make the server URL absolute. |
+
+Unresolvable entries next to an absolute server in the same list are dropped
+instead, and listed in `server_url_changes`. Catalog imports, catalog updates,
+and overlay materializations never fail on this: an unresolvable server stays
+as declared and the operations it covers are inspect-only. Fix such
+an API with an [overlay](../guides/overlays.md) that sets an absolute server.
+
+A resolved server is the host the description was imported from. That host
+passed the import egress policy (`ingest.egress`), but `execute` checks
+`broker.egress` separately: for an internal host, list it in
+`broker.egress.allowed_internal_domains` as well as
+`ingest.egress.allowed_internal_domains`.
+
+**APIs stored with host-relative servers.** An API imported before ingest
+resolved relative servers keeps host-relative operations that `execute`
+refuses with `RESOLVE_FAILED` ("has no upstream host"). Import the description
+from its URL again (`jentic apis import <url>`) and promote the new draft
+(`jentic apis promote <vendor/name/version> <revision_id>`); the new revision
+stores the resolved servers, so it doesn't collide with the live one. If
+credentials are bound to the API, promoting needs `credentials:write`, since
+the API's host changes.
 
 ## `credential_undecryptable` (424) on execute
 
