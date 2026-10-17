@@ -6,7 +6,7 @@ process. An OAuth/MCP agent still polls the broker's async ``_links.self``
 standalone admin app must resolve ``at_`` against the admin DB's
 ``access_tokens`` table exactly as the combined app does — including every
 kill switch on that path (revocation, expiry, a disabled agent, a deactivated
-OAuth client) and the permission and query-scoping gates behind it.
+OAuth client, a revoked consent grant) and the permission and query-scoping gates behind it.
 
 Each fail-closed ``at_`` case first proves the token is accepted (200) on the
 same app and then flips one gate, so it can only pass when the ``at_`` branch
@@ -41,6 +41,7 @@ from jentic_one.admin.repos import (
     AgentCredentialRepository,
     AgentRepository,
     JobRepository,
+    OAuthClientGrantRepository,
     OAuthClientRepository,
 )
 from jentic_one.admin.services.auth_service import AuthService
@@ -56,6 +57,7 @@ from tests.integration.auth.seeds import (
     CLIENT_ID,
     SEED_MARKER,
     SEED_PASSWORD,
+    mint_grant_channel_tokens,
     seed_agent,
     seed_client,
     seed_password_user,
@@ -236,6 +238,33 @@ async def test_standalone_admin_rejects_user_access_token_after_client_deactivat
     assert after.status_code == 401, after.text
 
 
+async def test_standalone_admin_rejects_grant_channel_access_token_after_grant_revoked(
+    integration_context: Context,
+    admin_app: FastAPI,
+    owner_id: str,
+    created_job_ids: list[str],
+) -> None:
+    """An agent ``at_`` minted through a consent grant dies with the grant."""
+    agent_id, job_id = await _seed_agent_with_job(
+        integration_context, owner_id, created_job_ids, scopes=["jobs:read"]
+    )
+    await seed_client(integration_context, allowed_scopes=["jobs:read"])
+    grant_id, token, _refresh, _id_token = await mint_grant_channel_tokens(
+        integration_context, user_id=owner_id, agent_id=agent_id, grant_scopes=["jobs:read"]
+    )
+
+    async with _client(admin_app, token) as client:
+        before = await client.get(f"/jobs/{job_id}")
+        # Flip only the grant row, so the 401 can come from nothing but the grant gate.
+        async with integration_context.admin_db.session() as session:
+            assert await OAuthClientGrantRepository.revoke(session, grant_id)
+            await session.commit()
+        after = await client.get(f"/jobs/{job_id}")
+
+    assert before.status_code == 200, before.text
+    assert after.status_code == 401, after.text
+
+
 # ── at_ authenticates, then the permission and scoping gates decide ─────────
 
 
@@ -264,7 +293,7 @@ async def test_standalone_admin_access_token_cannot_read_another_actors_job(
     created_job_ids: list[str],
 ) -> None:
     """Query scoping still applies: another actor's job is indistinguishable from none."""
-    agent_id, _own_job = await _seed_agent_with_job(
+    agent_id, own_job = await _seed_agent_with_job(
         integration_context, owner_id, created_job_ids, scopes=["jobs:read"]
     )
     _other_agent, other_job = await _seed_agent_with_job(
@@ -273,8 +302,10 @@ async def test_standalone_admin_access_token_cannot_read_another_actors_job(
     token = await _mint_agent_access_token(integration_context, agent_id)
 
     async with _client(admin_app, token) as client:
+        own = await client.get(f"/jobs/{own_job}")
         resp = await client.get(f"/jobs/{other_job}")
 
+    assert own.status_code == 200, own.text
     assert resp.status_code == 404, resp.text
 
 
