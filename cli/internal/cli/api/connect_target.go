@@ -124,7 +124,7 @@ func (l connectLane) findAPI() string {
 	}
 	return "Check the identity with `jentic apis show <vendor/name/version>` (or the api fields " +
 		"`jentic inspect` reports); if the API is not imported yet, import it with " +
-		"`jentic catalog import <api_id>`, then retry `jentic connect --api`."
+		"`jentic catalog import <entry_id>` (the entry_id from `jentic catalog search`), then retry `jentic connect --api`."
 }
 
 // apiTargetCoded maps the connect route's API-target and session-cap error

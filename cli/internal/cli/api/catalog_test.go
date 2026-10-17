@@ -42,9 +42,9 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[
-				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"_links":{}},
-				{"api_id":"slack.com","vendor":"slack.com","registered":false,"_links":{}}],
-			"catalog_total":2,"registered_count":1,"manifest_age_seconds":120,
+				{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com","title":"Stripe API","registered":true,"alternates":2,"_links":{}},
+				{"entry_id":"public/slack.com","source_slug":"public","catalog_api_id":"slack.com","vendor":"slack.com","registered":false,"_links":{}}],
+			"catalog_total":2,"registered_count":1,"oldest_source_sync_age_seconds":120,
 			"has_more":false,"next_cursor":""}`))
 	}))
 	defer srv.Close()
@@ -54,7 +54,7 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 		t.Fatalf("catalogList: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"stripe.com", "slack.com", theme.SelectOn, theme.SelectOff, "2 entries · 1 imported"} {
+	for _, want := range []string{"public/stripe.com", "public/slack.com", "Stripe API", "+2 other sources", theme.SelectOn, theme.SelectOff, "2 entries · 1 imported", "oldest source sync 2m old"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output missing %q\n---\n%s", want, got)
 		}
@@ -68,8 +68,8 @@ func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[
-				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"update_available":true,"_links":{}}],
-			"catalog_total":2,"registered_count":1,"outdated_count":1,"manifest_age_seconds":120,
+				{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com","registered":true,"update_available":true,"_links":{}}],
+			"catalog_total":2,"registered_count":1,"outdated_count":1,"oldest_source_sync_age_seconds":120,
 			"has_more":false,"next_cursor":""}`))
 	}))
 	defer srv.Close()
@@ -101,7 +101,7 @@ func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[],"catalog_total":0,"registered_count":0,"outdated_count":0,
-			"manifest_age_seconds":0,"has_more":false,"next_cursor":""}`))
+			"oldest_source_sync_age_seconds":0,"has_more":false,"next_cursor":""}`))
 	}))
 	defer srv.Close()
 
@@ -144,17 +144,17 @@ func TestCatalogShowPreview(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":[{"method":"GET","path":"/v1/charges","summary":"List charges"}],
 				"total":1,"offset":0,"truncated":false,"info":{"title":"Stripe","version":"2024"}}`))
 		default:
-			_, _ = w.Write([]byte(`{"api_id":"stripe.com","vendor":"stripe.com","spec_url":"https://spec","registered":false,"_links":{}}`))
+			_, _ = w.Write([]byte(`{"entry_id":"public/stripe.com","source_slug":"public","catalog_api_id":"stripe.com","vendor":"stripe.com","display_vendor":"stripe.com","registered":false,"human_url":"https://example.test/stripe","_links":{"human":"https://example.test/stripe"}}`))
 		}
 	}))
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "stripe.com"); err != nil {
+	if err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "public/stripe.com"); err != nil {
 		t.Fatalf("catalogShow: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"stripe.com", "Stripe", "/v1/charges", "List charges"} {
+	for _, want := range []string{"public/stripe.com", "Stripe", "/v1/charges", "List charges", "https://example.test/stripe"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("show output missing %q\n---\n%s", want, got)
 		}
@@ -184,7 +184,7 @@ func TestCatalogImportAutoPromotes(t *testing.T) {
 
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 5 * time.Second}
-	if err := app.catalogImport(activeCtx(srv.URL), opts, "stripe.com"); err != nil {
+	if err := app.catalogImport(activeCtx(srv.URL), opts, "public/stripe.com"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoted != "/apis/stripe.com/main/2024/revisions/rev_1:promote" {
@@ -222,7 +222,7 @@ func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 30 * time.Second}
 	start := time.Now()
-	err := app.catalogImport(activeCtx(srv.URL), opts, "stripe.com")
+	err := app.catalogImport(activeCtx(srv.URL), opts, "public/stripe.com")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -262,7 +262,7 @@ func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 5 * time.Second, noPromote: true}
-	if err := app.catalogImport(activeCtx(srv.URL), opts, "v/n"); err != nil {
+	if err := app.catalogImport(activeCtx(srv.URL), opts, "public/v/n"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoteCalled {
@@ -312,9 +312,81 @@ func TestCatalogShowEntryNotFound(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "ghost.com")
+	err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "public/ghost.com")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected not-found error, got %v", err)
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("want a RESOLVE_FAILED coded error, got %v", err)
+	}
+	if strings.Contains(coded.Msg, "did you mean") || coded.Details != nil {
+		t.Errorf("no did_you_mean in the body, so none in the error: %+v", coded)
+	}
+}
+
+// TestCatalogEntryNotFoundPrintsDidYouMean pins the old-style id recovery:
+// the server's 404 body names the caller's visible entry_id, and the CLI
+// repeats it verbatim — it never builds a source prefix itself.
+func TestCatalogEntryNotFoundPrintsDidYouMean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"Not Found","status":404,"detail":"catalog entry not found","did_you_mean":"internal/stripe.com"}`))
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name string
+		run  func(*app) error
+		want string
+	}{
+		{"show", func(a *app) error { return a.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "stripe.com") }, "jentic catalog show internal/stripe.com"},
+		{"import", func(a *app) error {
+			return a.catalogImport(activeCtx(srv.URL), &catalogImportOptions{timeout: time.Second}, "stripe.com")
+		}, "jentic catalog import internal/stripe.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run(testApp(t))
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+				t.Fatalf("want a RESOLVE_FAILED coded error, got %v", err)
+			}
+			if !strings.Contains(coded.Msg, `did you mean "internal/stripe.com"`) {
+				t.Errorf("message %q must name the server's did_you_mean", coded.Msg)
+			}
+			if coded.Actionable != tc.want {
+				t.Errorf("actionable = %q, want %q", coded.Actionable, tc.want)
+			}
+			if coded.Details["did_you_mean"] != "internal/stripe.com" {
+				t.Errorf("details = %v, want did_you_mean", coded.Details)
+			}
+		})
+	}
+}
+
+// TestCatalogCommandsRejectMalformedEntryIDs pins validateEntryID on the cobra
+// commands: a traversal-shaped id never reaches the raw-path route.
+func TestCatalogCommandsRejectMalformedEntryIDs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("a malformed entry_id reached the wire: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	for _, bad := range []string{"../access-requests", "/public/x", "public//x", "public/./x", "public/x\n"} {
+		for _, err := range []error{
+			app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, bad),
+			app.catalogImport(activeCtx(srv.URL), &catalogImportOptions{}, bad),
+		} {
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+				t.Fatalf("%q: want a RESOLVE_FAILED coded error, got %v", bad, err)
+			}
+			if !strings.Contains(coded.Msg, "jentic catalog search") {
+				t.Errorf("%q: message %q must point at catalog search", bad, coded.Msg)
+			}
+		}
 	}
 }
 
@@ -402,8 +474,8 @@ func TestCatalogFilterCycle(t *testing.T) {
 func TestCatalogBrowserListRow(t *testing.T) {
 	m := &catalogBrowser{
 		entries: []catalogEntry{
-			{APIID: "stripe.com", Registered: true},
-			{APIID: "slack.com", Registered: false},
+			{EntryID: "public/stripe.com", Registered: true},
+			{EntryID: "public/slack.com", Registered: false},
 		},
 		cursor: 0,
 	}
@@ -453,8 +525,8 @@ func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 
 func TestCatalogBrowserBackPeelsLevels(t *testing.T) {
 	m := &catalogBrowser{
-		entries:    []catalogEntry{{APIID: "acme.com"}},
-		previews:   map[string]*catalogPreview{"acme.com": {}},
+		entries:    []catalogEntry{{EntryID: "public/acme.com"}},
+		previews:   map[string]*catalogPreview{"public/acme.com": {}},
 		previewErr: map[string]string{},
 		query:      "pay",
 		filter:     filterRegistered,
@@ -464,7 +536,7 @@ func TestCatalogBrowserBackPeelsLevels(t *testing.T) {
 	if _, cmd := m.back(); cmd != nil {
 		t.Error("collapsing preview should not issue a command")
 	}
-	if _, shown := m.previews["acme.com"]; shown {
+	if _, shown := m.previews["public/acme.com"]; shown {
 		t.Error("preview should be collapsed")
 	}
 	if m.done {

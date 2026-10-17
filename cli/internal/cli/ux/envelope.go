@@ -73,7 +73,7 @@ type List struct {
 	HasMore    bool   `json:"has_more"`
 	NextCursor string `json:"next_cursor,omitempty"`
 	// Meta carries command-specific summary fields that are NOT the collection
-	// itself (e.g. catalog's catalog_total / manifest_age_seconds). Kept under one
+	// itself (e.g. catalog's catalog_total / oldest_source_sync_age_seconds). Kept under one
 	// key so the top level stays a stable, closed shape across every list command;
 	// omitted entirely when a command has no summary.
 	Meta map[string]any `json:"meta,omitempty"`

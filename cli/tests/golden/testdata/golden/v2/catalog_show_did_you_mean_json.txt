@@ -1,0 +1,5 @@
+exit: 2
+--- stdout ---
+
+--- stderr ---
+{"actionable_step":"jentic catalog show public/stripe.com","details":{"did_you_mean":"public/stripe.com"},"error":"catalog entry \"stripe.com\" not found — did you mean \"public/stripe.com\"?","error_code":"RESOLVE_FAILED","schema_version":"2"}

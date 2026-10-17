@@ -3,7 +3,7 @@ package api
 // mcp_catalog.go holds the catalog pair of MCP tools (search_catalog /
 // import_api). They ride the exact client seams the cobra commands use — the
 // catalogClient wrapper for GET /catalog and
-// POST /catalog/{api_id:path}:import (rawPathEditor and all) — so the
+// POST /catalog/{entry_id:path}:import (rawPathEditor and all) — so the
 // envelopes stay byte-consistent with `jentic catalog … --json`, with
 // schema_version and the sibling instance stamp joined like every other tool
 // result.
@@ -25,7 +25,7 @@ import (
 // before handing the still-running job back to the model. It sits well inside
 // the 30s mcpCallTimeout so the terminal legs (result fetch + promotes) keep
 // headroom; a slower import converges on the next import_api call (the
-// idempotentHint contract — re-import of the same api_id converges).
+// idempotentHint contract — re-import of the same entry_id converges).
 const defaultImportWaitBudget = 20 * time.Second
 
 // searchCatalogParams mirrors the `jentic catalog search` surface: keyword
@@ -38,10 +38,11 @@ var searchCatalogParams = []paramSpec{
 	{name: "cursor", aliases: []string{"next_cursor"}, kind: paramString},
 }
 
-// importAPIParams: the catalog entry identity. `id` is a safe alias here —
+// importAPIParams: the catalog entry identity. `api_id` is accepted as an
+// alias for callers written against schema_version 1, and `id` is safe here —
 // this tool has no operation_id for it to collide with.
 var importAPIParams = []paramSpec{
-	{name: "api_id", aliases: []string{"id", "api"}, kind: paramString},
+	{name: "entry_id", aliases: []string{"api_id", "id", "api"}, kind: paramString},
 }
 
 // transportSoftError is the access-loop twin of executeTransportError
@@ -49,7 +50,7 @@ var importAPIParams = []paramSpec{
 // TRANSPORT_ERROR with the get_started pointer — never as INTERNAL_ERROR
 // ("stop, CLI bug") with no recovery. Unlike execute, retryable is safe to
 // hint unconditionally here: every access-loop call is a read or a
-// server-converging write (a re-import of the same api_id converges, a
+// server-converging write (a re-import of the same entry_id converges, a
 // duplicate filing answers 409 — nothing double-executes). Non-transport
 // failures (completed *HTTPError, auth, no-config) fall through to the
 // shared code-keyed mapping, keeping any caller-supplied extras.
@@ -131,13 +132,13 @@ func (s *mcpServer) handleSearchCatalog(ctx context.Context, req *mcp.CallToolRe
 		nextCursor = page.NextCursor
 	}
 	payload := map[string]any{
-		"schema_version":       mcpSchemaVersion,
-		"data":                 page.Data,
-		"catalog_total":        page.CatalogTotal,
-		"registered_count":     page.RegisteredCount,
-		"outdated_count":       page.OutdatedCount,
-		"manifest_age_seconds": page.ManifestAgeSeconds,
-		"has_more":             nextCursor != "",
+		"schema_version":                 mcpSchemaVersion,
+		"data":                           page.Data,
+		"catalog_total":                  page.CatalogTotal,
+		"registered_count":               page.RegisteredCount,
+		"outdated_count":                 page.OutdatedCount,
+		"oldest_source_sync_age_seconds": page.OldestSourceSyncAgeSeconds,
+		"has_more":                       nextCursor != "",
 	}
 	if nextCursor != "" {
 		payload["next_cursor"] = nextCursor
@@ -156,12 +157,12 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	if err != nil {
 		return nil, invalidParams(err)
 	}
-	apiID, _ := args["api_id"].(string)
-	if apiID == "" {
-		return nil, invalidParams(errors.New(`import_api requires "api_id" (aliases: "id", "api"): ` +
-			`a catalog entry id from a search_catalog hit, e.g. "googleapis.com/sheets"`))
+	entryID, _ := args["entry_id"].(string)
+	if entryID == "" {
+		return nil, invalidParams(errors.New(`import_api requires "entry_id" (aliases: "api_id", "id", "api"): ` +
+			`the entry_id of a search_catalog hit, e.g. "public/googleapis.com/sheets"`))
 	}
-	if err := validateAPIID(apiID); err != nil {
+	if err := checkEntryID(entryID); err != nil {
 		return nil, invalidParams(err)
 	}
 
@@ -170,9 +171,9 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 		s.logger.Warn("import_api failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
-	jobID, err := client.Import(cctx, apiID)
+	jobID, err := client.Import(cctx, entryID)
 	if err != nil {
-		return s.importAPIError(cctx, apiID, err), nil
+		return s.importAPIError(cctx, entryID, err), nil
 	}
 
 	job, done, pollErr := s.trackImportJob(cctx, client, jobID)
@@ -181,7 +182,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 		// clean non-terminal result would send the model into a re-import
 		// loop against a backend that de-duplicates nothing. Surface the
 		// failure with the job_id so the model can keep watching THIS job.
-		s.logger.Warn("import_api job poll failed", "api_id", apiID, "job_id", jobID, "error", redactedErr(pollErr))
+		s.logger.Warn("import_api job poll failed", "entry_id", entryID, "job_id", jobID, "error", redactedErr(pollErr))
 		return s.transportSoftError(cctx, pollErr, map[string]any{"job_id": jobID}), nil
 	}
 	if !done {
@@ -192,7 +193,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 		if job != nil {
 			status = job.Status
 		}
-		s.logger.Info("import_api still running past the wait budget", "api_id", apiID, "job_id", jobID, "status", status)
+		s.logger.Info("import_api still running past the wait budget", "entry_id", entryID, "job_id", jobID, "status", status)
 		return s.result(cctx, map[string]any{
 			"schema_version": mcpSchemaVersion,
 			"job_id":         jobID,
@@ -202,8 +203,8 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	if job.Status != catJobCompleted {
 		return s.softErrorExtra(cctx, &ux.CodedError{
 			Code: ux.CodeInternalError,
-			Msg:  fmt.Sprintf("import of %s %s: %s", apiID, job.Status, valueOr(job.Error, "no detail")),
-			Actionable: "Re-check the api_id against a search_catalog hit and retry import_api; " +
+			Msg:  fmt.Sprintf("import of %s %s: %s", entryID, job.Status, valueOr(job.Error, "no detail")),
+			Actionable: "Re-check the entry_id against a search_catalog hit and retry import_api; " +
 				"if the import keeps failing, relay this error to your operator.",
 		}, "search_catalog", map[string]any{"job_id": jobID, "job_status": job.Status}), nil
 	}
@@ -217,7 +218,7 @@ func (s *mcpServer) handleImportAPI(ctx context.Context, req *mcp.CallToolReques
 	// default (`jentic catalog import` without --no-promote): unpromoted
 	// drafts are invisible to search/execute, which would strand the loop.
 	promoted := s.app.promoteRevisions(cctx, client, result)
-	s.logger.Info("import_api", "api_id", apiID, "job_id", jobID, "revisions", len(result.Revisions))
+	s.logger.Info("import_api", "entry_id", entryID, "job_id", jobID, "revisions", len(result.Revisions))
 	return s.result(cctx, map[string]any{
 		"schema_version": mcpSchemaVersion,
 		"job_id":         jobID,
@@ -267,23 +268,32 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 	}
 }
 
-// importAPIError maps the import-specific failures: a 404 is an unknown
-// catalog entry (rediscover via search_catalog — the identity is fine); a
-// control-plane 403 on THIS route is a missing catalog:import permission, and
-// the recovery is asking the operator to grant the permission (skill wording),
-// not get_started.
-func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error) *mcp.CallToolResult {
-	s.logger.Warn("import_api failed", "api_id", apiID, "error", redactedErr(err))
+// importAPIError maps the import-specific failures: a 404 is an unknown (or
+// hidden — the server answers both alike) catalog entry: rediscover via
+// search_catalog, or, when the server's 404 names a did_you_mean (the caller
+// sent an old-style catalog_api_id such as "stripe.com"), retry with that
+// entry_id. A control-plane 403 on THIS route is a missing catalog:import
+// permission, and the recovery is asking the operator to grant the permission
+// (skill wording), not get_started.
+func (s *mcpServer) importAPIError(ctx context.Context, entryID string, err error) *mcp.CallToolResult {
+	s.logger.Warn("import_api failed", "entry_id", entryID, "error", redactedErr(err))
 	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
 		case http.StatusNotFound:
-			return s.softErrorNext(ctx, &ux.CodedError{
+			coded := &ux.CodedError{
 				Code: ux.CodeResolveFailed,
-				Msg:  fmt.Sprintf("catalog entry %q not found", apiID),
-				Actionable: "Call search_catalog with a keyword for the API you need and use the " +
-					"api_id from one of its hits.",
-			}, "search_catalog")
+				Msg:  fmt.Sprintf("catalog entry %q not found", entryID),
+				Actionable: "Call search_catalog with a keyword for the API you need and pass the " +
+					"entry_id of one of its hits verbatim.",
+			}
+			if suggestion := didYouMean(he); suggestion != "" {
+				coded.Msg += fmt.Sprintf(" — did you mean %q?", suggestion)
+				coded.Actionable = fmt.Sprintf("Call import_api again with entry_id %q.", suggestion)
+				coded.Details = map[string]any{"did_you_mean": suggestion}
+				return s.softError(ctx, coded)
+			}
+			return s.softErrorNext(ctx, coded, "search_catalog")
 		case http.StatusForbidden:
 			return s.softError(ctx, &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
@@ -297,19 +307,47 @@ func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error)
 	return s.transportSoftError(ctx, err, nil)
 }
 
-// validateAPIID syntactically guards the {api_id:path} route: the api_id is
+// maxEntryIDLength mirrors the server's entry_id width: a longer id can't name
+// an entry, so it is rejected before the wire like the other malformed shapes.
+const maxEntryIDLength = 320
+
+// checkEntryID syntactically guards the {entry_id:path} route: the entry_id is
 // spliced into the request path VERBATIM (catalog_client.go's rawPathEditor —
-// deliberately unescaped so umbrella ids keep their literal slash), which
-// means a traversal-shaped model-supplied value ("../access-requests", a
-// leading "/", empty or dot segments) would otherwise rewrite the route.
-// Reject those before the wire as a correctable protocol error.
-func validateAPIID(apiID string) error {
-	if strings.HasPrefix(apiID, "/") {
-		return fmt.Errorf("invalid api_id %q: a leading %q is not allowed — pass the api_id from a search_catalog hit verbatim", apiID, "/")
+// deliberately unescaped so the "/" between source and id stays literal),
+// which means a traversal-shaped value ("../access-requests", a leading "/",
+// empty or dot segments) would otherwise rewrite the route. The rules match
+// the server's (which answers such ids as a missing entry): no empty, "." or
+// ".." segment, no control character, at most maxEntryIDLength characters.
+// The id is checked as a whole — the CLI never adds or strips a source prefix.
+func checkEntryID(entryID string) error {
+	const hint = " — pass the entry_id from a search_catalog hit verbatim"
+	if len(entryID) > maxEntryIDLength {
+		return fmt.Errorf("invalid entry_id %q: longer than %d characters%s", entryID, maxEntryIDLength, hint)
 	}
-	for _, seg := range strings.Split(apiID, "/") {
+	for _, r := range entryID {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return fmt.Errorf("invalid entry_id %q: control characters are not allowed%s", entryID, hint)
+		}
+	}
+	if strings.HasPrefix(entryID, "/") {
+		return fmt.Errorf("invalid entry_id %q: a leading %q is not allowed%s", entryID, "/", hint)
+	}
+	for _, seg := range strings.Split(entryID, "/") {
 		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("invalid api_id %q: empty, %q, or %q path segments are not allowed — pass the api_id from a search_catalog hit verbatim", apiID, ".", "..")
+			return fmt.Errorf("invalid entry_id %q: empty, %q, or %q path segments are not allowed%s", entryID, ".", "..", hint)
+		}
+	}
+	return nil
+}
+
+// validateEntryID is checkEntryID for the cobra commands: the same rules, as
+// a coded RESOLVE_FAILED whose hint points at `jentic catalog search`.
+func validateEntryID(entryID string) error {
+	if err := checkEntryID(entryID); err != nil {
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        strings.Replace(err.Error(), "a search_catalog hit", "`jentic catalog search`", 1),
+			Actionable: "Find the entry with `jentic catalog search <keyword>` and pass its entry_id verbatim.",
 		}
 	}
 	return nil
@@ -351,33 +389,36 @@ var searchCatalogSchema = map[string]any{
 var importAPISchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"api_id": map[string]any{
+		"entry_id": map[string]any{
 			"type": "string",
-			"description": "The catalog entry to import (required; \"id\" and \"api\" are accepted aliases): " +
-				"an api_id from a search_catalog hit, e.g. \"googleapis.com/sheets\".",
+			"description": "The catalog entry to import (required; \"api_id\", \"id\" and \"api\" are accepted " +
+				"aliases): pass the entry_id from a search_catalog hit verbatim, e.g. \"public/googleapis.com/sheets\".",
 		},
 	},
-	"required": []string{"api_id"},
+	"required": []string{"entry_id"},
 }
 
 // catalogToolSpecs declares the catalog tool surface. Annotations per master
 // §3.2: search_catalog is read-only; import_api carries idempotentHint and NO
-// readOnlyHint (re-import of the same api_id converges). --read-only
+// readOnlyHint (re-import of the same entry_id converges). --read-only
 // therefore serves search_catalog and withholds import_api.
 func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 	return []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
 				Name:  "search_catalog",
-				Title: "Search the public API catalog",
-				Description: "Search the public API catalog for importable APIs by keyword. The registry that " +
+				Title: "Search the API catalog",
+				Description: "Search the API catalog (the public catalog plus any other catalog sources this " +
+					"instance reads) for importable APIs by keyword. The registry that " +
 					"search_apis reads only sees IMPORTED APIs — when search_apis returns an empty data " +
 					"array, the API probably isn't imported yet: find it here, import it with import_api, " +
 					"then search_apis again (reading the registry and importing need no extra grant). " +
 					`Example: {"query": "spreadsheets", "limit": 10}. Returns one page as ` +
 					"{data, catalog_total, registered_count, has_more, next_cursor}; each entry carries " +
-					"the api_id to pass to import_api and `registered` (true = already imported — skip " +
-					"the import). When has_more is true, pass next_cursor back as cursor.",
+					"its entry_id (\"{source}/{id}\", e.g. \"public/googleapis.com/sheets\") — pass it to " +
+					"import_api verbatim, never rebuilt from catalog_api_id — its title, source_slug and " +
+					"`registered` (true = already imported — skip the import). When has_more is true, pass " +
+					"next_cursor back as cursor.",
 				InputSchema: searchCatalogSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
@@ -389,10 +430,11 @@ func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 				Title: "Import a catalog API into the registry",
 				Description: "Import a catalog API into this instance's registry so its operations become " +
 					"searchable and executable. " +
-					`Example: {"api_id": "googleapis.com/sheets"} with an api_id from a search_catalog hit. ` +
+					`Example: {"entry_id": "public/googleapis.com/sheets"} — pass the entry_id from a ` +
+					"search_catalog hit verbatim. " +
 					"The import runs as a job: this call tracks it briefly and, on completion, promotes the " +
 					"imported revisions live, returning {job_id, status, revisions, promoted}. If it returns " +
-					"a non-terminal status, call import_api again with the same api_id — re-importing " +
+					"a non-terminal status, call import_api again with the same entry_id — re-importing " +
 					"converges (idempotent) and finishes the promotion. Requires the catalog:import " +
 					"permission (agents hold it by default); on a denial, ask your operator to grant it — " +
 					"do not guess other permissions. Importing makes an API discoverable but does NOT " +

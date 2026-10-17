@@ -153,11 +153,11 @@ func TestSafeMarshal_FailSafeOnUnencodable(t *testing.T) {
 
 func TestMarshalRedacted_StampsSchemaVersion(t *testing.T) {
 	out := string(safeMarshal(Result{Status: StatusCreated, Resource: "environment", Name: "local"}))
-	if !strings.Contains(out, `"schema_version":"1"`) {
+	if !strings.Contains(out, `"schema_version":"2"`) {
 		t.Errorf("Result schema_version not stamped: %s", out)
 	}
 	pout := string(safeMarshal(Page{Items: []int{1, 2}, NextToken: "c1"}))
-	if !strings.Contains(pout, `"schema_version":"1"`) {
+	if !strings.Contains(pout, `"schema_version":"2"`) {
 		t.Errorf("Page schema_version not stamped: %s", pout)
 	}
 }
