@@ -54,6 +54,9 @@ class IngestSpecification(BaseModel):
     # display surfaces can derive friendly titles without reverse-engineering
     # the slugified vendor/name tuple.
     catalog_api_id: str | None = None
+    #: The catalog entry (``{source_slug}/{external_id}``) a catalog import came
+    #: from; persisted on the Api row next to ``catalog_api_id``. None otherwise.
+    catalog_entry_id: str | None = None
     #: Overlay-only: the base revision's ``spec_digest`` this overlay was materialized
     #: over (distinct from ``sha``, which is the overlaid digest). Persisted on the
     #: resulting ``api_revisions`` row so the Flow-3 sweep can diff upstream against the
