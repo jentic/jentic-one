@@ -1,22 +1,27 @@
 """Owned agents follow their owner's account status, end to end over HTTP.
 
 The owner is disabled, re-enabled and deleted through the real
-``UserService``; the agent then calls ``GET /me`` on the auth app with each
-credential it can hold. The app's ``verify_token`` is the superset verifier
-the REST surfaces and the ``/mcp`` mount share, so a refusal here is the
-refusal every one of them returns.
+``UserService``; the agent then calls ``GET /me`` on the auth app and
+``GET /mcp`` on the real MCP mount with each credential it can hold, and
+exchanges a JWT-bearer assertion at ``POST /oauth/token``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from typing import Any
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from jwt.algorithms import OKPAlgorithm
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agents import Agent
@@ -25,8 +30,10 @@ from jentic_one.admin.repos import AgentCredentialRepository, AgentRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.token_service import TokenService
-from jentic_one.auth.web.app import create_app
+from jentic_one.auth.web.app import create_app, make_superset_verifier
+from jentic_one.mcp.installer import install_mcp_mount
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
 from tests.web.conftest import noop_lifespan
@@ -196,3 +203,123 @@ async def test_ownerless_agent_and_user_login_are_unaffected(
         await session.execute(delete(AccessToken).where(AccessToken.actor_id == admin_user_id))
         await session.execute(delete(RefreshToken).where(RefreshToken.actor_id == admin_user_id))
         await session.commit()
+
+
+def _mcp_status(ctx: Context, credential: str) -> int:
+    """``GET /mcp`` with a bearer, through the real mount and superset verifier.
+
+    An authenticated GET answers 405 (no stream is served); a refused
+    credential answers the 401 challenge.
+    """
+    app = FastAPI()
+    app.state.ctx = ctx
+    app.state.verify_token = make_superset_verifier(ctx)
+    install_mcp_mount(app, ctx)
+    with TestClient(app, headers={"Authorization": f"Bearer {credential}"}) as client:
+        return client.get("/mcp").status_code
+
+
+async def test_mcp_bearer_follows_owner_status(
+    web_context: Context,
+    admin_user_id: str,
+    owner_user_id: str,
+    owned_agent: _AgentCredentials,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(web_context.config.server.mcp, "enabled", True)
+    users = UserService(web_context)
+    admin = _admin(admin_user_id)
+    channels = _agent_channels(owned_agent)
+
+    def _statuses() -> dict[str, int]:
+        return {name: _mcp_status(web_context, c) for name, c in channels.items()}
+
+    assert _statuses() == {"jak_": 405, "at_": 405}
+    await users.disable(owner_user_id, identity=admin)
+    assert _statuses() == {"jak_": 401, "at_": 401}
+    await users.enable(owner_user_id, identity=admin)
+    assert _statuses() == {"jak_": 405, "at_": 405}
+    await users.delete(owner_user_id, identity=admin)
+    assert _statuses() == {"jak_": 401, "at_": 401}
+
+
+_KID = "owner-status-key"
+_JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+
+async def _register_signing_key(ctx: Context, agent_id: str) -> Ed25519PrivateKey:
+    """Give the agent a JWKS, as registration does, and return its private key."""
+    private_key = Ed25519PrivateKey.generate()
+    jwk = OKPAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
+    jwk["kid"] = _KID
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(Agent).where(Agent.id == agent_id).values(jwks={"keys": [jwk]})
+        )
+        await session.commit()
+    return private_key
+
+
+def _exchange(ctx: Context, agent_id: str, private_key: Ed25519PrivateKey) -> tuple[int, Any]:
+    """``POST /oauth/token`` with a fresh JWT-bearer assertion for ``agent_id``."""
+    now = time.time()
+    assertion = jwt.encode(
+        {
+            "iss": agent_id,
+            "aud": f"{resolved_auth_base_url(ctx.config).rstrip('/')}/oauth/token",
+            "iat": now,
+            "exp": now + 60,
+            "jti": secrets.token_hex(16),
+        },
+        private_key,
+        algorithm="EdDSA",
+        headers={"kid": _KID},
+    )
+    app = create_app(ctx)
+    app.router.lifespan_context = noop_lifespan
+    with TestClient(app) as client:
+        resp = client.post(
+            "/oauth/token",
+            json={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            },
+        )
+    return resp.status_code, resp.json()
+
+
+async def test_jwt_bearer_exchange_follows_owner_status(
+    web_context: Context, admin_user_id: str, owner_user_id: str, owned_agent: _AgentCredentials
+) -> None:
+    """No new tokens while the owner is disabled or deleted; the refusal is the
+    same ``invalid_grant`` a disabled agent gets."""
+    users = UserService(web_context)
+    admin = _admin(admin_user_id)
+    agent_id = owned_agent.agent_id
+    key = await _register_signing_key(web_context, agent_id)
+
+    status, body = _exchange(web_context, agent_id, key)
+    assert status == 200 and body["access_token"].startswith("at_")
+
+    await users.disable(owner_user_id, identity=admin)
+    owner_disabled = _exchange(web_context, agent_id, key)
+
+    await users.enable(owner_user_id, identity=admin)
+    re_enabled_status, _ = _exchange(web_context, agent_id, key)
+
+    async with web_context.admin_db.session() as session:
+        await AgentRepository.update_status(session, agent_id, ActorStatus.DISABLED)
+        await session.commit()
+    agent_disabled = _exchange(web_context, agent_id, key)
+    async with web_context.admin_db.session() as session:
+        await AgentRepository.update_status(session, agent_id, ActorStatus.ACTIVE)
+        await session.commit()
+
+    await users.delete(owner_user_id, identity=admin)
+    owner_deleted = _exchange(web_context, agent_id, key)
+
+    assert owner_disabled[0] == 400
+    assert owner_disabled[1]["error"] == "invalid_grant"
+    assert re_enabled_status == 200
+    assert owner_disabled == agent_disabled
+    assert owner_deleted == agent_disabled
