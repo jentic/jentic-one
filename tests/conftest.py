@@ -31,6 +31,8 @@ _PROXY_TRACER_FIELDS = (
     "_real_tracer",
 )
 
+pytest_plugins = ("tests.harness.logging_isolation",)
+
 
 @pytest.fixture(autouse=True)
 def _isolated_resolution_cache() -> Iterator[None]:

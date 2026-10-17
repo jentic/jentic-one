@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 )
@@ -23,4 +27,32 @@ func testApp(t *testing.T) *Cmd {
 		Out:   new(bytes.Buffer),
 		Err:   new(bytes.Buffer),
 	}}
+}
+
+// newHumanSkillCmd builds the skill command tree pinned to an EXPLICIT human
+// mode. `go test` stdout is never a TTY, so without the pin the mutating verbs
+// would auto-select their JSON envelope (#830) and the human-report assertions
+// would see JSON. JSON-shape tests use --json or newMachineSkillCmd instead.
+func newHumanSkillCmd(t *testing.T, app *Cmd) *cobra.Command {
+	t.Helper()
+	cmd := NewSkillCmd(app.App)
+	cmd.SetContext(clictx.WithActiveState(t.Context(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{},
+		Mode:          clictx.ModeHuman,
+		ModeExplicit:  true,
+	}))
+	return cmd
+}
+
+// newMachineSkillCmd builds the skill command tree under agent mode, the
+// machine rung that forces JSON regardless of --json or the TTY.
+func newMachineSkillCmd(t *testing.T, app *Cmd) *cobra.Command {
+	t.Helper()
+	cmd := NewSkillCmd(app.App)
+	cmd.SetContext(clictx.WithActiveState(t.Context(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{},
+		Mode:          clictx.ModeAgent,
+		ModeExplicit:  true,
+	}))
+	return cmd
 }
