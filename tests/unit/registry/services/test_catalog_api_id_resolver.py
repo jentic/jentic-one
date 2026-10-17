@@ -132,6 +132,35 @@ def test_hintless_or_invalid_entry_gets_a_namespaced_fallback(hint: str | None) 
     )
 
 
+@pytest.mark.parametrize("hint", ["partner~stripe.com", "partner~acme.io", "~acme.io", "a~b"])
+def test_hint_containing_the_namespace_separator_falls_back(hint: str) -> None:
+    # "~" is reserved for the resolver: one source cannot claim another
+    # source's namespaced id, curated vendor or not.
+    resolver = _resolver({"stripe.com"})
+    assert resolver.resolve(source_slug="corp", external_id="Pay API", hint=hint) == (
+        "corp~pay-api"
+    )
+
+
+def test_curated_source_hint_containing_the_separator_also_falls_back() -> None:
+    resolver = _resolver(set())
+    assert resolver.resolve(source_slug="public", external_id="x", hint="corp~acme.io") == (
+        "public~x"
+    )
+
+
+def test_disabled_curated_source_owns_nothing() -> None:
+    sources = {**_SOURCES, "public": _src("public", "curated", enabled=False)}
+    resolver = CatalogApiIdResolver(
+        sources=sources, mappings=[], curated_owned=frozenset({"stripe.com"})
+    )
+    # A disabled curated source no longer keeps its hints verbatim on a vendor it
+    # would own.
+    assert resolver.resolve(source_slug="public", external_id="x", hint="stripe.com") == (
+        "public~stripe.com"
+    )
+
+
 def test_exclude_unowned_drops_unmapped_non_curated_claims() -> None:
     public = build_catalog_entry(
         source_slug="public",
