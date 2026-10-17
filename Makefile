@@ -340,5 +340,5 @@ $(foreach t,$(PERF_TARGETS),$(eval $(call PERF_RULE,$(t))))
 perf-help: ## Perf: list the perf suite + agent probe targets (tests/perf/Makefile)
 	@$(MAKE) --no-print-directory -C tests/perf help
 
-perf-catalog: ## Perf: catalog browse + search p95 over 50k synthetic entries in 10 sources (ARGS="--entries 10000")
+perf-catalog: ## Perf: catalog browse + search p95 over 50k synthetic entries in 10 sources (ARGS="--asgi --backend postgres")
 	uv run python -m tests.perf.catalog_scale $(ARGS)
