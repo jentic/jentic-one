@@ -124,10 +124,14 @@ _CATALOG_SEARCH_RETRY_AFTER_S = 1
 def _response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
-    """Add ``Allow`` to 405s carrying ``allowed_methods`` and ``Retry-After`` to catalog 503s."""
+    """Add ``Allow`` to 405s carrying ``allowed_methods`` and ``Retry-After`` to catalog 503s.
+
+    A catalog 503 for an ``invalid`` ranking gets no ``Retry-After``: the same
+    request produces the same ranking, so retrying soon doesn't help.
+    """
     if status_code == 405 and hasattr(exc, "allowed_methods"):
         response.headers["Allow"] = ", ".join(exc.allowed_methods)
-    if isinstance(exc, CatalogSearchUnavailableError):
+    if isinstance(exc, CatalogSearchUnavailableError) and exc.reason != "invalid":
         response.headers["Retry-After"] = str(_CATALOG_SEARCH_RETRY_AFTER_S)
     return response
 

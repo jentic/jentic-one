@@ -817,7 +817,7 @@ class CatalogService:
         )
         # ``from None``: the strategy's exception text may carry caller-supplied
         # text, and the 5xx handler logs the chained traceback.
-        raise CatalogSearchUnavailableError(name) from None
+        raise CatalogSearchUnavailableError(name, reason=reason) from None
 
     async def _call_strategy(
         self, strategy: CatalogSearchStrategy, request: CatalogSearchRequest, deadline_ms: int
@@ -837,7 +837,11 @@ class CatalogService:
             return "error", exc
         result = normalize_ranking(ranked, request.entries)
         if result.dropped:
-            logger.warning(
+            # Warning only when nothing usable is left (that is a strategy
+            # failure); a few dropped rows on an otherwise good page are debug
+            # noise that would otherwise repeat on every page of every walk.
+            log = logger.debug if result.rows else logger.warning
+            log(
                 "catalog_search_rows_dropped",
                 strategy=strategy.name,
                 invalid=result.dropped_invalid,
