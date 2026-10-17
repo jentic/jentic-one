@@ -189,14 +189,19 @@ class AssertionService:
         :data:`JTI_CLOCK_SKEW_GRACE_S` on the database clock; after that the
         assertion fails the ``exp`` check everywhere, and a new assertion
         reusing the ``jti`` takes the record over. Expired records are pruned
-        here in batches of :data:`JTI_PRUNE_BATCH`.
+        here in batches of :data:`JTI_PRUNE_BATCH`, after the claim: the
+        prune skips rows other transactions hold and so never waits, which
+        keeps a claim waiting on another exchange's prune from ever closing a
+        lock cycle, and a replay is refused without paying for a prune.
         """
         now = await db_now(session)
-        await AssertionJtiRepository.delete_expired(session, now=now, limit=JTI_PRUNE_BATCH)
         expires_at = datetime.fromtimestamp(exp, UTC) + timedelta(seconds=JTI_CLOCK_SKEW_GRACE_S)
-        return await AssertionJtiRepository.claim(
+        claimed = await AssertionJtiRepository.claim(
             session, issuer=issuer, jti_digest=jti_digest(jti), expires_at=expires_at, now=now
         )
+        if claimed:
+            await AssertionJtiRepository.delete_expired(session, now=now, limit=JTI_PRUNE_BATCH)
+        return claimed
 
     def _expected_audiences(self, request_base_url: str | None) -> list[str]:
         # Normalized like deployment_base_url so a trailing slash in a

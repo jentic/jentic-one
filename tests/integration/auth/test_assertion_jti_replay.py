@@ -16,12 +16,13 @@ import time
 from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jwt.algorithms import OKPAlgorithm
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.assertion_jtis import AssertionJti
@@ -34,6 +35,7 @@ from jentic_one.auth.services.assertion_service import (
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorStatus
 from tests.integration.auth.seeds import seed_agent, seed_user
 
 pytestmark = pytest.mark.integration
@@ -69,9 +71,11 @@ def _keypair() -> tuple[Ed25519PrivateKey, dict[str, Any]]:
     return key, {"keys": [jwk_dict]}
 
 
-async def _active_agent(ctx: Context) -> tuple[str, Ed25519PrivateKey]:
+async def _active_agent(
+    ctx: Context, *, status: ActorStatus = ActorStatus.ACTIVE
+) -> tuple[str, Ed25519PrivateKey]:
     await seed_user(ctx, _OWNER)
-    agent_id = await seed_agent(ctx, owner_id=_OWNER, scopes=[])
+    agent_id = await seed_agent(ctx, owner_id=_OWNER, scopes=[], status=status)
     key, jwks = _keypair()
     async with ctx.admin_db.transaction() as session:
         await session.execute(update(Agent).where(Agent.id == agent_id).values(jwks=jwks))
@@ -125,6 +129,11 @@ async def test_a_jti_is_single_use_across_two_auth_processes(
 
     access, refresh, _ = await AssertionService(integration_context).verify_and_exchange(assertion)
     assert access and refresh
+    # Control: the second process verifies this agent's assertions at all.
+    other, _, _ = await AssertionService(second_auth_process).verify_and_exchange(
+        _assertion(integration_context, key, agent_id, jti="jti-other")
+    )
+    assert other
 
     # The second process never saw the first exchange; the shared record refuses it.
     with pytest.raises(InvalidGrantError, match="Assertion is invalid"):
@@ -136,9 +145,12 @@ async def test_a_jti_is_single_use_across_two_auth_processes(
         )
 
     async with integration_context.admin_db.session() as session:
-        row = (await session.execute(select(AssertionJti))).scalar_one()
+        row = (
+            await session.execute(
+                select(AssertionJti).where(AssertionJti.jti_digest == jti_digest("jti-shared"))
+            )
+        ).scalar_one()
     assert row.issuer == agent_id
-    assert row.jti_digest == jti_digest("jti-shared")
     # Only the digest is stored, never the claim or the assertion.
     assert "jti-shared" not in (row.issuer, row.jti_digest)
 
@@ -231,26 +243,55 @@ async def test_expired_records_are_pruned_in_bounded_batches(
     assert issuers == sorted(["agnt_live", agent_id])
 
 
-async def test_a_rejected_exchange_leaves_no_record(
+async def test_a_pending_agent_writes_no_record(
     integration_context: Context, clean_jtis: None, canonical_auth: None
 ) -> None:
-    """The record is written in the verifying transaction, which a later failure rolls back."""
-    agent_id, key = await _active_agent(integration_context)
-    # Past the exp check but with a bad audience: fails after nothing is claimed.
-    bad = jwt.encode(
-        {
-            "iss": agent_id,
-            "aud": "https://elsewhere.test/oauth/token",
-            "exp": time.time() + 60,
-            "jti": "jti-bad",
-        },
-        key,
-        algorithm="EdDSA",
-        headers={"kid": "k1"},
-    )
-    with pytest.raises(InvalidGrantError):
-        await AssertionService(integration_context).verify_and_exchange(bad)
+    """Approval polling (a fresh jti per attempt) never fills the table."""
+    agent_id, key = await _active_agent(integration_context, status=ActorStatus.PENDING)
+    with pytest.raises(InvalidGrantError, match="pending approval"):
+        await AssertionService(integration_context).verify_and_exchange(
+            _assertion(integration_context, key, agent_id, jti="jti-pending")
+        )
     assert await _rows(integration_context) == 0
+
+
+async def test_a_failure_after_the_claim_rolls_the_record_back(
+    integration_context: Context, clean_jtis: None, canonical_auth: None
+) -> None:
+    """The record shares the verifying transaction: an exchange that fails after
+    claiming leaves no record, so the caller's retry of that assertion succeeds."""
+    agent_id, key = await _active_agent(integration_context)
+    assertion = _assertion(integration_context, key, agent_id, jti="jti-rollback")
+    svc = AssertionService(integration_context)
+
+    with (
+        patch(
+            "jentic_one.auth.services.assertion_service.record_audit",
+            AsyncMock(side_effect=RuntimeError("audit down")),
+        ),
+        pytest.raises(RuntimeError, match="audit down"),
+    ):
+        await svc.verify_and_exchange(assertion)
+    assert await _rows(integration_context) == 0
+
+    access, _, _ = await svc.verify_and_exchange(assertion)
+    assert access
+    assert await _rows(integration_context) == 1
+
+
+async def _wait_for_a_lock_wait(ctx: Context, *, timeout_s: float = 10.0) -> None:
+    """Poll until some backend of this database waits on a lock (no fixed sleep)."""
+    deadline = time.monotonic() + timeout_s
+    probe = text(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE wait_event_type = 'Lock' AND datname = current_database()"
+    )
+    while time.monotonic() < deadline:
+        async with ctx.admin_db.session() as session:
+            if int((await session.execute(probe)).scalar_one()) > 0:
+                return
+        await asyncio.sleep(0.02)
+    raise AssertionError("the second claim never waited on the first's row lock")
 
 
 async def test_concurrent_claims_of_one_jti_yield_exactly_one_success(
@@ -285,8 +326,8 @@ async def test_concurrent_claims_of_one_jti_yield_exactly_one_success(
     first = asyncio.create_task(_claim(integration_context, hold=True))
     await first_inserted.wait()
     second = asyncio.create_task(_claim(second_auth_process, hold=False))
-    await asyncio.sleep(0.2)
-    assert not second.done(), "the second claim must block on the first's row lock"
+    await _wait_for_a_lock_wait(integration_context)
+    assert not second.done()
     release.set()
 
     results = await asyncio.gather(first, second)
@@ -318,3 +359,41 @@ async def test_many_simultaneous_claims_yield_exactly_one_success(
     results = await asyncio.gather(*(_claim(ctx) for ctx in contexts))
     assert results.count(True) == 1
     assert await _rows(integration_context) == 1
+
+
+async def test_concurrent_takeovers_of_an_expired_record_yield_exactly_one_success(
+    integration_context: Context,
+    second_auth_process: Context,
+    integration_config: AppConfig,
+    clean_jtis: None,
+) -> None:
+    """Fresh assertions reusing an expired jti race the takeover; exactly one wins."""
+    if integration_config.databases.admin.backend == "sqlite":
+        pytest.skip("SQLite serialises writers; the race needs PostgreSQL row locking")
+    digest = jti_digest("jti-takeover")
+    async with integration_context.admin_db.transaction() as session:
+        session.add(
+            AssertionJti(
+                issuer="agnt_race",
+                jti_digest=digest,
+                expires_at=datetime.now(UTC) - timedelta(minutes=1),
+            )
+        )
+    expires_at = datetime.now(UTC) + timedelta(minutes=5)
+
+    async def _claim(ctx: Context) -> bool:
+        async with ctx.admin_db.transaction() as session:
+            return await AssertionJtiRepository.claim(
+                session,
+                issuer="agnt_race",
+                jti_digest=digest,
+                expires_at=expires_at,
+                now=datetime.now(UTC),
+            )
+
+    contexts = [integration_context, second_auth_process] * 2
+    results = await asyncio.gather(*(_claim(ctx) for ctx in contexts))
+    assert results.count(True) == 1
+    async with integration_context.admin_db.session() as session:
+        row = (await session.execute(select(AssertionJti))).scalar_one()
+    assert abs((row.expires_at - expires_at).total_seconds()) < 1
