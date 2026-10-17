@@ -69,6 +69,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.locks import advisory_lock_key
 from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.events import emit_event, emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
@@ -94,6 +95,10 @@ _SWEEP_TASKS: set[asyncio.Task[None]] = set()
 
 #: Metric label for a cursor naming a strategy other than the configured one.
 _UNKNOWN_STRATEGY_LABEL = "unknown"
+
+#: Registry-DB advisory-lock key that single-flights the update-notify sweep across
+#: processes (scanner and request-triggered sweeps on every replica/worker).
+UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sweep")
 
 
 def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
@@ -278,13 +283,14 @@ class CatalogService:
         flaky host never breaks the refresh or the rest of the batch. A ``0``
         interval disables the sweep entirely (air-gapped kill switch).
 
-        Note the refresh's advisory lock is transaction-scoped (it guards only the
-        staleness check). Sweeps are serialized **within a process** by
-        ``Context.update_sweep_lock`` (scanner + read-path trigger can't overlap), but this
-        is **not** globally single-flight across replicas: a rare concurrent double-refresh on
-        two replicas could still emit a duplicate event for the same change. That is
-        deliberately tolerated — the event is idempotent for operators and the next sweep on
-        either replica dedupes on the persisted digest. Probes fan out with bounded
+        Single-flight: sweeps are serialized **within a process** by
+        ``Context.update_sweep_lock`` (scanner + read-path trigger can't overlap) and
+        **across processes** by a non-blocking registry-DB advisory lock
+        (:data:`UPDATE_SWEEP_LOCK_KEY`, a no-op on single-process SQLite). A sweep that
+        loses either race skips quietly — another sweep is already doing the work — so
+        at most one sweep at a time reads and advances the per-API dedupe state, and a
+        changed digest emits once. The residual duplicate is the emit-then-mark crash
+        window described in :meth:`_probe_one`. Probes fan out with bounded
         concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
         a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
         candidate set can't turn one refresh into an unbounded stall.
@@ -293,23 +299,26 @@ class CatalogService:
         if interval <= 0:
             return
 
-        # Serialize sweeps in-process: the scanner and the read-path trigger can both fire.
-        # The lock.locked() pre-check is a best-effort fast-skip, not a guarantee — it is
-        # TOCTOU, so two triggers racing past it both reach ``async with lock`` and the
-        # second *queues* (waits) rather than skipping. That is harmless: by the time the
-        # queued sweep runs, the first has bumped each candidate's ``last_checked_at``, so
-        # the queued pass no-ops on the per-API interval gate in ``_probe_one``. The
-        # pre-check just avoids the common non-racing back-to-back trigger paying for a
-        # full re-probe (see Context.update_sweep_lock).
+        # In-process guard first (cheap, no DB connection). Every caller checks
+        # locked() before acquiring and there is no await in between, so nobody ever
+        # queues on this lock: a concurrent trigger either skips here or holds it.
         lock = self._ctx.update_sweep_lock
         if lock.locked():
             logger.debug("catalog_update_sweep_skipped_in_flight")
             return
-        async with lock:
+        # The cross-process guard (advisory lock) is taken only once the in-process one
+        # is held; another replica/worker sweeping right now holds it.
+        async with (
+            lock,
+            self._ctx.registry_db.try_advisory_lock(UPDATE_SWEEP_LOCK_KEY) as held,
+        ):
+            if not held:
+                logger.debug("catalog_update_sweep_skipped_locked_elsewhere")
+                return
             await self._do_update_notify_sweep(interval)
 
     async def _do_update_notify_sweep(self, interval: int) -> None:
-        """Sweep body — always called under ``Context.update_sweep_lock``."""
+        """Sweep body — always called under both single-flight locks."""
         async with self._ctx.registry_db.session() as session:
             candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
             # The manifest coverage set is only needed to admit overlay/manual specs

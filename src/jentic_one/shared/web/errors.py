@@ -21,6 +21,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jentic.problem_details import ProblemDetailException
 
+from jentic_one.shared.state.backend import StateBackendCapacityError
+
 # ``ctx`` members that describe the *schema constraint* (never the submitted
 # value). Anything else in ``ctx`` — notably ``error``, which carries a custom
 # validator's exception and may quote the input — is dropped.
@@ -171,4 +173,31 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
     return JSONResponse(
         status_code=500, content=problem.detail, media_type="application/problem+json"
+    )
+
+
+async def state_backend_capacity_error_handler(
+    request: Request, exc: StateBackendCapacityError
+) -> JSONResponse:
+    """Refuse a request whose shared-state write was refused: 503 + ``Retry-After``.
+
+    The write was a claim, a single-use marker or a nonce the request depends
+    on, so the request cannot proceed safely without it. Registered on every
+    app, so a caller that lets the error propagate fails closed.
+    """
+    structlog.get_logger("jentic_one.shared.web.errors").warning(
+        "shared_state_write_refused", path=request.url.path, namespace=exc.namespace
+    )
+    problem = ProblemDetailException(
+        status_code=503,
+        detail="The service is temporarily at capacity; retry after the indicated delay.",
+        type="state_backend_capacity",
+        title="Service Unavailable",
+        instance=request.url.path,
+    )
+    return JSONResponse(
+        status_code=503,
+        content=problem.detail,
+        media_type="application/problem+json",
+        headers={"Retry-After": str(exc.retry_after_s)},
     )

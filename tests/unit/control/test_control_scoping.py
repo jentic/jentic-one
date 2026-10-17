@@ -325,3 +325,45 @@ def test_admin_ignores_owned_agent_ids() -> None:
     identity = _identity(permissions=["org:admin"])
     assert build_access_filters(identity, ConnectSession, owned_agent_ids=["agnt_a"]) == []
     assert build_access_filters(identity, Credential, owned_agent_ids=["agnt_a"]) == []
+
+
+# --- Write filters (owner-only) ---
+
+
+@pytest.mark.parametrize("model", [Credential, ConnectSession])
+def test_write_filter_drops_owner_delegation(model: type) -> None:
+    """``owner:credentials:read`` widens reads only: a write filter is owner == self."""
+    identity = _identity(
+        sub="agent_1",
+        permissions=[OWNER_CREDENTIALS_READ, "credentials:write"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="user_owner",
+    )
+    filters = build_access_filters(identity, model, for_write=True)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agent_1" in sql
+    assert "user_owner" not in sql
+    read_sql = str(
+        build_access_filters(identity, model)[0].compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "user_owner" in read_sql
+
+
+def test_write_filter_admin_is_unrestricted() -> None:
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, Credential, for_write=True) == []
+
+
+@pytest.mark.parametrize(
+    "widening",
+    [
+        {"bound_credential_ids": ["cred_1"]},
+        {"owned_agent_ids": ["agent_1"]},
+        {"include_shared": True},
+    ],
+    ids=["bound_credential_ids", "owned_agent_ids", "include_shared"],
+)
+def test_write_filter_rejects_read_widenings(widening: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="write filter"):
+        build_access_filters(_identity(), Credential, for_write=True, **widening)  # type: ignore[arg-type]

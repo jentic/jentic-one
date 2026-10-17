@@ -120,17 +120,23 @@ async def test_user_lifecycle(integration_context: Context) -> None:
     assert user_id in user_ids_in_page
 
     # Step 9: Disable user
-    await user_svc.disable(user_id, identity=Identity(sub=admin_id, email="test@local"))
+    await user_svc.disable(
+        user_id, identity=Identity(sub=admin_id, email="test@local", permissions=["org:admin"])
+    )
     disabled = await user_svc.get_by_id(user_id)
     assert disabled.active is False
 
     # Step 10: Enable user
-    await user_svc.enable(user_id, identity=Identity(sub=admin_id, email="test@local"))
+    await user_svc.enable(
+        user_id, identity=Identity(sub=admin_id, email="test@local", permissions=["org:admin"])
+    )
     enabled = await user_svc.get_by_id(user_id)
     assert enabled.active is True
 
     # Step 11: Delete user (soft-delete)
-    await user_svc.delete(user_id, identity=Identity(sub=admin_id, email="test@local"))
+    await user_svc.delete(
+        user_id, identity=Identity(sub=admin_id, email="test@local", permissions=["org:admin"])
+    )
 
     # Verify user is anonymised but still exists in DB
     async with ctx.admin_db.session() as session:
