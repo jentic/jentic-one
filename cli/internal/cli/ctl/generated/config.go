@@ -2663,8 +2663,22 @@ func (j *TelemetryConfig) UnmarshalJSON(value []byte) error {
 
 // Tracing exporter configuration.
 type TracingConfig struct {
-	// Exporter corresponds to the JSON schema field "exporter".
+	// Where spans go. ``none`` records no spans at all (every span is non-recording),
+	// while trace ids are still generated and propagated: an inbound ``traceparent``
+	// is honoured, outbound requests carry ``traceparent``/``tracestate``, and
+	// execution records and logs keep their ``trace_id``. With ``none`` the outbound
+	// ``traceparent`` has the sampled flag unset (``-00``) even when the caller sent
+	// ``-01``, since this process records nothing.
 	Exporter TracingConfigExporter `json:"exporter,omitempty,omitzero" yaml:"exporter,omitempty" mapstructure:"exporter,omitempty"`
+
+	// Fraction of traces recorded and exported when ``exporter`` is ``otlp`` (1.0
+	// records every trace). It caps every trace entering the process, including
+	// requests that arrive with a sampled ``traceparent`` (the CLI and MCP send one
+	// on every call), so a caller cannot force recording. A caller's unsampled
+	// ``traceparent`` stays unsampled. Ignored with ``exporter: none``, and
+	// overridden by the standard ``OTEL_TRACES_SAMPLER`` environment variable when
+	// that is set (a warning is logged if this field is not 1.0).
+	SampleRatio float64 `json:"sample_ratio,omitempty,omitzero" yaml:"sample_ratio,omitempty" mapstructure:"sample_ratio,omitempty"`
 }
 
 type TracingConfigExporter string
@@ -2710,6 +2724,15 @@ func (j *TracingConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["exporter"]; !ok || v == nil {
 		plain.Exporter = "otlp"
+	}
+	if v, ok := raw["sample_ratio"]; !ok || v == nil {
+		plain.SampleRatio = 1.0
+	}
+	if 1 < plain.SampleRatio {
+		return fmt.Errorf("field %s: must be <= %v", "sample_ratio", 1)
+	}
+	if 0 > plain.SampleRatio {
+		return fmt.Errorf("field %s: must be >= %v", "sample_ratio", 0)
 	}
 	*j = TracingConfig(plain)
 	return nil
