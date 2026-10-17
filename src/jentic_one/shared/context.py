@@ -156,10 +156,12 @@ class Context:
         Dynamic entries override YAML entries of the same name. Subsequent
         ``providers.get(...)`` calls resolve against the new registry; a request
         already holding a replaced provider finishes on it, and the replaced
-        provider is closed once :data:`PROVIDER_RETIRE_GRACE_S` has passed.
+        provider is closed by the first refresh after
+        :data:`PROVIDER_RETIRE_GRACE_S` has passed, or at :meth:`shutdown`.
 
-        Concurrent calls are serialised, and a call whose change a rebuild that
-        started after it has already read is answered by that rebuild.
+        Concurrent calls are serialised. A call is answered without a rebuild of
+        its own when a rebuild that started after the call was made has already
+        completed: that rebuild read the stored configs after the caller's change.
         """
         if self._provider_refresh_lock is None:
             self._provider_refresh_lock = asyncio.Lock()
@@ -336,7 +338,15 @@ class Context:
             try:
                 await self.refresh_providers()
             except Exception as exc:
-                logger.warning("provider_refresh_on_boot_failed", error=str(exc))
+                logger.warning(
+                    "provider_refresh_on_boot_failed",
+                    error_type=type(exc).__name__,
+                    actionable_step=(
+                        "Check that this process can read the admin database and holds "
+                        "the credential keyset; the YAML-configured providers stay in "
+                        "use until a later refresh succeeds."
+                    ),
+                )
 
     async def shutdown(self) -> None:
         """Close the provider registry's providers, then all connected databases."""

@@ -151,11 +151,17 @@ class PgListenInvalidationBus:
         self._subscribers.add(topic, handler)
 
     async def start(self) -> None:
-        if self._running or not self._subscribers or not self._targets:
+        if self._running:
+            return
+        # Listen only where a subscribed topic's database lives: a process whose
+        # subscriptions are all admin topics opens nothing on a control-only server.
+        subscribed = {topic.partition(".")[0] for topic in self._subscribers.topics}
+        targets = [t for t in self._targets if t.databases & subscribed]
+        if not targets:
             return
         self._running = True
         attempted: list[asyncio.Event] = []
-        for target in self._targets:
+        for target in targets:
             first_attempt = asyncio.Event()
             attempted.append(first_attempt)
             self._tasks.append(

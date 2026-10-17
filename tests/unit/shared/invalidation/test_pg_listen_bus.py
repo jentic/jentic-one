@@ -107,6 +107,25 @@ async def test_no_subscribers_opens_no_connection() -> None:
     assert server.conns == []
 
 
+async def test_listens_only_on_servers_carrying_a_subscribed_database() -> None:
+    """Admin-only subscriptions open nothing on a separate control server."""
+    admin_server, control_server = _Server(), _Server()
+    bus = PgListenInvalidationBus(
+        [
+            PgListenTarget(name="a", connect=admin_server.connect, schemas={"a": ("admin",)}),
+            PgListenTarget(name="c", connect=control_server.connect, schemas={"c": ("control",)}),
+        ],
+        config=_FAST,
+    )
+    bus.subscribe("admin.provider_configs", lambda _m: None)
+    await bus.start()
+    try:
+        assert len(admin_server.conns) == 1
+        assert control_server.conns == []
+    finally:
+        await bus.stop()
+
+
 async def test_routes_by_schema_and_ignores_foreign_schemas() -> None:
     server = _Server()
     bus = _bus(server)
