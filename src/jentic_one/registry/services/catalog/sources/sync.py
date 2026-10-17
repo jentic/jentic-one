@@ -290,7 +290,12 @@ class CatalogSourceSync:
             staged, is_full, watermark = await self._stage(slug, stream, run_id)
         except Exception as exc:
             code = _error_code(exc)
-            logger.warning("catalog_source_listing_failed", source=slug, error_code=code)
+            logger.warning(
+                "catalog_source_listing_failed",
+                source=slug,
+                error_code=code,
+                error_type=type(exc).__name__,
+            )
             outcome = await self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=code)
             metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
             return outcome
@@ -415,7 +420,11 @@ class CatalogSourceSync:
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSourceRepository.lock_for_apply(session, slug)
             source = await CatalogSourceRepository.get(session, slug)
-            rejection = _apply_rejection(source, run_id)
+            superseded = False
+            if source is not None and source.last_applied_run_id is not None:
+                last = await CatalogSyncRunRepository.get(session, source.last_applied_run_id)
+                superseded = last is not None and last.started_at > started_at
+            rejection = _apply_rejection(source, run_id, superseded=superseded)
             if rejection is not None or source is None:
                 status, error = rejection or (RUN_STATUS_FAILED, "lease_lost")
                 await CatalogSyncRunRepository.delete_staged(session, run_id)
@@ -611,11 +620,13 @@ class CatalogSourceSync:
             return await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
 
 
-def _apply_rejection(source: CatalogSourceRow | None, run_id: str) -> tuple[str, str | None] | None:
+def _apply_rejection(
+    source: CatalogSourceRow | None, run_id: str, *, superseded: bool
+) -> tuple[str, str | None] | None:
     """Why a staged run must not apply: its lease is gone, or a newer run already applied."""
     if source is None or source.sync_lease_owner != run_id:
         return RUN_STATUS_FAILED, "lease_lost"
-    if source.last_applied_run_id is not None and source.last_applied_run_id > run_id:
+    if superseded:
         return RUN_STATUS_SUPERSEDED, None
     return None
 
@@ -637,6 +648,11 @@ def is_due(cfg: CatalogSourceConfig, row: CatalogSourceRow, *, now: datetime) ->
     return (now - row.last_sync_at).total_seconds() > cfg.max_age_seconds
 
 
+def _raw(value: str | None) -> str | None:
+    """Connector text as staged: verbatim except NUL, which no database text column stores."""
+    return value.replace("\x00", "") if value is not None else None
+
+
 def _staged_row(run_id: str, change: Upserted | Removed) -> CatalogStagedEntry:
     if isinstance(change, Removed):
         return CatalogStagedEntry(
@@ -647,13 +663,13 @@ def _staged_row(run_id: str, change: Upserted | Removed) -> CatalogStagedEntry:
         sync_run_id=run_id,
         op=STAGED_OP_UPSERT,
         external_id=entry.external_id,
-        catalog_api_id_hint=entry.catalog_api_id_hint,
-        title=entry.title,
-        version=entry.version,
+        catalog_api_id_hint=_raw(entry.catalog_api_id_hint),
+        title=_raw(entry.title),
+        version=_raw(entry.version),
         spec_ref=dict(entry.spec_ref) if entry.spec_ref is not None else None,
-        human_url=entry.human_url,
-        tags=[t for t in entry.tags if isinstance(t, str)],
-        content_hint=entry.content_hint,
+        human_url=_raw(entry.human_url),
+        tags=[t.replace("\x00", "") for t in entry.tags if isinstance(t, str)],
+        content_hint=_raw(entry.content_hint),
     )
 
 
