@@ -10742,6 +10742,11 @@ type ClientInterface interface {
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -10763,6 +10768,11 @@ type ClientInterface interface {
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10982,6 +10992,11 @@ type ClientInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -10995,6 +11010,11 @@ type ClientInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14451,6 +14471,11 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -14482,6 +14507,11 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14911,6 +14941,11 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -14934,6 +14969,11 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId str
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -27176,6 +27216,11 @@ type ClientWithResponsesInterface interface {
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -27197,6 +27242,11 @@ type ClientWithResponsesInterface interface {
 	// failed ``begin`` leaves the session retryable, so it must not be
 	// free to hammer during a vendor incident. Gated like the review read
 	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
+	//
+	// A response carrying an ``authorize_url`` also sets a short-lived
+	// ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
+	// sign-in completes only in the approver's browser that called this
+	// endpoint, whoever opened the session.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27432,6 +27482,11 @@ type ClientWithResponsesInterface interface {
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
 	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -27445,6 +27500,11 @@ type ClientWithResponsesInterface interface {
 	// authorization-code providers return an ``authorize_url`` for popup
 	// redirect; device-flow providers return ``user_code`` /
 	// ``verification_uri`` for the RFC 8628 human step.
+	//
+	// An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+	// cookie scoped to the OAuth callback path: the callback completes only
+	// in the browser that called this endpoint, so call it from the browser
+	// that opens the ``authorize_url``.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -45481,6 +45541,11 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
@@ -45508,6 +45573,11 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // failed “begin“ leaves the session retryable, so it must not be
 // free to hammer during a vendor incident. Gated like the review read
 // (“poll_token“ or owner / “org:admin“; 403 otherwise).
+//
+// A response carrying an “authorize_url“ also sets a short-lived
+// “HttpOnly“ cookie scoped to the OAuth callback path: the vendor
+// sign-in completes only in the approver's browser that called this
+// endpoint, whoever opened the session.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -45869,6 +45939,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
 //
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
@@ -45888,6 +45963,11 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // authorization-code providers return an “authorize_url“ for popup
 // redirect; device-flow providers return “user_code“ /
 // “verification_uri“ for the RFC 8628 human step.
+//
+// An “authorize_url“ response also sets a short-lived “HttpOnly“
+// cookie scoped to the OAuth callback path: the callback completes only
+// in the browser that called this endpoint, so call it from the browser
+// that opens the “authorize_url“.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
