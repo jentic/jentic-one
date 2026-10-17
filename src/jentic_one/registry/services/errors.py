@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 
 class RegistryServiceError(Exception):
     """Base for all registry service errors."""
@@ -316,6 +318,39 @@ class CatalogUnavailableError(RegistryServiceError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class CatalogSourceUnavailableError(RegistryServiceError):
+    """Raised when an entry's catalog source is throttled, down or timed out.
+
+    Transient: the caller should retry after ``retry_after_s`` seconds (the
+    source's ``Retry-After`` or throttle block when it gave one, else a short
+    default). Maps to 503 with ``Retry-After``.
+    """
+
+    #: The wait suggested when the source gave none.
+    DEFAULT_RETRY_AFTER_S = 5
+
+    def __init__(self, entry_id: str, *, retry_after_s: float | None = None) -> None:
+        super().__init__(f"The catalog source of '{entry_id}' is unavailable; retry later.")
+        self.entry_id = entry_id
+        self.retry_after_s = (
+            self.DEFAULT_RETRY_AFTER_S
+            if retry_after_s is None
+            else max(1, math.ceil(retry_after_s))
+        )
+
+
+class CatalogSpecGoneError(RegistryServiceError):
+    """Raised when an entry's source says its spec is permanently gone.
+
+    The entry is still listed, so this is not a 404: retrying will not help
+    until the source lists a spec for it again. Maps to 410.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        super().__init__(f"The source of catalog entry '{entry_id}' no longer has its spec.")
+        self.entry_id = entry_id
 
 
 class OverlaySupersedeForbiddenError(RegistryServiceError):
