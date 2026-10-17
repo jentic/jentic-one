@@ -288,8 +288,11 @@ class CatalogService:
         """Sync a never-synced, auto-syncing ``git-manifest`` source inline.
 
         Only such a source may hold up a read, so a fresh install's first list
-        is not empty. The wait is bounded by ``ingest.fetch_timeout_s``; a busy
-        lease or a failure leaves the source absent until the scanner syncs it.
+        is not empty. The listing fetch is bounded by ``ingest.fetch_timeout_s``
+        (staging and the apply are not). A busy lease or a failure leaves the
+        source absent until the scanner syncs it; a failed or timed-out run is
+        recorded, so the source is no longer never-synced and later reads do not
+        wait on it while the scanner backs off.
         """
         due = [
             cfg.slug
@@ -306,8 +309,7 @@ class CatalogService:
         sync = CatalogSourceSync(self._ctx)
         for slug in due:
             try:
-                async with asyncio.timeout(self._ingest_cfg.fetch_timeout_s):
-                    await sync.sync_source(slug)
+                await sync.sync_source(slug, listing_timeout_s=self._ingest_cfg.fetch_timeout_s)
             except Exception:
                 logger.warning("catalog_first_sync_failed", source=slug, exc_info=True)
         return True
