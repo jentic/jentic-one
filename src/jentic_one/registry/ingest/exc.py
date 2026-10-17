@@ -1,5 +1,7 @@
 """Ingest exception taxonomy."""
 
+from enum import StrEnum
+
 
 class BaseIngestError(Exception):
     """Base for all ingest errors."""
@@ -65,22 +67,62 @@ class HostOwnedByOtherVendorIngestError(IngestStageError):
         super().__init__(f"Cannot import this spec as live: {detail}")
 
 
-class RelativeServerUrlError(IngestStageError):
-    """Raised when a server list declares only relative URLs and no base resolves them.
+class ServerUrlProblem(StrEnum):
+    """Why a host-less server URL cannot be made absolute."""
 
-    A relative server URL (``/api/v3``) is relative to the document's location,
-    so it resolves only for a spec imported from its own URL. Without that base
-    every operation it covers would have no upstream host, so the import is
-    refused. The message leads with the first offending URL: the job error
-    column keeps only the first 128 characters.
+    #: The spec has no document URL to resolve against (inline paste or upload).
+    NO_BASE = "no_base"
+    #: The document URL is a file/static-content host (or the catalog mirror),
+    #: not where the API is served.
+    CONTENT_HOST = "content_host"
+    #: The document URL is https but its redirect chain ended on plaintext http.
+    INSECURE_REDIRECT = "insecure_redirect"
+    #: The first path segment is a host name: a missing ``https://``.
+    MISSING_SCHEME = "missing_scheme"
+    #: A scheme other than http(s), or a reference that resolves to one.
+    UNSUPPORTED_SCHEME = "unsupported_scheme"
+    #: Starts with a variable whose default is itself relative (``{basePath}/v1``).
+    LEADING_VARIABLE = "leading_variable"
+    #: Only a query or fragment: it would resolve to the spec document itself.
+    NO_PATH = "no_path"
+
+
+#: Guidance per problem; it leads the message so truncation only ever cuts the URL.
+_SERVER_URL_GUIDANCE: dict[ServerUrlProblem, str] = {
+    ServerUrlProblem.NO_BASE: "relative server URL has no base; use an absolute URL",
+    ServerUrlProblem.CONTENT_HOST: "spec host serves files; use an absolute server URL",
+    ServerUrlProblem.INSECURE_REDIRECT: "spec URL redirected to http; use an absolute server URL",
+    ServerUrlProblem.MISSING_SCHEME: "server URL looks like a host; add https://",
+    ServerUrlProblem.UNSUPPORTED_SCHEME: "server URL must be http(s)",
+    ServerUrlProblem.LEADING_VARIABLE: "server URL starts with a relative variable",
+    ServerUrlProblem.NO_PATH: "server URL is only a query or fragment; make it absolute",
+}
+
+#: Longest message that survives the 128-char ``job.error`` column behind the
+#: single-source import wrapper (``all 1 import source(s) failed: source[0]: ``).
+SERVER_URL_ERROR_MAX_CHARS = 86
+
+
+class RelativeServerUrlError(IngestStageError):
+    """Raised when a user import declares a server URL that cannot be made absolute.
+
+    Every operation a host-less server covers would have no upstream host, so
+    the import is refused. The message is the problem's guidance followed by the
+    first offending URL, shortened with ``…`` so the whole message fits
+    :data:`SERVER_URL_ERROR_MAX_CHARS`.
     """
 
-    def __init__(self, urls: list[str]) -> None:
+    def __init__(self, urls: list[str], problem: ServerUrlProblem) -> None:
         self.urls = urls
+        self.problem = problem
+        guidance = _SERVER_URL_GUIDANCE[problem]
         more = f" (+{len(urls) - 1} more)" if len(urls) > 1 else ""
-        super().__init__(
-            f"relative server URL {urls[0]!r}{more} has no base URL; use an absolute server URL"
-        )
+        budget = SERVER_URL_ERROR_MAX_CHARS - len(guidance) - len(more) - len(": ''")
+        url = urls[0]
+        if len(url) > budget:
+            url = url[: max(budget - 1, 0)] + "…"
+        message = f"{guidance}: '{url}'{more}" if budget > 1 else guidance
+        super().__init__(message)
 
 
 class MissingRequiredKeysError(IngestStageError):
