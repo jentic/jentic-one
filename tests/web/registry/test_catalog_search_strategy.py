@@ -204,10 +204,13 @@ def test_browse_and_token_free_queries_never_reach_the_strategy(
 
 @pytest.mark.usefixtures("catalog")
 def test_cursor_naming_unregistered_strategy_is_400(admin_client: TestClient) -> None:
-    cursor = encode_catalog_cursor("pay.com", 1.0, strategy="not_registered")
-    resp = admin_client.get("/catalog", params={"q": _Q, "cursor": cursor})
+    cursor = encode_catalog_cursor("pay.com", 1.0, strategy="not_registered" + "x" * 200)
+    with capture_logs() as logs:
+        resp = admin_client.get("/catalog", params={"q": _Q, "cursor": cursor})
     assert resp.status_code == 400, resp.text
     assert "not_registered" not in resp.text
+    [rejected] = [e for e in logs if e["event"] == "catalog_search_cursor_strategy_unregistered"]
+    assert len(rejected["strategy"]) <= 32
 
 
 @pytest.mark.usefixtures("catalog")
