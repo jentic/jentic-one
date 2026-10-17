@@ -47,6 +47,7 @@ from jentic_one.registry.core.schema.catalog_sync_runs import (
     RUN_STATUS_SUPERSEDED,
     RUN_STATUS_SUSPECT_EMPTY,
 )
+from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.catalog_entry_repo import (
     CatalogEntryRepository,
     CatalogSyncRunRepository,
@@ -156,6 +157,10 @@ class CatalogSourceSync:
         self._deps_factory = deps_factory or self._default_deps
 
     @property
+    def ctx(self) -> Context:
+        return self._ctx
+
+    @property
     def sources(self) -> Mapping[str, CatalogSourceConfig]:
         return self._sources
 
@@ -214,6 +219,7 @@ class CatalogSourceSync:
                 else:
                     row.reresolve_wanted_at = utcnow()
                     logger.info("catalog_source_reresolve_flagged", source=cfg.slug)
+            (await self._resolver(session)).report_unmatched()
 
     async def mark_stale_wanted(self) -> int:
         """Flag enabled, auto-syncing sources whose last sync is older than their max age.
@@ -238,8 +244,14 @@ class CatalogSourceSync:
         """Sync every enabled source once (an operator refresh)."""
         return [await self.sync_source(slug, forced=forced) for slug in list(self._sources)]
 
-    async def sync_source(self, slug: str, *, forced: bool = False) -> SyncOutcome:
-        """Claim the lease and sync one source; ``busy`` when another run holds it."""
+    async def sync_source(
+        self, slug: str, *, forced: bool = False, stream: ListStream | None = None
+    ) -> SyncOutcome:
+        """Claim the lease and sync one source; ``busy`` when another run holds it.
+
+        ``stream`` replaces the source's own listing (a caller that already holds
+        the listing document, such as the snapshot refresh, passes it here).
+        """
         cfg = self._sources[slug]
         if not cfg.enabled:
             return SyncOutcome(slug=slug, status=OUTCOME_DISABLED)
@@ -252,12 +264,13 @@ class CatalogSourceSync:
             watermark = row.watermark if row is not None else None
         if not claimed:
             return SyncOutcome(slug=slug, status=OUTCOME_BUSY)
-        try:
-            stream = self.build_source(cfg).list_entries(since=watermark)
-        except Exception:
-            logger.exception("catalog_source_build_failed", source=slug)
-            await self._release(slug, run_id)
-            return SyncOutcome(slug=slug, status=RUN_STATUS_FAILED, error_code="build_error")
+        if stream is None:
+            try:
+                stream = self.build_source(cfg).list_entries(since=watermark)
+            except Exception:
+                logger.exception("catalog_source_build_failed", source=slug)
+                await self._release(slug, run_id)
+                return SyncOutcome(slug=slug, status=RUN_STATUS_FAILED, error_code="build_error")
         return await self.run_claimed(cfg, stream, run_id=run_id, forced=forced)
 
     async def run_claimed(
@@ -402,15 +415,9 @@ class CatalogSourceSync:
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSourceRepository.lock_for_apply(session, slug)
             source = await CatalogSourceRepository.get(session, slug)
-            if source is None or source.sync_lease_owner != run_id:
-                error = "lease_lost"
-                status = RUN_STATUS_FAILED
-            elif source.last_applied_run_id is not None and source.last_applied_run_id > run_id:
-                error = None
-                status = RUN_STATUS_SUPERSEDED
-            else:
-                error = status = ""
-            if status:
+            rejection = _apply_rejection(source, run_id)
+            if rejection is not None or source is None:
+                status, error = rejection or (RUN_STATUS_FAILED, "lease_lost")
                 await CatalogSyncRunRepository.delete_staged(session, run_id)
                 await CatalogSyncRunRepository.finish(
                     session, run_id, status=status, error_code=error, finished_at=utcnow()
@@ -419,7 +426,6 @@ class CatalogSourceSync:
                 return SyncOutcome(
                     slug=slug, status=status, run_id=run_id, staged=staged, error_code=error
                 )
-            assert source is not None
 
             rows = await CatalogEntryRepository.rows_for_source(session, slug)
             by_external = {r.external_id: r for r in rows}
@@ -544,8 +550,9 @@ class CatalogSourceSync:
     async def reresolve_source(self, slug: str) -> int:
         """Re-run the resolver over a source's stored rows; returns how many ids changed.
 
-        Rows whose stored id a curated source now owns are counted as ownership
-        conflicts and namespaced (or mapped) by the resolver.
+        An already imported API whose entry's id changes keeps its own
+        ``catalog_api_id``; each such API is counted as an ownership conflict and
+        logged.
         """
         cfg = self._sources.get(slug)
         if cfg is None:
@@ -559,14 +566,32 @@ class CatalogSourceSync:
                 return 0
             resolver = await self._resolver(session)
             rows = await CatalogEntryRepository.rows_for_source(session, slug, live_only=True)
+            imported = {
+                entry_id: (vendor, name, version, api_id)
+                for vendor, name, version, api_id, entry_id in (
+                    await ApiRepository.imported_from_source(session, slug)
+                )
+            }
             for row in rows:
                 resolved = resolver.resolve(
                     source_slug=slug, external_id=row.external_id, hint=row.catalog_api_id_hint
                 )
                 if resolved == row.catalog_api_id:
                     continue
-                if cfg.trust != "curated" and resolver.is_curated_owned(row.catalog_api_id):
+                api = imported.get(row.entry_id)
+                if api is not None:
                     conflicts += 1
+                    logger.warning(
+                        "catalog_ownership_conflict",
+                        source=slug,
+                        entry_id=row.entry_id,
+                        previous_catalog_api_id=row.catalog_api_id,
+                        catalog_api_id=resolved,
+                        api_vendor=api[0],
+                        api_name=api[1],
+                        api_version=api[2],
+                        kept_catalog_api_id=api[3],
+                    )
                 row.catalog_api_id = resolved
                 changed += 1
             await CatalogEntryRepository.flush(session)
@@ -576,7 +601,6 @@ class CatalogSourceSync:
             source.resolver_inputs_digest = self.current_resolver_inputs_digest()
         if conflicts:
             metrics.record_ownership_conflicts(slug, conflicts)
-            logger.warning("catalog_ownership_conflict", source=slug, count=conflicts)
         if changed:
             logger.info("catalog_source_reresolved", source=slug, changed=changed)
         return changed
@@ -587,10 +611,27 @@ class CatalogSourceSync:
             return await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
 
 
+def _apply_rejection(source: CatalogSourceRow | None, run_id: str) -> tuple[str, str | None] | None:
+    """Why a staged run must not apply: its lease is gone, or a newer run already applied."""
+    if source is None or source.sync_lease_owner != run_id:
+        return RUN_STATUS_FAILED, "lease_lost"
+    if source.last_applied_run_id is not None and source.last_applied_run_id > run_id:
+        return RUN_STATUS_SUPERSEDED, None
+    return None
+
+
 def is_due(cfg: CatalogSourceConfig, row: CatalogSourceRow, *, now: datetime) -> bool:
-    """Whether an auto-syncing source's last sync is older than its max age."""
+    """Whether an auto-syncing source's last sync is older than its max age.
+
+    After a failed run the next attempt backs off exponentially (one minute,
+    doubling, capped at the max age), counted from the row's last update.
+    """
     if not cfg.enabled or cfg.max_age_seconds <= 0:
         return False
+    if row.consecutive_failures > 0 and row.updated_at is not None:
+        backoff = min(cfg.max_age_seconds, 60 * 2 ** min(row.consecutive_failures - 1, 10))
+        if (now - row.updated_at).total_seconds() < backoff:
+            return False
     if row.last_sync_at is None:
         return True
     return (now - row.last_sync_at).total_seconds() > cfg.max_age_seconds

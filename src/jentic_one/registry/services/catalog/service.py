@@ -43,6 +43,8 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
     record_update_notified,
     record_update_snoozed,
 )
+from jentic_one.registry.services.catalog.sources.git_manifest import manifest_stream
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
@@ -157,8 +159,16 @@ class CatalogService:
 
     # ── refresh / staleness ──────────────────────────────────────────────────
 
-    async def refresh(self) -> CatalogRefreshResult:
-        """Fetch the upstream manifest and atomically replace the catalog snapshot."""
+    async def refresh(
+        self, *, sync_sources: bool = False, force: bool = False
+    ) -> CatalogRefreshResult:
+        """Fetch the upstream manifest and atomically replace the catalog snapshot.
+
+        The same manifest document is also applied to the legacy catalog source
+        (a shadow write: reads keep serving the snapshot). ``sync_sources`` syncs
+        every other enabled source too; ``force`` overrides the mass-removal guard.
+        Source sync failures are logged and never fail the refresh.
+        """
         try:
             doc = await fetch_json(self._cfg.legacy_manifest_url(), config=self._ingest_cfg)
         except CatalogFetchError as exc:
@@ -169,7 +179,25 @@ class CatalogService:
             count = await CatalogRepository.replace(
                 session, source_url=self._cfg.legacy_manifest_url(), entries=entries
             )
+        await self._sync_sources(doc, others=sync_sources, force=force)
         return CatalogRefreshResult(count=count)
+
+    async def _sync_sources(self, doc: dict[str, Any], *, others: bool, force: bool) -> None:
+        sync = CatalogSourceSync(self._ctx)
+        legacy = self._cfg.legacy_source_slug
+        try:
+            await sync.register_sources()
+            if legacy in sync.sources:
+                outcome = await sync.sync_source(legacy, forced=force, stream=manifest_stream(doc))
+                logger.info("catalog_legacy_source_synced", status=outcome.status)
+            if others:
+                for slug in sync.sources:
+                    if slug != legacy:
+                        await sync.sync_source(slug, forced=force)
+            else:
+                await sync.mark_stale_wanted()
+        except Exception:
+            logger.warning("catalog_source_sync_failed", exc_info=True)
 
     def _is_stale(self, fetched_at: datetime | None) -> bool:
         """Whether the cache should be lazily refreshed (D-005a option (a)).

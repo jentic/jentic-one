@@ -174,6 +174,7 @@ class CatalogSourceRepository:
             return
         row.last_status = status
         row.consecutive_failures = row.consecutive_failures + 1
+        row.sync_wanted_at = None
         if row.sync_lease_owner == owner:
             row.sync_lease_owner = None
             row.sync_lease_until = None
