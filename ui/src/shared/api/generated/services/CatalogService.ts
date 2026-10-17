@@ -23,9 +23,8 @@ export class CatalogService {
      *
      * A search walk keeps the ranking that served its first page. A later page
      * whose cursor names a ranking that is not the configured one answers 400
-     * (restart the search without a cursor); one whose ranking fails or isn't
-     * available on this replica answers 503 ``catalog_search_unavailable`` with
-     * ``Retry-After`` (retry the page, or restart the search).
+     * (restart the search without a cursor); one whose ranking fails answers 503
+     * ``catalog_search_unavailable`` (retry the page, or restart the search).
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */
@@ -59,7 +58,7 @@ export class CatalogService {
          */
         includeSnoozed?: boolean,
         /**
-         * Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+         * Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.
          */
         cursor?: (string | null),
         /**

@@ -7852,7 +7852,7 @@ type ListCatalogParams struct {
 	// IncludeSnoozed Treat entries whose update notification is snoozed as outdated.
 	IncludeSnoozed *bool `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
 
-	// Cursor Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+	// Cursor Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 
 	// Limit Maximum number of entries to return (1-200).
@@ -10614,9 +10614,8 @@ type ClientInterface interface {
 	//
 	// A search walk keeps the ranking that served its first page. A later page
 	// whose cursor names a ranking that is not the configured one answers 400
-	// (restart the search without a cursor); one whose ranking fails or isn't
-	// available on this replica answers 503 ``catalog_search_unavailable`` with
-	// ``Retry-After`` (retry the page, or restart the search).
+	// (restart the search without a cursor); one whose ranking fails answers 503
+	// ``catalog_search_unavailable`` (retry the page, or restart the search).
 	//
 	// Corresponds with GET /catalog (the `ListCatalog` operationId).
 	ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14222,9 +14221,8 @@ func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditor
 //
 // A search walk keeps the ranking that served its first page. A later page
 // whose cursor names a ranking that is not the configured one answers 400
-// (restart the search without a cursor); one whose ranking fails or isn't
-// available on this replica answers 503 “catalog_search_unavailable“ with
-// “Retry-After“ (retry the page, or restart the search).
+// (restart the search without a cursor); one whose ranking fails answers 503
+// “catalog_search_unavailable“ (retry the page, or restart the search).
 //
 // Corresponds with GET /catalog (the `ListCatalog` operationId).
 func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27066,9 +27064,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// A search walk keeps the ranking that served its first page. A later page
 	// whose cursor names a ranking that is not the configured one answers 400
-	// (restart the search without a cursor); one whose ranking fails or isn't
-	// available on this replica answers 503 ``catalog_search_unavailable`` with
-	// ``Retry-After`` (retry the page, or restart the search).
+	// (restart the search without a cursor); one whose ranking fails answers 503
+	// ``catalog_search_unavailable`` (retry the page, or restart the search).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45318,9 +45315,8 @@ func (c *ClientWithResponses) RefreshSessionWithResponse(ctx context.Context, re
 //
 // A search walk keeps the ranking that served its first page. A later page
 // whose cursor names a ranking that is not the configured one answers 400
-// (restart the search without a cursor); one whose ranking fails or isn't
-// available on this replica answers 503 “catalog_search_unavailable“ with
-// “Retry-After“ (retry the page, or restart the search).
+// (restart the search without a cursor); one whose ranking fails answers 503
+// “catalog_search_unavailable“ (retry the page, or restart the search).
 //
 // Returns a wrapper object for the known response body format(s).
 //
