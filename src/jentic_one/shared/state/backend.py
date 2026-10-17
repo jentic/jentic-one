@@ -28,18 +28,34 @@ _logger = structlog.get_logger(__name__)
 
 # Default per-namespace bounds for :class:`MemoryStateBackend`'s key/value store.
 DEFAULT_MEMORY_MAX_ENTRIES = 100_000
-DEFAULT_MEMORY_MAX_BYTES = 64 * 1024 * 1024
+DEFAULT_MEMORY_MAX_BYTES = 16 * 1024 * 1024
+# Default bound on the budgeted bytes of all namespaces of one backend together.
+DEFAULT_MEMORY_MAX_TOTAL_BYTES = 192 * 1024 * 1024
 DEFAULT_MEMORY_SWEEP_INTERVAL_S = 30.0
-# Approximate per-entry cost on top of the key and value bytes: the dict slot,
-# the key ``str`` and value ``bytes`` object headers, the ``_Entry`` and its
-# expiry-index items (measured with ``tracemalloc``: about 400-600 bytes).
-ENTRY_OVERHEAD_BYTES = 400
+# Per-entry cost on top of the key and value bytes: the dict slot, the key
+# ``str`` and value ``bytes`` object headers, the ``_Entry``, and its items in
+# the namespace and owner expiry indexes, including superseded items up to the
+# compaction threshold. Measured with ``tracemalloc`` on CPython 3.12 by
+# filling ``idem``/``idem-body`` through ``SharedStateIdempotencyStore`` (20
+# callers, 7 response headers, a claim then a record per request) and taking
+# (traced bytes - key and value bytes) / entries: about 680-730 bytes per
+# record and about 430 per body entry.
+# ``test_the_byte_budget_tracks_real_memory`` in
+# ``tests/unit/broker/test_idempotency_store.py`` keeps the budget within 15%
+# of real memory. Allocator fragmentation outside ``tracemalloc``'s view is
+# not included, so leave container headroom over the budgets.
+ENTRY_OVERHEAD_BYTES = 750
 # Bounds of the ``Retry-After`` hint a capacity refusal carries.
 _MIN_RETRY_AFTER_S = 1
 _MAX_RETRY_AFTER_S = 3600
-# An expiry index is rebuilt once its superseded items outnumber its live
-# entries by this much, so overwrites cannot grow it without bound.
+# An expiry index starts compacting once its superseded items outnumber its
+# live entries by this much, so overwrites cannot grow it without bound.
 _INDEX_SLACK = 64
+# Most items one write moves while an expiry index compacts, so compaction is
+# spread over many writes and no single write pays an O(entries) rebuild.
+COMPACTION_STEP = 64
+# The scope name a refusal by the backend-wide byte cap reports.
+TOTAL_SCOPE = "total"
 
 
 class StateBackendCapacityError(Exception):
@@ -54,17 +70,30 @@ class StateBackendCapacityError(Exception):
     Attributes:
         namespace: The full namespace.
         retry_after_s: Seconds until the earliest live entry in the refusing
-            namespace (or owner share) expires, clamped to [1, 3600].
+            namespace (or owner share, or the whole backend) expires, clamped
+            to [1, 3600].
         owner: The owner whose share is spent, or ``None`` when the whole
-            namespace is full.
+            namespace (or the backend) is full.
+        total: Whether the backend-wide byte cap refused the write.
     """
 
-    def __init__(self, namespace: str, *, retry_after_s: int, owner: str | None = None) -> None:
-        scope = f"namespace {namespace!r}" + (f" share of owner {owner!r}" if owner else "")
+    def __init__(
+        self,
+        namespace: str,
+        *,
+        retry_after_s: int,
+        owner: str | None = None,
+        total: bool = False,
+    ) -> None:
+        if total:
+            scope = f"total byte budget (writing namespace {namespace!r})"
+        else:
+            scope = f"namespace {namespace!r}" + (f" share of owner {owner!r}" if owner else "")
         super().__init__(f"shared-state {scope} is full")
         self.namespace = namespace
         self.retry_after_s = retry_after_s
         self.owner = owner
+        self.total = total
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,13 +197,29 @@ class _Usage:
 
     ``index`` is a min-heap of ``(expires_at, seq, key)``. An item is current
     only while ``seq`` matches the stored entry; overwrites and deletes leave
-    superseded items behind, which are skipped when they reach the top and
-    dropped in bulk once they outnumber the live entries.
+    superseded items behind, which are skipped when they reach the top.
+
+    Once superseded items outnumber the live entries, ``index`` becomes
+    ``draining`` and a fresh ``index`` starts. Every later index write moves at
+    most :data:`COMPACTION_STEP` items from ``draining`` (keeping only current
+    ones) until it is empty, so compaction costs at most that many heap pushes
+    per write rather than one O(n) rebuild. Both heaps are consulted for the
+    earliest deadline while ``draining`` is non-empty.
     """
 
     entries: int = 0
     bytes: int = 0
     index: list[tuple[float, int, str]] = field(default_factory=list)
+    draining: list[tuple[float, int, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class _Refusal:
+    """The scope refusing a write: ``namespace``, ``owner_share`` or :data:`TOTAL_SCOPE`."""
+
+    scope: str
+    usage: _Usage | None
+    owner: str | None = None
 
 
 @dataclass(slots=True)
@@ -223,20 +268,23 @@ class MemoryStateBackend:
       namespace drops that namespace's expired entries first;
     * each namespace has an entry-count budget and an approximate byte budget
       (key + value + :data:`ENTRY_OVERHEAD_BYTES`), and optionally a per-owner
-      share of both (:class:`NamespaceBudget`). A write that would still take
-      its namespace or its owner past a budget is refused with
-      :class:`StateBackendCapacityError`, whose ``retry_after_s`` is when the
-      earliest live entry there expires. A live entry is never evicted, so a
-      claim or replay marker cannot be dropped early and re-claimed.
+      share of both (:class:`NamespaceBudget`); all namespaces together also
+      have a backend-wide byte cap (``max_total_bytes``). A write that would
+      still take its namespace, its owner or the backend past a budget is
+      refused with :class:`StateBackendCapacityError`, whose
+      ``retry_after_s`` is when the earliest live entry there expires. A live
+      entry is never evicted, so a claim or replay marker cannot be dropped
+      early and re-claimed.
 
     An overwrite is charged only its size difference, so rewriting a key with
     a value no larger than the current one always fits.
 
     Budgets are per namespace, so filling one key kind (for example
     unauthenticated login CSRF nonces) refuses only writes of that kind and
-    never starves idempotency claims or ``jti`` replay records. The key/value
-    store's memory is therefore bounded by roughly the sum of the byte budgets
-    of the namespaces in use. Token buckets are not budgeted: each is a
+    never starves idempotency claims or ``jti`` replay records, as long as
+    the sum of the namespace budgets in use stays under ``max_total_bytes``.
+    The key/value store's memory is bounded by the smaller of that sum and
+    ``max_total_bytes``. Token buckets are not budgeted: each is a
     fixed-size record kept only until it has refilled, so they are bounded by
     request rate times refill time.
     """
@@ -247,11 +295,14 @@ class MemoryStateBackend:
         clock: Callable[[], float] = time.monotonic,
         max_entries: int = DEFAULT_MEMORY_MAX_ENTRIES,
         max_bytes: int = DEFAULT_MEMORY_MAX_BYTES,
+        max_total_bytes: int = DEFAULT_MEMORY_MAX_TOTAL_BYTES,
         namespace_budgets: Mapping[str, NamespaceBudget] | None = None,
         sweep_interval_s: float = DEFAULT_MEMORY_SWEEP_INTERVAL_S,
     ) -> None:
         default = NamespaceBudget(max_entries=max_entries, max_bytes=max_bytes)
         budgets = dict(namespace_budgets or {})
+        if max_total_bytes < 1:
+            raise ValueError(f"max_total_bytes must be positive, got {max_total_bytes}")
         for name, budget in {"": default, **budgets}.items():
             if budget.max_entries < 1:
                 raise ValueError(
@@ -265,6 +316,8 @@ class MemoryStateBackend:
         self._clock = clock
         self._default_budget = default
         self._budgets = budgets
+        self._max_total_bytes = max_total_bytes
+        self._total_bytes = 0
         self._sweep_interval_s = sweep_interval_s
         self._kv: dict[str, _Entry] = {}
         self._usage: dict[str, _Usage] = {}
@@ -273,7 +326,7 @@ class MemoryStateBackend:
         self._buckets: dict[str, _Bucket] = {}
         self._bucket_index: list[tuple[float, str]] = []
         self._next_sweep_at = clock() + sweep_interval_s
-        self._refusal_logged_at: dict[tuple[str, bool], float] = {}
+        self._refusal_logged_at: dict[tuple[str, str], float] = {}
 
     def _budget(self, namespace: str) -> NamespaceBudget:
         return self._budgets.get(namespace, self._default_budget)
@@ -290,13 +343,30 @@ class MemoryStateBackend:
 
     def _index(self, usage: _Usage, entry: _Entry, key: str) -> None:
         heapq.heappush(usage.index, (entry.expires_at, entry.seq, key))
-        if len(usage.index) > 2 * usage.entries + _INDEX_SLACK:
-            # Amortised: runs once per ``entries + _INDEX_SLACK`` superseded items.
-            usage.index = [item for item in usage.index if self._is_current(item)]
-            heapq.heapify(usage.index)
+        if usage.draining:
+            self._compact_step(usage)
+        elif len(usage.index) > 2 * usage.entries + _INDEX_SLACK:
+            usage.draining, usage.index = usage.index, []
+            self._compact_step(usage)
+
+    def _compact_step(self, usage: _Usage) -> None:
+        """Move up to :data:`COMPACTION_STEP` items from ``draining`` to ``index``.
+
+        Popping from the end of a heap's list keeps it a valid heap, so
+        ``draining`` still answers earliest-deadline queries mid-compaction.
+        A draining heap of ``d`` items empties within ``d / COMPACTION_STEP``
+        index writes, well before the fresh index can reach the threshold
+        again.
+        """
+        draining, index = usage.draining, usage.index
+        for _ in range(min(COMPACTION_STEP, len(draining))):
+            item = draining.pop()
+            if self._is_current(item):
+                heapq.heappush(index, item)
 
     def _delete(self, key: str) -> None:
         entry = self._kv.pop(key)
+        self._total_bytes -= entry.size
         namespace = key_namespace(key)
         usage = self._usage[namespace]
         usage.entries -= 1
@@ -325,22 +395,32 @@ class MemoryStateBackend:
         Pops only superseded and expired index items, so the cost is
         O(expired), not O(entries).
         """
-        index = usage.index
-        while index:
-            item = index[0]
-            if not self._is_current(item):
-                heapq.heappop(index)
-            elif item[0] <= now:
-                heapq.heappop(index)
-                self._delete(item[2])
-            else:
-                return item[0]
-        return None
+        earliest: float | None = None
+        for index in (usage.index, usage.draining):
+            while index:
+                item = index[0]
+                if not self._is_current(item):
+                    heapq.heappop(index)
+                elif item[0] <= now:
+                    heapq.heappop(index)
+                    self._delete(item[2])
+                else:
+                    earliest = item[0] if earliest is None else min(earliest, item[0])
+                    break
+        return earliest
+
+    def _earliest_live_anywhere(self, now: float) -> float | None:
+        """Drop every namespace's expired entries; return the earliest live deadline.
+
+        O(namespaces + expired): what the backend-wide cap waits on.
+        """
+        deadlines = [self._earliest_live(usage, now) for usage in list(self._usage.values())]
+        live = [d for d in deadlines if d is not None]
+        return min(live) if live else None
 
     def _sweep(self, now: float) -> None:
         """Drop expired entries of every namespace and every refilled bucket."""
-        for usage in list(self._usage.values()):
-            self._earliest_live(usage, now)
+        self._earliest_live_anywhere(now)
         index = self._bucket_index
         while index and index[0][0] <= now:
             full_at, key = heapq.heappop(index)
@@ -361,15 +441,13 @@ class MemoryStateBackend:
         used = (usage.bytes if usage else 0) - (existing.size if existing is not None else 0)
         return entries <= max_entries and used + size <= max_bytes
 
-    def _refusing_scope(
-        self, key: str, namespace: str, size: int
-    ) -> tuple[_Usage | None, str | None] | None:
-        """``None`` when the write fits; else the usage that refuses it and its owner."""
+    def _refusing_scope(self, key: str, namespace: str, size: int) -> _Refusal | None:
+        """``None`` when the write fits; else the scope that refuses it."""
         budget = self._budget(namespace)
         existing = self._kv.get(key)
         usage = self._usage.get(namespace)
         if not self._fits(usage, existing, size, budget.max_entries, budget.max_bytes):
-            return (usage, None)
+            return _Refusal("namespace", usage)
         owner_key = self._owner_key(key, namespace)
         if owner_key is not None and budget.max_owner_share is not None:
             share = budget.max_owner_share
@@ -381,18 +459,30 @@ class MemoryStateBackend:
                 max(1, int(budget.max_entries * share)),
                 max(1, int(budget.max_bytes * share)),
             ):
-                return (owner, owner_key[1])
+                return _Refusal("owner_share", owner, owner_key[1])
+        # Charged like a namespace: an overwrite no larger than the entry fits.
+        total = self._total_bytes - (existing.size if existing is not None else 0)
+        if total + size > self._max_total_bytes:
+            return _Refusal(TOTAL_SCOPE, None)
         return None
 
+    def _reclaim(self, refusal: _Refusal, now: float) -> float | None:
+        """Drop the refusing scope's expired entries; return its earliest live deadline."""
+        if refusal.scope == TOTAL_SCOPE:
+            return self._earliest_live_anywhere(now)
+        if refusal.usage is None:
+            return None
+        return self._earliest_live(refusal.usage, now)
+
     def _refuse(
-        self, namespace: str, owner: str | None, earliest: float | None, now: float
+        self, namespace: str, refusal: _Refusal, earliest: float | None, now: float
     ) -> StateBackendCapacityError:
         retry_after_s = _clamp_retry_after(
             earliest - now if earliest is not None else _MAX_RETRY_AFTER_S
         )
         # One warning per namespace (and scope) per sweep interval: a flood of
         # refused writes must not become a flood of log lines.
-        log_key = (namespace, owner is not None)
+        log_key = (namespace, refusal.scope)
         last = self._refusal_logged_at.get(log_key)
         if last is None or now - last >= self._sweep_interval_s:
             self._refusal_logged_at[log_key] = now
@@ -401,47 +491,52 @@ class MemoryStateBackend:
             _logger.warning(
                 "memory_state_backend_capacity_refused",
                 namespace=namespace,
-                scope="owner_share" if owner is not None else "namespace",
+                scope=refusal.scope,
                 entries=usage.entries,
                 approx_bytes=usage.bytes,
                 max_entries=budget.max_entries,
                 max_bytes=budget.max_bytes,
                 max_owner_share=budget.max_owner_share,
+                total_approx_bytes=self._total_bytes,
+                max_total_bytes=self._max_total_bytes,
                 retry_after_s=retry_after_s,
                 detail=(
                     "the in-process state backend namespace (or one owner's share "
-                    "of it) is full of live entries, so new writes to it are refused "
-                    "(callers answer 503) until entries expire. Raise "
-                    "broker.resilience.backend.memory budgets for this namespace, "
-                    "shorten the TTL of what it stores, or use the redis backend."
+                    "of it, or the backend as a whole) is full of live entries, so "
+                    "new writes to it are refused (callers answer 503) until entries "
+                    "expire. Raise broker.resilience.backend.memory budgets (and the "
+                    "container memory limit with them), shorten the TTL of what it "
+                    "stores, or use the redis backend."
                 ),
             )
-        return StateBackendCapacityError(namespace, retry_after_s=retry_after_s, owner=owner)
+        return StateBackendCapacityError(
+            namespace,
+            retry_after_s=retry_after_s,
+            owner=refusal.owner,
+            total=refusal.scope == TOTAL_SCOPE,
+        )
 
     def _store(self, key: str, value: bytes, expires_at: float, now: float) -> None:
-        """Write *value* under *key*, or raise when its namespace budget is spent.
+        """Write *value* under *key*, or raise when a budget it counts against is spent.
 
         A write that does not fit first drops the expired entries of the
-        namespace (or owner share) refusing it, in O(expired). Nothing live is
+        scope refusing it (its namespace, its owner share, or for the
+        backend-wide cap every namespace), in O(expired). Nothing live is
         ever evicted.
 
         Raises:
-            StateBackendCapacityError: The namespace or the owner's share is
-                still full.
+            StateBackendCapacityError: The namespace, the owner's share or the
+                backend-wide byte cap is still full.
         """
         self._maybe_sweep(now)
         namespace = key_namespace(key)
         size = len(key) + len(value) + ENTRY_OVERHEAD_BYTES
-        refusing = self._refusing_scope(key, namespace, size)
-        if refusing is not None:
-            usage, owner = refusing
-            if usage is not None:
-                self._earliest_live(usage, now)
-            refusing = self._refusing_scope(key, namespace, size)
-            if refusing is not None:
-                usage, owner = refusing
-                earliest = self._earliest_live(usage, now) if usage is not None else None
-                raise self._refuse(namespace, owner, earliest, now)
+        refusal = self._refusing_scope(key, namespace, size)
+        if refusal is not None:
+            self._reclaim(refusal, now)
+            refusal = self._refusing_scope(key, namespace, size)
+            if refusal is not None:
+                raise self._refuse(namespace, refusal, self._reclaim(refusal, now), now)
         existing = self._kv.get(key)
         if existing is not None and existing.expires_at == expires_at:
             # Same deadline (a counter increment): update in place, so the
@@ -454,6 +549,7 @@ class MemoryStateBackend:
         self._seq += 1
         entry = _Entry(value=value, expires_at=expires_at, size=size, seq=self._seq)
         self._kv[key] = entry
+        self._total_bytes += size
         scopes = [self._usage.setdefault(namespace, _Usage())]
         owner_key = self._owner_key(key, namespace)
         if owner_key is not None:
@@ -466,6 +562,7 @@ class MemoryStateBackend:
     def _resize(self, key: str, namespace: str, entry: _Entry, size: int) -> None:
         delta = size - entry.size
         entry.size = size
+        self._total_bytes += delta
         self._usage[namespace].bytes += delta
         owner_key = self._owner_key(key, namespace)
         if owner_key is not None:

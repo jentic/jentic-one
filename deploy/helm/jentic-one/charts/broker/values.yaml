@@ -4,13 +4,17 @@ image:
 
 replicas: 1
 
+# The memory limit holds the ~130Mi process baseline plus the default memory
+# shared-state backend's 192 MiB cap
+# (broker.resilience.backend.memory.max_total_bytes), with headroom. Raise it
+# together with those budgets. See "Scaling and HA" in docs/installation/helm.md.
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
   limits:
     cpu: 500m
-    memory: 256Mi
+    memory: 512Mi
 
 healthCheck:
   path: /health
@@ -32,7 +36,7 @@ service:
 # it therefore works only with idempotency, rate limiting and the circuit
 # breaker disabled; otherwise build an image with jentic-one[redis] and set the
 # redis backend. Raise resources.limits.cpu AND resources.limits.memory roughly
-# N times (256Mi fits one worker). See "Scaling and HA" in
+# N times (512Mi fits one worker). See "Scaling and HA" in
 # docs/installation/helm.md.
 #   extraEnv:
 #     JENTIC__SERVER__WORKERS: "2"

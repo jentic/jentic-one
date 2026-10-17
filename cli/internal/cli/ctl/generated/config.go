@@ -1694,7 +1694,7 @@ func (j *McpOAuthConfig) UnmarshalJSON(value []byte) error {
 // new writes (the request that needed it gets a 503) rather than evicting a
 // live entry. Ignored by the redis backend.
 type MemoryBackendConfig struct {
-	// Default most approximate bytes (key + value + about 400 bytes of per-entry
+	// Default most approximate bytes (key + value + about 750 bytes of per-entry
 	// overhead) one key namespace may hold before its writes are refused.
 	MaxBytesPerNamespace int `json:"max_bytes_per_namespace,omitempty,omitzero" yaml:"max_bytes_per_namespace,omitempty" mapstructure:"max_bytes_per_namespace,omitempty"`
 
@@ -1702,30 +1702,39 @@ type MemoryBackendConfig struct {
 	// refused.
 	MaxEntriesPerNamespace int `json:"max_entries_per_namespace,omitempty,omitzero" yaml:"max_entries_per_namespace,omitempty" mapstructure:"max_entries_per_namespace,omitempty"`
 
+	// Most approximate bytes all namespaces of one memory backend may hold together
+	// (201326592, 192 MiB, by default); a write past it is refused like a full
+	// namespace, never by evicting a live entry. Each surface that keeps shared state
+	// (auth, broker, control) has its own backend, so a process holds up to this much
+	// per such surface. Raise the container memory limit together with it.
+	MaxTotalBytes int `json:"max_total_bytes,omitempty,omitzero" yaml:"max_total_bytes,omitempty" mapstructure:"max_total_bytes,omitempty"`
+
 	// Per-namespace budget overrides, keyed by namespace (the key prefix before the
-	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 1000000
-	// entries / 268435456 bytes (256 MiB) and idem-body (their stored response
-	// bodies) 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller
-	// share. The sustained idempotent request rate idem can hold is min(max_entries,
-	// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
-	// about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s
-	// at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
-	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500
-	// bytes + body length each) stop being stored for replay sooner, about 25 req/s
-	// of 1 KiB bodies, without refusing requests.
+	// first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000
+	// entries / 134217728 bytes (128 MiB) and idem-body (their stored response
+	// bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller
+	// share; every other namespace uses max_entries_per_namespace /
+	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
+	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
+	// record_bytes is about 1000 bytes plus the response headers (capped at 512
+	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
+	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
+	// bodies (about 830 bytes + body length each) stop being stored for replay
+	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
 // Per-namespace budget overrides, keyed by namespace (the key prefix before the
-// first “:“). Unless overridden here, idem (Idempotency-Key records) is 1000000
-// entries / 268435456 bytes (256 MiB) and idem-body (their stored response bodies)
-// 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller share.
+// first “:“). Unless overridden here, idem (Idempotency-Key records) is 250000
+// entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies)
+// 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share;
+// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
 // The sustained idempotent request rate idem can hold is min(max_entries,
 // max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
-// about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s
+// about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s
 // at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
-// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500
-// bytes + body length each) stop being stored for replay sooner, about 25 req/s of
+// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
+// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
 // 1 KiB bodies, without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
@@ -1741,7 +1750,7 @@ func (j *MemoryBackendConfig) UnmarshalJSON(value []byte) error {
 		return err
 	}
 	if v, ok := raw["max_bytes_per_namespace"]; !ok || v == nil {
-		plain.MaxBytesPerNamespace = 67108864
+		plain.MaxBytesPerNamespace = 16777216
 	}
 	if 1 > plain.MaxBytesPerNamespace {
 		return fmt.Errorf("field %s: must be >= %v", "max_bytes_per_namespace", 1)
@@ -1752,13 +1761,19 @@ func (j *MemoryBackendConfig) UnmarshalJSON(value []byte) error {
 	if 1 > plain.MaxEntriesPerNamespace {
 		return fmt.Errorf("field %s: must be >= %v", "max_entries_per_namespace", 1)
 	}
+	if v, ok := raw["max_total_bytes"]; !ok || v == nil {
+		plain.MaxTotalBytes = 201326592
+	}
+	if 1 > plain.MaxTotalBytes {
+		return fmt.Errorf("field %s: must be >= %v", "max_total_bytes", 1)
+	}
 	*j = MemoryBackendConfig(plain)
 	return nil
 }
 
 // Entry-count and approximate byte budget for one memory-backend key namespace.
 type MemoryNamespaceBudgetConfig struct {
-	// Most approximate bytes (key + value + about 400 bytes of per-entry overhead)
+	// Most approximate bytes (key + value + about 750 bytes of per-entry overhead)
 	// the namespace may hold.
 	MaxBytes int `json:"max_bytes" yaml:"max_bytes" mapstructure:"max_bytes"`
 

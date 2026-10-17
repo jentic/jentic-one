@@ -200,15 +200,19 @@ broker:
       # a live entry. Use redis in production.
       # Idempotency-Key ceiling per process:
       #   min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s
-      # with record_bytes ~ 500 B + response headers (capped at 512 B): about
-      # 80 req/s at the defaults (1 h TTL on memory), 8 req/s per caller.
+      # with record_bytes ~ 1000 B + response headers (capped at 512 B): about
+      # 30 req/s at the defaults (1 h TTL on memory), 3 req/s per caller.
+      # max_total_bytes caps all namespaces of one backend together; raise
+      # the container memory limit with any budget (the broker chart's 512Mi
+      # fits the defaults).
       # memory:
       #   max_entries_per_namespace: 100000
-      #   max_bytes_per_namespace: 67108864   # 64 MiB
+      #   max_bytes_per_namespace: 16777216   # 16 MiB
+      #   max_total_bytes: 201326592          # 192 MiB
       #   namespaces:
       #     # The built-in defaults:
-      #     idem: {max_entries: 1000000, max_bytes: 268435456, max_owner_share: 0.1}
-      #     idem-body: {max_entries: 1000000, max_bytes: 134217728, max_owner_share: 0.1}
+      #     idem: {max_entries: 250000, max_bytes: 134217728, max_owner_share: 0.1}
+      #     idem-body: {max_entries: 1000000, max_bytes: 33554432, max_owner_share: 0.1}
 
 admin:
   auth:

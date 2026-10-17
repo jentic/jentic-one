@@ -10,6 +10,7 @@ from jentic_one.shared.state import (
     NamespaceBudget,
     StateBackendCapacityError,
 )
+from jentic_one.shared.state.backend import COMPACTION_STEP, ENTRY_OVERHEAD_BYTES
 
 
 class FakeClock:
@@ -195,7 +196,8 @@ async def test_byte_budget_refuses_a_large_value(clock: FakeClock) -> None:
 
 
 async def test_overwrite_counts_only_the_size_difference(clock: FakeClock) -> None:
-    backend = MemoryStateBackend(clock=clock, max_bytes=10_000)
+    # Charged in full, the rewrite would need both entries' sizes (~20 KB).
+    backend = MemoryStateBackend(clock=clock, max_bytes=11_000)
     await backend.set("idem:a", b"x" * 9_000, ttl_s=60.0)
     await backend.set("idem:a", b"x" * 9_500, ttl_s=60.0)
     assert await backend.get("idem:a") == b"x" * 9_500
@@ -385,7 +387,8 @@ async def test_owner_share_bounds_bytes(clock: FakeClock) -> None:
 async def test_an_overwrite_no_larger_than_the_entry_fits_a_full_namespace(
     clock: FakeClock,
 ) -> None:
-    backend = MemoryStateBackend(clock=clock, max_entries=1, max_bytes=500)
+    # Holds one ~800-byte entry, not two.
+    backend = MemoryStateBackend(clock=clock, max_entries=1, max_bytes=1_000)
     await backend.set("ns:a", b"x" * 50, ttl_s=10.0)
     await backend.set("ns:a", b"y" * 50, ttl_s=3_600.0)
     clock.advance(20.0)
@@ -407,3 +410,94 @@ def test_owner_share_must_be_a_fraction() -> None:
                 "idem": NamespaceBudget(max_entries=1, max_bytes=1, max_owner_share=1.5)
             }
         )
+
+
+async def test_the_total_cap_bounds_all_namespaces_together(clock: FakeClock) -> None:
+    """Each namespace is under its own budget, but together they hit the cap."""
+    entry = len("a:k") + 1 + ENTRY_OVERHEAD_BYTES
+    backend = MemoryStateBackend(clock=clock, max_total_bytes=2 * entry)
+    await backend.set("a:k", b"v", ttl_s=500.0)
+    await backend.set("b:k", b"v", ttl_s=90.0)
+    clock.advance(10.0)
+
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set("c:k", b"v", ttl_s=60.0)
+    assert refused.value.total is True
+    assert refused.value.namespace == "c"
+    # The earliest live entry of any namespace frees room first.
+    assert refused.value.retry_after_s == 80
+    assert await backend.get("a:k") == b"v"
+    # An overwrite no larger than the entry still fits a full backend.
+    await backend.set("a:k", b"w", ttl_s=3_600.0)
+
+
+async def test_the_total_cap_reclaims_expired_entries_of_other_namespaces(
+    clock: FakeClock,
+) -> None:
+    entry = len("a:k") + 1 + ENTRY_OVERHEAD_BYTES
+    backend = MemoryStateBackend(clock=clock, max_total_bytes=2 * entry)
+    await backend.set("a:k", b"v", ttl_s=1.0)
+    await backend.set("b:k", b"v", ttl_s=600.0)
+    clock.advance(2.0)
+    await backend.set("c:k", b"v", ttl_s=600.0)
+    assert set(backend._kv) == {"b:k", "c:k"}
+
+
+def test_the_total_cap_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_total_bytes"):
+        MemoryStateBackend(max_total_bytes=0)
+
+
+async def test_index_compaction_is_spread_over_writes(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No single write rebuilds a large expiry index.
+
+    Every overwrite with a new deadline supersedes an index item. A one-shot
+    rebuild would check all ~2x``entries`` items in one write (about 28 ms at
+    150k entries); compaction instead checks at most ``COMPACTION_STEP`` per
+    write while the index stays bounded.
+    """
+    entries = 20_000
+    backend = MemoryStateBackend(clock=clock, max_entries=entries + 1, max_bytes=10**9)
+    for i in range(entries):
+        await backend.set(f"ns:{i}", b"v", ttl_s=600.0)
+    checked = 0
+    is_current = backend._is_current
+
+    def counting(item: tuple[float, int, str]) -> bool:
+        nonlocal checked
+        checked += 1
+        return is_current(item)
+
+    monkeypatch.setattr(backend, "_is_current", counting)
+    usage = backend._usage["ns"]
+    most_per_write = 0
+    compacted = False
+    for i in range(3 * entries):
+        checked = 0
+        await backend.set(f"ns:{i % entries}", b"v", ttl_s=700.0 + i)
+        most_per_write = max(most_per_write, checked)
+        compacted = compacted or bool(usage.draining)
+        assert len(usage.index) + len(usage.draining) <= 3 * entries + 2 * 64
+    assert compacted
+    assert most_per_write <= COMPACTION_STEP
+    # Every live entry is still indexed exactly once.
+    current = [item for item in usage.index + usage.draining if is_current(item)]
+    assert len(current) == entries
+
+
+async def test_expiry_is_found_in_a_compacting_index(clock: FakeClock) -> None:
+    backend = MemoryStateBackend(clock=clock, max_entries=200, sweep_interval_s=10**6)
+    for i in range(200):
+        await backend.set(f"ns:{i}", b"v", ttl_s=1_000.0 + i)
+    # The 265th superseding write takes the index past 2 x 200 + 64 items and
+    # starts a compaction, which has moved only one step when we refuse.
+    for i in range(265):
+        await backend.set(f"ns:{i % 200}", b"v", ttl_s=2_000.0 + i)
+    usage = backend._usage["ns"]
+    assert usage.draining
+    with pytest.raises(StateBackendCapacityError) as refused:
+        await backend.set("ns:new", b"v", ttl_s=60.0)
+    # The earliest live deadline is ns:65's (2_065 s), wherever it is indexed.
+    assert refused.value.retry_after_s == 2_065

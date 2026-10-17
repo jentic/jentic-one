@@ -1161,8 +1161,8 @@
       "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for JWT-bearer jti replay records,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by the redis backend.",
       "properties": {
         "max_bytes_per_namespace": {
-          "default": 67108864,
-          "description": "Default most approximate bytes (key + value + about 400 bytes of per-entry overhead) one key namespace may hold before its writes are refused.",
+          "default": 16777216,
+          "description": "Default most approximate bytes (key + value + about 750 bytes of per-entry overhead) one key namespace may hold before its writes are refused.",
           "minimum": 1,
           "title": "Max Bytes Per Namespace",
           "type": "integer"
@@ -1174,11 +1174,18 @@
           "title": "Max Entries Per Namespace",
           "type": "integer"
         },
+        "max_total_bytes": {
+          "default": 201326592,
+          "description": "Most approximate bytes all namespaces of one memory backend may hold together (201326592, 192 MiB, by default); a write past it is refused like a full namespace, never by evicting a live entry. Each surface that keeps shared state (auth, broker, control) has its own backend, so a process holds up to this much per such surface. Raise the container memory limit together with it.",
+          "minimum": 1,
+          "title": "Max Total Bytes",
+          "type": "integer"
+        },
         "namespaces": {
           "additionalProperties": {
             "$ref": "#/$defs/MemoryNamespaceBudgetConfig"
           },
-          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 1000000 entries / 268435456 bytes (256 MiB) and idem-body (their stored response bodies) 1000000 entries / 134217728 bytes (128 MiB), each with a 0.1 per-caller share. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 500 bytes plus the response headers (capped at 512 bytes): about 80 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 500 bytes + body length each) stop being stored for replay sooner, about 25 req/s of 1 KiB bodies, without refusing requests.",
+          "description": "Per-namespace budget overrides, keyed by namespace (the key prefix before the first ``:``). Unless overridden here, idem (Idempotency-Key records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body (their stored response bodies) 1000000 entries / 33554432 bytes (32 MiB), each with a 0.1 per-caller share; every other namespace uses max_entries_per_namespace / max_bytes_per_namespace. The sustained idempotent request rate idem can hold is min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830 bytes + body length each) stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, without refusing requests.",
           "title": "Namespaces",
           "type": "object"
         }
@@ -1190,7 +1197,7 @@
       "description": "Entry-count and approximate byte budget for one memory-backend key namespace.",
       "properties": {
         "max_bytes": {
-          "description": "Most approximate bytes (key + value + about 400 bytes of per-entry overhead) the namespace may hold.",
+          "description": "Most approximate bytes (key + value + about 750 bytes of per-entry overhead) the namespace may hold.",
           "minimum": 1,
           "title": "Max Bytes",
           "type": "integer"

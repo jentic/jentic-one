@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, SecretStr
 from jentic_one.shared.state.backend import (
     DEFAULT_MEMORY_MAX_BYTES,
     DEFAULT_MEMORY_MAX_ENTRIES,
+    DEFAULT_MEMORY_MAX_TOTAL_BYTES,
     MemoryStateBackend,
     NamespaceBudget,
     SharedStateBackend,
@@ -43,17 +44,19 @@ class BackendKind(StrEnum):
 
 # Built-in budgets for the broker's ``Idempotency-Key`` entries. ``idem``
 # holds one small record per key (status, fingerprint, headers capped at
-# 512 bytes: about 0.9 KiB budgeted each); ``idem-body`` holds the stored
+# 512 bytes: about 1.2 KiB budgeted each); ``idem-body`` holds the stored
 # response bodies, so a full body budget only drops bodies from replays and
 # never refuses a claim. Each caller may hold at most a tenth of either, so
-# one caller cannot lock every other caller out.
+# one caller cannot lock every other caller out. With the 16 MiB default for
+# every other namespace they fit the 192 MiB backend-wide cap, which the
+# broker chart's 512Mi memory limit holds with the process baseline.
 IDEM_OWNER_SHARE = 0.1
 _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
     "idem": NamespaceBudget(
-        max_entries=1_000_000, max_bytes=256 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
+        max_entries=250_000, max_bytes=128 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
     ),
     "idem-body": NamespaceBudget(
-        max_entries=1_000_000, max_bytes=128 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
+        max_entries=1_000_000, max_bytes=32 * 1024 * 1024, max_owner_share=IDEM_OWNER_SHARE
     ),
 }
 
@@ -65,7 +68,7 @@ class MemoryNamespaceBudgetConfig(BaseModel):
     max_bytes: int = Field(
         ge=1,
         description=(
-            "Most approximate bytes (key + value + about 400 bytes of per-entry "
+            "Most approximate bytes (key + value + about 750 bytes of per-entry "
             "overhead) the namespace may hold."
         ),
     )
@@ -107,8 +110,20 @@ class MemoryBackendConfig(BaseModel):
         default=DEFAULT_MEMORY_MAX_BYTES,
         ge=1,
         description=(
-            "Default most approximate bytes (key + value + about 400 bytes of "
+            "Default most approximate bytes (key + value + about 750 bytes of "
             "per-entry overhead) one key namespace may hold before its writes are refused."
+        ),
+    )
+    max_total_bytes: int = Field(
+        default=DEFAULT_MEMORY_MAX_TOTAL_BYTES,
+        ge=1,
+        description=(
+            "Most approximate bytes all namespaces of one memory backend may hold "
+            "together (201326592, 192 MiB, by default); a write past it is refused "
+            "like a full namespace, never by evicting a live entry. Each surface "
+            "that keeps shared state (auth, broker, control) has its own backend, "
+            "so a process holds up to this much per such surface. Raise the "
+            "container memory limit together with it."
         ),
     )
     namespaces: dict[str, MemoryNamespaceBudgetConfig] = Field(
@@ -116,16 +131,18 @@ class MemoryBackendConfig(BaseModel):
         description=(
             "Per-namespace budget overrides, keyed by namespace (the key prefix "
             "before the first ``:``). Unless overridden here, idem (Idempotency-Key "
-            "records) is 1000000 entries / 268435456 bytes (256 MiB) and idem-body "
-            "(their stored response bodies) 1000000 entries / 134217728 bytes "
-            "(128 MiB), each with a 0.1 per-caller share. The sustained idempotent "
-            "request rate idem can hold is min(max_entries, max_bytes / record_bytes) "
-            "/ broker.idempotency.ttl_s, where record_bytes is about 500 bytes plus "
-            "the response headers (capped at 512 bytes): about 80 req/s at the "
-            "defaults and a 1 h TTL, and a tenth of that per caller. Above it, "
-            "Idempotency-Key requests get 503 idempotency_unavailable; bodies "
-            "(about 500 bytes + body length each) stop being stored for replay "
-            "sooner, about 25 req/s of 1 KiB bodies, without refusing requests."
+            "records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body "
+            "(their stored response bodies) 1000000 entries / 33554432 bytes "
+            "(32 MiB), each with a 0.1 per-caller share; every other namespace "
+            "uses max_entries_per_namespace / max_bytes_per_namespace. The "
+            "sustained idempotent request rate idem can hold is min(max_entries, "
+            "max_bytes / record_bytes) / broker.idempotency.ttl_s, where "
+            "record_bytes is about 1000 bytes plus the response headers (capped at "
+            "512 bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth "
+            "of that per caller. Above it, Idempotency-Key requests get 503 "
+            "idempotency_unavailable; bodies (about 830 bytes + body length each) "
+            "stop being stored for replay sooner, about 5 req/s of 1 KiB bodies, "
+            "without refusing requests."
         ),
     )
 
@@ -191,5 +208,6 @@ def build_state_backend(cfg: StateBackendConfig) -> SharedStateBackend:
     return MemoryStateBackend(
         max_entries=cfg.memory.max_entries_per_namespace,
         max_bytes=cfg.memory.max_bytes_per_namespace,
+        max_total_bytes=cfg.memory.max_total_bytes,
         namespace_budgets=cfg.memory.budgets(),
     )

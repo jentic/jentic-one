@@ -456,30 +456,41 @@ later rollback still decrypts what was written under the new key)
 > `Retry-After` of when its earliest entry expires.
 >
 > With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on redis; the `idem` budget of 256 MiB; about
-> 0.9 KiB per record with typical response headers), one broker process
-> sustains about **80 idempotent requests per second**, and about **8 per
-> second per caller**, because each caller may hold at most 10% of the
-> budget. Above that, `Idempotency-Key` requests get 503. Stored response
-> bodies have their own 128 MiB `idem-body` budget. Past about 25 req/s of
-> 1 KiB bodies, replays omit the body (`Jentic-Idempotency-Body-Omitted:
-> true`) but requests are not refused. The ceiling is
-> `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
-> `record_bytes` is about 500 bytes plus the response headers (capped at
-> 512 bytes).
+> window on memory and 24 h on redis; the `idem` budget of 128 MiB; about
+> 1.2 KiB budgeted per record with typical response headers), one broker
+> process sustains about **30 idempotent requests per second**, and about
+> **3 per second per caller**, because each caller may hold at most 10% of
+> the budget. Above that, `Idempotency-Key` requests get 503. Stored
+> response bodies have their own 32 MiB `idem-body` budget. Past about
+> 5 req/s of 1 KiB bodies, replays omit the body
+> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
+> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
+> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
+> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
+> `Content-Location` and `Retry-After` first, so a replay may lack the
+> others.
+>
+> Every other namespace defaults to 16 MiB, and all namespaces of one
+> backend together are capped at
+> `broker.resilience.backend.memory.max_total_bytes` (192 MiB), refused the
+> same way. The budgets track real memory to within about 15% (measured
+> with `tracemalloc`), so on the defaults the broker's state stays under
+> about 192 MiB on top of a ~130 MiB process baseline, which the broker
+> chart's 512Mi memory limit holds. The combined app runs up to three such
+> backends (auth, broker, control) in one process.
 >
 > To raise it: switch to `redis` (`broker.resilience.backend.redis_url`;
 > the published images lack the `[redis]` extra, see #1786), raise
 > `broker.resilience.backend.memory.namespaces.idem` (and its
-> `max_owner_share`), or lower `broker.idempotency.ttl_s`. The two `idem`
-> budgets alone can reach about 384 MiB, more than the broker chart's
-> default 256Mi memory limit, so raise the container memory limit together
-> with the budgets.
+> `max_owner_share`) together with `max_total_bytes`, or lower
+> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
+> as much as you raise the budgets.
 
 Every subchart exposes `replicas` and `resources` in its values
 (`--set broker.replicas=3`). The defaults are sized for evaluation, not
-load: broker/registry/control request 100m/128Mi with a 500m/256Mi limit,
-and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
+load: registry/control request 100m/128Mi with a 500m/256Mi limit, the
+broker requests 100m/256Mi with a 500m/512Mi limit (its default `memory`
+shared-state budgets, above), and app/admin request 256Mi with a 1Gi limit. The app's floor is real, not
 a hint: it boots at roughly 150Mi RSS, and every concurrent password or
 OAuth client-secret verification adds 64Mi (argon2id with
 `memory_cost=65536`) — so a handful of simultaneous logins on a 256Mi limit
@@ -516,7 +527,7 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   your own image with the `[redis]` extra and the redis backend configured.
   When you do raise it, raise the CPU limit **and the memory limit**
   roughly N× (each worker is a full interpreter; the broker's default
-  256Mi limit fits one), and apply the `postgresql.maxConnections` rule per
+  512Mi limit fits one), and apply the `postgresql.maxConnections` rule per
   worker as per replica. Prometheus metrics are per worker (prefer the
   `otlp` exporter). Requires PostgreSQL. A worker that cannot start exits
   the container with code 3. Details:
