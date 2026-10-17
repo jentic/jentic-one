@@ -2,7 +2,7 @@
 
 Adds ``assertion_jtis`` to the admin schema: one row per accepted RFC 7523
 JWT-bearer assertion, keyed on ``(issuer, jti_digest)`` by the unique index
-``uq_assertion_jtis_issuer_jti_digest``, so a replayed ``jti`` is refused by
+``ix_assertion_jtis_issuer_jti_digest``, so a replayed ``jti`` is refused by
 every auth process that shares the admin database. ``ix_assertion_jtis_expires_at``
 serves the bounded prune of expired rows on the exchange path.
 
@@ -47,12 +47,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "uq_assertion_jtis_issuer_jti_digest", _TABLE, ["issuer", "jti_digest"], unique=True
+        "ix_assertion_jtis_issuer_jti_digest", _TABLE, ["issuer", "jti_digest"], unique=True
     )
     op.create_index("ix_assertion_jtis_expires_at", _TABLE, ["expires_at"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_assertion_jtis_expires_at", table_name=_TABLE)
-    op.drop_index("uq_assertion_jtis_issuer_jti_digest", table_name=_TABLE)
+    op.drop_index("ix_assertion_jtis_issuer_jti_digest", table_name=_TABLE)
     op.drop_table(_TABLE)

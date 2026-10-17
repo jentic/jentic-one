@@ -280,11 +280,12 @@ async def test_a_failure_after_the_claim_rolls_the_record_back(
 
 
 async def _wait_for_a_lock_wait(ctx: Context, *, timeout_s: float = 10.0) -> None:
-    """Poll until some backend of this database waits on a lock (no fixed sleep)."""
+    """Poll until a claim on ``assertion_jtis`` waits on a row lock (no fixed sleep)."""
     deadline = time.monotonic() + timeout_s
     probe = text(
         "SELECT count(*) FROM pg_stat_activity "
-        "WHERE wait_event_type = 'Lock' AND datname = current_database()"
+        "WHERE wait_event_type = 'Lock' AND datname = current_database() "
+        "AND query ILIKE '%assertion_jtis%'"
     )
     while time.monotonic() < deadline:
         async with ctx.admin_db.session() as session:
