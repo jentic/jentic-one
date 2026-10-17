@@ -249,6 +249,18 @@ class CredentialIdentityMismatchError(BrokerError):
     """
 
 
+class CredentialBindingSuspendedError(BrokerError):
+    """The agent's binding to a credential covering this API is suspended (403).
+
+    Distinct from the missing-binding denial (``no_credential_binding``): the
+    operator suspended the agent's access, so only the operator can restore
+    it (resume the binding). The directive never suggests a new connect —
+    the connect flow refuses one while the suspension stands.
+    """
+
+    default_type = "credential_binding_suspended"
+
+
 class UpstreamTimeoutError(BrokerError):
     """The upstream did not respond within the deadline (504).
 
@@ -573,6 +585,29 @@ def no_credential_binding_directive(
         strategy="prompt_human",
         parameters=parameters,
         human_readable_instruction=instruction,
+    )
+
+
+def credential_binding_suspended_directive(
+    *, vendor: str, name: str, version: str
+) -> AgentDirective:
+    """Directive for a ``credential_binding_suspended`` 403 — only the operator can lift it.
+
+    The agent's binding to a credential covering this API is suspended. The
+    operator made that call, so the recovery is theirs: resume the binding.
+    Deliberately carries no ``suggested_command``, ``connect`` or
+    ``provisioning_url`` — a new connect for the same API is refused while the
+    suspension stands, and suggesting one would steer the agent around it.
+    """
+    api = "/".join(part for part in (vendor, name) if part)
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"api": {"vendor": vendor, "name": name, "version": version}},
+        human_readable_instruction=(
+            f"Your operator has suspended your access to '{api}'. Ask your operator "
+            "whether they will resume it — only they can. Do not request a new "
+            "connection for this API. Once they resume it, retry this call."
+        ),
     )
 
 

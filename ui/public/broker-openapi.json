@@ -491,6 +491,28 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "credential_binding_suspended": {
+                "summary": "The caller's binding for this API is suspended by its operator.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "Your operator has suspended your access to 'api.example.com/main'. Ask your operator whether they will resume it — only they can. Do not request a new connection for this API. Once they resume it, retry this call.",
+                    "parameters": {
+                      "api": {
+                        "name": "main",
+                        "vendor": "api.example.com",
+                        "version": "1.0.0"
+                      }
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "The credential binding for this API is suspended",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 403,
+                  "title": "The credential binding for this API is suspended",
+                  "type": "credential_binding_suspended"
+                }
+              },
               "insufficient_scope": {
                 "summary": "Token lacks the `capabilities:execute` permission.",
                 "value": {
@@ -530,7 +552,7 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n"
       },
       "NotFound": {
         "content": {

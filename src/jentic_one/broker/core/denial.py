@@ -27,6 +27,9 @@ class DenialReason(StrEnum):
     CREDENTIAL_IDENTITY_MISMATCH = "credential_identity_mismatch"
     """Bound, but no bound credential's stored identity covers the API (403)."""
 
+    CREDENTIAL_BINDING_SUSPENDED = "credential_binding_suspended"
+    """The agent's binding to a credential covering the API is suspended (403)."""
+
     # --- rule evaluation (what the binding may do) ------------------------
     NO_RULES_LOADED = "no_rules_loaded"
     """The binding's rule list is empty — nothing to match (403, default deny)."""
