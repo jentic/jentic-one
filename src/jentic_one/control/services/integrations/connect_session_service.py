@@ -56,7 +56,11 @@ from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectRequest,
 )
-from jentic_one.control.services.credentials.state import consume_callback_state, decode_state
+from jentic_one.control.services.credentials.state import (
+    BrowserBindingClaim,
+    consume_callback_state,
+    decode_state,
+)
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -1925,6 +1929,9 @@ class ConnectSessionService:
         # whenever given; required for an ``api`` target.
         expected_agent_id: str | None = None,
         digest: str | None = None,
+        # The approver's browser: an authorization-code flow binds its
+        # callback to it, since the approver is the one who goes to the vendor.
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Confirm scopes + permissions and kick off the vendor-side flow.
 
@@ -2032,7 +2039,12 @@ class ConnectSessionService:
         # signed state token for auth-code). We only own the flow-agnostic
         # state machine + permission-rule capture below.
         try:
-            challenge = await handler.begin(row, app=session_app, confirmed_scopes=confirmed_scopes)
+            challenge = await handler.begin(
+                row,
+                app=session_app,
+                confirmed_scopes=confirmed_scopes,
+                browser_binding=browser_binding,
+            )
         except Exception:
             # A vendor-side ``begin`` failure must leave the session
             # retryable — roll the CAS back to ``created`` (undoing a
@@ -2139,6 +2151,7 @@ class ConnectSessionService:
         poll_token: str | None,
         variant: ConfirmVariant,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConfirmResult:
         """Confirm with an entered secret, an own OAuth client or an existing credential.
 
@@ -2199,11 +2212,21 @@ class ConnectSessionService:
         elif isinstance(variant, ExistingCredentialConfirm):
             assert effective_agent_id is not None
             result = await self._confirm_existing(
-                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                effective_agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                browser_binding=browser_binding,
             )
         else:
             result = await self._confirm_own_client(
-                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
+                row,
+                variant,
+                effective_agent_id,
+                late_bound=late_bound,
+                identity=identity,
+                browser_binding=browser_binding,
             )
 
         await record_audit_best_effort(
@@ -2428,6 +2451,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None,
     ) -> ConnectedConfirmResult | ReauthorizeConfirmResult:
         async with self._ctx.control_db.session() as session:
             pending = await CredentialRepository.get_by_id(session, row.credential_id)
@@ -2455,6 +2479,7 @@ class ConnectSessionService:
                 identity=identity,
                 redirect_uri=platform_redirect_uri(self._ctx),
                 sole_agent_id=agent_id,
+                browser_binding=browser_binding,
             )
             if not isinstance(challenge, AuthCodeChallenge):
                 raise ReauthorizeUnavailableError(
@@ -2526,6 +2551,7 @@ class ConnectSessionService:
         *,
         late_bound: bool,
         identity: Identity,
+        browser_binding: BrowserBindingClaim | None,
     ) -> AuthCodeConfirmResult:
         if not variant.authorize_url.strip() or not variant.token_url.strip():
             raise OwnClientInvalidError("authorize_url and token_url are required")
@@ -2588,7 +2614,10 @@ class ConnectSessionService:
         )
         try:
             challenge = await handler.begin(
-                current, app=app, confirmed_scopes=variant.confirmed_scopes
+                current,
+                app=app,
+                confirmed_scopes=variant.confirmed_scopes,
+                browser_binding=browser_binding,
             )
         except Exception:
             # Leave the session as it was so the approver can retry.
@@ -3535,7 +3564,9 @@ class ConnectSessionService:
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------
 
-    async def mark_terminal_from_callback(self, *, raw_state: str, error: str) -> str:
+    async def mark_terminal_from_callback(
+        self, *, raw_state: str, error: str, browser_binding: str | None
+    ) -> str:
         """Mark a session ``failed`` from a callback landing that carried no
         usable code (vendor returned ``error`` or dropped ``code`` entirely).
 
@@ -3545,10 +3576,12 @@ class ConnectSessionService:
         one-shot nonce too, or a captured callback URL with
         ``error=access_denied`` could be replayed after a successful
         connect (``_mark_terminal``'s CAS is the second line of defence).
-        Raises ``StateError`` subclasses on decode / replay failures.
+        Raises ``StateError`` subclasses on decode / replay failures, and
+        when ``browser_binding`` (the callback's binding cookie) does not
+        match — then nothing is written and the session stays live.
         Returns the session id for the router's log line.
         """
-        state = await consume_callback_state(self._ctx, raw_state)
+        state = await consume_callback_state(self._ctx, raw_state, browser_binding=browser_binding)
         if state.session_id is None:
             raise NoOpForFlowError("callback state missing session id")
         await self._mark_terminal(state.session_id, "failed", error, error_code="callback_error")
@@ -3620,6 +3653,7 @@ class ConnectSessionService:
         *,
         raw_state: str,
         code: str,
+        browser_binding: str | None,
     ) -> StatusResult:
         """Complete a connect session from an OAuth callback landing.
 
@@ -3635,8 +3669,12 @@ class ConnectSessionService:
         doesn't support a callback path (device flow) — a defensive
         guard the router should never trip, since only auth-code state
         JWTs carry a ``sid``.
+
+        ``browser_binding`` is the binding cookie the callback carried; a
+        missing or mismatched one is refused before the nonce is consumed,
+        leaving the session live for the approver's own browser.
         """
-        state = await consume_callback_state(self._ctx, raw_state)
+        state = await consume_callback_state(self._ctx, raw_state, browser_binding=browser_binding)
         if state.session_id is None:
             # State without ``sid`` doesn't belong on this path — router
             # dispatches to the standalone-credential handler for those.
