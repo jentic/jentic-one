@@ -43,7 +43,10 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
     - the decider of a held execution it can see (``GET /executions/holds``,
       which takes no permission; the ``HeldExecution`` filter);
     - with ``oauth-clients:read`` (``GET /admin/oauth-grants``): the consenting
-      user of an OAuth grant it can see (the ``OAuthClientGrant`` filter);
+      user of an OAuth grant it can see (the ``OAuthClientGrant`` filter). This
+      is narrower by design than the agent-detail "Consented by" panel
+      (``GET /agents/{id}/oauth-grants``, no permission): an agent's owner
+      without ``oauth-clients:read`` sees that consenter as a raw user id;
     - with ``oauth-clients:read`` (``GET /admin/oauth-clients``, which lists
       every client): the creator of any OAuth client.
 
