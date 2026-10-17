@@ -10,9 +10,10 @@ import jwt
 from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.services.errors import InvalidGrantError
-from jentic_one.auth.services.token_service import TokenService, log_agent_owner_inactive
+from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth import resolve_agent_key
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -156,7 +157,8 @@ class AssertionService:
                 raise InvalidGrantError(_INVALID)
             if not owner_active:
                 # An owned agent follows its owner's account status: no new
-                # tokens while the owner is disabled or deleted. Same generic
+                # tokens while the owner is disabled or deleted (a soft-deleted
+                # user has ``active`` false). Same generic
                 # refusal as any other non-active agent.
                 log_agent_owner_inactive(agent.id, agent.owner_id)
                 raise InvalidGrantError(_INVALID)

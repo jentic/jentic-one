@@ -15,6 +15,7 @@ from sqlalchemy import Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
@@ -132,7 +133,13 @@ class ApiKeyResolver:
     async def _resolve_retired(
         self, raw_key: str, *, event: str, deadline_note: str
     ) -> Identity | None:
-        """Retired-prefix arm: resolve as the successor agent, or fail closed."""
+        """Retired-prefix arm: resolve as the successor agent, or fail closed.
+
+        A successor refused only because its owner is not active returns early
+        with the ``agent_owner_inactive`` event alone: the key is not logged as
+        ``migrated_key_fail_closed``, which is reserved for a successor agent
+        whose own status is not active.
+        """
         arm = await self._lookup_agent(raw_key)
         if isinstance(arm, Identity):
             # One WARNING per resolve, naming the successor now serving the
@@ -217,19 +224,10 @@ class ApiKeyResolver:
             if row.status != "active":
                 return _InactiveAgent(agent_id=row.agent_id)
             if row.owner_id is not None and not row.owner_active:
-                # The owner is disabled or deleted (delete leaves ``active``
-                # false), or its row is missing: fail closed. WARNING: a
-                # client-side 401, but one an operator can act on.
-                logger.warning(
-                    "agent_owner_inactive",
-                    agent_id=row.agent_id,
-                    owner_id=row.owner_id,
-                    actionable_step=(
-                        "This agent's owner is disabled or deleted, so the agent "
-                        "cannot authenticate. Re-enable the owner, or transfer the "
-                        "agent to an active owner."
-                    ),
-                )
+                # The owner is disabled or deleted, or its row is missing:
+                # fail closed. A soft-deleted user has ``active`` false, so
+                # this covers delete too.
+                log_agent_owner_inactive(row.agent_id, row.owner_id)
                 return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
             permissions = await self._load_permissions(session, row.agent_id, ActorType.AGENT)
         return Identity(

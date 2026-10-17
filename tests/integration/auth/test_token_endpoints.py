@@ -571,7 +571,7 @@ async def test_owner_disable_kills_agent_access_token_until_re_enabled(
     assert (await token_service.introspect(access))["active"] is False
     owner_inactive = [log for log in logs if log["event"] == "agent_owner_inactive"]
     assert len(owner_inactive) == 1
-    assert owner_inactive[0]["log_level"] == "warning"
+    assert owner_inactive[0]["log_level"] == "info"
     assert owner_inactive[0]["agent_id"] == agent_id
     assert owner_inactive[0]["owner_id"] == owner_id
     assert await _agent_status(integration_context, agent_id) == ActorStatus.ACTIVE
