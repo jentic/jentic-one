@@ -1190,7 +1190,7 @@ class CredentialService:
         Not-found and type-mismatch errors take precedence over an invalid
         ``token_url``.
         """
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(identity, Credential, for_write=True)
         # ``token_url`` resolves DNS, so it is validated before the write
         # transaction opens (as in ``create``), after a read-only existence and
         # type check. The transaction repeats that check against the row it writes.
@@ -1365,7 +1365,7 @@ class CredentialService:
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
         """Delete a credential by ID (cascade removes siblings)."""
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             existing = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters

@@ -60,6 +60,18 @@ jobs:
               - 'src/**'
               - 'tests/unit/**'
               - 'tests/arch/**'
+              # Shared test infrastructure every suite loads: the root
+              # conftest registers the suite-wide plugins in tests/harness/
+              # (e.g. logging isolation), and any conftest or harness edit
+              # changes the fixtures the unit tests run under.
+              - 'tests/__init__.py'
+              - 'tests/conftest.py'
+              - 'tests/**/conftest.py'
+              - 'tests/harness/**'
+              # tests/unit/shared/test_rule_matcher_parity.py reads the shared
+              # fixture and pins the UI's vendored copy byte-for-byte to it.
+              - 'tests/fixtures/**'
+              - 'ui/src/shared/credentials/lib/__tests__/rule-matcher-parity.json'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'Makefile'
@@ -101,9 +113,15 @@ jobs:
               - 'src/**'
               - 'tests/integration/**'
               - 'tests/web/**'
-              # Shared Postgres-fixture settings imported by both suites above,
-              # and the fixture bootstrap `make start-fixtures` runs.
-              - 'tests/harness/postgres.py'
+              # Shared test infrastructure both suites above load: the root
+              # conftest registers the suite-wide plugins in tests/harness/
+              # (logging isolation wraps every integration test), and
+              # tests/harness/ also holds the shared Postgres-fixture settings.
+              - 'tests/__init__.py'
+              - 'tests/conftest.py'
+              - 'tests/**/conftest.py'
+              - 'tests/harness/**'
+              # The fixture bootstrap `make start-fixtures` runs.
               - 'scripts/setup.sh'
               - 'pyproject.toml'
               - 'uv.lock'

@@ -10,7 +10,8 @@ injected API keys, cookies, and arbitrary tenant bodies that may carry PII).
 
 It owns four concerns:
 
-1. ``configure_tracing`` — the global ``TracerProvider`` (OTLP gRPC or no-op).
+1. ``configure_tracing`` — the global ``TracerProvider`` (sampled OTLP gRPC, or
+   non-recording with ``exporter = none``).
    Every exporter it wires is wrapped in :class:`ScrubbingSpanExporter`, which
    removes free-text exception detail, query-string values and non-safe-listed
    captured headers from every span before it leaves the process.
@@ -43,6 +44,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.sampling import ALWAYS_OFF, ParentBased, Sampler, TraceIdRatioBased
 from opentelemetry.sdk.util import BoundedList
 from opentelemetry.trace import Status
 from opentelemetry.util.types import AttributeValue
@@ -459,6 +461,49 @@ def reset_tracing() -> None:
     trace._TRACER_PROVIDER_SET_ONCE._done = False
 
 
+# The standard OTel env var that selects a sampler; when an operator sets it,
+# the SDK's own env resolution wins over ``sample_ratio``.
+_OTEL_TRACES_SAMPLER_ENV = "OTEL_TRACES_SAMPLER"
+
+
+def _sampler(cfg: TracingConfig, *, exporting: bool) -> Sampler | None:
+    """Pick the provider's sampler; ``None`` lets the SDK resolve it from env.
+
+    Without an exporter nothing would ever leave the process, so every span is
+    non-recording (``ALWAYS_OFF``, not ``ParentBased``: a sampled inbound
+    ``traceparent`` must not switch recording back on). The SDK still assigns
+    each span a valid context — the inbound trace id, or a fresh one — so trace
+    ids and ``tracestate`` propagate either way. The sampled flag on outbound
+    ``traceparent`` is unset (``-00``), even when the caller sent ``-01``: the
+    SDK derives that flag from the sampling decision alone, and a sampled
+    decision always builds a recording span, so no sampler can forward the
+    caller's flag without recording.
+
+    With an exporter, ``sample_ratio`` caps every trace that enters this
+    process: a new trace and a remote parent with the sampled flag set are both
+    sampled by ``TraceIdRatioBased``. First-party clients (CLI, MCP) send a
+    sampled ``traceparent`` on every call, and any external caller can, so
+    trusting a remote ``-01`` would bypass the ratio entirely. The ratio test is
+    deterministic on the trace id, so services sharing a ratio agree on the
+    same traces. A remote parent that is not sampled stays unsampled (the
+    caller opted out; following it only lowers cost), and local parents are
+    followed so an in-process trace is never split.
+    """
+    if not exporting:
+        return ALWAYS_OFF
+    env_sampler = os.getenv(_OTEL_TRACES_SAMPLER_ENV)
+    if env_sampler:
+        if cfg.sample_ratio != 1.0:
+            _logger.warning(
+                "tracing_sampler_env_overrides_sample_ratio",
+                sampler=env_sampler,
+                sample_ratio=cfg.sample_ratio,
+            )
+        return None
+    ratio = TraceIdRatioBased(cfg.sample_ratio)
+    return ParentBased(root=ratio, remote_parent_sampled=ratio)
+
+
 def configure_tracing(
     service_name: str | None = None,
     config: TracingConfig | None = None,
@@ -467,18 +512,20 @@ def configure_tracing(
 ) -> TracerProvider:
     """Set up the OTel TracerProvider.
 
-    With ``config.exporter == "otlp"`` (the default) spans are exported via
-    OTLP gRPC. With ``"none"`` we install a TracerProvider with no span
-    processors so application code that obtains tracers/spans still works,
-    but nothing tries to dial out — useful for local dev where the
-    collector isn't running. Idempotent.
+    With ``config.exporter == "otlp"`` (the default) spans are sampled at
+    ``config.sample_ratio`` and exported via OTLP gRPC. With ``"none"`` the
+    provider has no span processor and an ``ALWAYS_OFF`` sampler: spans are
+    non-recording, so the hot path pays for no attributes, events or span
+    snapshots, and nothing tries to dial out. Span contexts stay valid, so
+    :func:`current_trace_id`, :func:`jentic_tracestate` and the outbound
+    ``traceparent`` keep working (with the sampled flag unset). Idempotent.
 
     ``exporter`` replaces the OTLP exporter (tests pass an in-memory one so
-    they exercise the production chain). Whatever exporter is used, it is
-    wrapped in :class:`ScrubbingSpanExporter` behind a ``BatchSpanProcessor``,
-    so no span leaves the process with exception text or unsafe client
-    attributes — for every surface and deploy mode, since they all build
-    their provider here.
+    they exercise the production chain) and is sampled like OTLP. Whatever
+    exporter is used, it is wrapped in :class:`ScrubbingSpanExporter` behind a
+    ``BatchSpanProcessor``, so no span leaves the process with exception text
+    or unsafe client attributes — for every surface and deploy mode, since
+    they all build their provider here.
     """
     current = trace.get_tracer_provider()
     if isinstance(current, TracerProvider):
@@ -487,9 +534,11 @@ def configure_tracing(
     cfg = config if config is not None else TracingConfig()
     resolved_name = service_name if service_name else os.getenv("OTEL_SERVICE_NAME", "jentic-one")
     resource = Resource.create({"service.name": resolved_name})
-    provider = TracerProvider(resource=resource)
     if exporter is None and cfg.exporter == "otlp":
         exporter = OTLPSpanExporter()
+    provider = TracerProvider(
+        resource=resource, sampler=_sampler(cfg, exporting=exporter is not None)
+    )
     if exporter is not None:
         provider.add_span_processor(BatchSpanProcessor(scrubbing_exporter(exporter)))
     trace.set_tracer_provider(provider)
@@ -573,10 +622,15 @@ def instrument_inbound_app(app: object) -> None:
     the secret/PII ``sanitize_fields`` list so that even if header capture is
     later enabled, ``authorization``/``cookie``/``x-api-key`` are scrubbed before
     they reach a span. Bodies are never captured.
+
+    Only the server span is created per request: the ASGI middleware's
+    per-message ``http send``/``http receive`` child spans are excluded, since
+    a streamed response would otherwise open one span per body chunk.
     """
     FastAPIInstrumentor.instrument_app(
         app,  # type: ignore[arg-type]
         http_capture_headers_sanitize_fields=_INBOUND_SANITIZE_FIELDS,
+        exclude_spans=["send", "receive"],
     )
 
 
@@ -633,7 +687,7 @@ def jentic_tracestate(member_value: str) -> Iterator[None]:
     the current context so the W3C propagator serializes it onto the outbound
     ``tracestate`` for any request dispatched inside the block. Restores the
     prior context on exit. A no-op (yields unchanged) when there is no valid
-    span context (e.g. ``exporter = none`` / outside a trace), so credential
+    span context (e.g. outside a trace, or tracing never configured), so credential
     injection and dispatch still run.
     """
     span_context = trace.get_current_span().get_span_context()

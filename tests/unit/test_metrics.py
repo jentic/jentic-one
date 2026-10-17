@@ -10,15 +10,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 
 from jentic_one.shared.config import MetricsConfig
-from jentic_one.shared.metrics import configure_metrics, make_metrics_asgi_app, reset_metrics
+from jentic_one.shared.metrics import configure_metrics, make_metrics_asgi_app
 
-
-@pytest.fixture(autouse=True)
-def _reset_metrics_state():
-    """Reset global metrics state between tests."""
-    reset_metrics()
-    yield
-    reset_metrics()
+pytestmark = pytest.mark.usefixtures("isolated_meter_provider")
 
 
 def test_none_exporter_is_noop():

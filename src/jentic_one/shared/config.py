@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from jentic_one.shared.state.factory import StateBackendConfig
+from jentic_one.shared.state.factory import BackendKind, StateBackendConfig
 from jentic_one.shared.url import (
     is_loopback_host,
     is_loopback_url,
@@ -458,7 +458,33 @@ class MetricsConfig(BaseModel):
 class TracingConfig(BaseModel):
     """Tracing exporter configuration."""
 
-    exporter: Literal["otlp", "none"] = "otlp"
+    exporter: Literal["otlp", "none"] = Field(
+        default="otlp",
+        description=(
+            "Where spans go. ``none`` records no spans at all (every span is "
+            "non-recording), while trace ids are still generated and propagated: "
+            "an inbound ``traceparent`` is honoured, outbound requests carry "
+            "``traceparent``/``tracestate``, and execution records and logs keep "
+            "their ``trace_id``. With ``none`` the outbound ``traceparent`` has "
+            "the sampled flag unset (``-00``) even when the caller sent ``-01``, "
+            "since this process records nothing."
+        ),
+    )
+    sample_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of traces recorded and exported when ``exporter`` is "
+            "``otlp`` (1.0 records every trace). It caps every trace entering "
+            "the process, including requests that arrive with a sampled "
+            "``traceparent`` (the CLI and MCP send one on every call), so a "
+            "caller cannot force recording. A caller's unsampled ``traceparent`` "
+            "stays unsampled. Ignored with ``exporter: none``, and overridden by "
+            "the standard ``OTEL_TRACES_SAMPLER`` environment variable when that "
+            "is set (a warning is logged if this field is not 1.0)."
+        ),
+    )
 
 
 class ObservabilityConfig(BaseModel):
@@ -1623,6 +1649,10 @@ class BrokerResilienceConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
 
 
+MEMORY_IDEMPOTENCY_TTL_S = 3_600.0
+REDIS_IDEMPOTENCY_TTL_S = 86_400.0
+
+
 class IdempotencyConfig(BaseModel):
     """``Idempotency-Key`` replay store.
 
@@ -1639,12 +1669,29 @@ class IdempotencyConfig(BaseModel):
     """
 
     enabled: bool = True
-    # 24h replay window (spec default); tune DOWN for high-volume Redis footprint.
-    ttl_s: float = 86_400.0
+    ttl_s: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Replay window of a completed Idempotency-Key record, in seconds. Unset, "
+            f"it is {MEMORY_IDEMPOTENCY_TTL_S:.0f} (1 h) on the memory shared-state "
+            f"backend and {REDIS_IDEMPOTENCY_TTL_S:.0f} (24 h) on redis. On memory, "
+            "every record is held in process for this long, so the TTL divides the "
+            "sustained idempotent request rate the idem budget can hold."
+        ),
+    )
     # Claim TTL — size to the request deadline (+buffer); poison-pill guard.
     pending_ttl_s: float = 35.0
     # Bodies larger than this are NOT stored for byte-for-byte replay.
     max_response_bytes: int = 256 * 1024
+
+    def replay_ttl_s(self, backend: BackendKind) -> float:
+        """``ttl_s``, or the default for *backend* when it is unset."""
+        if self.ttl_s is not None:
+            return self.ttl_s
+        if backend is BackendKind.MEMORY:
+            return MEMORY_IDEMPOTENCY_TTL_S
+        return REDIS_IDEMPOTENCY_TTL_S
 
 
 # Asymmetric signature algs are the only ones the hardened JWT path accepts.

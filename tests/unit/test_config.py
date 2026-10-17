@@ -34,6 +34,7 @@ from jentic_one.shared.config import (
     EncryptionKey,
     EntitlementConfig,
     HeldExecutionsConfig,
+    IdempotencyConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -52,6 +53,13 @@ from jentic_one.shared.config import (
     load_config,
     resolved_auth_base_url,
     resolved_control_egress,
+)
+from jentic_one.shared.state import (
+    BackendKind,
+    MemoryBackendConfig,
+    MemoryStateBackend,
+    StateBackendConfig,
+    build_state_backend,
 )
 
 
@@ -128,6 +136,27 @@ def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
     with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
         config = load_config(config_file)
     assert config.logging.http_wire_trace is True
+
+
+@pytest.mark.parametrize("ratio", ["-0.1", "1.5"])
+def test_tracing_sample_ratio_default_yaml_env_and_bounds(
+    config_file: Path, tmp_path: Path, sample_config_dict: dict[str, Any], ratio: str
+):
+    assert load_config(config_file).observability.tracing.sample_ratio == 1.0
+
+    from_yaml = tmp_path / "ratio.yaml"
+    from_yaml.write_text(
+        yaml.dump({**sample_config_dict, "observability": {"tracing": {"sample_ratio": 0.25}}})
+    )
+    assert load_config(from_yaml).observability.tracing.sample_ratio == 0.25
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": "0.1"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).observability.tracing.sample_ratio == 0.1
+
+    env = {"JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO": ratio}
+    with patch.dict(os.environ, env, clear=False), pytest.raises(ConfigError, match="sample_ratio"):
+        load_config(config_file)
 
 
 def test_control_connect_manual_flows_default_on_and_env_overrides(
@@ -2184,3 +2213,66 @@ def test_http_jwks_url_env_override_rejected_in_production(config_file: Path):
         pytest.raises(ConfigError, match=r"jwks_url must be https:// in production"),
     ):
         load_config(config_file)
+
+
+# --- memory shared-state backend budgets --------------------------------------
+
+
+def test_memory_backend_namespace_budgets_are_configurable(config_file: Path):
+    env = {
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_ENTRIES_PER_NAMESPACE": "500",
+        "JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_BYTES_PER_NAMESPACE": "1000000",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        memory = load_config(config_file).broker.resilience.backend.memory
+    assert memory.max_entries_per_namespace == 500
+    assert memory.max_bytes_per_namespace == 1_000_000
+    assert memory.budgets()["idem"].max_entries == 250_000
+
+
+def test_memory_backend_total_cap_defaults_and_is_configurable(config_file: Path):
+    default = load_config(config_file).broker.resilience.backend.memory
+    assert default.max_total_bytes == 192 * 1024 * 1024
+    assert default.max_bytes_per_namespace == 16 * 1024 * 1024
+    assert default.budgets()["idem"].max_bytes == 128 * 1024 * 1024
+    assert default.budgets()["idem-body"].max_bytes == 32 * 1024 * 1024
+    env = {"JENTIC__BROKER__RESILIENCE__BACKEND__MEMORY__MAX_TOTAL_BYTES": "5000"}
+    with patch.dict(os.environ, env, clear=False):
+        memory = load_config(config_file).broker.resilience.backend.memory
+    assert memory.max_total_bytes == 5_000
+    backend = build_state_backend(StateBackendConfig(memory=memory))
+    assert isinstance(backend, MemoryStateBackend)
+    assert backend._max_total_bytes == 5_000
+    with pytest.raises(ValidationError):
+        MemoryBackendConfig(max_total_bytes=0)
+
+
+def test_an_idem_override_keeps_the_per_caller_share_unless_set():
+    memory = MemoryBackendConfig.model_validate(
+        {
+            "namespaces": {
+                "idem": {"max_entries": 10, "max_bytes": 10_000},
+                "idem-body": {"max_entries": 10, "max_bytes": 10_000, "max_owner_share": 1.0},
+                "cb": {"max_entries": 10, "max_bytes": 10_000},
+            }
+        }
+    )
+    budgets = memory.budgets()
+    assert budgets["idem"].max_owner_share == 0.1
+    assert budgets["idem-body"].max_owner_share == 1.0
+    assert budgets["cb"].max_owner_share is None
+
+
+@pytest.mark.parametrize(
+    ("backend", "configured", "expected"),
+    [
+        (BackendKind.MEMORY, None, 3_600.0),
+        (BackendKind.REDIS, None, 86_400.0),
+        (BackendKind.MEMORY, 120.0, 120.0),
+        (BackendKind.REDIS, 120.0, 120.0),
+    ],
+)
+def test_idempotency_replay_ttl_defaults_by_backend(
+    backend: BackendKind, configured: float | None, expected: float
+):
+    assert IdempotencyConfig(ttl_s=configured).replay_ttl_s(backend) == expected

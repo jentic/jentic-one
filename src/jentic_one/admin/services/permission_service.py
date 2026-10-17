@@ -9,7 +9,9 @@ from jentic_one.admin.core.permissions import (
     ORG_ADMIN,
     compute_effective,
 )
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.user_management import (
     ensure_can_manage,
     ensure_not_last_active_admin,
@@ -93,16 +95,21 @@ class PermissionService:
     ) -> list[str]:
         """Validate and set permissions for a user.
 
-        The caller may only grant permissions they hold (``validate_grants``),
-        and may only change the permissions of a user whose current
-        permissions they already hold (``org:admin`` and self exempt).
+        The target is resolved through the caller's ``User`` access filter, so
+        a user the caller cannot read answers not found (404). The caller may
+        only grant permissions they hold (``validate_grants``), and may only
+        change the permissions of a user whose current permissions they
+        already hold (``org:admin`` and self exempt).
         Removing ``org:admin`` from the last active holder is refused.
         """
         granted_by = identity.sub
         await self.validate_grants(granted_by, permissions)
 
         async with self._ctx.admin_db.transaction() as session:
-            if await UserRepository.get_by_id(session, user_id) is None:
+            target = await UserRepository.get_by_id(
+                session, user_id, filters=build_access_filters(identity, User)
+            )
+            if target is None:
                 raise UserNotFoundError(user_id)
             permission_sets = await UserPermissionGrantRepository.get_permission_sets(
                 session, [user_id, granted_by]

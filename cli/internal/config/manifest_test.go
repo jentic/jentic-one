@@ -150,3 +150,67 @@ func TestRecordStackBuildIgnoresEmptyRef(t *testing.T) {
 		t.Errorf("StackRef = %q, want preserved v0.25.0", m.StackRef)
 	}
 }
+
+// TestRecordCLIUpdate: a CLI swap records the new CLI fields without touching
+// the stack's, and backfills StackRef from the old Ref on a legacy manifest
+// that has a stack installed (#943, #976).
+func TestRecordCLIUpdate(t *testing.T) {
+	tests := []struct {
+		name          string
+		before        Manifest
+		update        CLIUpdate
+		wantStackRef  string
+		wantResolved  string
+		wantRef       string
+		wantVersion   string
+		wantCommit    string
+		wantBinaryDir string
+	}{
+		{
+			name:         "release download over a tracked stack",
+			before:       Manifest{Ref: "v0.26.0", StackRef: "v0.26.0", CLIVersion: "v0.26.0", Commit: "old1111", Mode: ModeDocker},
+			update:       CLIUpdate{Ref: "v0.28.0", Version: "v0.28.0", Commit: "new2222", BinaryPath: "/opt/bin/jenticctl"},
+			wantStackRef: "v0.26.0", wantResolved: "v0.26.0", wantRef: "v0.28.0", wantVersion: "v0.28.0", wantCommit: "new2222", wantBinaryDir: "/opt/bin/jenticctl",
+		},
+		{
+			name:         "legacy manifest backfills stack_ref from the old ref",
+			before:       Manifest{Ref: "v0.26.0", CLIVersion: "v0.26.0", Mode: ModeLocal},
+			update:       CLIUpdate{Ref: "v0.28.0", Version: "v0.28.0"},
+			wantStackRef: "v0.26.0", wantResolved: "v0.26.0", wantRef: "v0.28.0", wantVersion: "v0.28.0",
+		},
+		{
+			name:         "CLI-only install (no mode) has no stack to backfill",
+			before:       Manifest{Ref: "v0.26.0", CLIVersion: "v0.26.0"},
+			update:       CLIUpdate{Ref: "v0.28.0", Version: "v0.28.0"},
+			wantStackRef: "", wantResolved: "v0.28.0", wantRef: "v0.28.0", wantVersion: "v0.28.0",
+		},
+		{
+			name:         "brew records the cask version only",
+			before:       Manifest{Ref: "v0.26.0", StackRef: "v0.26.0", CLIVersion: "v0.26.0", Commit: "old1111", Mode: ModeLocal},
+			update:       CLIUpdate{Version: "0.28.0"},
+			wantStackRef: "v0.26.0", wantResolved: "v0.26.0", wantRef: "v0.26.0", wantVersion: "0.28.0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths := Paths{Root: t.TempDir()}
+			m := tt.before
+			if err := m.RecordCLIUpdate(paths, tt.update); err != nil {
+				t.Fatalf("RecordCLIUpdate: %v", err)
+			}
+			got, _, err := LoadManifest(paths)
+			if err != nil {
+				t.Fatalf("reload: %v", err)
+			}
+			if got.StackRef != tt.wantStackRef || got.ResolvedStackRef() != tt.wantResolved {
+				t.Errorf("stack_ref=%q resolved=%q, want %q/%q", got.StackRef, got.ResolvedStackRef(), tt.wantStackRef, tt.wantResolved)
+			}
+			if got.Ref != tt.wantRef || got.CLIVersion != tt.wantVersion || got.Commit != tt.wantCommit {
+				t.Errorf("ref=%q cli_version=%q commit=%q, want %q/%q/%q", got.Ref, got.CLIVersion, got.Commit, tt.wantRef, tt.wantVersion, tt.wantCommit)
+			}
+			if got.BinaryPath != tt.wantBinaryDir {
+				t.Errorf("binary_path = %q, want %q", got.BinaryPath, tt.wantBinaryDir)
+			}
+		})
+	}
+}
