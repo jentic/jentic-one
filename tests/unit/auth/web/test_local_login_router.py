@@ -781,6 +781,28 @@ def test_the_default_login_csrf_share_refuses_only_the_flooder(ctx: MagicMock) -
     assert victim.status_code == 302
 
 
+def test_a_query_client_id_does_not_reset_the_login_rate_limit(ctx: MagicMock) -> None:
+    """The login routes are keyed by bare IP: a caller-chosen ``client_id``
+    query parameter does not open a fresh rate-limit bucket per value."""
+    ctx.config.auth.oauth_rate_limit = OAuthRateLimitConfig(authorize_rpm=1, authorize_burst=2)
+    app = _make_app(ctx)
+    client = _client_at(app, FLOODER_IP)
+    ls = _signed_state(ctx)
+
+    statuses = [
+        client.get("/login", params={"ls": ls, "client_id": f"rotated-{i}"}).status_code
+        for i in range(3)
+    ]
+    assert statuses == [200, 200, 429]
+
+    submit = client.post(
+        "/login",
+        params={"client_id": "rotated-post"},
+        data={"email": "u@test.local", "password": "pw", "ls": ls, "csrf": "x"},
+    )
+    assert submit.status_code == 429
+
+
 def test_a_spoofed_forwarded_for_does_not_escape_the_share(ctx: MagicMock) -> None:
     """X-Forwarded-For from an untrusted socket is ignored, so rotating it
     leaves the flooder in its own share."""

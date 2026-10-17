@@ -1905,10 +1905,10 @@ type OAuthRateLimitConfig struct {
 	AuthorizeBurst int `json:"authorize_burst,omitempty,omitzero" yaml:"authorize_burst,omitempty" mapstructure:"authorize_burst,omitempty"`
 
 	// Sustained requests/minute allowed on the unauthenticated ``/authorize``
-	// endpoints, keyed per ``client_id``+IP — except the local-login routes, which
-	// carry no query ``client_id`` and fall back to a bare-IP key. Behind a proxy,
-	// set ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the
-	// proxy's IP bucket.
+	// endpoints, keyed per ``client_id``+IP — except the local-login routes, whose
+	// ``client_id`` rides inside the signed login state and which are always keyed by
+	// bare IP. Behind a proxy, set ``auth.oauth_rate_limit.trusted_proxies`` or every
+	// client shares the proxy's IP bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`
 
 	// Burst allowance on top of ``exchange_rpm``.

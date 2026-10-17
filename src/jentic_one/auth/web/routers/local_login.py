@@ -83,7 +83,7 @@ from jentic_one.auth.web.flow import (
     FONTS_URL,
     SPA_TOKEN_STORAGE_KEY,
     STATE_MAX_AGE_SECONDS,
-    check_rate_limit,
+    check_login_rate_limit,
     client_gate_passes,
     derive_key,
     get_cached_oauth_client,
@@ -472,7 +472,7 @@ def _render_login_page(
     response_class=HTMLResponse,
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_login_rate_limit)],
 )
 async def login_page(
     request: Request,
@@ -528,7 +528,7 @@ async def login_page(
     summary="Local-account login submit (authorization flow)",
     response_model=None,
     responses=_GATED_404_RESPONSE,
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_login_rate_limit)],
 )
 async def login_submit(
     request: Request,
