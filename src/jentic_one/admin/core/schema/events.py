@@ -30,6 +30,11 @@ class Event(AuditableMixin, AdminBase):
             postgresql_where=text("trace_id IS NOT NULL"),
         ),
         Index("ix_events_actor", "actor_id", "actor_type"),
+        # Serves the subject scoping (``created_by`` = the caller or one of its
+        # agents) and the actor lookup's event arm, which pairs that with
+        # ``actor_id``. Replaces the mixin's single-column ``created_by`` index
+        # (``created_by`` is redeclared below without ``index=True``).
+        Index("ix_events_created_by_actor", "created_by", "actor_id"),
         # Cross-worker exactly-once backstop for mcp.session_started: the emit
         # path (shared/events/mcp_session.py) is check-then-insert, so two
         # workers can both pass the dedupe lookup before either commits. This
@@ -69,3 +74,6 @@ class Event(AuditableMixin, AdminBase):
     actor_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     execution_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Redeclared from AuditableMixin only to drop its single-column index;
+    # ``ix_events_created_by_actor`` leads with this column instead.
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
