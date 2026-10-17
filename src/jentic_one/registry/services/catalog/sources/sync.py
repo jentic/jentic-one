@@ -37,7 +37,6 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_sources import (
@@ -196,7 +195,7 @@ class CatalogSourceSync:
         return factory.build(cfg, deps=self._deps_factory(cfg))
 
     @contextlib.asynccontextmanager
-    async def _source_transaction(self, slug: str) -> AsyncIterator[AsyncSession]:
+    async def _source_transaction(self, slug: str) -> AsyncIterator[Any]:
         """A transaction holding the source's apply lock (applies and re-resolves).
 
         Postgres takes a transaction-scoped advisory lock; SQLite, a single
@@ -482,7 +481,7 @@ class CatalogSourceSync:
     ) -> SyncOutcome:
         slug = cfg.slug
 
-        async def _end(session: AsyncSession, status: str, error: str | None) -> SyncOutcome:
+        async def _end(session: Any, status: str, error: str | None) -> SyncOutcome:
             await CatalogSyncRunRepository.delete_staged(session, run_id)
             await CatalogSyncRunRepository.finish(
                 session, run_id, status=status, error_code=error, finished_at=utcnow()
@@ -627,7 +626,7 @@ class CatalogSourceSync:
     def _is_curated(cfg: CatalogSourceConfig) -> bool:
         return cfg.enabled and cfg.trust == "curated"
 
-    async def _flag_conflicting(self, session: AsyncSession) -> None:
+    async def _flag_conflicting(self, session: Any) -> None:
         """After the curated id set changed, flag every non-curated source with live rows."""
         slugs = [
             row.slug
@@ -639,7 +638,7 @@ class CatalogSourceSync:
         await CatalogSourceRepository.mark_reresolve_wanted(session, slugs)
 
     async def _record_ownership_conflicts(
-        self, session: AsyncSession, slug: str, resolver: CatalogApiIdResolver
+        self, session: Any, slug: str, resolver: CatalogApiIdResolver
     ) -> int:
         """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
 

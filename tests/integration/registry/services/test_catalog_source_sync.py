@@ -31,6 +31,7 @@ from jentic_one.registry.services.catalog.entries import (
     curated_vendors_of,
     exclude_unowned,
 )
+from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
@@ -321,8 +322,6 @@ async def test_build_error_counts_as_a_failure_and_backs_off(
 async def test_apply_that_raises_fails_the_run_in_a_fresh_transaction(
     catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jentic_one.registry.services.catalog.sources import sync as sync_module
-
     async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
