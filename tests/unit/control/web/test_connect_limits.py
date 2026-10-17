@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 
 from jentic_one.control.web.connect_limits import (
@@ -50,16 +51,10 @@ async def test_both_connect_limiters_use_the_process_backend() -> None:
     ]
 
 
-async def test_fallback_connect_limiter_shares_budget_across_http_and_mcp() -> None:
+def test_a_missing_connect_limiter_is_a_wiring_error_not_a_private_fallback() -> None:
+    """An app assembled without ``install_connect_limiters`` fails loudly."""
     app = FastAPI()
-    route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
-    mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
-    assert route_lim is mcp_lim
-    assert route_lim._key_prefix == "rl:integrations_connect:"
 
-    # Clearing ROUTE_LIMITER_ATTR resets the shared limiter instead of
-    # resurrecting the stale instance from MCP_LIMITER_ATTR.
-    delattr(app.state, ROUTE_LIMITER_ATTR)
-    reset_route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
-    assert reset_route_lim is not route_lim
-    assert connect_limiter(app, MCP_LIMITER_ATTR) is reset_route_lim
+    with pytest.raises(RuntimeError, match="install_connect_limiters"):
+        connect_limiter(app, ROUTE_LIMITER_ATTR)
+    assert getattr(app.state, ROUTE_LIMITER_ATTR, None) is None

@@ -97,6 +97,7 @@ from jentic_one.control.services.oauth_app_registrations.service import (
 )
 from jentic_one.control.services.vendors.service import AmbiguousVendorError
 from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -1498,6 +1499,7 @@ def _app(ctx: Context, identity: Identity) -> FastAPI:
         app.add_exception_handler(exc_class, handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     app.state.ctx = ctx
+    install_connect_limiters(app, ctx)
     app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
     app.dependency_overrides[resolve_identity] = lambda: identity
     return app
