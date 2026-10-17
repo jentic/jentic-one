@@ -283,11 +283,31 @@ class InvalidNoteResourceError(RegistryServiceError):
 
 
 class CatalogEntryNotFoundError(RegistryServiceError):
-    """Raised when a catalog entry cannot be resolved by api_id."""
+    """Raised when a catalog entry is missing or hidden from the caller (one answer for both).
 
-    def __init__(self, api_id: str) -> None:
-        super().__init__(f"Catalog entry '{api_id}' not found")
-        self.api_id = api_id
+    ``did_you_mean`` names the caller's visible collapse winner for an id that
+    looks like a bare ``catalog_api_id`` (its first segment is no visible source
+    slug); it depends only on visible entries, so it reveals no hidden one.
+    """
+
+    def __init__(self, entry_id: str, *, did_you_mean: str | None = None) -> None:
+        super().__init__(f"Catalog entry '{entry_id}' not found")
+        self.entry_id = entry_id
+        self.did_you_mean = did_you_mean
+
+
+class SourceSwitchForbiddenError(RegistryServiceError):
+    """Raised when ``switch_source=true`` is sent by a caller without ``credentials:write``.
+
+    Switching re-points an existing API, and the credentials bound to it, at a
+    different catalog entry's spec, so it is an operator action. Maps to 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Switching an API to another catalog source requires the "
+            "'credentials:write' permission."
+        )
 
 
 class CatalogUnavailableError(RegistryServiceError):

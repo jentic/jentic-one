@@ -568,6 +568,8 @@ async def handle_search_catalog(
 
     try:
         page = await CatalogService(env.ctx).list_all(
+            permissions=frozenset(compute_effective(set(env.identity.permissions))),
+            actor_id=env.identity.sub or None,
             q=args.get("query") or None,
             cursor=args.get("cursor") or None,
             limit=limit or 50,
@@ -577,20 +579,28 @@ async def handle_search_catalog(
 
     entries = []
     for view in page.data:
-        self_link = f"{env.base_url}/catalog/{view.api_id}"
+        self_link = f"{env.base_url}/catalog/{view.entry_id}"
         entries.append(
             {
-                "api_id": view.api_id,
+                "entry_id": view.entry_id,
+                "source_slug": view.source_slug,
+                "catalog_api_id": view.catalog_api_id,
                 "vendor": view.vendor,
-                "path": view.path,
-                "spec_url": view.spec_url,
+                "display_vendor": view.display_vendor,
+                "title": view.title,
+                "version": view.version,
+                "tags": list(view.tags),
+                "human_url": view.human_url,
+                "has_spec": view.has_spec,
                 "registered": view.registered,
                 "update_available": view.update_available,
+                "alternates": view.alternates,
                 "_links": {
                     "self": self_link,
                     "operations": f"{self_link}/operations",
                     "import": f"{self_link}:import",
-                    "github": view.github_url or "",
+                    "human": view.human_url or "",
+                    "alternates": [f"{env.base_url}/catalog/{alt}" for alt in view.alternate_ids],
                 },
             }
         )
@@ -601,7 +611,7 @@ async def handle_search_catalog(
         "catalog_total": page.catalog_total,
         "registered_count": page.registered_count,
         "outdated_count": page.outdated_count,
-        "manifest_age_seconds": page.manifest_age_seconds,
+        "oldest_source_sync_age_seconds": page.oldest_source_sync_age_seconds,
         "has_more": next_cursor != "",
     }
     if next_cursor:
@@ -678,7 +688,7 @@ _JOB_FAILED = "failed"
 def validate_api_id(api_id: str) -> None:
     """Syntactic guard on the catalog entry id (Go: ``validateAPIID``).
 
-    The Go client splices the api_id into the ``{api_id:path}`` route verbatim,
+    The Go client splices the id into the ``{entry_id:path}`` route verbatim,
     so it rejects traversal shapes before the wire. In-process there is no
     route to rewrite, but the error contract must not differ: the same shapes
     are refused as the same correctable protocol error.
@@ -836,8 +846,8 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
     api_id = args.get("api_id", "")
     if not api_id:
         raise invalid_params(
-            'import_api requires "api_id" (aliases: "id", "api"): a catalog entry id '
-            'from a search_catalog hit, e.g. "googleapis.com/sheets"'
+            'import_api requires "api_id" (aliases: "id", "api"): the entry_id of a '
+            'search_catalog hit, e.g. "public/googleapis.com/sheets"'
         )
     validate_api_id(api_id)
     try:
@@ -917,20 +927,23 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
 
 
 async def _file_import(env: CallEnv, api_id: str) -> str:
-    """The filing leg: POST /catalog/{api_id}:import in-process, error-mapped.
+    """The filing leg: POST /catalog/{entry_id}:import in-process, error-mapped.
 
-    Runs under the caller's hard ceiling — ``import_entry``'s catalog read can
-    lazily refresh the upstream manifest (``_refresh_if_stale``), a fetch
-    bounded only by ``ingest.fetch_timeout_s``.
+    ``api_id`` carries an ``entry_id``. An entry hidden from the agent gets the
+    same answer as a missing one, and the import never switches an existing API
+    to another source. Runs under the caller's hard ceiling — ``import_entry``'s
+    catalog read can sync a never-synced source first, a fetch bounded only by
+    ``ingest.fetch_timeout_s``.
     """
     try:
         return await CatalogService(env.ctx).import_entry(api_id, env.identity)
-    except CatalogEntryNotFoundError:
+    except CatalogEntryNotFoundError as exc:
+        hint = f" — did you mean {exc.did_you_mean!r}?" if exc.did_you_mean else ""
         raise ToolError(
             CODE_RESOLVE_FAILED,
-            f"catalog entry {api_id!r} not found",
-            actionable="Call search_catalog with a keyword for the API you need and use "
-            "the api_id from one of its hits.",
+            f"catalog entry {api_id!r} not found{hint}",
+            actionable="Call search_catalog with a keyword for the API you need and pass "
+            "the entry_id of one of its hits as api_id.",
             next_tool="search_catalog",
         ) from None
     except OverlaySupersedeForbiddenError as exc:

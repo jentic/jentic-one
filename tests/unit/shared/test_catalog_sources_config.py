@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from structlog.testing import capture_logs
+from pydantic import ValidationError
 
 from jentic_one.registry.services.catalog.sources.validate import check_catalog_config
 from jentic_one.shared.catalog.source_types import DEFAULT_PUBLIC_MANIFEST_URL
@@ -17,49 +17,40 @@ def _cfg(**data: Any) -> CatalogConfig:
 
 
 def test_default_is_one_curated_public_git_manifest_source() -> None:
-    [public] = _cfg().effective_sources()
+    cfg = _cfg()
+    [public] = cfg.sources
     assert (public.slug, public.kind, public.trust) == ("public", "git-manifest", "curated")
     assert public.settings == {"url": DEFAULT_PUBLIC_MANIFEST_URL}
-    assert _cfg().deprecated_keys_set() == []
-    check_catalog_config(_cfg())
+    assert cfg.legacy_source() is public
+    check_catalog_config(cfg)
 
 
-def test_manifest_url_alias_maps_onto_the_legacy_source_with_a_warning() -> None:
-    cfg = _cfg(manifest_url="https://mirror.example/apis.json")
-    assert cfg.legacy_source() is not None
-    assert cfg.legacy_source().settings["url"] == "https://mirror.example/apis.json"  # type: ignore[union-attr]
-    assert cfg.legacy_manifest_url() == "https://mirror.example/apis.json"
-    with capture_logs() as logs:
-        check_catalog_config(cfg)
-    [warning] = [e for e in logs if e["event"] == "catalog_config_deprecated_key"]
-    assert warning["key"] == "catalog.manifest_url"
-    assert warning["replacement"] == "catalog.sources[slug=public].settings.url"
+@pytest.mark.parametrize(
+    ("key", "value", "replacement"),
+    [
+        (
+            "manifest_url",
+            "https://mirror.example/apis.json",
+            "catalog.sources[slug=<legacy_source_slug>].settings.url",
+        ),
+        (
+            "manifest_max_age_seconds",
+            0,
+            "catalog.sources[slug=<legacy_source_slug>].max_age_seconds",
+        ),
+    ],
+)
+def test_removed_manifest_key_fails_at_load_naming_its_replacement(
+    key: str, value: object, replacement: str
+) -> None:
+    with pytest.raises(ValidationError) as exc:
+        _cfg(**{key: value})
+    assert f"catalog.{key} was removed: set {replacement} instead" in str(exc.value)
 
 
-def test_manifest_max_age_zero_turns_off_the_legacy_source_auto_sync() -> None:
-    cfg = _cfg(manifest_max_age_seconds=0)
-    assert cfg.legacy_source().max_age_seconds == 0  # type: ignore[union-attr]
-    assert cfg.legacy_max_age_seconds() == 0
-
-
-def test_disabled_legacy_source_disables_the_snapshot_auto_refresh() -> None:
-    cfg = _cfg(
-        sources=[
-            {
-                "slug": "public",
-                "kind": "git-manifest",
-                "enabled": False,
-                "settings": {"url": DEFAULT_PUBLIC_MANIFEST_URL},
-            }
-        ]
-    )
-    assert cfg.legacy_max_age_seconds() == 0
-
-
-def test_alias_assigned_after_load_is_honoured() -> None:
-    cfg = _cfg()
-    cfg.manifest_url = "https://late.example/apis.json"
-    assert cfg.legacy_manifest_url() == "https://late.example/apis.json"
+def test_unknown_catalog_key_fails_at_load() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        _cfg(manifest_urls="https://typo.example/apis.json")
 
 
 def _errors(cfg: CatalogConfig) -> str:
@@ -166,14 +157,6 @@ def test_unknown_auth_type_fails_validation() -> None:
         "auth": {"type": "bearer_from_env", "env": "TOKEN"},
     }
     assert "unknown auth type 'bearer_from_env'" in _errors(_cfg(sources=[src]))
-
-
-def test_deprecated_key_without_a_legacy_source_fails_validation() -> None:
-    cfg = _cfg(
-        manifest_url="https://x/a.json",
-        sources=[{"slug": "corp", "kind": "git-manifest", "settings": {"url": "https://y"}}],
-    )
-    assert "names no configured source" in _errors(cfg)
 
 
 def test_invalid_slug_is_rejected_at_load() -> None:

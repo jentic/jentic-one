@@ -315,8 +315,10 @@ async def test_build_error_counts_as_a_failure_and_backs_off(
         corp = await _source(ctx, "corp")
         assert (corp.consecutive_failures, corp.last_status) == (1, "failed")
         assert corp.sync_lease_owner is None
-        # Backing off: the scanner does not flag it again straight away.
-        assert await sync.mark_stale_wanted() == 0
+        # Backing off: the scanner does not flag it again straight away (the
+        # never-synced "public" is flagged; "corp" is not).
+        assert await sync.mark_stale_wanted() == 1
+        assert (await _source(ctx, "corp")).sync_wanted_at is None
 
 
 async def test_apply_that_raises_fails_the_run_in_a_fresh_transaction(
@@ -514,23 +516,27 @@ async def test_stale_source_is_flagged_and_the_scanner_drains_it(
     async with catalog_ctx(sources=sources) as ctx:
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
-        # Only "corp": the legacy source is synced by the snapshot refresh.
-        assert await sync.mark_stale_wanted() == 1
-        assert (await _source(ctx, "public")).sync_wanted_at is None
-        flagged = await _source(ctx, "corp")
-        assert flagged.sync_wanted_at is not None
-        assert flagged.sync_lease_owner is None  # flagging starts no sync
+        # The legacy source is flagged like any other.
+        assert await sync.mark_stale_wanted() == 2
+        for slug in ("public", "corp"):
+            flagged = await _source(ctx, slug)
+            assert flagged.sync_wanted_at is not None
+            assert flagged.sync_lease_owner is None  # flagging starts no sync
 
         monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
         outcomes = await CatalogSourceSyncScanner(ctx).tick()
-        assert [(o.slug, o.status) for o in outcomes] == [("corp", "applied")]
-        drained = await _source(ctx, "corp")
-        assert drained.sync_wanted_at is None
-        assert drained.last_sync_at is not None
+        assert sorted((o.slug, o.status) for o in outcomes) == [
+            ("corp", "applied"),
+            ("public", "applied"),
+        ]
+        for slug in ("public", "corp"):
+            drained = await _source(ctx, slug)
+            assert drained.sync_wanted_at is None
+            assert drained.last_sync_at is not None
         assert await sync.mark_stale_wanted() == 0
 
 
-async def test_scanner_never_flags_the_legacy_source_on_max_age(
+async def test_scanner_flags_the_legacy_source_on_max_age(
     catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
@@ -549,14 +555,16 @@ async def test_scanner_never_flags_the_legacy_source_on_max_age(
             return _scripted_source(full())(self, cfg)
 
         monkeypatch.setattr(CatalogSourceSync, "build_source", _build)
-        assert await sync.mark_stale_wanted() == 0
-        assert await CatalogSourceSyncScanner(ctx).tick() == []
-        assert built == []
+        assert await sync.mark_stale_wanted() == 1
+        assert [o.slug for o in await CatalogSourceSyncScanner(ctx).tick()] == ["public"]
+        assert built == ["public"]
         assert (await _source(ctx, "public")).sync_wanted_at is None
 
 
 async def test_max_age_zero_source_is_never_flagged(catalog_ctx: CtxFactory) -> None:
-    async with catalog_ctx(manifest_max_age_seconds=0) as ctx:
+    async with catalog_ctx(
+        sources=[git_source("public", trust="curated", max_age_seconds=0)]
+    ) as ctx:
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
         assert await sync.mark_stale_wanted() == 0

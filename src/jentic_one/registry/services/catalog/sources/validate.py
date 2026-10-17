@@ -3,13 +3,11 @@
 Runs once at registry startup, before the source scanner starts. It checks what
 the configuration alone can decide (slugs, kinds, kind settings, auth types,
 reader ACLs, mapping rows, an untrusted source ranked above a curated one); it
-never contacts a source. Using the deprecated
-``catalog.manifest_*`` keys logs a warning naming the replacement.
+never contacts a source.
 """
 
 from __future__ import annotations
 
-import structlog
 from pydantic import ValidationError
 
 from jentic_one.registry.services.catalog.sources.auth import registered_source_auth_types
@@ -22,13 +20,6 @@ from jentic_one.shared.catalog.api_id import normalise_catalog_api_id
 from jentic_one.shared.config import CatalogConfig, ConfigError, SourceReadersConfig
 from jentic_one.shared.context import Context
 
-logger = structlog.get_logger(__name__)
-
-_DEPRECATED_REPLACEMENTS = {
-    "manifest_url": "catalog.sources[slug={slug}].settings.url",
-    "manifest_max_age_seconds": "catalog.sources[slug={slug}].max_age_seconds",
-}
-
 _ACTOR_ID_PREFIXES = ("usr_", "agnt_")
 
 
@@ -40,7 +31,7 @@ def validate_catalog_sources(ctx: Context) -> None:
 def check_catalog_config(catalog: CatalogConfig) -> None:
     """The checks behind ``validate_catalog_sources``, on a bare ``CatalogConfig``."""
     errors: list[str] = []
-    sources = catalog.effective_sources()
+    sources = catalog.sources
     slugs = [s.slug for s in sources]
     for slug in sorted({s for s in slugs if slugs.count(s) > 1}):
         errors.append(f"catalog.sources: slug {slug!r} is configured more than once")
@@ -90,14 +81,8 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
                     f"({source.precedence}) cannot rank above a curated one ({floor})"
                 )
 
-    deprecated = catalog.deprecated_keys_set()
     legacy = catalog.legacy_source_slug
-    if deprecated and legacy not in known:
-        errors.append(
-            f"catalog.legacy_source_slug: {legacy!r} names no configured source, so "
-            f"{', '.join('catalog.' + k for k in deprecated)} cannot be applied"
-        )
-    elif legacy in known:
+    if legacy in known:
         legacy_kind = next(s.kind for s in sources if s.slug == legacy)
         if legacy_kind != "git-manifest":
             errors.append(
@@ -107,13 +92,6 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
 
     if errors:
         raise ConfigError("invalid catalog configuration:\n  " + "\n  ".join(errors))
-
-    for key in deprecated:
-        logger.warning(
-            "catalog_config_deprecated_key",
-            key=f"catalog.{key}",
-            replacement=_DEPRECATED_REPLACEMENTS[key].format(slug=legacy),
-        )
 
 
 def _reader_errors(where: str, visibility: str, readers: SourceReadersConfig | None) -> list[str]:

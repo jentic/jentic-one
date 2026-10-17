@@ -12,20 +12,21 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from jentic_one.registry.repos.revision_repo import RegisteredSpec
-from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
 from jentic_one.registry.services.catalog.service import (
     UPDATE_SWEEP_LOCK_KEY,
     CatalogService,
     _is_upstream_tracked,
+    _ReadState,
 )
-from jentic_one.registry.services.errors import CatalogUnavailableError
+from jentic_one.registry.services.catalog.snapshot import build_snapshot
 from jentic_one.shared.config import CatalogConfig
 from jentic_one.shared.models.events import EventType
 
@@ -58,8 +59,6 @@ def _make_ctx(*, interval: int = 86400, advisory_held: set[int] | None = None) -
     ctx = MagicMock()
     ctx.config.catalog = CatalogConfig(
         update_check_interval_seconds=interval,
-        manifest_max_age_seconds=300,
-        manifest_url="https://example.com/apis.json",
         update_sweep_deadline_seconds=300,
         update_sweep_max_concurrency=4,
     )
@@ -733,44 +732,6 @@ async def test_sweep_swallows_emit_failure_per_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_safe_refresh_runs_sweep_after_successful_refresh() -> None:
-    """_safe_refresh spawns the update-notify sweep once the refresh succeeds."""
-    svc = CatalogService(_make_ctx(interval=86400))
-    with (
-        patch(
-            f"{_SWEEP}.CatalogRepository.try_acquire_refresh_lock",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(f"{_SWEEP}.CatalogRepository.fetched_at", new_callable=AsyncMock, return_value=None),
-        patch.object(svc, "refresh", new_callable=AsyncMock),
-        patch.object(svc, "trigger_update_notify_sweep") as spawn,
-    ):
-        await svc._safe_refresh()
-        spawn.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_safe_refresh_skips_sweep_when_refresh_fails() -> None:
-    """A CatalogUnavailableError short-circuits before the sweep runs."""
-    svc = CatalogService(_make_ctx(interval=86400))
-    with (
-        patch(
-            f"{_SWEEP}.CatalogRepository.try_acquire_refresh_lock",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(f"{_SWEEP}.CatalogRepository.fetched_at", new_callable=AsyncMock, return_value=None),
-        patch.object(
-            svc, "refresh", new_callable=AsyncMock, side_effect=CatalogUnavailableError("x")
-        ),
-        patch.object(svc, "trigger_update_notify_sweep") as spawn,
-    ):
-        await svc._safe_refresh()
-        spawn.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_spawn_sweep_detaches_and_runs_task() -> None:
     """The spawn seam runs the sweep as a background task (not awaited inline)."""
     svc = CatalogService(_make_ctx(interval=86400))
@@ -895,10 +856,11 @@ async def test_sweep_skips_manual_spec_not_in_manifest() -> None:
             new_callable=AsyncMock,
             return_value=[manual],
         ),
-        patch(
-            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+        patch.object(
+            svc,
+            "_snapshot",
             new_callable=AsyncMock,
-            return_value=set(),  # not in the manifest → skipped
+            return_value=_snapshot_with(set()),  # not in the catalog → skipped
         ),
         patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
     ):
@@ -918,10 +880,11 @@ async def test_sweep_probes_overlay_spec_in_manifest() -> None:
             new_callable=AsyncMock,
             return_value=[overlay],
         ),
-        patch(
-            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+        patch.object(
+            svc,
+            "_snapshot",
             new_callable=AsyncMock,
-            return_value={overlay.source_url},
+            return_value=_snapshot_with({overlay.source_url}),
         ),
         patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
     ):
@@ -940,55 +903,75 @@ async def test_sweep_skips_manifest_query_for_pure_catalog() -> None:
             new_callable=AsyncMock,
             return_value=[_spec(origin="catalog")],
         ),
-        patch(
-            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
-            new_callable=AsyncMock,
-        ) as spec_urls,
+        patch.object(svc, "_snapshot", new_callable=AsyncMock) as spec_urls,
         patch.object(svc, "_probe_one", new_callable=AsyncMock),
     ):
         await svc._run_update_notify_sweep()
     spec_urls.assert_not_called()
 
 
-# ── catalog entry view: update_available derivation (Phase 4) ────────────────
+# ── catalog entry view: update_available derivation ──────────────────────────
+
+_SPEC_URL = "https://raw.githubusercontent.com/x/y/main/openapi.json"
+_ENTRY_ID = "public/acme.com"
 
 
-def _entry(
-    spec_url: str = "https://raw.githubusercontent.com/x/y/main/openapi.json",
-) -> mb.ManifestEntry:
-    return mb.ManifestEntry.from_dict(
-        {"api_id": "acme.com", "vendor": "acme.com", "path": "apis/acme", "spec_url": spec_url}
+def _snapshot_with(spec_urls: set[str]) -> MagicMock:
+    snapshot = MagicMock()
+    snapshot.spec_urls = {f"public/{i}": url for i, url in enumerate(sorted(spec_urls))}
+    return snapshot
+
+
+def _state(registered: set[str], outdated: set[str]) -> Any:
+    snapshot = build_snapshot(
+        ("k", "k"),
+        [
+            SimpleNamespace(
+                source_slug="public",
+                external_id="acme.com",
+                catalog_api_id="acme.com",
+                catalog_api_id_hint="acme.com",
+                title=None,
+                version=None,
+                tags=[],
+                human_url=None,
+                spec_ref={"url": _SPEC_URL},
+                content_hint=None,
+            )
+        ],
+        sources={},
+        mappings=[],
+    )
+    allowed = frozenset({"public"})
+    return _ReadState(
+        snapshot=snapshot,
+        rows={},
+        allowed=allowed,
+        registered=frozenset(registered),
+        outdated_urls=outdated,
+        view=snapshot.collapse(allowed, frozenset(registered)),
     )
 
 
+def _view(registered: set[str], outdated: set[str]) -> Any:
+    state = _state(registered, outdated)
+    return CatalogService._to_view(state, state.snapshot.by_id[_ENTRY_ID])
+
+
 def test_to_view_update_available_only_when_registered_and_outdated() -> None:
-    entry = _entry()
-    url = entry.spec_url or ""
-    # Registered + outdated → True.
-    v = CatalogService._to_view(entry, {url}, {url})
+    v = _view({_ENTRY_ID}, {_SPEC_URL})
     assert v.registered is True
     assert v.update_available is True
 
 
 def test_to_view_not_outdated_when_not_registered() -> None:
-    entry = _entry()
-    url = entry.spec_url or ""
     # In the outdated set but NOT registered locally → never update_available.
-    v = CatalogService._to_view(entry, set(), {url})
+    v = _view(set(), {_SPEC_URL})
     assert v.registered is False
     assert v.update_available is False
 
 
 def test_to_view_registered_not_outdated() -> None:
-    entry = _entry()
-    url = entry.spec_url or ""
-    v = CatalogService._to_view(entry, {url}, set())
+    v = _view({_ENTRY_ID}, set())
     assert v.registered is True
-    assert v.update_available is False
-
-
-def test_to_view_defaults_when_outdated_set_omitted() -> None:
-    entry = _entry()
-    url = entry.spec_url or ""
-    v = CatalogService._to_view(entry, {url})
     assert v.update_available is False

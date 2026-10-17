@@ -82,7 +82,9 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
-from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.catalog.entries import build_catalog_entry
+from jentic_one.registry.services.catalog.manifest_builder import catalog_api_name
+from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
@@ -423,16 +425,20 @@ async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None)
     ``name`` overrides the derived api_name, standing in for a clashing
     manifest entry or an API imported before the sub-segment naming.
     """
-    entry = CatalogEntryView(
-        api_id=_TESTDEV_CATALOG_ID,
-        vendor="testdev.example",
-        path=None,
-        spec_url="https://catalog.example.com/testdev/openapi.json",
-        github_url=None,
-        registered=False,
+    entry = build_catalog_entry(
+        source_slug="public",
+        external_id=_TESTDEV_CATALOG_ID,
+        catalog_api_id=_TESTDEV_CATALOG_ID,
+        hint=_TESTDEV_CATALOG_ID,
+        title=None,
+        version=None,
     )
     source = CatalogService(ctx)._to_import_source(
-        entry, Identity(sub=_USER_ID, permissions=["org:admin"]), name=name
+        entry,
+        "https://catalog.example.com/testdev/openapi.json",
+        Identity(sub=_USER_ID, permissions=["org:admin"]),
+        vendor=None,
+        name=name or catalog_api_name(_TESTDEV_CATALOG_ID, [_TESTDEV_CATALOG_ID]),
     )
     with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=_spec_client()):
         await ImportHandler(ctx).execute(
