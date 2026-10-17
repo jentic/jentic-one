@@ -83,7 +83,12 @@ class _Built:
 
 @pytest.fixture()
 def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Run against a copy of the process-global registry so tests don't leak strategies."""
+    """Run against a copy of the process-global registry so tests don't leak strategies.
+
+    These tests exercise the registry itself (shadowing, idempotency, the build
+    cache), so they swap the private tables wholesale. Extension test suites
+    should use the public ``registered_catalog_search_strategy`` helper instead.
+    """
     monkeypatch.setattr(search, "_STRATEGIES", dict(search._STRATEGIES))
     monkeypatch.setattr(search, "_BUILT", {})
     _Built.builds = []
