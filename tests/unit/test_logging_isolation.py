@@ -18,6 +18,7 @@ pytest_plugins = ("pytester",)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PLUGIN = "tests.harness.logging_isolation"
+_INNER_SESSION_TIMEOUT_S = 60
 
 _CONFIG = """
 from jentic_one.shared.config import AppConfig
@@ -113,7 +114,11 @@ def run_inner(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
 
     def run(source: str, *plugin_args: str) -> pytest.RunResult:
         pytester.makepyfile(test_inner=source)
-        return pytester.runpytest_subprocess("-p", "no:cacheprovider", *plugin_args)
+        # Each inner session takes well under a second; the timeout keeps a
+        # hung one (e.g. a stuck import) from hanging the outer run.
+        return pytester.runpytest_subprocess(
+            "-p", "no:cacheprovider", *plugin_args, timeout=_INNER_SESSION_TIMEOUT_S
+        )
 
     return run
 

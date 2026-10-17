@@ -89,6 +89,10 @@ def _structlog_first_use_caching_off() -> Iterator[None]:
     can undo a proxy that cached, so it never caches. A test that needs to see
     what ``configure_logging()`` asks for spies on ``structlog.configure``.
     """
+    assert isinstance(structlog_config._CONFIG, structlog_config._Configuration), (
+        "structlog moved its global config (structlog._config._CONFIG); "
+        "update tests/harness/logging_isolation.py"
+    )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(structlog_config._CONFIG, "__class__", _ConfigurationWithoutCaching)
         yield
@@ -183,10 +187,11 @@ def _restore_stdlib(state: _LoggingState) -> None:
         logging.root.manager._clear_cache()  # type: ignore[attr-defined]
     # Handlers the test attached (a file sink, a stream on the test's captured
     # stdout) are closed once nothing in the restored tree still uses them.
-    kept = {h for lg_state in state.loggers.values() for h in lg_state.handlers}
-    for handler in dict.fromkeys(dropped):
-        if handler not in kept:
-            handler.close()
+    if dropped:
+        kept = {h for lg_state in state.loggers.values() for h in lg_state.handlers}
+        for handler in dict.fromkeys(dropped):
+            if handler not in kept:
+                handler.close()
     if _capturing_warnings() != state.capture_warnings:
         logging.captureWarnings(state.capture_warnings)
 
