@@ -1225,6 +1225,7 @@ func TestMCPExecute_BrokerResolveFailureIsError(t *testing.T) {
 		{"unregistered upstream", `{"type":"operation_not_found","title":"Operation not found — unregistered upstream URL.","status":404}`, "search_apis", http.StatusNotFound},
 		{"contract error points at inspect", `{"type":"payload_too_large","title":"Request body exceeds the 1024-byte cap.","status":413}`, "inspect_operation", http.StatusRequestEntityTooLarge},
 		{"credential-ish type is not substring-matched", `{"type":"credential_header_malformed","title":"bad header","status":400}`, "inspect_operation", http.StatusBadRequest},
+		{"egress allowlist gap is an operator fix", `{"type":"private_name_not_in_allowed_domains","title":"not covered","status":400}`, "whoami", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel
 
 from jentic_one.shared.access_guidance import ConnectTarget
+from jentic_one.shared.broker.egress_refusal import egress_refusal
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
 from jentic_one.shared.permissions.matching import validate_path
@@ -116,7 +117,13 @@ class TooManyCandidatesError(BrokerError):
 
 
 class UpstreamUrlNotAllowedError(BrokerError):
-    """SSRF boundary: private-IP / metadata host / unformable upstream URL (400)."""
+    """SSRF boundary: private-IP / metadata host / unformable upstream URL (400).
+
+    Typed ``invalid_upstream_url``, or ``private_name_not_in_allowed_domains``
+    when a DNS name resolves into ``broker.egress.allowed_private_subnets`` but
+    matches no ``broker.egress.allowed_internal_domains`` suffix and the caller
+    is authorized for the operation (see :func:`upstream_url_not_allowed`).
+    """
 
 
 class UpgradeNotSupportedError(BrokerError):
@@ -261,6 +268,21 @@ class UpstreamTimeoutError(BrokerError):
     default_type = "upstream_timeout"
 
 
+class UpstreamTransportError(BrokerError):
+    """The broker could not talk to the upstream at the transport level (502).
+
+    The upstream dropped the connection (including partway through the response
+    body), refused it, or broke the HTTP protocol, so no usable upstream answer
+    exists. ``broker`` origin: the broker generated this response. Typed
+    ``upstream_transport_error`` (the request may have reached the upstream) or
+    ``upstream_connect_failed`` (connect phase, ``pre_send``: no request bytes
+    were sent). A connect or read *timeout* is :class:`UpstreamTimeoutError`
+    (504) instead.
+    """
+
+    default_type = "upstream_transport_error"
+
+
 class DeadlineExceededError(BrokerError):
     """The overall request deadline elapsed before the call completed (504).
 
@@ -325,6 +347,23 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
             "The upstream vendor returned a server error; try an alternative "
             "vendor/API you are already bound for."
         ),
+    )
+
+
+def upstream_url_not_allowed(exc: ValueError, *, authorized: bool) -> UpstreamUrlNotAllowedError:
+    """Map an upstream-URL refusal from the egress check to the broker's 400.
+
+    The shape comes from :func:`jentic_one.shared.broker.egress_refusal.egress_refusal`:
+    a domain-suffix gap is ``private_name_not_in_allowed_domains`` with an
+    operator-facing ``prompt_human`` directive only when ``authorized`` (the
+    caller passed authorization for a registered operation); every other
+    refusal, and a gap shown to anyone else, is ``invalid_upstream_url``.
+    """
+    refusal = egress_refusal(exc, authorized=authorized)
+    return UpstreamUrlNotAllowedError(
+        detail=refusal.detail,
+        type=refusal.type,
+        directive=AgentDirective(**refusal.directive) if refusal.directive else None,
     )
 
 

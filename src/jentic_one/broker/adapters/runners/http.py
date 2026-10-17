@@ -12,7 +12,10 @@ zip-bomb vector for a passthrough that has no reason to decode. Status mirroring
 + header filtering are the caller's concern. On a transport-level failure it
 raises the domain ``UpstreamTimeoutError`` (timeout) or a generic ``BrokerError``
 (other transport errors) so the central handler maps it — the runner never
-raises a web/HTTP exception.
+raises a web/HTTP exception. A connect-time egress refusal from the DNS-pinning
+transport (``shared/egress``) maps to the same ``UpstreamUrlNotAllowedError``
+the pre-flight check raises, and a host that transport cannot resolve maps to
+the ``upstream_connect_failed`` connect failure (``UpstreamTransportError``, 502).
 """
 
 from __future__ import annotations
@@ -39,12 +42,49 @@ from jentic_one.broker.core.exceptions import (
     BrokerError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
+    UpstreamTransportError,
+    UpstreamUrlNotAllowedError,
     switch_toolkit_directive,
+    upstream_url_not_allowed,
 )
+from jentic_one.shared.broker.egress_refusal import log_egress_refusal
 from jentic_one.shared.broker.protocols import RunnerCapabilities
+from jentic_one.shared.egress import UpstreamHostUnresolvedError
+from jentic_one.shared.url_validation import EgressPolicyError
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer("broker.runner")
+
+
+def _egress_refusal(
+    exc: EgressPolicyError, host: str, span: Span | None
+) -> UpstreamUrlNotAllowedError:
+    """Map a connect-time egress refusal to the pre-flight problem, logging it for operators.
+
+    A runner only runs a call that has passed authorization, so the caller is
+    authorized for the distinct domain-gap type. The span gets an error status
+    and ``egress.refused`` so the trace doesn't read as a successful call.
+    """
+    refusal = upstream_url_not_allowed(exc, authorized=True)
+    log_egress_refusal(exc, host=host, stage="connect", problem_type=refusal.type)
+    if span is not None:
+        span.set_attribute("egress.refused", True)
+        span.set_attribute("egress.problem_type", refusal.type)
+        span.set_status(StatusCode.ERROR, "egress refused")
+    return refusal
+
+
+def _unresolved_host_error() -> UpstreamTransportError:
+    """The 502 connect failure for an upstream host the pinning transport could not resolve.
+
+    No request bytes were sent, so it is ``pre_send`` (retry-safe for any
+    method) and reads like a refused connection.
+    """
+    return UpstreamTransportError(
+        detail="The upstream connection could not be established.",
+        type="upstream_connect_failed",
+        pre_send=True,
+    )
 
 
 def _transport_error_detail(exc: httpx.HTTPError) -> str:
@@ -199,6 +239,18 @@ class HttpRunner(UpstreamRunner):
                     body = await self._read_capped(resp)
                 finally:
                     await resp.aclose()
+            except EgressPolicyError as exc:
+                # The DNS-pinning transport refused the resolved address before
+                # connecting, so no request bytes left the broker.
+                raise _egress_refusal(exc, host, span) from exc
+            except UpstreamHostUnresolvedError as exc:
+                # The pinning transport could not resolve the host, so nothing
+                # was sent: a connect failure, safe to retry for any method.
+                span.set_status(StatusCode.ERROR, "upstream host did not resolve")
+                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
+                raise _unresolved_host_error() from None
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 # Connect-phase failure: no request bytes reached the upstream, so
                 # a retry is safe for ANY method. ConnectTimeout
@@ -303,6 +355,15 @@ class HttpRunner(UpstreamRunner):
                         content_type=resp.headers.get("content-type"),
                         aiter=self._cap_iter(resp.aiter_raw(), resp.status_code),
                     )
+            except EgressPolicyError as exc:
+                # No span of its own on the streaming path: the refusal is
+                # recorded by the log line and the problem only.
+                raise _egress_refusal(exc, host, None) from exc
+            except UpstreamHostUnresolvedError as exc:
+                logger.error("upstream_network_failure", host=host, error_type=type(exc).__name__)
+                # ``from None``: a chained cause would put the raw message back
+                # into any traceback rendered from this error (span, log).
+                raise _unresolved_host_error() from None
             except httpx.TimeoutException as exc:
                 raise UpstreamTimeoutError(
                     detail="The upstream did not respond within the deadline.",

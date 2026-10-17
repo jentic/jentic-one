@@ -11,6 +11,8 @@ import pytest
 from jentic_one.broker.adapters.egress import DnsPinningTransport, resolve_and_validate
 from jentic_one.broker.adapters.http_client import build_client
 from jentic_one.shared.config import EgressConfig, UpstreamClientConfig
+from jentic_one.shared.egress import UpstreamHostUnresolvedError
+from jentic_one.shared.url_validation import EgressPolicyError, PrivateNameNotAllowedError
 
 
 def _fake_getaddrinfo(*ips: str):
@@ -77,13 +79,64 @@ def test_resolve_allows_internal_when_allowlisted(monkeypatch: pytest.MonkeyPatc
     assert str(addr) == "10.1.2.3"
 
 
+def test_resolve_raises_distinct_reason_for_private_name_outside_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pins #1722 at connect time: an allowed subnet with no matching domain
+    # suffix is refused with the same distinct reason as pre-flight.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("10.1.2.3"))
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8"])
+    with pytest.raises(PrivateNameNotAllowedError) as exc_info:
+        resolve_and_validate("api.corp.example", egress)
+    assert exc_info.value.hostname == "api.corp.example"
+    assert "10.1.2.3" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "ips", [("10.1.2.3", "192.168.0.9"), ("192.168.0.9", "10.1.2.3")], ids=["gap-first", "gap-last"]
+)
+def test_resolve_mixed_answer_outside_allowed_subnet_keeps_generic_reason(
+    monkeypatch: pytest.MonkeyPatch, ips: tuple[str, str]
+) -> None:
+    # Whatever the record order, a record outside the allowed subnet means a
+    # suffix would not make the name reachable, so the generic refusal wins.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(*ips))
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8"])
+    with pytest.raises(EgressPolicyError, match="blocked address range") as exc_info:
+        resolve_and_validate("api.corp.example", egress)
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+@pytest.mark.parametrize("ips", [("10.1.2.3", "169.254.169.254"), ("169.254.169.254", "10.1.2.3")])
+def test_resolve_mixed_answer_with_metadata_keeps_generic_reason(
+    monkeypatch: pytest.MonkeyPatch, ips: tuple[str, str]
+) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(*ips))
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8", "169.254.0.0/16"])
+    with pytest.raises(EgressPolicyError, match="blocked address range") as exc_info:
+        resolve_and_validate("api.corp.example", egress)
+    assert not isinstance(exc_info.value, PrivateNameNotAllowedError)
+
+
+def test_resolve_ipv4_mapped_answer_in_allowed_subnet_raises_distinct_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("::ffff:10.1.2.3"))
+    egress = EgressConfig(allowed_private_subnets=["10.0.0.0/8"])
+    with pytest.raises(PrivateNameNotAllowedError):
+        resolve_and_validate("api.corp.example", egress)
+
+
 def test_resolve_raises_on_nxdomain(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(*_a, **_k):
         raise socket.gaierror("nope")
 
     monkeypatch.setattr(socket, "getaddrinfo", _boom)
-    with pytest.raises(ValueError, match="did not resolve"):
+    with pytest.raises(UpstreamHostUnresolvedError, match="did not resolve") as exc_info:
         resolve_and_validate("ghost.example.com", None)
+    # Still a ValueError, so every except-ValueError caller keeps failing closed.
+    assert isinstance(exc_info.value, ValueError)
+    assert not isinstance(exc_info.value, EgressPolicyError)
 
 
 # --- DnsPinningTransport (the pin) --------------------------------------------

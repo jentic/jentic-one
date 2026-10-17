@@ -132,6 +132,37 @@ Two layers keep the proxy from being used against the network it runs in:
 Validation runs again after server-variable substitution, in both the sync
 and async callers, so an injected variable cannot smuggle in a new host.
 
+Both layers refuse with a `400` problem. A host name needs **both**
+allowlists: an address in `broker.egress.allowed_private_subnets` *and* a
+suffix in `broker.egress.allowed_internal_domains` (an IP literal needs only
+the subnet). A name that passes the subnet check but matches no suffix is
+`private_name_not_in_allowed_domains`; every other refusal is
+`invalid_upstream_url`. The distinct type is only for a caller that has passed
+authorization for the registered operation, and every refusal of a target is
+evaluated the same way: the pre-flight check holds back any egress-policy
+refusal — a blocked name, a blocked resolved address, or a missing suffix —
+until discovery and authorization have run (neither makes an outbound call),
+then raises it. Whatever the reason, a refused request does the same registry
+and authorization work and leaves the same events and counters, and anyone not
+authorized gets `invalid_upstream_url`. So neither the type, the body, nor the
+work done tells an unprivileged caller which names resolve into the
+operator's trusted subnet. Only a malformed URL is refused before discovery.
+Its `prompt_human` directive names the config key for the operator to
+review but not the host, and it never advises widening the suffix list, which
+is what keeps a public name from being pointed into the subnet. No refusal
+carries the resolved address.
+
+Every refusal — pre-flight, connect time, or in the async worker — is logged
+as `upstream_egress_refused` with the host, the `stage`, the real `reason`
+(`private_name_not_in_allowed_domains`, `blocked_target` or `invalid_url`), and
+the `problem_type` the caller was shown. That log line is how an operator
+finds a host to review. On the synchronous runner path an egress refusal is
+never retried and never counts against the upstream's circuit; a queued
+execution fails terminally with the same problem in its job result, never
+requeued. A host the pinning transport cannot resolve at connect time is a
+`502` `upstream_connect_failed` connect failure (`pre_send`, so a retry is safe
+for any method), like a refused connection.
+
 ## Credential injection
 
 `CredentialService` ([`broker/services/credentials/orchestrator.py`](../../src/jentic_one/broker/services/credentials/orchestrator.py)) is the

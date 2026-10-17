@@ -27,7 +27,11 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.exceptions import (
+    BrokerError,
+    CircuitOpenError,
+    UpstreamUrlNotAllowedError,
+)
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.resilience.circuit import CircuitBreaker
 
@@ -88,6 +92,10 @@ class CircuitBreakerRunner:
 
         try:
             result = await self._inner.run(request)
+        except UpstreamUrlNotAllowedError:
+            # An egress-policy refusal never reached the upstream, so it says
+            # nothing about the upstream's health.
+            raise
         except BrokerError:
             # A transport failure (timeout, connect error) the inner runner
             # mapped to a BrokerError counts against the upstream.
@@ -129,6 +137,8 @@ class CircuitBreakerRunner:
                 recorded = True
                 await self._breaker.record(host, ok=result.status_code < 500)
                 yield result
+        except UpstreamUrlNotAllowedError:
+            raise
         except BrokerError:
             if not recorded:
                 await self._breaker.record(host, ok=False)

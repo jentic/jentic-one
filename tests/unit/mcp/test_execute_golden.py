@@ -694,6 +694,9 @@ def _broker_problem(status: int, problem: dict[str, Any]) -> httpx.Response:
         # Exact type match: a type that merely mentions "credential" is not routed
         # to whoami.
         (400, {"type": "credential_header_malformed", "title": "bad header"}, "inspect_operation"),
+        # An internal host outside allowed_internal_domains (#1722) is an
+        # operator config fix, never a contract fix.
+        (400, {"type": "private_name_not_in_allowed_domains", "title": "not covered"}, "whoami"),
     ],
 )
 async def test_broker_resolve_failure_is_a_coded_soft_error(
