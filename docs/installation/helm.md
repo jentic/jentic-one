@@ -465,12 +465,17 @@ is an OOM-kill, not a slowdown. Do not set the app's memory limit below
   `broker.resilience.backend.redis_url` (via `extraEnv`:
   `JENTIC__BROKER__RESILIENCE__BACKEND__BACKEND` /
   `…__REDIS_URL`, identical on every replica). The chart does not bundle
-  Redis — bring your own. **One hard caveat:** the Redis client is an
-  optional extra (`pip install jentic-one[redis]`) that the published
+  Redis — bring your own. **One hard caveat:** the Redis client is the
+  optional `redis` extra, which the published
   `ghcr.io/jentic/jentic-one-app` image does **not** include — configuring
   the redis backend on that image crash-loops every replica at startup. On
   the published image today, keep `broker.replicas: 1`; scaling out means
-  building your own image with the `[redis]` extra.
+  building your own image with the extra baked in through the `EXTRAS`
+  build arg: `docker buildx build -f deploy/docker/app.multiarch.Dockerfile
+  --build-arg EXTRAS=redis …` (single-arch: `make build-app EXTRAS=redis`).
+  Adding `[redis]` to the image's `pip install` line does not work: the
+  wheel installs `--no-deps`, so its extras are ignored
+  ([deploy/README.md](../../deploy/README.md#reproducibility-python-dependencies-come-from-uvlock)).
 - **App** — the same shared-state backend also carries the auth surface's
   OAuth rate limiters and consent-nonce anti-replay, so the same rule
   applies: keep `app.replicas: 1` on the `memory` backend; configure Redis
