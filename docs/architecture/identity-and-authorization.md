@@ -114,7 +114,7 @@ sequenceDiagram
    the assertion's `exp` plus a 120-second grace on the database clock, so
    an auth host whose clock lags the database by up to that much still
    refuses a replay; expired records are pruned in small batches on each
-   exchange. The `exp`/`iat` checks run with **zero clock leeway**, so a
+   accepted exchange. The `exp`/`iat` checks run with **zero clock leeway**, so a
    client clock more than a few seconds fast produces `iat` rejections —
    keep agents, auth hosts and the database on NTP.
 

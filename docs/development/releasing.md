@@ -269,6 +269,14 @@ backend.
   `state.backend` instead of module globals, so on a registered shared
   backend they are deployment-wide. On `memory` they stay per process, as
   before.
+- **A surface assembled without its shared-state wiring fails loudly.** The
+  auth routers and the control and MCP connect limiters used to build a
+  private in-memory backend, with a WARNING, when an app was put together
+  without the auth surface's `install_on_app` or the control surface's
+  `install_connect_limiters`. They now raise a `RuntimeError` naming the
+  missing step (the MCP mount at startup, the others on first use). The
+  shipped app factories are unaffected; a custom assembly must call those
+  install functions.
 
 ## Upgrading to 0.42.3
 
