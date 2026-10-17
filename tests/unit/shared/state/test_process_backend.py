@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 
 from jentic_one.auth.web.app import install_on_app as install_auth
+from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
@@ -19,6 +20,7 @@ from jentic_one.shared.state import (
     register_state_backend,
 )
 from jentic_one.shared.state.factory import unregister_state_backend
+from jentic_one.shared.web.app_factory import create_combined_app
 
 
 class _CountingBackend(MemoryStateBackend):
@@ -89,3 +91,28 @@ def test_an_unknown_backend_fails_when_the_app_is_assembled(
     ctx = _ctx(sample_config_dict, backend="not-registered")
     with pytest.raises(RuntimeError, match=r"registered backends: .*memory"):
         install_connect_limiters(FastAPI(), ctx)
+
+
+@pytest.mark.parametrize("shape", ["surface", "combined"])
+async def test_the_app_lifespan_closes_the_backend_even_when_startup_fails(
+    sample_config_dict: dict[str, Any],
+    counting: list[_CountingBackend],
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+) -> None:
+    ctx = _ctx(sample_config_dict, backend="counting")
+    app = (
+        create_control_app(ctx)
+        if shape == "surface"
+        else create_combined_app(ctx, ["control", "auth"])
+    )
+    (backend,) = counting
+
+    async def _fail() -> None:
+        raise RuntimeError("database unreachable")
+
+    monkeypatch.setattr(ctx, "startup", _fail)
+    with pytest.raises(RuntimeError, match="database unreachable"):
+        async with app.router.lifespan_context(app):
+            pass
+    assert backend.closes == 1
