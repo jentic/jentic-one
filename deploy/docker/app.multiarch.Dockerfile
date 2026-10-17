@@ -66,7 +66,15 @@ RUN uv build --wheel --out-dir /build/dist
 # The app stage installs this hash-pinned export of uv.lock first and the
 # wheel with --no-deps, so the image ships exactly the locked set CI tests
 # (#1819). Universal markers keep it valid for amd64 and arm64 alike.
-RUN uv export --frozen --no-dev --no-emit-project -o /build/dist/requirements.txt
+# --locked fails the build when uv.lock is out of date with pyproject.toml: a
+# dependency declared there but missing from the lock would otherwise be
+# absent from the image. EXTRAS (space-separated, e.g. `redis`) selects
+# optional extras; the --no-deps wheel install ignores `[extra]`, so extras
+# reach the image only through this export.
+ARG EXTRAS=""
+RUN uv export --locked --no-dev --no-emit-project \
+        $(for e in ${EXTRAS}; do printf -- '--extra %s ' "$e"; done) \
+        -o /build/dist/requirements.txt
 
 FROM ${UBUNTU_IMAGE} AS runtime
 
@@ -95,16 +103,24 @@ EXPOSE 8000
 # --- app stage (mirrors deploy/docker/app.Dockerfile) ---------------------
 FROM runtime AS app
 
-COPY --from=builder /build/dist/*.whl /build/dist/requirements.txt /tmp/
 # Ubuntu's system python is PEP 668 externally-managed, so the wheel lands in
 # a venv; /opt/venv/bin on PATH keeps the `python` runtime contract. The
-# locked requirements install first and the wheel goes in with --no-deps, so
-# pip never re-resolves the dependency ranges (`make check-image-lock` guards).
+# locked requirements install first, in their own layer so a code-only change
+# reuses it, and the wheel goes in with --no-deps, so pip never re-resolves
+# the dependency ranges (`make check-image-lock` guards). --only-binary keeps
+# pip from building an sdist, whose build backend would come from PyPI
+# without hash checking; `pip check` fails the build when the wheel declares
+# a requirement the locked set doesn't satisfy.
+COPY --from=builder /build/dist/requirements.txt /tmp/
 RUN python3.12 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt && \
-    whl="$(ls /tmp/jentic_one-*.whl)" && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
+        -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+COPY --from=builder /build/dist/*.whl /tmp/
+RUN whl="$(ls /tmp/jentic_one-*.whl)" && \
     /opt/venv/bin/pip install --no-cache-dir --no-deps "${whl}" && \
-    rm /tmp/*.whl /tmp/requirements.txt
+    /opt/venv/bin/pip check && \
+    rm /tmp/*.whl
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # Writable data dir for the SQLite backend. Pre-creating it owned by the runtime
