@@ -536,6 +536,22 @@ async def test_refused_delete_runs_no_user_deleted_hooks(
     assert (await _get_user(ctx, target_id)).active is True
 
 
+async def test_last_active_admin_delete_runs_no_user_deleted_hooks(
+    integration_context: Context,
+    make_user: MakeUser,
+    no_other_active_admins: None,
+    deleted_hook_calls: list[tuple[str, Identity, bool]],
+) -> None:
+    ctx = integration_context
+    admin_id = await make_user("guard-hook-sole-admin@test.local", {"org:admin"})
+
+    with pytest.raises(LastActiveAdminError):
+        await UserService(ctx).delete(admin_id, identity=_admin(admin_id))
+
+    assert deleted_hook_calls == []
+    assert (await _get_user(ctx, admin_id)).active is True
+
+
 @pytest.mark.parametrize("operation", ["disable", "delete"])
 async def test_last_active_admin_cannot_be_deactivated(
     integration_context: Context,
