@@ -71,6 +71,20 @@ class CatalogEntryLinksResponse(BaseModel):
     )
 
 
+class CatalogMatchResponse(BaseModel):
+    """Why a catalog entry matched a search, as reported by the ranking strategy."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"channels": ["token"]}]})
+
+    channels: list[str] = Field(
+        description=(
+            "Kinds of evidence behind the match (e.g. `token`). An open set: new values "
+            "may appear, so clients must accept values they don't recognise."
+        ),
+        examples=[["token"]],
+    )
+
+
 class CatalogEntryResponse(BaseModel):
     """A single browsable catalog entry."""
 
@@ -131,6 +145,17 @@ class CatalogEntryResponse(BaseModel):
         examples=[False],
     )
     links: CatalogEntryLinksResponse = Field(serialization_alias="_links")
+    match: CatalogMatchResponse | None = Field(
+        default=None,
+        # Omitted (not null) when absent, so entries without match evidence keep
+        # their exact bytes.
+        exclude_if=lambda v: v is None,
+        description=(
+            "Why this entry matched the search `q`. Present only when the configured "
+            "ranking strategy reports match evidence; omitted for browse and for the "
+            "default ranking."
+        ),
+    )
 
 
 class CatalogListResponse(BaseModel):

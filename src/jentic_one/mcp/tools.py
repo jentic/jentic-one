@@ -97,6 +97,7 @@ from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
+    CatalogSearchUnavailableError,
     CatalogUnavailableError,
     InvalidApiFilterError,
     OperationNotFoundError,
@@ -572,26 +573,36 @@ async def handle_search_catalog(
         )
     except InvalidCursorError:
         raise invalid_params("invalid pagination cursor") from None
+    except CatalogSearchUnavailableError:
+        # Go: a 503 from GET /catalog rides the transport soft error (retryable).
+        raise ToolError(
+            CODE_TRANSPORT_ERROR,
+            "catalog search is temporarily unavailable for this page",
+            actionable="Retry search_catalog with the same cursor shortly, or call it again "
+            "without a cursor to restart the search.",
+            extra={"retryable": True},
+        ) from None
 
-    entries = []
+    entries: list[dict[str, Any]] = []
     for view in page.data:
         self_link = f"{env.base_url}/catalog/{view.api_id}"
-        entries.append(
-            {
-                "api_id": view.api_id,
-                "vendor": view.vendor,
-                "path": view.path,
-                "spec_url": view.spec_url,
-                "registered": view.registered,
-                "update_available": view.update_available,
-                "_links": {
-                    "self": self_link,
-                    "operations": f"{self_link}/operations",
-                    "import": f"{self_link}:import",
-                    "github": view.github_url or "",
-                },
-            }
-        )
+        entry: dict[str, Any] = {
+            "api_id": view.api_id,
+            "vendor": view.vendor,
+            "path": view.path,
+            "spec_url": view.spec_url,
+            "registered": view.registered,
+            "update_available": view.update_available,
+            "_links": {
+                "self": self_link,
+                "operations": f"{self_link}/operations",
+                "import": f"{self_link}:import",
+                "github": view.github_url or "",
+            },
+        }
+        if view.match is not None:
+            entry["match"] = {"channels": list(view.match.channels)}
+        entries.append(entry)
     next_cursor = (page.next_cursor or "") if page.has_more else ""
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

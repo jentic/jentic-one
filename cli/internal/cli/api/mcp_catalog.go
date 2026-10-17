@@ -377,7 +377,8 @@ func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 					`Example: {"query": "spreadsheets", "limit": 10}. Returns one page as ` +
 					"{data, catalog_total, registered_count, has_more, next_cursor}; each entry carries " +
 					"the api_id to pass to import_api and `registered` (true = already imported — skip " +
-					"the import). When has_more is true, pass next_cursor back as cursor.",
+					"the import), and may carry `match` (why it matched the query). When has_more is " +
+					"true, pass next_cursor back as cursor.",
 				InputSchema: searchCatalogSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
