@@ -41,6 +41,7 @@ from jentic_one.control.services.credentials.state import (
     BrowserBinding,
     StateError,
     browser_binding_cookie_name,
+    browser_binding_matches,
     decode_state,
     new_browser_binding,
 )
@@ -94,8 +95,10 @@ def clear_browser_binding_cookie(
 ) -> None:
     """Expire ``state``'s binding cookie on ``response`` (a no-op for an unbound state).
 
-    When the browser also carries ``MAX_BINDING_COOKIES`` or more binding
-    cookies of other flows (connects it abandoned), those are expired too.
+    When the callback came from the browser that started the flow (its
+    cookie matched) and that browser also carries ``MAX_BINDING_COOKIES`` or
+    more binding cookies of other flows (connects it abandoned), those are
+    expired too. A refused callback never prunes.
 
     Uses the same ``Path`` and ``Secure`` as when it was set (both derive
     from :func:`flow_callback_url` of the same state).
@@ -105,13 +108,16 @@ def clear_browser_binding_cookie(
     callback_url = flow_callback_url(request, ctx, state)
     own = browser_binding_cookie_name(state.browser_binding_hash)
     names = [own]
-    others = [
-        name
-        for name in request.cookies
-        if name.startswith(BROWSER_BINDING_COOKIE_PREFIX) and name != own
-    ]
-    if len(others) >= MAX_BINDING_COOKIES:
-        names += others
+    # Prune only from the browser that started this flow: a refused callback
+    # proves nothing about the cookies it carries, so it touches only its own.
+    if browser_binding_matches(state, request.cookies.get(own)):
+        others = [
+            name
+            for name in request.cookies
+            if name.startswith(BROWSER_BINDING_COOKIE_PREFIX) and name != own
+        ]
+        if len(others) >= MAX_BINDING_COOKIES:
+            names += others
     for name in names:
         response.delete_cookie(
             key=name,

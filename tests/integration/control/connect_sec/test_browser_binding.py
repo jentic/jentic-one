@@ -572,6 +572,21 @@ async def test_callback_expires_a_pile_of_abandoned_binding_cookies(
         _assert_cookie_cleared(completed, name)
 
 
+async def test_a_refused_callback_prunes_nothing_but_its_own_cookie(
+    env: Context, vendor: list[str]
+) -> None:
+    credential_id = await existing_credential(env, oauth_scope="read")
+    others = {new_browser_binding().cookie_name: "x" for _ in range(MAX_BINDING_COOKIES)}
+    async with _browser(env) as initiator, _browser(env) as other:
+        state, cookie_name = await _begin(initiator, credential_id)
+        refused = await _callback(
+            other, state, cookies={**others, cookie_name: new_browser_binding().value}
+        )
+    assert _status(refused) == "error"
+    cleared = [h.split("=", 1)[0] for h in refused.headers.get_list("set-cookie")]
+    assert cleared == [cookie_name]
+
+
 async def test_a_few_other_flows_cookies_are_left_alone(env: Context, vendor: list[str]) -> None:
     """Concurrent connects in one browser keep their cookies."""
     first = await existing_credential(env, oauth_scope="read", name="First")
