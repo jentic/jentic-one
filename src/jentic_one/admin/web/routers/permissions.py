@@ -73,7 +73,7 @@ async def set_user_permissions(
 ) -> UserResponse:
     """Set the assigned permissions for a user."""
     await perm_svc.set_assigned(user_id, body.permissions, identity=identity)
-    view = await user_svc.get_by_id(user_id)
+    view = await user_svc.get(user_id, identity=identity)
     return UserResponse(
         id=view.id,
         email=view.email,
