@@ -18,7 +18,7 @@ What it holds, and what it never holds:
   are applied to the cached headers on each call, so the key carries no actor
   identity and one actor's selection can never be served to another.
 
-Staleness is bounded four ways:
+Staleness is bounded five ways:
 
 - the TTL (``broker.credential_cache_ttl_s``, at most 60 s; ``0`` disables the
   cache);
@@ -30,17 +30,22 @@ Staleness is bounded four ways:
 - the resolver's material read returns the selected credential's current
   header too, and re-resolves from the DB when it is gone, disabled or differs
   from the cached one;
+- the caller's binding boundary is derived on every call, so a bound
+  credential that the cached headers lack (or hold as disabled or not
+  ``connected``) sends the call to a fresh read;
 - a selection that fails on cached headers (no match, unknown id or name,
   ambiguity) is re-run on a fresh DB read before it is returned, so a
   credential connected elsewhere is seen on the caller's retry.
 
 What a write served by another process (the parts topology, or another worker)
-can still miss for up to the TTL: a new or re-enabled credential that should
-win over the cached winner (a more specific pin, or a sibling that should make
-the call ambiguous), and any change to a ``NO_AUTH`` winner, which has no
-material to read (a disable, a re-type, a ``server_variables`` edit). Each of
-these selects a credential the caller is bound to right now; none injects a
-secret that is gone or disabled.
+can still miss for up to the TTL: an edit to a credential already cached as
+usable that changes the selection without touching the cached winner (a
+sibling re-scoped to a more specific pin, renamed, or given other
+``server_variables``), and a re-type or ``server_variables`` edit of a
+``NO_AUTH`` winner, which has no material to read. A credential the deriver
+has not yet seen (its own short-TTL cache) is outside the boundary either way.
+Each of these selects a credential the caller is bound to right now; none
+injects a secret that is gone or disabled.
 
 The cache is per process. Concurrent misses on one vendor share a single
 header read (single-flight), so a clear does not stampede the control DB. The
@@ -74,16 +79,32 @@ _cache_misses = _meter.create_counter(
     "broker.credential_selection_cache.misses",
     description="Credential header cache misses (no entry, or an expired one)",
 )
+_cache_joined = _meter.create_counter(
+    "broker.credential_selection_cache.joined",
+    description=(
+        "Credential resolutions that missed and were served by another request's "
+        "in-flight header read (single-flight), not by cached headers"
+    ),
+)
+_cache_rechecks = _meter.create_counter(
+    "broker.credential_selection_cache.rechecks",
+    description=(
+        "Cached credential headers re-read from the DB before use (reason: "
+        "negative_selection, a failed selection re-checked; boundary_mismatch, a "
+        "bound credential missing from the cached headers or cached as unusable)"
+    ),
+)
 _cache_stale = _meter.create_counter(
     "broker.credential_selection_cache.stale",
     description=(
-        "Cached credential headers that were re-read from the DB before use "
-        "(reason: winner_changed or negative_selection)"
+        "Cached credential headers found out of date (reason: winner_changed, or "
+        "the recheck reason when the re-read headers differ from the cached ones)"
     ),
 )
 
 STALE_WINNER_CHANGED = "winner_changed"
-STALE_NEGATIVE_SELECTION = "negative_selection"
+RECHECK_NEGATIVE_SELECTION = "negative_selection"
+RECHECK_BOUNDARY_MISMATCH = "boundary_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,8 +215,18 @@ class CredentialSelectionCache:
         _cache_hits.add(1)
 
     @staticmethod
+    def record_joined() -> None:
+        """Count a resolution served by another request's in-flight header read."""
+        _cache_joined.add(1)
+
+    @staticmethod
+    def record_recheck(reason: str) -> None:
+        """Count cached headers re-read from the DB before use."""
+        _cache_rechecks.add(1, {"reason": reason})
+
+    @staticmethod
     def record_stale(reason: str) -> None:
-        """Count cached headers that had to be re-read from the DB before use."""
+        """Count cached headers found out of date."""
         _cache_stale.add(1, {"reason": reason})
 
     def put(self, vendor: str, headers: tuple[CredentialHeader, ...], *, generation: int) -> None:
