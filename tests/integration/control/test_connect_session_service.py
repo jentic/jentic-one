@@ -1153,13 +1153,14 @@ async def test_confirm_rejects_agent_not_owned_by_caller(
     clean_session_tables: None,
 ) -> None:
     # Owner-or-admin: a caller with ``credentials:write`` must not bind a
-    # credential to an agent someone else owns.
+    # credential to an agent someone else owns. The refusal is the same as
+    # for an agent that does not exist.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
         vendor_key="testauth", agent_id=None, identity=_OTHER_USER_IDENTITY
     )
-    with pytest.raises(ConfirmationForbiddenError):
+    with pytest.raises(AgentNotFoundError):
         await svc.confirm(
             created.session_id,
             poll_token=created.poll_token,
@@ -1569,11 +1570,14 @@ def _expected_status(caller: str, route: str, *, with_token: bool) -> int:
     Confirm then applies its own rules to everyone who got through: an agent
     cannot confirm an agent-started session, and approving for the agent
     needs ownership plus ``credentials:write`` and ``agents:write`` (or
-    ``org:admin``).
+    ``org:admin``). A token-holding stranger, who does not own the agent,
+    gets the same 400 as for an agent that does not exist.
     """
     approver = caller in ("owner", "admin")
     if not with_token and not approver:
         return 403
+    if route == "confirm" and caller == "stranger":
+        return 400
     if route == "confirm" and not approver:
         return 403
     return _OK[route]
