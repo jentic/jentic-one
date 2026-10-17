@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -678,6 +679,63 @@ def test_agent_cannot_change_a_sibling_agents_bindings(
     assert resp.status_code == 200
     resp = owner_client.delete(f"{sibling_url}/{control_credential_id}", params={"purge": "true"})
     assert resp.status_code == 204
+
+
+@pytest.fixture()
+def delegated_sibling_client(
+    web_context: Context, binding_agent_id: str, owner_user_id: str
+) -> Iterator[TestClient]:
+    """The binding agent with the default delegation scopes and no ``agents:read``."""
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": binding_agent_id,
+        "email": "",
+        "actor_type": "agent",
+        "parent_actor_id": owner_user_id,
+        "permissions": ["owner:agents:read", "owner:credentials:read"],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as tc:
+        yield tc
+
+
+def _normalised_problem(body: dict[str, object], agent_id: str) -> dict[str, object]:
+    """A problem body with the requested agent id and per-request ids blanked."""
+    text = json.dumps(body).replace(agent_id, "<agent_id>")
+    normalised: dict[str, object] = json.loads(text)
+    for key in ("request_id", "trace_id"):
+        normalised.pop(key, None)
+    return normalised
+
+
+@pytest.mark.parametrize("suffix", ["", "/credentials"])
+def test_sibling_agent_read_is_indistinguishable_from_unknown_id(
+    owner_client: TestClient,
+    delegated_sibling_client: TestClient,
+    binding_agent_id: str,
+    test_agent_id: str,
+    suffix: str,
+) -> None:
+    """An agent that is not the target, its owner, or org:admin gets the unknown-id 404.
+
+    ``owner:agents:read`` without ``agents:read`` does not reveal that a
+    sibling agent exists: the problem body matches a nonexistent id once the
+    ids are normalised. The agent itself and its owner still read it.
+    """
+    sibling = delegated_sibling_client.get(f"/agents/{test_agent_id}{suffix}")
+    unknown_id = "agnt_does_not_exist"
+    unknown = delegated_sibling_client.get(f"/agents/{unknown_id}{suffix}")
+    assert sibling.status_code == unknown.status_code == 404
+    assert sibling.headers["content-type"] == unknown.headers["content-type"]
+    assert _normalised_problem(sibling.json(), test_agent_id) == _normalised_problem(
+        unknown.json(), unknown_id
+    )
+    assert sibling.json()["type"] == "actor_not_found"
+
+    assert delegated_sibling_client.get(f"/agents/{binding_agent_id}{suffix}").status_code == 200
+    assert owner_client.get(f"/agents/{test_agent_id}{suffix}").status_code == 200
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,7 @@ from jentic_one.auth.services.schemas.agents import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_READ,
     ALL_PERMISSIONS,
     DEFAULT_AGENT_PERMISSIONS,
     ORG_ADMIN,
@@ -246,6 +247,23 @@ class AgentService:
             if agent is None:
                 raise ActorNotFoundError(agent_id)
             return await self._view(session, agent)
+
+    async def get_readable_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Read one agent for ``GET /agents/{id}`` and its credential bindings.
+
+        On top of :meth:`get_agent` visibility, the caller must be the agent
+        itself, its owner, ``org:admin``, or hold ``agents:read`` (the gate on
+        listing agents). Any other caller gets the same ``ActorNotFoundError``
+        as an id that does not exist, so the response does not reveal that the
+        agent exists.
+        """
+        view = await self.get_agent(agent_id, identity=identity)
+        permissions = set(identity.permissions)
+        if ORG_ADMIN in permissions or AGENTS_READ in permissions:
+            return view
+        if identity.sub in (view.id, view.owner_id):
+            return view
+        raise ActorNotFoundError(agent_id)
 
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         """Activate a pending agent.
@@ -732,8 +750,11 @@ class AgentService:
     async def list_credentials(
         self, agent_id: str, *, identity: Identity
     ) -> list[CredentialBindingView]:
-        """List direct credential bindings for an agent, name-enriched."""
-        await self.get_agent(agent_id, identity=identity)
+        """List direct credential bindings for an agent, name-enriched.
+
+        Readable like :meth:`get_readable_agent`; anyone else gets not found.
+        """
+        await self.get_readable_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
         views = [CredentialBindingView.model_validate(b) for b in bindings]
