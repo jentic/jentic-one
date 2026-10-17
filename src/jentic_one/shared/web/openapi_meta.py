@@ -477,7 +477,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — "
             "type-specific result payloads (the imported revisions for `import`, upstream "
             "response body for `execution`) live under `/jobs/{job_id}/result`. Results stay "
-            "readable until removed; only an approved execution's result expires (after "
+            "readable indefinitely; only an approved execution's result expires (after "
             "`held_executions.result_retention_seconds`), after which `/jobs/{job_id}/result` "
             "answers `410 job_result_expired` while the job itself remains. "
             "A job is visible only to the actor that created it, the owner of the agent "
