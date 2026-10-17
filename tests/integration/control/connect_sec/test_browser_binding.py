@@ -728,3 +728,23 @@ async def test_a_session_ended_during_the_exchange_keeps_no_grant(env: Context) 
         outcome = await ConnectSessionOutcomeRepository.get_by_session_id(session, session_id)
     assert outcome is not None
     assert outcome.outcome == "expired"
+
+
+@pytest.mark.parametrize("outcome", ["token_exchange_failed", "session_ended"])
+async def test_a_session_callback_that_does_not_connect_redirects_to_error(
+    env: Context, outcome: str
+) -> None:
+    """The popup reports the session's real result, not ``ok``, when it did not connect."""
+    async with _browser(env) as approver:
+        session_id, state = await _confirmed_session(env, approver)
+
+        async def exchange(_self: object, _row: object, *, code: str) -> SuccessTokens:
+            if outcome == "token_exchange_failed":
+                raise RuntimeError("vendor token endpoint said no")
+            assert await svc(env)._mark_terminal(session_id, "expired", "session TTL exceeded")
+            return _tokens()
+
+        with patch.object(AuthCodeFlowHandler, "complete_from_callback", new=exchange):
+            landed = await _callback(approver, state)
+    assert _status(landed) == "error"
+    assert await session_row(env, session_id) is None
