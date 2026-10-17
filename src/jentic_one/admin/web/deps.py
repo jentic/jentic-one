@@ -22,7 +22,7 @@ from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.provider_config_service import ProviderConfigService
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.shared.context import Context
-from jentic_one.shared.lookups import CredentialCreatorLookupProtocol
+from jentic_one.shared.credentials import CredentialCreatorLookupProtocol
 from jentic_one.shared.web import get_ctx
 
 

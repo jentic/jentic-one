@@ -13,8 +13,9 @@ auto-import a vendor's OpenAPI spec after a credential connects (broker requires
 a registered API before it can route); a ``SecuritySchemesLookupProtocol`` onto
 the same app so connect sessions that target a registry API can read its
 declared schemes, hosts and provenance; a ``CredentialCreatorLookupProtocol``
-onto admin app shapes that can read the control DB, so the actor lookup can
-label the creator of a credential the caller can read; and carrying the ``/mcp``
+onto combined app shapes that serve admin and can read the control DB, so the
+actor lookup can label the creator of a credential the caller can read (a
+standalone admin process does not get it); and carrying the ``/mcp``
 mount (``jentic_one.mcp``) onto control-plane app shapes via the container seam.
 Swapping an implementation later (e.g. an HTTP-backed resolver) is a change
 here only — the surfaces are unaffected.
@@ -216,9 +217,14 @@ def install_credential_creator_lookup(app: FastAPI, ctx: Context) -> None:
 
     ``GET /actors/lookup`` labels the creator of a credential the caller can
     read; the credentials and their read scoping live with control, so the
-    control ``CredentialService`` answers it. Only meaningful when the process
-    serves admin and can read the control DB; without it that relation
-    resolves no user.
+    control ``CredentialService`` answers it. Installed only on a combined
+    process that serves admin and can read the control DB.
+
+    A standalone admin process (``jentic-one admin``) has only the admin DB
+    and builds its app without this container, so it never carries the
+    lookup: there the actor lookup does not label credential creators, and a
+    user the caller knows only as the creator of a credential it can read
+    (including one shared with it) stays unresolved, like an unknown id.
     """
     app.state.credential_creator_lookup = CredentialService(ctx)
 
@@ -242,9 +248,11 @@ def build_default_container(ctx: Context) -> AppContainer:
     discovery-chain 401 challenge (never a dangling 404) even though the real
     transport lives with control.
 
-    Shapes serving admin that can read the control DB carry the
+    Combined shapes that serve admin and can read the control DB carry the
     credential-creator lookup (:func:`install_credential_creator_lookup`), so
     the actor lookup can label the creator of a credential the caller can read.
+    A standalone admin process builds no container and has no control DB, so
+    it does not carry it (see that function for the effect).
     """
     container = AppContainer.default(ctx)
     if "control" in ctx.config.apps:
