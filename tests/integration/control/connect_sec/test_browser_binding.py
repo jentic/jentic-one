@@ -10,6 +10,7 @@ callback without it, or with another flow's cookie, redirects with
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -18,6 +19,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
@@ -28,11 +30,25 @@ from jentic_one.control.services.credentials.state import (
     new_browser_binding,
 )
 from jentic_one.control.services.integrations import identity_echo
+from jentic_one.control.services.integrations.flow_handlers.base import (
+    DeviceAuthorizationBeginResult,
+)
+from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
+    DeviceAuthorizationHandler,
+)
+from jentic_one.control.web.connect_binding import MAX_BINDING_COOKIES
 from jentic_one.control.web.routers import credentials as credentials_router
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import (
+    VendorAuthConfig,
+    VendorAuthorizationCodeFlowConfig,
+    VendorDeviceAuthorizationFlowConfig,
+    VendorScopeConfig,
+)
 from jentic_one.shared.context import Context
 from tests.integration.control.connect_sec.support import (
     AGENT_ID,
+    KEY_SCHEME,
     OAUTH_SCHEME,
     OWNER,
     RULES,
@@ -98,15 +114,24 @@ async def _callback(
     code: str = "vendor-code",
     cookies: dict[str, str] | None = None,
 ) -> httpx.Response:
-    if cookies is not None:
-        # Send exactly these cookies, bypassing the jar.
-        browser.cookies.clear()
-        for name, value in cookies.items():
-            browser.cookies.set(name, value, domain="t", path=OAUTH_CALLBACK_PATH)
-    return await browser.get(OAUTH_CALLBACK_PATH, params={"state": state, "code": code})
+    """The vendor's redirect back, carrying the browser's cookies.
+
+    ``cookies`` replaces the browser's jar with exactly these cookies.
+    """
+    if cookies is None:
+        return await browser.get(OAUTH_CALLBACK_PATH, params={"state": state, "code": code})
+    browser.cookies.clear()
+    headers = {"cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())} if cookies else {}
+    return await browser.get(
+        OAUTH_CALLBACK_PATH, params={"state": state, "code": code}, headers=headers
+    )
 
 
 # --- standalone credential connect (the UI's "Connect" / "Reconnect") -------
+
+
+async def _fresh_grant(ctx: Context, *, state: Any, callback: Any) -> ProvisionResult:
+    return ProvisionResult(access_token="fresh-access", scope="read write")
 
 
 @pytest.fixture()
@@ -119,7 +144,7 @@ def vendor(env: Context, monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     async def complete_connect(ctx: Context, *, state: Any, callback: Any) -> ProvisionResult:
         exchanged.append(state.credential_id)
-        return ProvisionResult(access_token="fresh-access", scope="read write")
+        return await _fresh_grant(ctx, state=state, callback=callback)
 
     monkeypatch.setattr(provider, "complete_connect", complete_connect)
     return exchanged
@@ -165,8 +190,14 @@ async def test_begin_sets_a_scoped_httponly_cookie_bound_into_the_state(
     assert value not in started.json()["authorize_url"]
 
 
-async def test_plain_http_origin_omits_secure(env: Context, vendor: list[str]) -> None:
+async def test_plain_http_origin_omits_secure(
+    env: Context, vendor: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Local installs on http://127.0.0.1: a Secure cookie would be dropped by the browser."""
+    monkeypatch.setattr(env.config.server, "public_base_url", None)
+    monkeypatch.setattr(env.config.credentials.providers["direct_oauth2"], "redirect_uri", None)
+    monkeypatch.setattr(env, "_providers", None)
+    monkeypatch.setattr(env.providers.get("direct_oauth2"), "complete_connect", _fresh_grant)
     credential_id = await existing_credential(env, oauth_scope="read")
     async with _browser(env, base="http://127.0.0.1:8020") as browser:
         started = await browser.post(f"/credentials/{credential_id}/connect", json={})
@@ -224,24 +255,55 @@ async def test_another_flows_cookie_does_not_complete_this_flow(
 
 # --- agent-initiated session: the approver's browser is bound ----------------
 
+_VENDOR_ENTRY = VendorAuthConfig(
+    vendor="vault.example/api",
+    display_name="Vault",
+    flows=[
+        VendorAuthorizationCodeFlowConfig(
+            client_id="vault-client",
+            client_secret=SecretStr("vault-client-secret"),  # pragma: allowlist secret
+            authorize_url="https://auth.vault.example/authorize",
+            token_url="https://auth.vault.example/token",
+        )
+    ],
+    scopes=[VendorScopeConfig(name="read", classification="read", default=True)],
+)
 
-async def _confirm_own_client(
-    browser: AsyncClient, ctx: Context, session_id: str
+
+def _own_client_body() -> dict[str, Any]:
+    return {
+        "kind": "own_oauth_client",
+        "client_id": "approver-client",
+        "client_secret": _APPROVER_CLIENT_SECRET,
+        "authorize_url": "https://idp.approver.example/authorize",
+        "token_url": "https://idp.approver.example/token",
+        "confirmed_scopes": ["read"],
+    }
+
+
+async def _confirm(
+    browser: AsyncClient,
+    ctx: Context,
+    session_id: str,
+    body: dict[str, Any],
+    *,
+    agent_id: str = AGENT_ID,
 ) -> httpx.Response:
     return await browser.post(
         f"/connect-sessions/{session_id}:confirm",
         json={
-            "kind": "own_oauth_client",
-            "client_id": "approver-client",
-            "client_secret": _APPROVER_CLIENT_SECRET,
-            "authorize_url": "https://idp.approver.example/authorize",
-            "token_url": "https://idp.approver.example/token",
             "permission_rules": RULES,
-            "expected_agent_id": AGENT_ID,
+            "expected_agent_id": agent_id,
             "digest": await digest(ctx, session_id),
-            "confirmed_scopes": ["read"],
+            **body,
         },
     )
+
+
+async def _confirm_own_client(
+    browser: AsyncClient, ctx: Context, session_id: str
+) -> httpx.Response:
+    return await _confirm(browser, ctx, session_id, _own_client_body())
 
 
 class _VendorTokenEndpoint:
@@ -263,51 +325,133 @@ class _VendorTokenEndpoint:
         )
 
 
+@dataclass
+class _Approval:
+    """One way an approver's ``:confirm`` hands out an authorization URL."""
+
+    body: dict[str, Any]
+    session_id: str
+    credential_id: str | None = None
+
+    async def connected(self, ctx: Context, exchanges: int) -> bool:
+        """Whether the vendor sign-in has been completed (anything written)."""
+        if self.credential_id is not None:  # re-authorize: the wider grant landed
+            return await _granted(ctx, self.credential_id) == "read write"
+        row = await session_row(ctx, self.session_id)
+        assert row is not None
+        if exchanges == 0:
+            assert await _granted(ctx, row.credential_id) is None
+        return row.state == "connected"
+
+
+async def _approval(ctx: Context, kind: str) -> _Approval:
+    """Open an agent's session and the confirm body for ``kind``."""
+    await import_spec(ctx, OAUTH_SCHEME)
+    if kind == "oauth":
+        ctx.config.vendors.entries["vault"] = _VENDOR_ENTRY
+        created = await connect(ctx, requested_scopes=["read"])
+        return _Approval({"kind": "oauth", "confirmed_scopes": ["read"]}, created.session_id)
+    if kind == "own_oauth_client":
+        created = await connect(ctx, requested_scopes=["read"])
+        return _Approval(_own_client_body(), created.session_id)
+    created = await connect(ctx, requested_scopes=["read", "write"])
+    narrow = await existing_credential(ctx, oauth_scope="read")
+    return _Approval(
+        {"kind": "reauthorize", "credential_id": narrow},
+        created.session_id,
+        credential_id=narrow,
+    )
+
+
+@pytest.mark.parametrize("kind", ["oauth", "own_oauth_client", "reauthorize"])
 async def test_agent_session_callback_completes_only_in_the_approvers_browser(
-    env: Context,
+    env: Context, vendor: list[str], kind: str
 ) -> None:
-    await import_spec(env, OAUTH_SCHEME)
-    created = await connect(env, requested_scopes=["read"])
-    vendor = _VendorTokenEndpoint()
+    approval = await _approval(env, kind)
+    token_endpoint = _VendorTokenEndpoint()
     echoed = identity_echo.IdentityEchoResult(display="approver", raw={})
     # Browsers first: the patch below swaps ``httpx.AsyncClient`` for the vendor.
     async with _browser(env) as approver, _browser(env) as other:
+        confirmed = await _confirm(approver, env, approval.session_id, approval.body)
+        assert confirmed.status_code == 200, confirmed.text
+        cookie_name = _binding_set_cookie(confirmed).split("=", 1)[0]
+        state = _state_of(confirmed.json()["authorize_url"])
         with (
-            patch("httpx.AsyncClient", return_value=vendor),
+            patch("httpx.AsyncClient", return_value=token_endpoint),
             patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echoed)),
         ):
-            confirmed = await _confirm_own_client(approver, env, created.session_id)
-            assert confirmed.status_code == 200, confirmed.text
-            cookie_name = _binding_set_cookie(confirmed).split("=", 1)[0]
-            state = _state_of(confirmed.json()["authorize_url"])
-            before = await session_row(env, created.session_id)
-            assert before is not None
-
             for sent in ({}, {cookie_name: new_browser_binding().value}):
                 refused = await _callback(other, state, cookies=sent)
                 assert _status(refused) == "error"
                 _assert_cookie_cleared(refused, cookie_name)
-            # Also a vendor ``error=`` landing cannot fail the session from elsewhere.
+            # Nor can a vendor ``error=`` landing end the flow from elsewhere.
             other.cookies.clear()
             denied = await other.get(
                 OAUTH_CALLBACK_PATH, params={"state": state, "error": "access_denied"}
             )
             assert _status(denied) == "error"
 
-            # Nothing exchanged; the session is still live and unchanged.
-            assert vendor.calls == 0
-            live = await session_row(env, created.session_id)
-            assert live is not None
-            assert live.state == before.state
-            assert await _granted(env, live.credential_id) is None
+            # Nothing exchanged or written; the flow is still open.
+            assert (token_endpoint.calls, vendor) == (0, [])
+            assert not await approval.connected(env, exchanges=0)
 
             completed = await _callback(approver, state)
     assert _status(completed) == "ok"
     _assert_cookie_cleared(completed, cookie_name)
-    assert vendor.calls == 1
-    done = await session_row(env, created.session_id)
-    assert done is not None
-    assert done.state == "connected"
+    assert token_endpoint.calls + len(vendor) == 1
+    assert await approval.connected(env, exchanges=1)
+
+
+async def test_secret_confirm_sets_no_binding_cookie(env: Context) -> None:
+    await import_spec(env, KEY_SCHEME)
+    created = await connect(env)
+    async with _browser(env) as approver:
+        confirmed = await _confirm(
+            approver,
+            env,
+            created.session_id,
+            {"kind": "api_key", "key": "vault-key-" + "K" * 20},  # pragma: allowlist secret
+        )
+    assert confirmed.status_code == 200, confirmed.text
+    assert not [
+        h
+        for h in confirmed.headers.get_list("set-cookie")
+        if h.startswith(BROWSER_BINDING_COOKIE_PREFIX)
+    ]
+
+
+async def test_device_flow_confirm_sets_no_binding_cookie(env: Context) -> None:
+    await import_spec(env, OAUTH_SCHEME)
+    env.config.vendors.entries["vault"] = VendorAuthConfig(
+        vendor="vault.example/api",
+        display_name="Vault",
+        flows=[
+            VendorDeviceAuthorizationFlowConfig(
+                client_id="vault-device",
+                authorization_endpoint="https://auth.vault.example/device",
+                token_endpoint="https://auth.vault.example/token",
+            )
+        ],
+        scopes=[VendorScopeConfig(name="read", classification="read", default=True)],
+    )
+    created = await connect(env, requested_scopes=["read"])
+    challenge = DeviceAuthorizationBeginResult(
+        user_code="ABCD-EFGH", verification_uri="https://auth.vault.example/activate"
+    )
+    async with _browser(env) as approver:
+        with patch.object(
+            DeviceAuthorizationHandler, "begin", new=AsyncMock(return_value=challenge)
+        ):
+            confirmed = await _confirm(
+                approver, env, created.session_id, {"kind": "oauth", "confirmed_scopes": ["read"]}
+            )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["user_code"] == "ABCD-EFGH"
+    assert not [
+        h
+        for h in confirmed.headers.get_list("set-cookie")
+        if h.startswith(BROWSER_BINDING_COOKIE_PREFIX)
+    ]
 
 
 async def test_agent_session_callback_follows_the_approvers_loopback_alias(env: Context) -> None:
@@ -335,15 +479,100 @@ async def test_agent_session_callback_follows_the_approvers_loopback_alias(env: 
     assert parse_qs(target.query) == {"state": [state], "code": ["c"]}
 
 
-async def test_non_loopback_host_is_never_redirected(env: Context) -> None:
+@pytest.mark.parametrize(
+    ("signed", "current"),
+    [
+        ("http://127.0.0.1:8020", "https://app.example.com"),
+        ("https://app.example.com", "http://127.0.0.1:8020"),
+    ],
+    ids=["loopback-signed-public-current", "public-signed-loopback-current"],
+)
+async def test_hop_only_between_loopback_hosts(env: Context, signed: str, current: str) -> None:
     await import_spec(env, OAUTH_SCHEME)
     created = await connect(env, requested_scopes=["read"])
-    async with _browser(env, base="http://127.0.0.1:8020") as approver:
+    async with _browser(env, base=signed) as approver:
         confirmed = await _confirm_own_client(approver, env, created.session_id)
+        assert confirmed.status_code == 200, confirmed.text
         state = _state_of(confirmed.json()["authorize_url"])
-    async with _browser(env, base="https://app.example.com") as elsewhere:
+    async with _browser(env, base=current) as elsewhere:
         refused = await elsewhere.get(OAUTH_CALLBACK_PATH, params={"state": state, "code": "c"})
     assert _status(refused) == "error"
     live = await session_row(env, created.session_id)
     assert live is not None
     assert live.state != "connected"
+
+
+# --- cookie attributes follow the public callback URL ------------------------
+
+
+def _attrs(response: httpx.Response) -> dict[str, str]:
+    parts = _binding_set_cookie(response).split(";")[1:]
+    return {k.strip().lower(): v.strip() for k, _, v in (part.partition("=") for part in parts)}
+
+
+async def test_https_callback_behind_a_plain_http_proxy_hop_is_secure(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TLS ends at the proxy: the app sees http, the browser lands on https."""
+    monkeypatch.setattr(env.config.server, "public_base_url", None)
+    monkeypatch.setattr(
+        env.config.credentials.providers["direct_oauth2"],
+        "redirect_uri",
+        "https://app.example.com/credentials/oauth/callback",
+    )
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read"])
+    async with _browser(env, base="http://10.0.0.5:8000") as approver:
+        confirmed = await _confirm_own_client(approver, env, created.session_id)
+    assert confirmed.status_code == 200, confirmed.text
+    assert "secure" in _attrs(confirmed)
+
+
+async def test_cookie_path_follows_a_base_url_path(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefixed = "https://app.example.com/jentic/credentials/oauth/callback"
+    monkeypatch.setattr(env.config.credentials.providers["direct_oauth2"], "redirect_uri", prefixed)
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read"])
+    async with _browser(env) as approver:
+        confirmed = await _confirm_own_client(approver, env, created.session_id)
+        assert confirmed.status_code == 200, confirmed.text
+        assert _attrs(confirmed)["path"] == "/jentic/credentials/oauth/callback"
+        cookie_name = _binding_set_cookie(confirmed).split("=", 1)[0]
+        state = _state_of(confirmed.json()["authorize_url"])
+        # The proxy strips the prefix; the clearing cookie keeps the public path.
+        refused = await _callback(approver, state, cookies={})
+    cleared = next(
+        h for h in refused.headers.get_list("set-cookie") if h.startswith(f"{cookie_name}=")
+    )
+    assert "path=/jentic/credentials/oauth/callback" in cleared.lower()
+
+
+async def test_callback_expires_a_pile_of_abandoned_binding_cookies(
+    env: Context, vendor: list[str]
+) -> None:
+    credential_id = await existing_credential(env, oauth_scope="read")
+    abandoned = {new_browser_binding().cookie_name: "x" for _ in range(MAX_BINDING_COOKIES)}
+    async with _browser(env) as browser:
+        state, cookie_name = await _begin(browser, credential_id)
+        binding = browser.cookies.get(cookie_name)
+        assert binding is not None
+        completed = await _callback(browser, state, cookies={**abandoned, cookie_name: binding})
+    assert _status(completed) == "ok"
+    for name in [cookie_name, *abandoned]:
+        _assert_cookie_cleared(completed, name)
+
+
+async def test_a_few_other_flows_cookies_are_left_alone(env: Context, vendor: list[str]) -> None:
+    """Concurrent connects in one browser keep their cookies."""
+    first = await existing_credential(env, oauth_scope="read", name="First")
+    second = await existing_credential(env, oauth_scope="read", name="Second")
+    async with _browser(env) as browser:
+        state_a, _ = await _begin(browser, first)
+        state_b, name_b = await _begin(browser, second)
+        done_a = await _callback(browser, state_a)
+        assert not [h for h in done_a.headers.get_list("set-cookie") if h.startswith(f"{name_b}=")]
+        done_b = await _callback(browser, state_b)
+    assert (_status(done_a), _status(done_b)) == ("ok", "ok")
+    _assert_cookie_cleared(done_b, name_b)
