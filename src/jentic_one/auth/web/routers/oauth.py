@@ -28,7 +28,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
-from jentic_one.auth.web.ratelimit import client_ip
+from jentic_one.auth.web.ratelimit import client_rate_limit_key
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -87,11 +87,16 @@ async def _extract_client_id(request: Request) -> str | None:
 
 
 async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-client+IP rate limiter for the token endpoint."""
+    """Per-client_id+client-network rate limiter for the token endpoint.
+
+    The network half is the IPv4 address or IPv6 /64 (see
+    :func:`client_rate_limit_key`); the ``client_id`` half comes from the
+    unauthenticated body.
+    """
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    network = client_rate_limit_key(request, trusted)
     client_id = await _extract_client_id(request)
-    key = f"{client_id}:{ip}" if client_id else ip
+    key = f"{client_id}:{network}" if client_id else network
     limiter = _get_token_limiter(request, ctx)
     outcome = await limiter.acquire(key)
     if not outcome.allowed:
@@ -143,11 +148,11 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
     cfg = ctx.config.auth.oauth_rate_limit
     backend = _get_auth_backend(request)
     # Own bucket namespace (the fix-wave pattern, see the DCR door's
-    # `oauth-registration` limiter): this limiter keys on the bare IP, and the
-    # shared store would otherwise hand it the same bucket as another
-    # bare-IP-keyed limiter with different rate/burst params. Keyed on IP
-    # only — the form's client_id is caller-chosen, so including it would let
-    # one host sidestep the bucket by rotating ids. Reuses the exchange
+    # `oauth-registration` limiter): this limiter keys on the client network,
+    # and the shared store would otherwise hand it the same bucket as another
+    # limiter keyed the same way with different rate/burst params. Keyed on
+    # the client network only — the form's client_id is caller-chosen, so
+    # including it would let one host sidestep the bucket by rotating ids. Reuses the exchange
     # rpm/burst knobs (config schema unchanged): revocation traffic is
     # bounded by the same client population as /oauth/token.
     limiter = RateLimiter(
@@ -161,11 +166,11 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
 
 
 async def _check_revocation_rate_limit(request: Request, ctx: Context) -> None:
-    """Per-IP rate limiter for the RFC 7009 form arm (called after the gate)."""
+    """Per-client-network rate limiter for the RFC 7009 form arm (called after the gate)."""
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_revocation_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
