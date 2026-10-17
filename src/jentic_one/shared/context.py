@@ -344,6 +344,10 @@ class Context:
         await self._close_retired_providers(force=True)
         if self._providers is not None:
             await aclose_providers(self._providers.list_all().values())
+        # A later startup builds afresh: a rebuild must never carry over a
+        # provider instance that has been closed.
+        self._providers = None
+        self._provider_refresh_lock = None
         for db in (self._control_db, self._admin_db, self._registry_db):
             if db is not None:
                 await db.close()

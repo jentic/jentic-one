@@ -138,16 +138,30 @@ async def test_start_reconciles_once_on_a_delivering_bus_only() -> None:
     assert idle.calls == 0
 
 
-async def test_requests_outside_the_lifespan_are_ignored() -> None:
+async def test_requests_outside_the_lifespan_are_ignored_and_restart_works() -> None:
     refresh = _CountingRefresh()
     refresher = ProviderConfigRefresher(refresh, debounce_s=0)
     refresher.request()  # before start
     await refresher.start()
+    await refresher.wait_idle()
     await refresher.stop()
     refresher.request()  # after stop
-    await refresher.start()  # a stopped refresher does not restart
-    await refresher.wait_idle()
     assert refresh.calls == 0
+    await refresher.start()  # the lifespan entered again
+    refresher.request()
+    await refresher.wait_idle()
+    await refresher.stop()
+    assert refresh.calls == 1
+
+
+async def test_shutdown_drops_the_closed_registry() -> None:
+    """A Context started again must not reuse provider instances it closed."""
+    ctx = _ctx_without_dbs()
+    provider = _ClosingProvider(ctx)
+    ctx._providers = ProviderRegistry({"vault": provider})
+    await ctx.shutdown()
+    assert provider.closed
+    assert "vault" not in ctx.providers.list_all()
 
 
 def test_refresher_subscribes_only_the_provider_config_topic() -> None:

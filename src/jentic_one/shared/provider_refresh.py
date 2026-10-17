@@ -52,7 +52,8 @@ class ProviderConfigRefresher:
     Lifecycle: :meth:`subscribe` at app build time (before the bus starts),
     :meth:`start` in the lifespan after the bus started, :meth:`stop` before
     the ``Context`` shuts down. One owned worker task does every refresh, so
-    nothing outlives :meth:`stop`.
+    nothing outlives :meth:`stop`; a later :meth:`start` (the lifespan entered
+    again) begins afresh on the running event loop.
     """
 
     def __init__(
@@ -71,7 +72,6 @@ class ProviderConfigRefresher:
         self._idle = asyncio.Event()
         self._idle.set()
         self._task: asyncio.Task[None] | None = None
-        self._stopped = False
         self._reconcile_on_start = False
 
     def subscribe(self, bus: InvalidationBus) -> None:
@@ -89,22 +89,26 @@ class ProviderConfigRefresher:
         self.request()
 
     def request(self) -> None:
-        """Ask for a refresh; ignored before :meth:`start` and after :meth:`stop`."""
-        if self._task is None or self._stopped:
+        """Ask for a refresh; ignored unless started (before :meth:`start`, after :meth:`stop`)."""
+        if self._task is None:
             return
         self._idle.clear()
         self._wanted.set()
 
     async def start(self) -> None:
-        if self._task is not None or self._stopped:
+        if self._task is not None:
             return
+        # Fresh primitives per run: asyncio events bind to the loop they are
+        # first awaited on, and a re-entered lifespan may run on another loop.
+        self._wanted = asyncio.Event()
+        self._idle = asyncio.Event()
+        self._idle.set()
         self._task = asyncio.create_task(self._run(), name="provider-config-refresh")
         if self._reconcile_on_start:
             self.request()
 
     async def stop(self) -> None:
         """Cancel the worker (a rebuild in progress is abandoned, not swapped in)."""
-        self._stopped = True
         task, self._task = self._task, None
         if task is None:
             return

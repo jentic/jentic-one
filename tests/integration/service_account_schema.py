@@ -42,6 +42,8 @@ _APPROVALS_HEAD = "3306fb9172f1"  # pragma: allowlist secret
 #: The credential-keyed repeated-failure index, stacked on the approvals table.
 _REPEATED_FAILURE_INDEX_HEAD = "c00de2f5d777"  # pragma: allowlist secret
 _INVALIDATION_TRIGGERS_HEAD = "e046c1696c4b"  # pragma: allowlist secret
+#: The provider_configs invalidation trigger, stacked on the triggers above.
+_PROVIDER_CONFIG_TRIGGER_HEAD = "b7d41c2e9f60"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -211,6 +213,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_APPROVALS_HEAD],
         [_REPEATED_FAILURE_INDEX_HEAD],
         [_INVALIDATION_TRIGGERS_HEAD],
+        [_PROVIDER_CONFIG_TRIGGER_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)
