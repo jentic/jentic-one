@@ -774,7 +774,7 @@ def test_the_default_login_csrf_share_refuses_only_the_flooder(ctx: MagicMock) -
         rendered += 1
         assert rendered < 1_000, "the flooder was never refused"
     _assert_capacity_refusal(resp)
-    # Twice the default authorize limiter's per-IP allowance in one TTL
+    # Twice the default authorize limiter's per-network allowance in one TTL
     # (burst 30 + 30/min for 5 min = 180), and nowhere near the namespace.
     assert 360 <= rendered <= 400
 
@@ -783,7 +783,7 @@ def test_the_default_login_csrf_share_refuses_only_the_flooder(ctx: MagicMock) -
 
 
 def test_a_query_client_id_does_not_reset_the_login_rate_limit(ctx: MagicMock) -> None:
-    """The login routes are keyed by bare IP: a caller-chosen ``client_id``
+    """The login routes are keyed by client network: a caller-chosen ``client_id``
     query parameter does not open a fresh rate-limit bucket per value."""
     ctx.config.auth.oauth_rate_limit = OAuthRateLimitConfig(authorize_rpm=1, authorize_burst=2)
     app = _make_app(ctx)

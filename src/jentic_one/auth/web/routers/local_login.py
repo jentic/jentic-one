@@ -324,8 +324,8 @@ def _ls_digest(ls: str) -> str:
 def _csrf_client_key(request: Request, ctx: Context) -> str:
     """The ``login-csrf`` owner for this request: a keyed digest of its client network.
 
-    The client IP comes from the same trusted-proxy-aware helper as the
-    authorize rate limiter (``X-Forwarded-For`` is honoured only from
+    The client network is the authorization-flow rate limiter's key
+    (:func:`client_rate_limit_key`: ``X-Forwarded-For`` is honoured only from
     ``auth.oauth_rate_limit.trusted_proxies``). Keyed with a secret-derived
     HMAC so the state backend never holds a raw or trivially reversible
     address, and hex so it cannot contain the ``:`` that separates key
