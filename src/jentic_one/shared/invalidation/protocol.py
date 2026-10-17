@@ -72,8 +72,10 @@ class InvalidationBus(Protocol):
 
     Lifecycle: subscribers register with :meth:`subscribe` while the app is
     being wired (before :meth:`start`); the app lifespan calls :meth:`start`
-    after ``ctx.startup()`` and :meth:`stop` before ``ctx.shutdown()``. Both are
-    idempotent. A bus with no subscriptions holds no connection.
+    after ``ctx.startup()`` and :meth:`stop` when it exits. Both are
+    idempotent. A bus owns its connections (it never borrows from the
+    ``Context`` pools), so its stop does not depend on ``ctx.shutdown()``
+    ordering. A bus with no subscriptions holds no connection.
 
     Delivery contract an implementation must keep (pinned by
     :class:`jentic_one.testing.BaseInvalidationBusContract`):

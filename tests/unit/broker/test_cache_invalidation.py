@@ -8,21 +8,35 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import MetaData
 
+import jentic_one.admin.core.schema
+import jentic_one.control.core.schema
 from jentic_one.broker.core.cache_invalidation import BROKER_TOPICS, subscribe_broker_caches
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos.agent_rule_evaluator import AgentRuleEvaluator
 from jentic_one.broker.repos.caching_credential_deriver import CachingCredentialDeriver
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import CredentialDerivation
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db import DatabaseSession
+from jentic_one.shared.db.base import AdminBase, ControlBase
 from jentic_one.shared.invalidation import InProcessInvalidationBus, InvalidationMessage
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.permissions.evaluation import PermissionRule
+
+_ADMIN_MIGRATION = importlib.import_module(
+    "jentic_one.migrations.admin.versions.e046c1696c4b_add_cache_invalidation_triggers"
+)
+_CONTROL_MIGRATION = importlib.import_module(
+    "jentic_one.migrations.control.versions.5a78aa331015_add_cache_invalidation_triggers"
+)
+assert jentic_one.admin.core.schema and jentic_one.control.core.schema  # register the models
 
 
 def _digest(token: str) -> str:
@@ -275,3 +289,74 @@ async def test_invalidation_during_a_read_is_not_overwritten() -> None:
     gate.set()
     assert (await pending).sub == "agnt_1"
     assert _digest("at_slow") not in validator._cache
+
+
+async def test_caller_after_an_invalidation_does_not_share_an_older_read() -> None:
+    """A request arriving after an invalidation must not be answered by a read begun before it."""
+    first_gate, second_gate = asyncio.Event(), asyncio.Event()
+    answers = iter([(first_gate, None), (second_gate, _identity("agnt_1"))])
+
+    class _Resolver:
+        async def resolve_access_token(self, token: str) -> Identity | None:
+            gate, answer = next(answers)
+            await gate.wait()
+            return answer
+
+    validator = CachedTokenValidator(resolver=_Resolver(), cache_ttl_seconds=300)
+    before = asyncio.create_task(validator.validate("at_x"))
+    await asyncio.sleep(0)
+    validator.invalidate("at_x")  # e.g. the token was just minted elsewhere
+    after = asyncio.create_task(validator.validate("at_x"))
+    await asyncio.sleep(0)
+    first_gate.set()
+    second_gate.set()
+    with pytest.raises(TokenValidationError):
+        await before
+    assert (await after).sub == "agnt_1", "the late caller re-read instead of sharing"
+
+
+class _RecordingKeys(dict[str, tuple[str, ...]]):
+    """A message ``keys`` mapping that records which columns a handler reads."""
+
+    def __init__(self, read: set[str]) -> None:
+        super().__init__()
+        self._read = read
+
+    def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        self._read.add(key)
+        return super().get(key, default)
+
+
+def _triggered_columns() -> dict[str, tuple[str, ...]]:
+    columns: dict[str, tuple[str, ...]] = {}
+    for database, migration in (("admin", _ADMIN_MIGRATION), ("control", _CONTROL_MIGRATION)):
+        for table, cols in migration.TRIGGERED_TABLES.items():
+            columns[f"{database}.{table}"] = cols
+    return columns
+
+
+@pytest.mark.parametrize("topic", sorted(BROKER_TOPICS))
+async def test_handlers_read_only_columns_the_triggers_report(caches: _Caches, topic: str) -> None:
+    """A handler keyed on a column the trigger never sends would silently drop nothing."""
+    read: set[str] = set()
+    await caches.bus.publish(
+        InvalidationMessage(topic=topic, operation="UPDATE", keys=_RecordingKeys(read))
+    )
+    # control.credentials drops the whole binding cache (coverage is not keyed
+    # by credential), so it reads no column at all.
+    assert read or topic == "control.credentials", f"{topic} handler reads no key column"
+    assert read <= set(_triggered_columns()[topic]), (
+        f"{topic} handler reads {sorted(read)}; trigger reports {_triggered_columns()[topic]}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("metadata", "migration"),
+    [(AdminBase.metadata, _ADMIN_MIGRATION), (ControlBase.metadata, _CONTROL_MIGRATION)],
+)
+def test_trigger_key_columns_exist_on_their_tables(metadata: MetaData, migration: object) -> None:
+    """A misspelt key column would make the trigger report an empty key list."""
+    for table, cols in migration.TRIGGERED_TABLES.items():  # type: ignore[attr-defined]
+        assert table in metadata.tables, f"{table} is not a mapped table"
+        missing = set(cols) - set(metadata.tables[table].columns.keys())
+        assert not missing, f"{table} has no column(s) {sorted(missing)}"

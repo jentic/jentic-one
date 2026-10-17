@@ -49,6 +49,10 @@ LISTEN_APPLICATION_NAME = "jentic-one-invalidation"
 #: database does not hold up boot — the supervisor keeps retrying behind it.
 _START_WAIT_S = 10.0
 
+#: Bound on one connection attempt. asyncpg's own default (60 s) would let a
+#: black-holed server stall the supervisor far past the reconnect backoff.
+_CONNECT_TIMEOUT_S = 10.0
+
 #: An async factory returning a connected asyncpg connection.
 ConnectFactory = Callable[[], Awaitable[Any]]
 
@@ -58,18 +62,20 @@ class PgListenTarget:
     """One database to ``LISTEN`` on and the logical databases it carries.
 
     ``schemas`` maps a schema name (what the trigger reports as
-    ``TG_TABLE_SCHEMA``) to the logical database (``admin``/``control``) whose
-    topics it feeds. Notifications from any other schema — another install
-    sharing the database — are ignored.
+    ``TG_TABLE_SCHEMA``) to the logical databases (``admin``/``control``) whose
+    topics it feeds — more than one when several logical databases share the
+    schema; a message then goes to each database's topic for the table, and
+    only the one that owns the table has subscribers. Notifications from any
+    other schema — another install sharing the database — are ignored.
     """
 
     name: str
     connect: ConnectFactory
-    schemas: Mapping[str, str]
+    schemas: Mapping[str, tuple[str, ...]]
 
     @property
     def databases(self) -> frozenset[str]:
-        return frozenset(self.schemas.values())
+        return frozenset(db for dbs in self.schemas.values() for db in dbs)
 
 
 def _asyncpg_connect_factory(config: DatabaseConfig) -> ConnectFactory:
@@ -81,6 +87,7 @@ def _asyncpg_connect_factory(config: DatabaseConfig) -> ConnectFactory:
         "password": config.password.get_secret_value(),
         "database": config.name,
         "server_settings": {"application_name": LISTEN_APPLICATION_NAME},
+        "timeout": _CONNECT_TIMEOUT_S,
     }
     if config.tcp_keepalive:
         kwargs["connection_class"] = keepalive_connection_class(TcpKeepalive.from_config(config))
@@ -103,11 +110,14 @@ def listen_targets(databases: Mapping[str, DatabaseConfig]) -> list[PgListenTarg
         grouped.setdefault((cfg.host, cfg.port, cfg.name), []).append((db_name, cfg))
     targets: list[PgListenTarget] = []
     for (host, port, name), members in grouped.items():
+        schemas: dict[str, list[str]] = {}
+        for db_name, cfg in members:
+            schemas.setdefault(cfg.schema_name, []).append(db_name)
         targets.append(
             PgListenTarget(
                 name=f"{host}:{port}/{name}",
                 connect=_asyncpg_connect_factory(members[0][1]),
-                schemas={cfg.schema_name: db_name for db_name, cfg in members},
+                schemas={schema: tuple(dbs) for schema, dbs in schemas.items()},
             )
         )
     return targets
@@ -132,6 +142,10 @@ class PgListenInvalidationBus:
         self._tasks: list[asyncio.Task[None]] = []
         self._connections: dict[str, Any] = {}
         self._running = False
+        # Set once start() hands control back to the app: from then on caches
+        # may fill, so a LISTEN established later (even a slow first one) must
+        # flush what was cached while nothing was listening.
+        self._serving = False
 
     def subscribe(self, topic: str, handler: InvalidationHandler) -> None:
         self._subscribers.add(topic, handler)
@@ -156,11 +170,13 @@ class PgListenInvalidationBus:
             async with asyncio.timeout(_START_WAIT_S):
                 for event in attempted:
                     await event.wait()
+        self._serving = True
 
     async def stop(self) -> None:
         if not self._running:
             return
         self._running = False
+        self._serving = False
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             task.cancel()
@@ -199,9 +215,11 @@ class PgListenInvalidationBus:
                 conn.add_termination_listener(partial(_set_on_terminate, lost))
                 await conn.add_listener(PG_INVALIDATION_CHANNEL, partial(self._on_notify, target))
                 self._connections[target.name] = conn
-                if attempt > 0:
+                if attempt > 0 or self._serving:
                     # Anything committed while we were not listening is lost to
-                    # us: drop everything those databases' topics cached.
+                    # us — after a lost connection, or a first LISTEN that only
+                    # landed once the app was already serving: drop everything
+                    # those databases' topics cached.
                     logger.info(
                         "invalidation_listen_reconnected", target=target.name, attempts=attempt
                     )
@@ -263,14 +281,15 @@ class PgListenInvalidationBus:
         if decoded is None:
             logger.warning("invalidation_payload_unparseable", target=target.name)
             return
-        database = target.schemas.get(decoded.schema)
-        if database is None:
+        databases = target.schemas.get(decoded.schema)
+        if databases is None:
             return
-        self._subscribers.dispatch(
-            InvalidationMessage(
-                topic=topic_for(database, decoded.table),
-                operation=decoded.operation,
-                keys=decoded.keys,
-                flush=decoded.flush,
+        for database in databases:
+            self._subscribers.dispatch(
+                InvalidationMessage(
+                    topic=topic_for(database, decoded.table),
+                    operation=decoded.operation,
+                    keys=decoded.keys,
+                    flush=decoded.flush,
+                )
             )
-        )
