@@ -2692,6 +2692,12 @@ class ConnectSessionService:
         route's own gate). An archived, disabled or rejected agent is
         refused — it can no longer use the credential, and archive revokes
         its bindings.
+
+        A missing agent and one the caller does not govern (owned by someone
+        else, or by nobody) raise the same :class:`AgentNotFoundError` as
+        :meth:`_require_session_agent_allowed`, so a late-bound ``agent_id``
+        answers exactly like one named at create time. Only ``org:admin`` and
+        the agent's owner reach the approver and status checks.
         """
         async with self._ctx.admin_db.session() as admin_session:
             agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
@@ -2701,7 +2707,7 @@ class ConnectSessionService:
             # An ownerless agent (nullable ``owner_id``) has no owner to
             # match — only ``org:admin`` may bind in its name. Fail closed.
             if agent.owner_id is None or identity.sub != agent.owner_id:
-                raise ConfirmationForbiddenError(f"agent {agent_id!r} is not owned by the caller")
+                raise AgentNotFoundError(agent_id)
             if not _is_owner_approver(identity):
                 raise ConfirmationForbiddenError(
                     "approving for an agent requires credentials:write and agents:write"
