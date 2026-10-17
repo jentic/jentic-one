@@ -640,7 +640,7 @@ async def check_session_continue_rate_limit(
     and the signed blob, and both are caller-supplied — a self-chosen key
     component would let one host sidestep the bucket.
     """
-    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
     ip = client_ip(request, trusted)
     limiter = _get_session_continue_limiter(request, ctx)
     outcome = await limiter.acquire(ip)

@@ -34,6 +34,7 @@ from jentic_one.shared.config import (
     EntitlementConfig,
     HeldExecutionsConfig,
     IdempotencyConfig,
+    OAuthRateLimitConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -810,6 +811,62 @@ def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
         config = load_config(config_file)
     assert config.auth.oauth_rate_limit.approval_status_rpm == 6
     assert config.auth.oauth_rate_limit.approval_status_burst == 3
+
+
+def test_oauth_trusted_proxies_default_empty(config_file: Path):
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.trusted_proxies == []
+    assert config.auth.oauth_rate_limit.trusted_networks == ()
+
+
+def test_oauth_trusted_proxies_env_comma_separated(config_file: Path):
+    """The env var takes a comma-separated list of IPs and CIDRs (#1880)."""
+    env = {"JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES": "10.0.0.0/8, 172.17.0.1,fd00::/8"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    rl = config.auth.oauth_rate_limit
+    assert rl.trusted_proxies == ["10.0.0.0/8", "172.17.0.1", "fd00::/8"]
+    assert [str(n) for n in rl.trusted_networks] == ["10.0.0.0/8", "172.17.0.1/32", "fd00::/8"]
+
+
+def test_oauth_trusted_proxies_yaml_list(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {"auth": {"oauth_rate_limit": {"trusted_proxies": [" 10.0.0.0/8 ", "2001:db8::1"]}}},
+    )
+    rl = config.auth.oauth_rate_limit
+    assert rl.trusted_proxies == ["10.0.0.0/8", "2001:db8::1"]
+    assert [str(n) for n in rl.trusted_networks] == ["10.0.0.0/8", "2001:db8::1/128"]
+
+
+@pytest.mark.parametrize(
+    "entry", ["10.0.0.0/33", "10.0.0.256", "proxy.internal", "", "fe80::1%eth0"]
+)
+def test_oauth_trusted_proxies_invalid_entry_fails_load(tmp_path: Path, entry: str):
+    with pytest.raises(ConfigError, match=r"trusted_proxies entry"):
+        _load(tmp_path, {"auth": {"oauth_rate_limit": {"trusted_proxies": [entry]}}})
+
+
+@pytest.mark.parametrize(
+    ("entry", "warned"),
+    [
+        ("10.0.0.0/8", False),
+        ("172.17.0.1", False),
+        ("fd00::/8", False),
+        ("::ffff:192.168.0.0/112", False),
+        ("0.0.0.0/0", True),
+        ("::/0", True),
+        ("203.0.113.7", True),
+        ("8.0.0.0/7", True),
+    ],
+)
+def test_oauth_trusted_proxies_warns_on_public_network(entry: str, warned: bool):
+    with structlog.testing.capture_logs() as logs:
+        OAuthRateLimitConfig(trusted_proxies=[entry])
+    events = [e for e in logs if e["event"] == "trusted_proxies_network_includes_public_addresses"]
+    assert bool(events) is warned
+    if warned:
+        assert events[0]["entry"] == entry
 
 
 def test_encryption_config_defaults():
