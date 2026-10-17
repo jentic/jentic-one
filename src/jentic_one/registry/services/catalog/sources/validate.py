@@ -2,7 +2,8 @@
 
 Runs once at registry startup, before the source scanner starts. It checks what
 the configuration alone can decide (slugs, kinds, kind settings, auth types,
-reader ACLs, mapping rows); it never contacts a source. Using the deprecated
+reader ACLs, mapping rows, an untrusted source ranked above a curated one); it
+never contacts a source. Using the deprecated
 ``catalog.manifest_*`` keys logs a warning naming the replacement.
 """
 
@@ -17,6 +18,7 @@ from jentic_one.registry.services.catalog.sources.registry import (
     resolve_catalog_source_kind,
 )
 from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS
+from jentic_one.shared.catalog.api_id import normalise_catalog_api_id
 from jentic_one.shared.config import CatalogConfig, ConfigError, SourceReadersConfig
 from jentic_one.shared.context import Context
 
@@ -69,10 +71,24 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
 
     known = set(slugs)
     for index, row in enumerate(catalog.catalog_api_id_mappings):
+        where = f"catalog.catalog_api_id_mappings[{index}]"
         if row.source not in known:
+            errors.append(f"{where}.source: unknown source {row.source!r}")
+        if normalise_catalog_api_id(row.catalog_api_id) is None:
             errors.append(
-                f"catalog.catalog_api_id_mappings[{index}].source: unknown source {row.source!r}"
+                f"{where}.catalog_api_id: {row.catalog_api_id!r} is not a valid catalog_api_id "
+                "(domain[/sub], at most 255 characters, no whitespace or '~')"
             )
+
+    curated = [s for s in sources if s.trust == "curated" and s.enabled]
+    if curated:
+        floor = min(s.precedence for s in curated)
+        for source in sources:
+            if source.trust == "untrusted" and source.precedence > floor:
+                errors.append(
+                    f"catalog.sources[slug={source.slug}].precedence: an untrusted source "
+                    f"({source.precedence}) cannot rank above a curated one ({floor})"
+                )
 
     deprecated = catalog.deprecated_keys_set()
     legacy = catalog.legacy_source_slug
