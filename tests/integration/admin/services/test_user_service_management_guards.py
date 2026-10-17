@@ -29,6 +29,7 @@ from jentic_one.admin.repos import (
     UserPermissionGrantRepository,
     UserRepository,
 )
+from jentic_one.admin.services import user_hooks
 from jentic_one.admin.services._support.user_management import ensure_not_last_active_admin
 from jentic_one.admin.services.errors import (
     LastActiveAdminError,
@@ -37,6 +38,7 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.users import UserUpdatePayload
+from jentic_one.admin.services.user_hooks import register_user_deleted_hook
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -465,6 +467,89 @@ async def test_delete_removes_external_identity_links(
 
     await UserService(ctx).delete(target_id, identity=_admin(admin_id))
     assert await _link_count(ctx, target_id) == 0
+
+
+@pytest.fixture()
+def deleted_hook_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Identity, bool]]:
+    """Register one user-deleted hook (on an emptied registry) that records its calls.
+
+    Each call records ``(user_id, identity, active)``, where ``active`` is the
+    deleted user's ``active`` flag as a fresh session sees it inside the hook.
+    """
+    monkeypatch.setattr(user_hooks, "_USER_DELETED_HOOKS", [])
+    calls: list[tuple[str, Identity, bool]] = []
+
+    async def _hook(ctx: Context, user_id: str, identity: Identity) -> None:
+        calls.append((user_id, identity, (await _get_user(ctx, user_id)).active))
+
+    register_user_deleted_hook(_hook)
+    return calls
+
+
+async def test_delete_runs_user_deleted_hooks_after_commit(
+    integration_context: Context,
+    make_user: MakeUser,
+    deleted_hook_calls: list[tuple[str, Identity, bool]],
+) -> None:
+    ctx = integration_context
+    admin_id = await make_user("guard-org-admin-hook@test.local", {"org:admin"})
+    target_id = await make_user("guard-hook-target@test.local", {"users:read"})
+    caller = _admin(admin_id)
+
+    await UserService(ctx).delete(target_id, identity=caller)
+
+    # The hook sees the committed delete (a separate session reads it inactive).
+    assert deleted_hook_calls == [(target_id, caller, False)]
+
+
+async def test_delete_succeeds_when_a_user_deleted_hook_fails(
+    integration_context: Context, make_user: MakeUser, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = integration_context
+    monkeypatch.setattr(user_hooks, "_USER_DELETED_HOOKS", [])
+
+    async def _failing(_ctx: Context, _user_id: str, _identity: Identity) -> None:
+        raise RuntimeError("boom")
+
+    register_user_deleted_hook(_failing)
+    admin_id = await make_user("guard-org-admin-hookfail@test.local", {"org:admin"})
+    target_id = await make_user("guard-hookfail-target@test.local", {"users:read"})
+
+    await UserService(ctx).delete(target_id, identity=_admin(admin_id))
+
+    assert (await _get_user(ctx, target_id)).active is False
+
+
+async def test_refused_delete_runs_no_user_deleted_hooks(
+    integration_context: Context,
+    make_user: MakeUser,
+    deleted_hook_calls: list[tuple[str, Identity, bool]],
+) -> None:
+    ctx = integration_context
+    caller_id = await make_user("guard-hook-nonadmin@test.local", {"users:write"})
+    target_id = await make_user("guard-hook-refused@test.local", {"users:read"})
+
+    with pytest.raises(UserNotFoundError):
+        await UserService(ctx).delete(target_id, identity=_identity(caller_id, "users:write"))
+
+    assert deleted_hook_calls == []
+    assert (await _get_user(ctx, target_id)).active is True
+
+
+async def test_last_active_admin_delete_runs_no_user_deleted_hooks(
+    integration_context: Context,
+    make_user: MakeUser,
+    no_other_active_admins: None,
+    deleted_hook_calls: list[tuple[str, Identity, bool]],
+) -> None:
+    ctx = integration_context
+    admin_id = await make_user("guard-hook-sole-admin@test.local", {"org:admin"})
+
+    with pytest.raises(LastActiveAdminError):
+        await UserService(ctx).delete(admin_id, identity=_admin(admin_id))
+
+    assert deleted_hook_calls == []
+    assert (await _get_user(ctx, admin_id)).active is True
 
 
 @pytest.mark.parametrize("operation", ["disable", "delete"])
