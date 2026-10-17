@@ -225,6 +225,12 @@ markers = [
     "smoke: lightweight liveness checks against a deployed environment",
 ]
 asyncio_mode = "auto"
+# A SQLAlchemy deprecation warning fails the test that triggers it: each one
+# walks the stack on every call, so a deprecated API on a hot path is a silent
+# per-request CPU cost (#1820).
+filterwarnings = [
+    "error::sqlalchemy.exc.SADeprecationWarning",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
