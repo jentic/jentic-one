@@ -1,4 +1,4 @@
-"""Shared helpers for the auth surface's pre-auth rate limiters.
+"""Shared helpers for the auth surface's rate limiters.
 
 Shared so every anonymous auth route (``/authorize`` and the rest of the
 authorization flow, the local-login form, DCR registration, the
