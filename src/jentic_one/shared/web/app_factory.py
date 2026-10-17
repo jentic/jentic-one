@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import inspect
 import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -492,6 +493,28 @@ async def _null_lifespan() -> AsyncGenerator[None]:
     yield
 
 
+async def _run_shutdown_handlers(app: FastAPI) -> None:
+    """Run the handlers registered with ``app.router.add_event_handler("shutdown", …)``.
+
+    FastAPI runs those handlers only for an app without its own ``lifespan``,
+    and every app built here has one, so the lifespan runs them itself. Surface
+    installers use them to close what they built (the auth and control
+    surfaces' shared-state backends). Best-effort: a failing handler is logged
+    and the rest still run.
+    """
+    for handler in list(app.router.on_shutdown):
+        try:
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            _logger.warning(
+                "shutdown_handler_failed",
+                handler=getattr(handler, "__qualname__", repr(handler)),
+                exc_info=True,
+            )
+
+
 def create_surface_app(
     ctx: Context,
     *,
@@ -579,6 +602,7 @@ def create_surface_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     # ``server.public_base_url`` names the control/auth surfaces' origin; a
@@ -710,6 +734,7 @@ def create_combined_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _run_shutdown_handlers(app)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
