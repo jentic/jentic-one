@@ -70,12 +70,20 @@ def _score(api_id: str) -> float:
     return (sum(map(ord, api_id)) % 4) / 3
 
 
+class _HostileInt(int):
+    """A score type whose negation (used by the sort) raises."""
+
+    def __neg__(self) -> int:
+        raise RuntimeError("hostile score")
+
+
 class _FakeStrategy:
     name = "fake"
 
     def __init__(self) -> None:
         self.fail = False
         self.all_invalid = False
+        self.hostile = False
         self.delay_s: float | None = None
         self.calls = 0
         self.last_entries: list[str] = []
@@ -91,6 +99,8 @@ class _FakeStrategy:
             await asyncio.sleep(self.delay_s)
         if self.all_invalid:
             return [RankedEntry(e, math.nan) for e in request.entries]
+        if self.hostile:
+            return [RankedEntry(e, _HostileInt(1)) for e in request.entries]
         rows: list[RankedEntry] = []
         for e in request.entries:  # input order, i.e. not ranked
             if e.api_id == _OMITTED:
@@ -307,7 +317,11 @@ def test_configured_strategy_unregistered_after_page_one_is_503(
     monkeypatch: pytest.MonkeyPatch,
     failure_metrics: InMemoryMetricReader,
 ) -> None:
-    """A real page-1 cursor whose strategy vanishes (e.g. a replica without it) is retryable."""
+    """Defensive: a cursor for the configured strategy, which this process lacks, is a 503.
+
+    App assembly refuses that config, so this pins the safety net, not a
+    rollout path.
+    """
     strategy = _FakeStrategy()
     with registered_catalog_search_strategy(strategy):
         monkeypatch.setattr(web_context.config.catalog, "search_strategy", strategy.name)
@@ -424,6 +438,26 @@ def test_all_invalid_ranking_falls_back_on_page_one(
     assert _failures(failure_metrics) == [
         ({"strategy": "fake", "reason": "invalid", "outcome": "fallback"}, 1)
     ]
+
+
+@pytest.mark.usefixtures("catalog")
+def test_hostile_score_types_fall_back_on_page_one(
+    admin_client: TestClient,
+    web_context: Context,
+    fake: _FakeStrategy,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_metrics: InMemoryMetricReader,
+) -> None:
+    """An ``int`` subclass whose ``__neg__`` raises is an invalid row, never a 500."""
+    fake.hostile = True
+    pages = _walk(admin_client, {"q": _Q, "limit": 2})
+
+    assert all("st" not in (_cursor_json(p["next_cursor"]) or {}) for p in pages)
+    assert _failures(failure_metrics) == [
+        ({"strategy": "fake", "reason": "invalid", "outcome": "fallback"}, 1)
+    ]
+    monkeypatch.setattr(web_context.config.catalog, "search_strategy", "token")
+    assert pages == _walk(admin_client, {"q": _Q, "limit": 2})
 
 
 @pytest.mark.usefixtures("catalog")

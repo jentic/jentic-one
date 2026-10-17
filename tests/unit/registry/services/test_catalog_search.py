@@ -160,6 +160,64 @@ def test_normalize_drops_non_finite_or_non_numeric_scores(bad: object) -> None:
     assert result.dropped_invalid == 1
 
 
+class _HostileInt(int):
+    """An ``int`` subclass whose negation (used by the sort) raises."""
+
+    def __neg__(self) -> int:
+        raise RuntimeError("hostile score")
+
+
+class _RaisingRow(RankedEntry):
+    """A ``RankedEntry`` whose ``match`` raises when read."""
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "match":
+            raise RuntimeError("hostile row")
+        return super().__getattribute__(name)
+
+
+class _HostileId(str):
+    """An ``api_id`` whose hashing (the lookup into the filtered set) raises."""
+
+    def __hash__(self) -> int:
+        raise RuntimeError("hostile api_id")
+
+
+@pytest.mark.parametrize("score", [_HostileInt(5), _HostileInt(0)])
+def test_normalize_drops_int_subclass_scores(score: int) -> None:
+    a, b = _entry("a"), _entry("b")
+
+    result = normalize_ranking([RankedEntry(a, score), RankedEntry(b, 1)], [a, b])
+
+    assert [(r.entry.api_id, type(r.score)) for r in result.rows] == [("b", int)]
+    assert result.dropped_invalid == 1
+
+
+def test_normalize_treats_rows_that_raise_while_read_as_invalid() -> None:
+    a, b, c = _entry("a"), _entry("b"), _entry("c")
+    hostile_entry = mb.ManifestEntry(
+        api_id=_HostileId("c"), path="x", spec_url=None, github_url="x"
+    )
+    rows = [
+        _RaisingRow(entry=a, score=3),
+        RankedEntry(hostile_entry, 2),
+        RankedEntry(b, 1),
+    ]
+
+    result = normalize_ranking(rows, [a, b, c])
+
+    assert [r.entry.api_id for r in result.rows] == ["b"]
+    assert result.dropped_invalid == 2
+
+
+def test_normalize_all_hostile_rows_leave_no_valid_row() -> None:
+    """The service reads an all-invalid ranking as a strategy failure (page-1 fallback)."""
+    a = _entry("a")
+    result = normalize_ranking([RankedEntry(a, _HostileInt(1)), _RaisingRow(a, 1)], [a])
+    assert result.rows == []
+    assert result.dropped_invalid == 2
+
+
 def test_catalog_search_request_is_keyword_only() -> None:
     with pytest.raises(TypeError):
         CatalogSearchRequest("pay", ())  # type: ignore[call-arg]
