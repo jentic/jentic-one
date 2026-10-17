@@ -14,10 +14,8 @@ from jentic_one.auth.web.ratelimit import client_ip
 from jentic_one.shared.config import OAuthRateLimitConfig
 
 
-def _request(socket_ip: str | None, forwarded: str | None = None) -> Request:
-    headers: list[tuple[bytes, bytes]] = []
-    if forwarded is not None:
-        headers.append((b"x-forwarded-for", forwarded.encode()))
+def _request(socket_ip: str | None, *forwarded: str) -> Request:
+    headers = [(b"x-forwarded-for", line.encode()) for line in forwarded]
     scope = {
         "type": "http",
         "method": "GET",
@@ -30,7 +28,7 @@ def _request(socket_ip: str | None, forwarded: str | None = None) -> Request:
 
 def _ip(trusted: list[str], socket_ip: str | None, forwarded: str | None = None) -> str:
     networks = OAuthRateLimitConfig(trusted_proxies=trusted).trusted_networks
-    return client_ip(_request(socket_ip, forwarded), networks)
+    return client_ip(_request(socket_ip, *([forwarded] if forwarded is not None else [])), networks)
 
 
 @pytest.mark.parametrize(
@@ -79,3 +77,10 @@ def test_client_ip_trusts_proxies_by_network_membership(
     trusted: list[str], socket_ip: str | None, forwarded: str | None, expected: str
 ) -> None:
     assert _ip(trusted, socket_ip, forwarded) == expected
+
+
+def test_client_ip_reads_repeated_forwarded_lines_as_one_list() -> None:
+    """A client-sent XFF line cannot outrank the line a trusted proxy adds."""
+    networks = OAuthRateLimitConfig(trusted_proxies=["10.0.0.0/8"]).trusted_networks
+    request = _request("10.0.0.5", "198.51.100.1", "203.0.113.7")
+    assert client_ip(request, networks) == "203.0.113.7"

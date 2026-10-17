@@ -32,7 +32,7 @@ def _parse_request_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6
     """Parse a socket or forwarded address for trust matching, or None if unparsable.
 
     An IPv4-mapped IPv6 address (a dual-stack listener) is unmapped so it
-    matches IPv4 entries; a zone ID is ignored, as network membership is.
+    matches IPv4 entries. A zone ID parses but does not affect membership.
     """
     try:
         addr = ipaddress.ip_address(value)
@@ -57,12 +57,14 @@ def client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]
     ``OAuthRateLimitConfig.trusted_networks``. The socket address and each
     ``X-Forwarded-For`` hop (walked right to left) are trusted by network
     membership; the first untrusted hop is the client. An unparsable hop is
-    untrusted and returned as-is.
+    untrusted and returned as-is. Repeated ``X-Forwarded-For`` lines are read
+    as one comma-joined list (RFC 9110 §5.3), so a proxy that adds its own
+    line cannot be outranked by a line the client sent first.
     """
     socket_ip = request.client.host if request.client else "unknown"
     if not trusted_proxies or not _is_trusted(socket_ip, trusted_proxies):
         return socket_ip
-    forwarded = request.headers.get("x-forwarded-for")
+    forwarded = ",".join(request.headers.getlist("x-forwarded-for"))
     if not forwarded:
         return socket_ip
     hops = [h.strip() for h in forwarded.split(",")]
