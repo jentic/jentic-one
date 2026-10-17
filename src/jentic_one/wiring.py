@@ -64,7 +64,9 @@ class InProcessRegistryResolver:
     async def resolve_operation(
         self, *, method: str, url: str, revision_id: uuid.UUID | None = None
     ) -> ResolveResult | None:
-        async with self._registry_db.session() as session:
+        # Read-only URL lookup on the broker hot path: autocommit drops the
+        # BEGIN/ROLLBACK round trips around its SELECT(s).
+        async with self._registry_db.read_session() as session:
             return await RegistryService(session).resolve_operation(
                 method=method, url=url, revision_id=revision_id
             )
