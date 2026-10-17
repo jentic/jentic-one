@@ -157,11 +157,13 @@ The contract:
   `request.entries` is already filtered. Return the **full** ranked list — never
   apply a limit. `request.options` is empty today; new request fields are added
   with defaults.
-- **Output.** Higher scores rank first. The service drops rows with a
-  non-finite or non-numeric score, rows for entries outside `request.entries`
-  and lower-scoring duplicates, then sorts by `(-score, api_id)`. A non-empty
-  result in which no row is valid counts as a failure. `match.channels` must be
-  slugs (`^[a-z][a-z0-9_-]{0,31}$`, at most 8); others are dropped.
+- **Output.** Higher scores rank first. The service drops rows whose score is
+  not a finite plain `int` or `float` (`bool` and other subclasses are
+  dropped), rows that raise while being read, rows for entries outside
+  `request.entries` and lower-scoring duplicates, then sorts by
+  `(-score, api_id)`. A non-empty result in which no row is valid counts as a
+  failure. `match.channels` must be slugs (`^[a-z][a-z0-9_-]{0,31}$`, at most
+  8); others are dropped.
 - **Stability.** Each page re-ranks and resumes after the cursor's exact
   `(score, api_id)`, so scores must be identical across calls for the same
   request. `rank()` runs once per page. If ranking is expensive, cache

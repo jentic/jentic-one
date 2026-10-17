@@ -25,7 +25,8 @@ Contract for a strategy:
   **full** ranked candidate list — the service pages it, so never apply a
   limit. An empty list means "no matches".
 - The service, not the strategy, owns the final order and validity: it drops
-  rows whose score is not a finite ``int``/``float``, rows whose entry is not
+  rows whose score is not a finite plain ``int``/``float`` (``bool`` and other
+  subclasses are dropped) or that raise while being read, rows whose entry is not
   in ``entries`` (matched by ``api_id``; the service's own entry is served),
   and duplicate ``api_id`` rows (the best-scoring one is kept), then sorts by
   ``(-score, api_id)``. Higher scores rank first. A non-empty result with no
@@ -374,7 +375,8 @@ class NormalizedRanking:
     #: Valid rows, unique by ``api_id``, sorted by ``(-score, api_id)``; each
     #: row's ``entry`` is the service's own entry for that ``api_id``.
     rows: list[RankedEntry]
-    #: Rows whose score is not a finite ``int``/``float`` (or not a ``RankedEntry``).
+    #: Rows that are not a ``RankedEntry``, whose score is not a finite plain
+    #: ``int``/``float``, or that raised while being read.
     dropped_invalid: int = 0
     #: Rows whose ``api_id`` is not among the filtered entries.
     dropped_foreign: int = 0
@@ -388,22 +390,45 @@ class NormalizedRanking:
 
 
 def _valid_score(score: object) -> bool:
-    if isinstance(score, bool) or not isinstance(score, int | float):
-        return False
-    try:
-        return math.isfinite(score)
-    except OverflowError:  # an int too large to convert to float
-        return False
+    # Exact types only: an ``int``/``float`` subclass could override comparison
+    # or negation and fail inside the sort or the pager.
+    if type(score) is int:
+        try:
+            float(score)
+        except OverflowError:  # an int too large to convert to float
+            return False
+        return True
+    return type(score) is float and math.isfinite(score)
 
 
 def _clean_match(match: object) -> CatalogMatch | None:
     """Keep well-formed slug channels (at most 8); drop anything else."""
     if not isinstance(match, CatalogMatch) or not isinstance(match.channels, tuple):
         return None
-    channels = tuple(c for c in match.channels if isinstance(c, str) and _CHANNEL_RE.fullmatch(c))[
+    channels = tuple(c for c in match.channels if type(c) is str and _CHANNEL_RE.fullmatch(c))[
         :_MAX_MATCH_CHANNELS
     ]
     return CatalogMatch(channels=channels) if channels else None
+
+
+def _read_row(
+    row: object, by_id: Mapping[str, mb.ManifestEntry]
+) -> tuple[mb.ManifestEntry | None, int | float, CatalogMatch | None] | None:
+    """``(own entry or None if foreign, score, match)`` for a row; ``None`` if invalid.
+
+    Any exception while reading the row (a property that raises, an ``api_id``
+    whose hashing fails, ...) makes it invalid rather than failing the search.
+    """
+    try:
+        if not isinstance(row, RankedEntry) or not _valid_score(row.score):
+            return None
+        score = row.score
+        api_id = getattr(row.entry, "api_id", None)
+        own = by_id.get(api_id) if isinstance(api_id, str) else None
+        match = _clean_match(row.match) if own is not None else None
+    except Exception:  # strategy-supplied objects can raise from any attribute
+        return None
+    return own, score, match
 
 
 def normalize_ranking(
@@ -411,30 +436,31 @@ def normalize_ranking(
 ) -> NormalizedRanking:
     """Validate and order a strategy's output so keyset paging over it is sound.
 
-    Drops rows that are not :class:`RankedEntry`, have a non-finite or non-numeric
-    score, or name an ``api_id`` outside ``entries``; keeps the best-scoring row per
-    ``api_id``; swaps in the service's own entry (a strategy can't alter what is
-    served); and sorts by ``(-score, api_id)`` — the order ``paginate_entries``
-    and the cursor assume.
+    Drops rows that are not :class:`RankedEntry`, have a score that is not a
+    finite plain ``int``/``float`` (``bool`` and other subclasses are dropped),
+    raise while being read, or name an ``api_id`` outside ``entries``; keeps the best-scoring row
+    per ``api_id``; swaps in the service's own entry (a strategy can't alter
+    what is served); and sorts by ``(-score, api_id)`` — the order
+    ``paginate_entries`` and the cursor assume.
     """
     by_id = {e.api_id: e for e in entries}
     best: dict[str, RankedEntry] = {}
     invalid = foreign = duplicate = 0
     for row in ranked:
-        if not isinstance(row, RankedEntry) or not _valid_score(row.score):
+        read = _read_row(row, by_id)
+        if read is None:
             invalid += 1
             continue
-        api_id = getattr(row.entry, "api_id", None)
-        own = by_id.get(api_id) if isinstance(api_id, str) else None
+        own, score, match = read
         if own is None:
             foreign += 1
             continue
         kept = best.get(own.api_id)
         if kept is not None:
             duplicate += 1
-            if kept.score >= row.score:
+            if kept.score >= score:
                 continue
-        best[own.api_id] = RankedEntry(entry=own, score=row.score, match=_clean_match(row.match))
+        best[own.api_id] = RankedEntry(entry=own, score=score, match=match)
     rows = sorted(best.values(), key=lambda r: (-r.score, r.entry.api_id))
     return NormalizedRanking(
         rows=rows, dropped_invalid=invalid, dropped_foreign=foreign, dropped_duplicate=duplicate
