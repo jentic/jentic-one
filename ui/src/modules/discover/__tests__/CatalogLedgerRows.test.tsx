@@ -13,12 +13,17 @@ const ENTITY: DiscoveryEntity = {
 	id: 'github.com',
 	entryId: 'public/github.com',
 	apiId: 'github.com',
+	sourceSlug: 'public',
+	browseKey: 'github.com',
+	displayVendor: 'github.com',
+	alternates: 0,
+	hasSpec: true,
 	summary: 'github.com',
 	registered: false,
 	updateAvailable: false,
 	vendor: 'github.com',
 	version: '1.1.4',
-	githubUrl: 'https://github.com/jentic/x/github.com',
+	humanUrl: 'https://github.com/jentic/x/github.com',
 };
 
 const CREDENTIAL = { credential_id: 'cred_1', name: 'GitHub PAT' } as Credential;

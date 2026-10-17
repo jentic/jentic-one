@@ -105,7 +105,7 @@ interface CatalogPageParam {
 export interface UseDiscoverCatalogResult {
 	/** Flattened entities across all loaded keyset pages. */
 	entities: DiscoveryEntity[];
-	/** Whole-manifest size (stable while scrolling — no status-row flicker). */
+	/** Whole-catalog size (stable while scrolling — no status-row flicker). */
 	catalogTotal: number;
 	/**
 	 * How many PUBLIC CATALOG entries are matched to a local spec url. NOT the
@@ -117,8 +117,8 @@ export interface UseDiscoverCatalogResult {
 	registeredCount: number;
 	/** How many imported entries have an upstream update available. */
 	outdatedCount: number;
-	/** Manifest freshness from the first page; null = never fetched. */
-	manifestAgeSeconds: number | null;
+	/** Age of the least recently synced visible source (first page); null = none synced. */
+	oldestSourceSyncAgeSeconds: number | null;
 	isPending: boolean;
 	isFetching: boolean;
 	error: Error | null;
@@ -139,7 +139,7 @@ export interface UseDiscoverCatalogResult {
  * `q` and `filter` are baked into the query key, so changing either starts a
  * fresh paged query from a null cursor (the contract requires keeping them
  * constant across a cursored scroll). `catalog_total`/`registered_count` are
- * read off the first page only — they describe the whole manifest and stay
+ * read off the first page only — they describe the whole catalog and stay
  * constant while paging, so the Discover status row doesn't flicker.
  */
 export function useDiscoverCatalog(params: {
@@ -208,7 +208,7 @@ export function useDiscoverCatalog(params: {
 		catalogTotal: first?.catalogTotal ?? 0,
 		registeredCount: first?.registeredCount ?? 0,
 		outdatedCount: first?.outdatedCount ?? 0,
-		manifestAgeSeconds: first?.manifestAgeSeconds ?? null,
+		oldestSourceSyncAgeSeconds: first?.oldestSourceSyncAgeSeconds ?? null,
 		isPending: query.isPending,
 		isFetching: query.isFetching,
 		error: query.error,
@@ -240,22 +240,25 @@ export interface UseCatalogJumpResult {
 }
 
 /**
- * Every browse row from `startKey` (exclusive keyset position) up to `endKey`
- * (exclusive api_id bound) — one rail letter, in a few bulk pages.
+ * Every browse row of `sourceSlug` from `startKey` (exclusive keyset
+ * position) up to `endKey` (exclusive browse-key bound) — one rail letter, in
+ * a few bulk pages.
  */
 async function listCatalogRange(
+	sourceSlug: string,
 	startKey: string,
 	endKey: string,
 	filter: CatalogFilter,
 ): Promise<DiscoveryEntity[]> {
 	const rows: DiscoveryEntity[] = [];
-	let cursor: string | null = catalogCursorAfter(startKey);
+	let cursor: string | null = catalogCursorAfter(`${sourceSlug}/${startKey}`);
 	if (cursor == null) throw jumpCursorUnavailable();
+	const inRange = (e: DiscoveryEntity) => e.sourceSlug === sourceSlug && e.browseKey < endKey;
 	for (;;) {
 		const page = await listCatalog({ filter, cursor, limit: CATALOG_BULK_PAGE_SIZE });
-		rows.push(...page.entities.filter((e) => e.apiId < endKey));
+		rows.push(...page.entities.filter(inRange));
 		const last = page.entities[page.entities.length - 1];
-		if (!page.hasMore || !page.nextCursor || !last || last.apiId >= endKey) return rows;
+		if (!page.hasMore || !page.nextCursor || !last || !inRange(last)) return rows;
 		cursor = page.nextCursor;
 	}
 }
@@ -263,18 +266,24 @@ async function listCatalogRange(
 /**
  * An A–Z rail jump: the browse feed started at a letter instead of the top
  * (`startKey`, e.g. `y` — see `jumpStartKey`), so the jump costs one page
- * rather than paging through everything before it. The ledger shows it as a
- * second range after the head feed, and the two merge when they meet.
- * Shares the catalog root key, so refreshes / import landings refetch it.
+ * rather than paging through everything before it. The browse feed is in
+ * `entry_id` order, so the jump starts inside one source (`sourceSlug`, the
+ * one the head feed is browsing). The ledger shows it as a second range after
+ * the head feed, and the two merge when they meet. Shares the catalog root
+ * key, so refreshes / import landings refetch it.
  */
 export function useCatalogJump(params: {
 	startKey: string | null;
+	sourceSlug: string;
 	filter: CatalogFilter;
 	enabled?: boolean;
 	pollWhilePending?: boolean;
 }): UseCatalogJumpResult {
 	const enabled = (params.enabled ?? true) && params.startKey != null;
-	const jumpCursor = params.startKey != null ? catalogCursorAfter(params.startKey) : null;
+	const jumpCursor =
+		params.startKey != null
+			? catalogCursorAfter(`${params.sourceSlug}/${params.startKey}`)
+			: null;
 	const query = useInfiniteQuery<
 		CatalogPage,
 		Error,
@@ -282,7 +291,13 @@ export function useCatalogJump(params: {
 		readonly unknown[],
 		CatalogPageParam
 	>({
-		queryKey: [...discoverKeys.catalogAll, 'jump', params.startKey, params.filter] as const,
+		queryKey: [
+			...discoverKeys.catalogAll,
+			'jump',
+			params.sourceSlug,
+			params.startKey,
+			params.filter,
+		] as const,
 		queryFn: ({ pageParam }) => {
 			// Every page of a jump is cursored; a null cursor means the start
 			// position couldn't be encoded, so fail and let the ledger page forward.
@@ -307,7 +322,7 @@ export function useCatalogJump(params: {
 
 	// Growing the range backward, a letter at a time (the server only pages
 	// forward, but a jump cursor can start anywhere). Reset with the jump.
-	const scope = `${params.startKey}\u0000${params.filter}`;
+	const scope = `${params.sourceSlug}\u0000${params.startKey}\u0000${params.filter}`;
 	const [earlier, setEarlier] = useState<{ scope: string; keys: string[] }>({
 		scope,
 		keys: [],
@@ -317,8 +332,15 @@ export function useCatalogJump(params: {
 		queries: earlierKeys.map((key, i) => {
 			const end = i === 0 ? params.startKey! : earlierKeys[i - 1];
 			return {
-				queryKey: [...discoverKeys.catalogAll, 'range', key, end, params.filter] as const,
-				queryFn: () => listCatalogRange(key, end, params.filter),
+				queryKey: [
+					...discoverKeys.catalogAll,
+					'range',
+					params.sourceSlug,
+					key,
+					end,
+					params.filter,
+				] as const,
+				queryFn: () => listCatalogRange(params.sourceSlug, key, end, params.filter),
 				retry: false,
 			};
 		}),
@@ -657,7 +679,7 @@ export function useImportCatalogApi(): UseImportResult {
 }
 
 interface UseRefreshCatalogResult {
-	/** Force a backend manifest rebuild, then refetch the Discover feed. */
+	/** Force a backend catalog source sync, then refetch the Discover feed. */
 	refresh: () => void;
 	isRefreshing: boolean;
 }
@@ -666,8 +688,8 @@ interface UseRefreshCatalogResult {
  * Force-refresh the catalog snapshot via `POST /catalog:refresh`.
  *
  * This differs from a client refetch of the loaded pages: it asks the backend
- * to pull the upstream manifest again, which is what actually resets
- * `manifest_age_seconds`. On success we invalidate the whole catalog feed so
+ * to sync its catalog sources again, which is what actually resets
+ * `oldest_source_sync_age_seconds`. On success we invalidate the whole catalog feed so
  * the ledger + status row re-read the fresh snapshot, and toast the new entry
  * count.
  */
@@ -677,24 +699,11 @@ export function useRefreshCatalog(): UseRefreshCatalogResult {
 	const mutation = useMutation({
 		mutationFn: () => refreshCatalog(),
 		onSuccess: (res) => {
-			if (res.status === 'partial') {
-				// Some sources failed or ran out of time; they keep their last good
-				// entries and the scanner retries them.
-				const failed = (res.sources ?? [])
-					.filter((s) => s.status === 'failed' || s.status === 'skipped')
-					.map((s) => s.slug);
-				toast({
-					title: 'Catalog partly refreshed',
-					description: `Couldn't refresh ${failed.join(', ') || 'some sources'}; they keep their last entries (${res.count.toLocaleString()} APIs).`,
-					variant: 'warning',
-				});
-			} else {
-				toast({
-					title: 'Catalog refreshed',
-					description: `Pulled the latest manifest from the Jentic public catalog (${res.count.toLocaleString()} APIs).`,
-					variant: 'success',
-				});
-			}
+			toast({
+				title: 'Catalog refreshed',
+				description: `Synced the catalog sources (${res.count.toLocaleString()} APIs).`,
+				variant: 'success',
+			});
 			queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
 		},
 		onError: (error: unknown) => {

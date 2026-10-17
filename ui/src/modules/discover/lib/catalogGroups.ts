@@ -6,8 +6,9 @@
  *   - **Search** (a query is active): a flat list in the server's rank order.
  *     No groups, no vendor nesting, no A–Z rail.
  *   - **Browse**: entries already in your workspace come first, in their own
- *     group. The rest are grouped by vendor (the `api_id` domain) under A–Z
- *     letter headings, then `0–9 & symbols` LAST (matching the rail's `#`).
+ *     group. The rest are grouped by vendor (the entry's `display_vendor`)
+ *     under A–Z letter headings, then `0–9 & symbols` LAST (matching the
+ *     rail's `#`).
  *       · 1 API     → a plain row.
  *       · 2–5 APIs  → a vendor header row + indented child rows.
  *       · > 5 APIs  → one collapsed summary row ("vendor · A, B, C, D +N more")
@@ -16,12 +17,14 @@
  *     `N+` while it may continue on a later page. `GET /catalog` carries no
  *     per-vendor or per-letter totals, so none are invented.
  *
- * Paging is APPEND-ONLY. `GET /catalog` browses in plain codepoint `api_id`
- * order (Python `sorted(key=api_id)`): digits, then the few Capitalised ids
- * (`Eventbrite`, `Mapbox`…), then the lowercase a–z run, then `{templated}`
- * hosts. Grouping/lettering is derived from that same key, so a new page
- * only ever adds rows after the ones already shown:
- *   - letters come from the `api_id`'s first character, compared
+ * Paging is APPEND-ONLY. `GET /catalog` browses in plain codepoint `entry_id`
+ * order (`{source_slug}/{external_id}`), so within one source the rows arrive
+ * in the order of the entry's `browseKey` (its id inside the source, e.g.
+ * `stripe.com`): digits, then the few Capitalised ids (`Eventbrite`,
+ * `Mapbox`…), then the lowercase a–z run, then `{templated}` hosts.
+ * Grouping/lettering is derived from that same key, so a new page only ever
+ * adds rows after the ones already shown:
+ *   - letters come from the `browseKey`'s first character, compared
  *     case-insensitively (never from a display name);
  *   - the lowercase run arrives in order, so its highest key is the feed's
  *     *frontier*; a Capitalised id arrives early (page 1) and is held back
@@ -35,6 +38,11 @@
  *     as its summary row and only its count/"+N more" update in place.
  * A big vendor's collapsed/expanded state is the caller's `expandedVendors`
  * set (keyed by the vendor item's `key`).
+ *
+ * Several visible sources stream one after another (`internal/…` before
+ * `public/…`). A later source's rows then sort into the letters already shown
+ * as its pages load, rather than strictly after them: the list stays sorted,
+ * only the append-only and settled-letter guarantees are per source.
  */
 import type { DiscoveryEntity } from '@/modules/discover/api';
 
@@ -123,13 +131,18 @@ export interface CatalogLedgerModel {
 	jumpMerged: boolean;
 }
 
-/** The vendor domain of a catalog entry (`googleapis.com/gmail` → `googleapis.com`). */
+/**
+ * The vendor a catalog entry groups under: its display vendor
+ * (`googleapis.com/gmail` → `googleapis.com`; a namespaced
+ * `aws-prod~stripe.com` → `stripe.com`).
+ */
 export function vendorOf(entity: DiscoveryEntity): string {
+	if (entity.displayVendor) return entity.displayVendor;
 	const slash = entity.apiId.indexOf('/');
 	return slash === -1 ? entity.apiId : entity.apiId.slice(0, slash);
 }
 
-/** The rail letter a name/api_id files under (`#` = digit or symbol). */
+/** The rail letter a name/browse key files under (`#` = digit or symbol). */
 export function railLetterOf(name: string): RailLetter {
 	const first = name.trim().charAt(0).toUpperCase();
 	return first >= 'A' && first <= 'Z' ? (first as RailLetter) : '#';
@@ -145,11 +158,11 @@ export function formatVendorCount({ count, atLeast }: VendorCount): string {
 	return `${count}${atLeast ? '+' : ''} API${count === 1 && !atLeast ? '' : 's'}`;
 }
 
-/** The browse order key: the `api_id`, case-folded. */
-const sortKey = (entity: DiscoveryEntity) => entity.apiId.toLowerCase();
+/** The browse order key: the entry's `browseKey`, case-folded. */
+const sortKey = (entity: DiscoveryEntity) => entity.browseKey.toLowerCase();
 /** Ids the server streams in ascending case-folded order (its lowercase run). */
 const inOrderRun = (entity: DiscoveryEntity) => {
-	const c = entity.apiId.charAt(0);
+	const c = entity.browseKey.charAt(0);
 	return c >= 'a' && c <= 'z';
 };
 
@@ -189,6 +202,13 @@ export function frontierKeyOf(rows: readonly DiscoveryEntity[]): string {
 	let frontier = '';
 	for (const e of rows) if (inOrderRun(e) && sortKey(e) > frontier) frontier = sortKey(e);
 	return frontier;
+}
+
+/** The (case-folded) vendor of the row at `frontier`, or null. */
+function frontierVendorOf(rows: readonly DiscoveryEntity[], frontier: string): string | null {
+	if (!frontier) return null;
+	const row = rows.find((e) => inOrderRun(e) && sortKey(e) === frontier);
+	return row ? vendorOf(row).toLowerCase() : null;
 }
 
 function dedupe(rows: readonly DiscoveryEntity[]): DiscoveryEntity[] {
@@ -309,7 +329,7 @@ export function buildCatalogLedger(
 	// Capitalised ids arrive with page 1, out of order; each lands in the
 	// part whose loaded range covers it (else waits) — never above shown rows.
 	const held = loaded.filter(
-		(e) => !e.registered && !inOrderRun(e) && railLetterOf(e.apiId) !== '#',
+		(e) => !e.registered && !inOrderRun(e) && railLetterOf(e.browseKey) !== '#',
 	);
 	const placed = parts.map((part) => {
 		const frontier = frontierKeyOf(part.rows);
@@ -330,8 +350,10 @@ export function buildCatalogLedger(
 	const symbolsReady = !last.hasMore && (placed[0].frontier !== '' || !placed[0].hasMore);
 	const symbols = symbolsReady
 		? loaded
-				.filter((e) => !e.registered && railLetterOf(e.apiId) === '#')
-				.sort((a, b) => (a.apiId < b.apiId ? -1 : a.apiId > b.apiId ? 1 : 0))
+				.filter((e) => !e.registered && railLetterOf(e.browseKey) === '#')
+				.sort((a, b) =>
+					a.browseKey < b.browseKey ? -1 : a.browseKey > b.browseKey ? 1 : 0,
+				)
 		: [];
 
 	// Consecutive rows of one vendor form a run (the server keeps them together).
@@ -427,9 +449,9 @@ export function buildCatalogLedger(
 	let gap: CatalogLedgerModel['gap'] = null;
 	placed.forEach((part, i) => {
 		// Only the vendor at a part's frontier can continue on its next page.
-		const growingVendor = part.hasMore && part.frontier ? part.frontier.split('/')[0] : null;
+		const growingVendor = part.hasMore ? frontierVendorOf(part.rows, part.frontier) : null;
 		emitRuns(
-			runsOf(part.rows, (e) => railLetterOf(e.apiId)),
+			runsOf(part.rows, (e) => railLetterOf(e.browseKey)),
 			growingVendor,
 		);
 		const next = placed[i + 1];
@@ -465,7 +487,7 @@ export function buildCatalogLedger(
 	const importedVendors = new Map<RailLetter, string[]>();
 	for (const e of loaded) {
 		if (!e.registered) continue;
-		const letter = railLetterOf(e.apiId);
+		const letter = railLetterOf(e.browseKey);
 		if (letter === '#' && !symbolsReady) continue;
 		importedVendors.set(letter, [...(importedVendors.get(letter) ?? []), vendorOf(e)]);
 	}

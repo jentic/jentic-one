@@ -47,7 +47,7 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.registered).toBe(true);
 		expect(entity.summary).toBe('stripe.com');
 		expect(entity.subtitle).toBe('stripe');
-		expect(entity.githubUrl).toBeUndefined();
+		expect(entity.humanUrl).toBeUndefined();
 	});
 
 	it('addresses the entry by entry_id and names it by catalog_api_id', () => {
@@ -81,7 +81,7 @@ describe('catalogEntryToEntity', () => {
 		const entity = catalogEntryToEntity(availableEntry);
 		expect(entity.registered).toBe(false);
 		expect(entity.apiId).toBe('slack.com');
-		expect(entity.githubUrl).toContain('slack.com.json');
+		expect(entity.humanUrl).toContain('slack.com.json');
 	});
 
 	it('falls back to catalog_api_id when the entry has no vendor', () => {

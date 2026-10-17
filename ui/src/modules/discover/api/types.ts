@@ -1,9 +1,9 @@
 /**
  * Discover module — UI-facing types.
  *
- * Discover browses the public catalog (`GET /catalog`): a single keyset-paginated
- * feed of importable APIs, each carrying a `registered` flag (true once it's been
- * imported into this deployment). There is no server-side blend of local + catalog
+ * Discover browses the catalog (`GET /catalog`): a single keyset-paginated feed
+ * of importable APIs from every catalog source the caller can see, each carrying
+ * a `registered` flag (true once it's been imported into this deployment). There is no server-side blend of local + catalog
  * — the catalog's own per-entry `registered` boolean is the source of truth for
  * the "In your workspace" marker, so the ledger is fed entirely from `/catalog`.
  *
@@ -25,18 +25,41 @@ export interface DiscoveryEntity {
 	entryId: string;
 	/** The entry's `catalog_api_id` (the identity workspace APIs record at import). */
 	apiId: string;
+	/** Slug of the catalog source the entry comes from (`public`, `internal`, …). */
+	sourceSlug: string;
 	/**
-	 * Human-readable title, distinct per entry even within one umbrella vendor.
-	 * Derived from `api_id`: a sub-API segment (`nytimes.com/article_search` →
-	 * `Article Search`) or the bare `api_id` when there is no sub-API.
+	 * The entry's position within its source: `entry_id` without the
+	 * `{source_slug}/` prefix (`public/stripe.com` → `stripe.com`). The browse
+	 * feed is ordered by `entry_id`, so within one source this is the order
+	 * the rows arrive in — the ledger's letters and keyset jumps key on it.
+	 */
+	browseKey: string;
+	/**
+	 * Human-readable title, distinct per entry even within one umbrella vendor:
+	 * the source's `title` when it lists one, else derived from the
+	 * `catalog_api_id` — a sub-API segment (`nytimes.com/article_search` →
+	 * `Article Search`) or the bare id when there is no sub-API.
 	 */
 	summary: string;
 	/**
-	 * Secondary line under the title — the shared vendor/domain (e.g.
+	 * Secondary line under the title — the display vendor (e.g.
 	 * `nytimes.com`). Present only when it adds context beyond `summary`
 	 * (i.e. the entry is an umbrella sub-API); omitted otherwise.
 	 */
 	subtitle?: string;
+	/**
+	 * The vendor the ledger groups the entry under (`display_vendor`, e.g.
+	 * `stripe.com` for a namespaced `aws-prod~stripe.com`). Display only — never
+	 * an identity.
+	 */
+	displayVendor: string;
+	/**
+	 * How many other visible entries (from other sources) share this entry's
+	 * `catalog_api_id` and are collapsed into it.
+	 */
+	alternates: number;
+	/** Whether the entry has an importable spec (false for a listing-only card). */
+	hasSpec: boolean;
 	/** Whether the API is already imported locally. Drives the In your workspace / Available pill. */
 	registered: boolean;
 	/**
@@ -48,18 +71,15 @@ export interface DiscoveryEntity {
 	/** Vendor / domain key (e.g. `stripe.com`) used for the vendor icon. */
 	vendor?: string;
 	/**
-	 * The catalog entry's own `vendor`, verbatim (no `api_id` fallback) — what a
+	 * The catalog entry's identity `vendor`, verbatim (no fallback) — what a
 	 * catalog import registers the API under (`catalogImportRef`). Absent when
-	 * the manifest has none.
+	 * the source lists none.
 	 */
 	catalogVendor?: string;
-	/**
-	 * Spec version read off `spec_url` — only when it follows the
-	 * jentic-public-apis layout (`parseCatalogSpecUrl`); absent otherwise.
-	 */
+	/** The entry's version, when its source lists one. */
 	version?: string;
-	/** GitHub source URL for the catalog spec, when the manifest has one. */
-	githubUrl?: string;
+	/** The entry's human-facing page at its source (a GitHub tree for `public`), when known. */
+	humanUrl?: string;
 }
 
 /**
