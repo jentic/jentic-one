@@ -17,7 +17,7 @@ from jentic_one.migrations.run import downgrade, upgrade
 
 _DB = "admin"
 _TABLE = "assertion_jtis"
-_UNIQUE = "uq_assertion_jtis_issuer_jti_digest"
+_UNIQUE = "ix_assertion_jtis_issuer_jti_digest"
 _PRUNE = "ix_assertion_jtis_expires_at"
 _PARENT_REV = "c00de2f5d777"  # pragma: allowlist secret
 
