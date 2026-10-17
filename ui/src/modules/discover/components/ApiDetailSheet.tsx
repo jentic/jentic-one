@@ -66,6 +66,11 @@ interface ApiDetailSheetProps {
 	 * else the workspace view. Omitted ⇒ no link.
 	 */
 	workspaceHref?: string | null;
+	/**
+	 * Show the entry's source tag: only while the loaded entries span more
+	 * than one source (`spansSources`), like the ledger's row badges.
+	 */
+	showSource?: boolean;
 }
 
 export function ApiDetailSheet({
@@ -77,6 +82,7 @@ export function ApiDetailSheet({
 	title,
 	icon,
 	workspaceHref,
+	showSource = false,
 }: ApiDetailSheetProps) {
 	const titleId = useId();
 	const [selectedOp, setSelectedOp] = useState<string | null>(null);
@@ -216,12 +222,14 @@ export function ApiDetailSheet({
 										</SoftPill>
 									)
 								)}
-								<Tag
-									data-testid="sheet-source"
-									title={`From the ${entity.sourceSlug} catalog source`}
-								>
-									{entity.sourceSlug}
-								</Tag>
+								{showSource && (
+									<Tag
+										data-testid="sheet-source"
+										title={`From the ${entity.sourceSlug} catalog source`}
+									>
+										{entity.sourceSlug}
+									</Tag>
+								)}
 								{entity.alternates > 0 && (
 									<span
 										className="text-muted-foreground text-[12px]"

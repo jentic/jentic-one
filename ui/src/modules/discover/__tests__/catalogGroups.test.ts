@@ -51,6 +51,27 @@ describe('catalogGroups', () => {
 		expect(vendorOf(api('stripe.com'))).toBe('stripe.com');
 	});
 
+	it('groups namespaced entries by display_vendor, in browse order', () => {
+		const ns = (id: string) =>
+			api(id, {
+				entryId: `internal/${id}`,
+				sourceSlug: 'internal',
+				displayVendor: 'stripe.com',
+				vendor: 'stripe.com',
+			});
+		const rows = [ns('aws-prod~stripe.com'), ns('aws-prod~stripe.com/connect')];
+		expect(vendorOf(rows[0])).toBe('stripe.com');
+		const model = buildCatalogLedger(rows, { searching: false, hasNextPage: false });
+		// One stripe.com vendor holding both. The letter follows the browse key
+		// (the keyset order a rail jump lands in), not the display vendor.
+		expect(kinds(model.items)).toEqual([
+			'group:A',
+			'vendor:stripe.com',
+			'child:aws-prod~stripe.com',
+			'child:aws-prod~stripe.com/connect',
+		]);
+	});
+
 	it('files digits/symbols under # and letters under themselves', () => {
 		expect(railLetterOf('100hires.com')).toBe('#');
 		expect(railLetterOf('{subdomain}.pinpointhq.com')).toBe('#');
