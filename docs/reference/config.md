@@ -311,12 +311,34 @@ Spec ingestion settings (fetch limits, timeouts, egress policy).
 
 ## `catalog`
 
-Public API catalog settings (manifest source + staleness).
+Public API catalog settings (sources, staleness, update notify).
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `catalog.manifest_url` | string | `"https://raw.githubusercontent.com/jentic/jentic-public-a…` | `JENTIC__CATALOG__MANIFEST_URL` | Manifest source for the public API catalog. Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json |
-| `catalog.manifest_max_age_seconds` | integer | `86400` | `JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS` |  |
+| `catalog.manifest_url` | string | `"https://raw.githubusercontent.com/jentic/jentic-public-a…` | `JENTIC__CATALOG__MANIFEST_URL` | Deprecated alias for the legacy source's settings.url (catalog.sources[slug=legacy_source_slug]). Full default: https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json |
+| `catalog.manifest_max_age_seconds` | integer | `86400` | `JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS` | Deprecated alias for the legacy source's max_age_seconds. |
+| `catalog.sources` | list of CatalogSourceConfig | — | `JENTIC__CATALOG__SOURCES` | Catalog sources. The default is the curated public-apis manifest. |
+| `catalog.sources.<n>.slug` | string | *required* | `JENTIC__CATALOG__SOURCES__<N>__SLUG` | Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$. |
+| `catalog.sources.<n>.kind` | string | *required* | `JENTIC__CATALOG__SOURCES__<N>__KIND` | Registered source kind, e.g. git-manifest. |
+| `catalog.sources.<n>.enabled` | boolean | `true` | `JENTIC__CATALOG__SOURCES__<N>__ENABLED` | Disabled sources are never synced (kill switch for this source). |
+| `catalog.sources.<n>.visibility` | "public" \| "org" \| "restricted" | `"public"` | `JENTIC__CATALOG__SOURCES__<N>__VISIBILITY` |  |
+| `catalog.sources.<n>.trust` | "curated" \| "internal" \| "untrusted" | `"untrusted"` | `JENTIC__CATALOG__SOURCES__<N>__TRUST` | curated sources own the catalog_api_ids they list. |
+| `catalog.sources.<n>.precedence` | integer | `0` | `JENTIC__CATALOG__SOURCES__<N>__PRECEDENCE` |  |
+| `catalog.sources.<n>.max_age_seconds` | integer (>= 0) | `86400` | `JENTIC__CATALOG__SOURCES__<N>__MAX_AGE_SECONDS` | Background sync interval. 0 disables automatic sync and background egress for this source; a manual refresh still syncs it. |
+| `catalog.sources.<n>.max_removal_ratio` | number (>= 0.0, <= 1.0) | `0.2` | `JENTIC__CATALOG__SOURCES__<N>__MAX_REMOVAL_RATIO` | Mass-removal guard: a sync removing more than this share is held. |
+| `catalog.sources.<n>.min_removal_count` | integer (>= 0) | `5` | `JENTIC__CATALOG__SOURCES__<N>__MIN_REMOVAL_COUNT` | The removal ratio only trips above this many removals. |
+| `catalog.sources.<n>.sync_lease_seconds` | integer (>= 3) | `60` | `JENTIC__CATALOG__SOURCES__<N>__SYNC_LEASE_SECONDS` | Cross-process sync lease, renewed every third of it. |
+| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` |  |
+| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` |  |
+| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` |  |
+| `catalog.sources.<n>.readers.permissions` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__PERMISSIONS` |  |
+| `catalog.sources.<n>.readers.actor_ids` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__ACTOR_IDS` |  |
+| `catalog.sources.<n>.settings` | object | — | `JENTIC__CATALOG__SOURCES__<N>__SETTINGS` | Kind-specific settings. |
+| `catalog.catalog_api_id_mappings` | list of CatalogApiIdMappingConfig | — | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS` | Rows letting a non-curated entry claim a curated catalog_api_id; matched case-insensitively and applied in the curated casing. |
+| `catalog.catalog_api_id_mappings.<n>.source` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__SOURCE` |  |
+| `catalog.catalog_api_id_mappings.<n>.external_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__EXTERNAL_ID` |  |
+| `catalog.catalog_api_id_mappings.<n>.catalog_api_id` | string | *required* | `JENTIC__CATALOG__CATALOG_API_ID_MAPPINGS__<N>__CATALOG_API_ID` |  |
+| `catalog.legacy_source_slug` | string | `"public"` | `JENTIC__CATALOG__LEGACY_SOURCE_SLUG` | The git-manifest source the deprecated manifest_* keys map onto and that pre-existing catalog imports are reconciled against. |
 | `catalog.update_check_interval_seconds` | integer | `86400` | `JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS` |  |
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |
