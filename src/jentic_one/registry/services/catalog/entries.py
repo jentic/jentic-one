@@ -14,7 +14,8 @@ across sources and is what the control plane (credentials, bindings) keys on.
   any other source whose slugified vendor equals a curated vendor is namespaced
   to ``{source_slug}~{hint}`` (so no existing vendor-wide credential covers it),
   unless a ``catalog.catalog_api_id_mappings`` row allows that exact entry;
-- a missing or invalid hint, or a namespaced form whose slug still equals a
+- a missing or invalid hint (``~`` is reserved for the resolver, so a hint
+  containing it is invalid), or a namespaced form whose slug still equals a
   curated vendor's or id's slug, becomes
   ``{source_slug}~{slugify_api_field(external_id)}``.
 
@@ -35,16 +36,12 @@ from jentic_one.registry.services.catalog.sources.metrics import (
     record_mapping_unmatched,
     record_namespaced,
 )
-from jentic_one.shared.catalog.api_id import normalise_catalog_api_id
+from jentic_one.shared.catalog.api_id import NAMESPACE_SEPARATOR, normalise_catalog_api_id
 from jentic_one.shared.config import CatalogApiIdMappingConfig, CatalogSourceConfig
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 logger = structlog.get_logger(__name__)
-
-#: Separator between a source slug and a namespaced hint. Never part of a valid
-#: curated id, so a namespaced id can never equal one.
-NAMESPACE_SEPARATOR = "~"
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +202,7 @@ class CatalogApiIdResolver:
 
     def _is_curated(self, source_slug: str) -> bool:
         cfg = self._sources.get(source_slug)
-        return cfg is not None and cfg.trust == "curated"
+        return cfg is not None and cfg.enabled and cfg.trust == "curated"
 
     def is_curated_owned(self, catalog_api_id: str) -> bool:
         """Whether ``catalog_api_id`` claims a curated vendor."""
