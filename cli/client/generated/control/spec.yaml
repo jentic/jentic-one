@@ -19119,9 +19119,8 @@ paths:
 
         A search walk keeps the ranking that served its first page. A later page
         whose cursor names a ranking that is not the configured one answers 400
-        (restart the search without a cursor); one whose ranking fails or isn't
-        available on this replica answers 503 ``catalog_search_unavailable`` with
-        ``Retry-After`` (retry the page, or restart the search).
+        (restart the search without a cursor); one whose ranking fails answers 503
+        ``catalog_search_unavailable`` (retry the page, or restart the search).
       operationId: listCatalog
       parameters:
       - description: Search text matched against entry IDs; results are ranked by the configured catalog search strategy (by default, match quality).
@@ -19203,7 +19202,7 @@ paths:
           - true
           title: Include Snoozed
           type: boolean
-      - description: Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+      - description: Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.
         examples:
           example:
             summary: Opaque cursor from a previous page
@@ -19215,10 +19214,9 @@ paths:
           anyOf:
           - examples:
             - eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
-            maxLength: 1024
             type: string
           - type: 'null'
-          description: Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.
+          description: Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.
           examples:
           - eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
           title: Cursor

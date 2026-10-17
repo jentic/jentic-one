@@ -32538,7 +32538,7 @@
     "/catalog": {
       "description": "`GET`: List Catalog.",
       "get": {
-        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.\n\nA search walk keeps the ranking that served its first page. A later page\nwhose cursor names a ranking that is not the configured one answers 400\n(restart the search without a cursor); one whose ranking fails or isn't\navailable on this replica answers 503 ``catalog_search_unavailable`` with\n``Retry-After`` (retry the page, or restart the search).",
+        "description": "List a keyset page of browsable catalog entries (search/filter aware).\n\nThe catalog holds thousands of entries, so this is cursor-paginated like\n``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.\n``catalog_total``/``registered_count``/``outdated_count`` count the whole\nmanifest, not the page, so the Discover status row stays stable while scrolling.\n\nA search walk keeps the ranking that served its first page. A later page\nwhose cursor names a ranking that is not the configured one answers 400\n(restart the search without a cursor); one whose ranking fails answers 503\n``catalog_search_unavailable`` (retry the page, or restart the search).",
         "operationId": "listCatalog",
         "parameters": [
           {
@@ -32657,7 +32657,7 @@
             }
           },
           {
-            "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.",
+            "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.",
             "examples": {
               "example": {
                 "summary": "Opaque cursor from a previous page",
@@ -32673,14 +32673,13 @@
                   "examples": [
                     "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
                   ],
-                  "maxLength": 1024,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging.",
+              "description": "Opaque cursor from a previous page's `next_cursor`; keep the other filters unchanged while paging. A cursor longer than 1 KB, or one this server didn't issue, answers 400.",
               "examples": [
                 "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
               ],
