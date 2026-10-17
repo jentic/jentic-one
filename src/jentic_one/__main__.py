@@ -129,8 +129,9 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             app: FastAPI = mod.create_app(ctx, container=container)
         else:
             app = mod.create_app(ctx)
-        # Safety net: create_surface_app already installs the platform verifier
-        # (the broker its own), so this only fires for a factory that skipped it.
+        # Safety net: create_surface_app installs the platform verifier on every
+        # control-plane surface (the broker installs its own), so this only fires
+        # for a factory that installs neither.
         if surface in SURFACES_NEEDING_AUTH:
             install_platform_token_verifier(app, ctx, replace=False)
         if surface == "broker" and ctx.is_db_allowed("registry"):

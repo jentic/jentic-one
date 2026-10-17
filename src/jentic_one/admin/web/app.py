@@ -89,7 +89,7 @@ def create_app(ctx: Context) -> FastAPI:
     # too (the split-deploy gateway routes /reference here). A combined app
     # mounts its own and never calls this factory. The reference documents the
     # whole control plane, not just admin's routes.
-    app.include_router(get_control_plane_reference_router())
+    app.include_router(get_control_plane_reference_router(ctx))
     # Serve the SPA after all API routers are registered. ``app.frontend()``
     # routes are low-priority, so API routes always win; this only needs the
     # routers present so the bundle never answers a real API path. No-op when no

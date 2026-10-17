@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import importlib
 import re
 from collections.abc import AsyncGenerator, Callable, Sequence
@@ -41,7 +42,7 @@ from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
-from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.container import AppContainer, RouterSpec
 from jentic_one.shared.web.deps import TokenVerifier
 from jentic_one.shared.web.errors import (
     request_validation_error_handler,
@@ -101,37 +102,57 @@ SURFACE_MODULES = {
 #: one control-plane API the endpoint reference documents.
 CONTROL_PLANE_SURFACES: tuple[str, ...] = ("registry", "admin", "control", "auth")
 
+#: Module holding the control-plane identity verifier chain. Imported
+#: dynamically (one named seam) so the shared layer carries no static import of
+#: a surface — the same posture as the :data:`SURFACE_MODULES` loop.
+PLATFORM_VERIFIER_MODULE = "jentic_one.auth.web.verifier"
+
 _db_instrumented = False
 
 
 def make_platform_token_verifier(ctx: Context) -> TokenVerifier:
     """Build the one identity verifier every control-plane app installs.
 
-    The chain is the auth surface's full-taxonomy verifier: agent API keys
+    The chain (:data:`PLATFORM_VERIFIER_MODULE`) resolves agent API keys
     (``jak_``; a retired ``sak_`` key is refused), opaque ``at_`` OAuth access
     tokens (resolved against the admin DB's ``access_tokens`` table), and HS256
     web-session JWTs. Combined and standalone factories both call this, so a
     standalone surface accepts exactly the token shapes the combined app does.
 
-    Resolved dynamically through :data:`SURFACE_MODULES` to avoid a static
-    shared -> auth import (same posture as the combined surface loop). The
-    broker is the one exception: it installs its own data-plane validator
+    The broker is the one exception: it installs its own data-plane validator
     (JWKS trusted issuers, TTL caches) in ``broker.core.setup``.
     """
-    auth_mod = importlib.import_module(SURFACE_MODULES["auth"])
-    verifier: TokenVerifier = auth_mod.make_superset_verifier(ctx)
+    verifier_mod = importlib.import_module(PLATFORM_VERIFIER_MODULE)
+    verifier: TokenVerifier = verifier_mod.make_superset_verifier(ctx)
     return verifier
 
 
 def install_platform_token_verifier(app: FastAPI, ctx: Context, *, replace: bool = True) -> None:
     """Install :func:`make_platform_token_verifier` as ``app.state.verify_token``.
 
+    The only writer of ``app.state.verify_token`` outside the broker.
     ``replace=False`` keeps a verifier already on the app — the composition
     root's safety net for a standalone factory that installed its own (the
     broker's data-plane validator).
     """
     if replace or not hasattr(app.state, "verify_token"):
         app.state.verify_token = make_platform_token_verifier(ctx)
+
+
+def _require_admin_db(ctx: Context, shape: str) -> None:
+    """Fail the app build when a control-plane process cannot verify callers.
+
+    Every control-plane route resolves its caller through the platform
+    verifier, which reads API keys, access tokens and permissions from the admin
+    DB. Without it ``app.state.verify_token`` would be missing and every
+    authenticated request would 500, so refuse to build instead.
+    """
+    if not ctx.is_db_allowed("admin"):
+        raise RuntimeError(
+            f"{shape} needs access to the 'admin' database to verify callers "
+            "(API keys, access tokens, permissions); add 'admin' to the "
+            "context's allowed_dbs"
+        )
 
 
 def mount_metrics_endpoint(app: FastAPI) -> None:
@@ -564,6 +585,11 @@ def create_surface_app(
     control-plane identity surface.
     """
     container = container or AppContainer.default(ctx)
+    # The broker verifies callers with its own data-plane validator; every other
+    # surface needs the admin DB for the platform verifier, so a misconfigured
+    # context fails here rather than 500ing every authenticated request.
+    if "broker" not in enabled_apps:
+        _require_admin_db(ctx, f"control-plane surface {sorted(enabled_apps)}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -683,18 +709,12 @@ def create_surface_app(
     # The platform identity verifier — the same chain create_combined_app
     # installs, so a standalone surface accepts every token shape the combined
     # app does (notably opaque ``at_`` OAuth access tokens). Installed before the
-    # container extensions so an injected installer can still replace it. The
-    # broker installs its own data-plane validator (broker.core.setup); a
-    # process without the admin DB has nowhere to resolve tokens against.
-    if "broker" not in enabled_apps and ctx.is_db_allowed("admin"):
+    # container extensions, and no surface hook writes it afterwards, so an
+    # injected installer can replace it. The broker installs its own data-plane
+    # validator (broker.core.setup).
+    if "broker" not in enabled_apps:
         install_platform_token_verifier(app, ctx)
-    for extra_router, extra_prefix, extra_tags in container.extra_routers:
-        app.include_router(
-            extra_router,
-            prefix=extra_prefix,
-            tags=list(extra_tags),
-            responses=COMMON_ERROR_RESPONSES,
-        )
+    _include_extra_routers(app, container.extra_routers)
     for installer in container.extra_installers:
         installer(app, ctx)
     for catch_all_router, catch_all_tags in catch_all_routers:
@@ -719,14 +739,23 @@ async def _root_health() -> RootHealthResponse:
     return RootHealthResponse(status="ok", version=__version__)
 
 
-def _include_control_plane_routes(app: FastAPI, apps: Sequence[str]) -> None:
+def _include_control_plane_routes(
+    app: FastAPI,
+    apps: Sequence[str],
+    *,
+    ctx: Context,
+    extra_routers: Sequence[RouterSpec] = (),
+) -> None:
     """Mount the combined control-plane route table on ``app``.
 
     Shared by :func:`create_combined_app` and
     :func:`build_control_plane_reference_app` so the live endpoint reference a
     standalone surface serves documents exactly the routes a combined app
-    mounts. Routes only — exception handlers, verifiers and extensions are the
-    caller's.
+    mounts. Routes only — exception handlers, verifiers and the extension
+    routers themselves are the caller's. ``ctx`` is the serving process's
+    context, for route factories that read deployment config.
+    ``extra_routers`` are the container routers the caller mounts after this
+    table; a partial app's endpoint reference documents them too.
     """
     app.get(
         "/health",
@@ -751,14 +780,15 @@ def _include_control_plane_routes(app: FastAPI, apps: Sequence[str]) -> None:
             app.include_router(router, prefix=prefix, tags=tags, responses=COMMON_ERROR_RESPONSES)
 
     # Public, schema-hidden endpoint reference (the CLI + docs SPA read this
-    # instead of parsing the OpenAPI document). Registered after all surfaces so
-    # the reference it builds covers every included route. A process serving
-    # only part of the control plane (a split deploy's admin+auth pod) documents
-    # the whole control plane instead of just its own routes.
+    # instead of parsing the OpenAPI document). A full control-plane app
+    # introspects itself, so every route it mounts (extensions included) is
+    # listed. A process serving only part of the control plane (a split
+    # deploy's admin+auth pod) documents the whole control plane plus its own
+    # extension routers instead of just its own routes.
     if set(CONTROL_PLANE_SURFACES) <= set(apps):
         app.include_router(get_reference_router())
     else:
-        app.include_router(get_control_plane_reference_router())
+        app.include_router(get_control_plane_reference_router(ctx, extra_routers=extra_routers))
 
     # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
     # tell which backend it is bound to — cloud vs. a local self-hosted install.
@@ -773,29 +803,47 @@ def _include_control_plane_routes(app: FastAPI, apps: Sequence[str]) -> None:
     app.include_router(get_system_router())
 
 
-def build_control_plane_reference_app() -> FastAPI:
+def _include_extra_routers(app: FastAPI, extra_routers: Sequence[RouterSpec]) -> None:
+    """Mount container-injected routers (append-only; never shadow a built-in)."""
+    for router, prefix, tags in extra_routers:
+        app.include_router(router, prefix=prefix, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
+
+
+def build_control_plane_reference_app(
+    ctx: Context, *, extra_routers: Sequence[RouterSpec] = ()
+) -> FastAPI:
     """A route-only app spanning every control-plane surface, for introspection.
 
-    Never served: it has no lifespan, context, verifier or middleware. A
-    standalone surface's ``GET /reference/endpoints.json`` introspects it
-    instead of the serving app, because a split deployment presents the whole
-    control-plane API (behind one gateway) even though each process mounts only
-    its own surface's routes.
+    Never served: it has no lifespan, verifier or middleware, and never touches
+    a database. A partial control-plane process's ``GET
+    /reference/endpoints.json`` introspects it instead of the serving app,
+    because a split deployment presents the whole control-plane API (behind one
+    gateway) even though each process mounts only its own surface's routes.
+    ``extra_routers`` (the serving process's container routers) are mounted
+    after the built-in table, in the same order the combined app uses.
     """
-    app = FastAPI(**fastapi_metadata_kwargs())
-    _include_control_plane_routes(app, CONTROL_PLANE_SURFACES)
+    app = FastAPI(**fastapi_metadata_kwargs(ctx.config.server.public_base_url))
+    _include_control_plane_routes(app, CONTROL_PLANE_SURFACES, ctx=ctx)
+    _include_extra_routers(app, extra_routers)
     install_openapi_metadata(app)
     return app
 
 
-def get_control_plane_reference_router() -> APIRouter:
-    """``GET /reference/endpoints.json`` for a standalone (split-deploy) surface.
+def get_control_plane_reference_router(
+    ctx: Context, *, extra_routers: Sequence[RouterSpec] = ()
+) -> APIRouter:
+    """``GET /reference/endpoints.json`` for a partial control-plane process.
 
     Documents every control-plane surface (:data:`CONTROL_PLANE_SURFACES`) —
     the same payload the combined app and the committed
-    ``docs/reference/endpoints.json`` carry — not just the serving process's.
+    ``docs/reference/endpoints.json`` carry — plus the process's own
+    ``extra_routers``, not just the serving process's surface routes.
     """
-    return get_reference_router(source_app=build_control_plane_reference_app)
+    return get_reference_router(
+        source_app=functools.partial(
+            build_control_plane_reference_app, ctx, extra_routers=tuple(extra_routers)
+        )
+    )
 
 
 def create_combined_app(
@@ -812,6 +860,7 @@ def create_combined_app(
     """
     container = container or AppContainer.default(ctx)
     structlog.get_logger(__name__).info("creating combined app", apps=apps)
+    _require_admin_db(ctx, f"combined control-plane app {apps}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -870,7 +919,7 @@ def create_combined_app(
     # The combined control-plane route table — the same assembly the
     # standalone endpoint reference introspects (see
     # build_control_plane_reference_app), so the two cannot drift.
-    _include_control_plane_routes(root, apps)
+    _include_control_plane_routes(root, apps, ctx=ctx, extra_routers=container.extra_routers)
 
     for surface in apps:
         mod = importlib.import_module(SURFACE_MODULES[surface])
@@ -881,20 +930,15 @@ def create_combined_app(
             mod.install_on_app(root, ctx)
 
     # Deterministic identity verifier: the platform chain (API keys + opaque
-    # ``at_`` + HS256) is installed after every surface ran ``install_on_app``,
-    # so the active verifier never depends on surface ordering or on whether
-    # the auth surface rides this process. Standalone surfaces install the same
-    # chain in create_surface_app. A process without the admin DB has nowhere to
-    # resolve tokens against, so it gets none.
-    if ctx.is_db_allowed("admin"):
-        install_platform_token_verifier(root, ctx)
+    # ``at_`` + HS256) is installed after every surface ran ``install_on_app``
+    # (no surface hook writes it), so the active verifier never depends on
+    # surface ordering or on whether the auth surface rides this process.
+    # Standalone surfaces install the same chain in create_surface_app.
+    install_platform_token_verifier(root, ctx)
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.
-    for router, prefix, tags in container.extra_routers:
-        root.include_router(
-            router, prefix=prefix, tags=list(tags), responses=COMMON_ERROR_RESPONSES
-        )
+    _include_extra_routers(root, container.extra_routers)
     for installer in container.extra_installers:
         installer(root, ctx)
 
