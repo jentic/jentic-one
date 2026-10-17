@@ -790,8 +790,9 @@ class OAuthRateLimitConfig(BaseModel):
         description=(
             "Sustained requests/minute allowed per client network (IPv4 "
             "address or IPv6 /64) across the unauthenticated authorization "
-            "flow: ``/authorize``, the IdP callback, the consent page and "
-            "submit, and the local-login form share one bucket, whatever "
+            "flow: ``/authorize``, the IdP callback, the consent page, its "
+            "submit and inline agent create, and the local-login form share "
+            "one bucket, whatever "
             "``client_id`` they name. A sign-in spends two to six requests "
             "(more after a mistyped password), so the defaults admit at "
             "least five back-to-back sign-ins and then at least five a minute "

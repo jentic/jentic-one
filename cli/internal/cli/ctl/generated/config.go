@@ -1787,15 +1787,15 @@ type MemoryBackendConfig struct {
 	// share; login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
 	// max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 	// IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
-	// twice what the default authorize rate limit lets one IP request in that time;
-	// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
-	// The sustained idempotent request rate idem can hold is min(max_entries,
-	// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
-	// about 1000 bytes plus the response headers (capped at 512 bytes): about 30
-	// req/s at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
-	// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
-	// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
-	// 1 KiB bodies, without refusing requests.
+	// twice what the default authorize rate limit lets one client network request in
+	// that time; every other namespace uses max_entries_per_namespace /
+	// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
+	// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
+	// record_bytes is about 1000 bytes plus the response headers (capped at 512
+	// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
+	// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
+	// bodies (about 830 bytes + body length each) stop being stored for replay
+	// sooner, about 5 req/s of 1 KiB bodies, without refusing requests.
 	Namespaces MemoryBackendConfigNamespaces `json:"namespaces,omitempty,omitzero" yaml:"namespaces,omitempty" mapstructure:"namespaces,omitempty"`
 }
 
@@ -1806,15 +1806,15 @@ type MemoryBackendConfig struct {
 // login-csrf (login page CSRF nonces) uses max_entries_per_namespace /
 // max_bytes_per_namespace with a 0.02 per-client share, about 370 live nonces per
 // IPv4 address or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL),
-// twice what the default authorize rate limit lets one IP request in that time;
-// every other namespace uses max_entries_per_namespace / max_bytes_per_namespace.
-// The sustained idempotent request rate idem can hold is min(max_entries,
-// max_bytes / record_bytes) / broker.idempotency.ttl_s, where record_bytes is
-// about 1000 bytes plus the response headers (capped at 512 bytes): about 30 req/s
-// at the defaults and a 1 h TTL, and a tenth of that per caller. Above it,
-// Idempotency-Key requests get 503 idempotency_unavailable; bodies (about 830
-// bytes + body length each) stop being stored for replay sooner, about 5 req/s of
-// 1 KiB bodies, without refusing requests.
+// twice what the default authorize rate limit lets one client network request in
+// that time; every other namespace uses max_entries_per_namespace /
+// max_bytes_per_namespace. The sustained idempotent request rate idem can hold is
+// min(max_entries, max_bytes / record_bytes) / broker.idempotency.ttl_s, where
+// record_bytes is about 1000 bytes plus the response headers (capped at 512
+// bytes): about 30 req/s at the defaults and a 1 h TTL, and a tenth of that per
+// caller. Above it, Idempotency-Key requests get 503 idempotency_unavailable;
+// bodies (about 830 bytes + body length each) stop being stored for replay sooner,
+// about 5 req/s of 1 KiB bodies, without refusing requests.
 type MemoryBackendConfigNamespaces map[string]MemoryNamespaceBudgetConfig
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -1977,11 +1977,11 @@ type OAuthRateLimitConfig struct {
 
 	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
 	// across the unauthenticated authorization flow: ``/authorize``, the IdP
-	// callback, the consent page and submit, and the local-login form share one
-	// bucket, whatever ``client_id`` they name. A sign-in spends two to six requests
-	// (more after a mistyped password), so the defaults admit at least five
-	// back-to-back sign-ins and then at least five a minute per network; raise both
-	// for a large shared NAT or egress IP. Behind a proxy, set
+	// callback, the consent page, its submit and inline agent create, and the
+	// local-login form share one bucket, whatever ``client_id`` they name. A sign-in
+	// spends two to six requests (more after a mistyped password), so the defaults
+	// admit at least five back-to-back sign-ins and then at least five a minute per
+	// network; raise both for a large shared NAT or egress IP. Behind a proxy, set
 	// ``auth.oauth_rate_limit.trusted_proxies`` or every client shares the proxy's
 	// bucket.
 	AuthorizeRpm int `json:"authorize_rpm,omitempty,omitzero" yaml:"authorize_rpm,omitempty" mapstructure:"authorize_rpm,omitempty"`

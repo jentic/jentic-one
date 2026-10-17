@@ -28,7 +28,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
-from jentic_one.auth.web.ratelimit import client_rate_limit_key
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -39,7 +39,6 @@ from jentic_one.auth.web.schemas.oauth import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
@@ -50,20 +49,12 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-def _get_auth_backend(request: Request) -> SharedStateBackend:
-    backend: object = getattr(request.app.state, "auth_state_backend", None)
-    if isinstance(backend, SharedStateBackend):
-        return backend
-    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
-    return MemoryStateBackend()
-
-
 def _get_token_limiter(request: Request, ctx: Context) -> RateLimiter:
     limiter: RateLimiter | None = getattr(request.app.state, "_token_limiter", None)
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     limiter = RateLimiter(backend, default_rpm=cfg.exchange_rpm, burst=cfg.exchange_burst)
     request.app.state._token_limiter = limiter
     return limiter
@@ -146,7 +137,7 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     # Own bucket namespace (the fix-wave pattern, see the DCR door's
     # `oauth-registration` limiter): this limiter keys on the client network,
     # and the shared store would otherwise hand it the same bucket as another
@@ -500,7 +491,7 @@ async def _rfc7009_form_arm(request: Request) -> Response:
 
     Runs entirely outside the FastAPI dependency/validation machinery (see
     ``_RevocationRoute``), in the DCR front door's order: gate, declared-length
-    cap, per-IP rate limit, form parse, service. Error responses speak the
+    cap, per-client-network rate limit, form parse, service. Error responses speak the
     RFC 6749 §5.2 dialect required by RFC 7009 §2.2.1 (top-level ``error``
     member) — never platform Problem Details.
     """
@@ -623,8 +614,8 @@ _REVOKE_FORM_BODY: dict[str, object] = {
             error_description="request body too large",
         ),
         429: oauth_error(
-            "Form-encoded (RFC 7009) requests only: per-IP rate limit "
-            "exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, "
+            "Form-encoded (RFC 7009) requests only: per-client-network rate "
+            "limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, "
             "`error=slow_down` per RFC 8628 §3.5).",
             error="slow_down",
             error_description="rate limit exceeded, retry later",
@@ -653,8 +644,9 @@ async def revoke_endpoint(
       die, so reconnecting requires fresh consent (deliberately beyond the
       RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
       is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-      64 KiB declared body length, and per-IP rate limited; its errors speak
-      the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+      64 KiB declared body length, and rate limited per client network
+      (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+      (RFC 7009 §2.2.1), not Problem Details.
     - **JSON** (any other content type — the pre-G11 contract, byte-identical
       including 422 shapes): requires a platform bearer identity; revokes the
       caller's own token (access → that token, refresh → its family). Used by
