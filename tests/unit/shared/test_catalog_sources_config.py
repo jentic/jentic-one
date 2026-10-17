@@ -97,6 +97,46 @@ def test_mapping_row_with_unknown_source_fails_validation() -> None:
     assert "catalog_api_id_mappings[0].source: unknown source 'ghost'" in msg
 
 
+@pytest.mark.parametrize("bad", ["", "not valid", "a/b/c", "corp~stripe.com", "/x", "x" * 256])
+def test_mapping_row_with_an_invalid_catalog_api_id_fails_validation(bad: str) -> None:
+    msg = _errors(
+        _cfg(
+            catalog_api_id_mappings=[
+                {"source": "public", "external_id": "x", "catalog_api_id": bad}
+            ]
+        )
+    )
+    assert "catalog_api_id_mappings[0].catalog_api_id" in msg
+
+
+def _git(slug: str, trust: str, precedence: int, **kw: object) -> dict[str, object]:
+    return {
+        "slug": slug,
+        "kind": "git-manifest",
+        "trust": trust,
+        "precedence": precedence,
+        "settings": {"url": f"https://{slug}.example/apis.json"},
+        **kw,
+    }
+
+
+def test_untrusted_source_ranked_above_a_curated_one_fails_validation() -> None:
+    sources = [_git("public", "curated", 10), _git("low", "curated", 5), _git("x", "untrusted", 6)]
+    msg = _errors(_cfg(sources=sources))
+    assert "catalog.sources[slug=x].precedence: an untrusted source (6)" in msg
+
+
+def test_untrusted_and_internal_precedence_within_bounds_are_accepted() -> None:
+    sources = [
+        _git("public", "curated", 10),
+        _git("x", "untrusted", 10),
+        _git("corp", "internal", 50),
+        # A disabled curated source does not set the bound.
+        _git("old", "curated", 0, enabled=False),
+    ]
+    check_catalog_config(_cfg(sources=sources))
+
+
 def test_restricted_source_needs_readers_and_others_reject_them() -> None:
     restricted = {
         "slug": "secret",
