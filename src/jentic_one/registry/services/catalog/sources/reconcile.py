@@ -13,8 +13,9 @@ sync lease (so one replica runs it and the others skip), the reconcile:
    against the blob's ``spec_url`` values and takes the matching entry.
 
 It only touches rows whose ``catalog_entry_id`` is null, so a second boot is a
-no-op. Imported rows carrying a ``catalog_api_id`` that matches no live entry are
-counted and logged.
+no-op. Only rows it could map (a ``catalog_api_id``, or a revision with a
+``source_url``) count; those it still cannot map, because no live entry
+matches, are counted and logged.
 """
 
 from __future__ import annotations
@@ -136,7 +137,11 @@ async def _backfill_entry_ids(
                 backfilled += 1
             else:
                 catalog_unmapped += 1
+        url_rows: dict[Any, bool] = {}
         for api_pk, url in await ApiRepository.unmapped_source_urls(session):
+            if url_rows.get(api_pk):
+                continue
+            url_rows.setdefault(api_pk, False)
             api_id = by_spec_url.get(url)
             if api_id is None:
                 continue
@@ -145,4 +150,6 @@ async def _backfill_entry_ids(
                 session, api_pk, entry_id
             ):
                 backfilled += 1
-    return backfilled, catalog_unmapped
+                url_rows[api_pk] = True
+    url_unmapped = sum(1 for mapped in url_rows.values() if not mapped)
+    return backfilled, catalog_unmapped + url_unmapped

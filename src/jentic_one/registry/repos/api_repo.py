@@ -205,9 +205,24 @@ class ApiRepository:
 
     @staticmethod
     async def count_unmapped(session: AsyncSession) -> int:
-        """Rows that still have no ``catalog_entry_id``."""
+        """Rows with no ``catalog_entry_id`` that the reconcile could map.
+
+        Those carry a ``catalog_api_id`` or have a non-archived revision with a
+        ``source_url``; any other row (a manual upload, say) has nothing to match.
+        """
+        has_url = (
+            select(ApiRevision.id)
+            .where(
+                ApiRevision.api_id == Api.id,
+                ApiRevision.source_url.is_not(None),
+                ApiRevision.state != "archived",
+            )
+            .exists()
+        )
         result = await session.execute(
-            select(func.count()).select_from(Api).where(Api.catalog_entry_id.is_(None))
+            select(func.count())
+            .select_from(Api)
+            .where(Api.catalog_entry_id.is_(None), or_(Api.catalog_api_id.is_not(None), has_url))
         )
         return int(result.scalar_one())
 
