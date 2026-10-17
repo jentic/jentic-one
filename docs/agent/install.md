@@ -503,7 +503,7 @@ not guess commands from package-manager habit. The first two you will need:
 
 ```bash
 jentic catalog search "<api name>"      # find an importable API in the public catalog
-jentic catalog import <vendor/name>     # import it into this instance's registry
+jentic catalog import <entry_id>        # import it by the entry_id the search printed
 ```
 
 Report to the human:

@@ -22,7 +22,7 @@ Every task against an external API follows the same audited loop:
 ```bash
 jentic whoami                          # 1. what your bindings already SERVE
 jentic catalog search "<capability>"   # 2. find an importable API (public catalog)
-jentic catalog import <vendor/name>    #    import it into the local registry
+jentic catalog import <entry_id>    #    import it into the local registry
 jentic search "<what you want to do>"  # 3. find the operation — each hit gives its METHOD and URL
 jentic inspect GET:https://api.example.com/v1/things/{id}     # 4. params, schemas, auth
 jentic execute GET:https://api.example.com/v1/things/{id} --path id=abc   # 5. call it through the broker
@@ -89,7 +89,7 @@ jentic whoami
 
 # 2. Find and import the API from the public catalog
 jentic catalog search "crypto prices"
-jentic catalog import coincap-io/coincap-io
+jentic catalog import public/coincap-io/coincap-io
 
 # 3. Report the access gap to your operator, once, with everything they need:
 #    "I need coincap-io/coincap-io. Auth type: api_key. Rules:
