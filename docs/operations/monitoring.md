@@ -136,7 +136,9 @@ fraction of traces recorded and exported. The cap also applies to a request
 that arrives with a sampled `traceparent` (the CLI and MCP send one on every
 call, and any caller can), so no caller can force full recording. The decision
 is deterministic on the trace id, so services sharing a ratio keep the same
-traces whole. A request whose `traceparent` is unsampled stays unsampled. The
+traces whole. A request whose `traceparent` is unsampled stays unsampled. A
+sampled request that the ratio drops is forwarded upstream with the sampled
+flag unset (`-00`), as with `exporter: none`. The
 standard `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` variables replace
 the ratio when set; a `tracing_sampler_env_overrides_sample_ratio` warning is
 logged at startup if `sample_ratio` is not `1.0`. The SDK treats an
