@@ -688,6 +688,36 @@ _JOB_KIND_EXECUTION = "execution"
 _JOB_FAILED = "failed"
 
 
+def entry_id_problem(entry_id: str) -> str | None:
+    """Why ``entry_id`` can't name a catalog entry, or ``None`` when it can.
+
+    The rule is the REST router's (which answers such ids as a missing entry):
+    at most 320 characters (code points), no character below U+0020 or U+007F,
+    no leading ``/``, no empty, ``.`` or ``..`` segment. Go: ``checkEntryID``.
+    """
+    if len(entry_id) > _MAX_ENTRY_ID_LENGTH:
+        return f"longer than {_MAX_ENTRY_ID_LENGTH} characters"
+    if any(ord(ch) < 0x20 or ch == "\x7f" for ch in entry_id):
+        return "control characters are not allowed"
+    if entry_id.startswith("/"):
+        return 'a leading "/" is not allowed'
+    if any(segment in ("", ".", "..") for segment in entry_id.split("/")):
+        return 'empty, ".", or ".." path segments are not allowed'
+    return None
+
+
+def safe_did_you_mean(suggestion: str | None) -> str | None:
+    """The server's ``did_you_mean`` when it is a well-formed entry_id, else ``None``.
+
+    A suggestion is relayed into an actionable retry, so one that couldn't
+    name an entry is dropped rather than handed to the model.
+    """
+    if not suggestion:
+        return None
+    suggestion = suggestion.strip()
+    return suggestion if suggestion and entry_id_problem(suggestion) is None else None
+
+
 def validate_entry_id(entry_id: str) -> None:
     """Syntactic guard on the catalog entry id (Go: ``checkEntryID``).
 
@@ -697,23 +727,12 @@ def validate_entry_id(entry_id: str) -> None:
     contract must not differ: the same shapes are refused as the same
     correctable protocol error.
     """
-    hint = " — pass the entry_id from a search_catalog hit verbatim"
-    if len(entry_id) > _MAX_ENTRY_ID_LENGTH:
+    problem = entry_id_problem(entry_id)
+    if problem is not None:
         raise invalid_params(
-            f"invalid entry_id {entry_id!r}: longer than {_MAX_ENTRY_ID_LENGTH} characters{hint}"
+            f"invalid entry_id {entry_id!r}: {problem}"
+            " — pass the entry_id from a search_catalog hit verbatim"
         )
-    if any(ord(ch) < 0x20 or 0x7F <= ord(ch) < 0xA0 for ch in entry_id):
-        raise invalid_params(
-            f"invalid entry_id {entry_id!r}: control characters are not allowed{hint}"
-        )
-    if entry_id.startswith("/"):
-        raise invalid_params(f'invalid entry_id {entry_id!r}: a leading "/" is not allowed{hint}')
-    for segment in entry_id.split("/"):
-        if segment in ("", ".", ".."):
-            raise invalid_params(
-                f'invalid entry_id {entry_id!r}: empty, ".", or ".." path segments are '
-                f"not allowed{hint}"
-            )
 
 
 def _already_imported_payload(job_id: str) -> dict[str, Any]:
@@ -950,8 +969,9 @@ async def _file_import(env: CallEnv, entry_id: str) -> str:
         return await CatalogService(env.ctx).import_entry(entry_id, env.identity)
     except CatalogEntryNotFoundError as exc:
         # Hidden and missing ids get the same text; the hint names only an
-        # entry the agent can see.
-        hint = f" — did you mean {exc.did_you_mean!r}?" if exc.did_you_mean else ""
+        # entry the agent can see, and only when it is a well-formed entry_id.
+        suggestion = safe_did_you_mean(exc.did_you_mean)
+        hint = f" — did you mean {suggestion!r}?" if suggestion else ""
         raise invalid_params(
             f"catalog entry {entry_id!r} not found{hint}; call search_catalog with a keyword "
             "for the API you need and pass the entry_id of one of its hits verbatim"

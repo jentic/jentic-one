@@ -445,6 +445,7 @@ func TestMCPImportAPI_TraversalEntryIDIsInvalidParams(t *testing.T) {
 		"public/a\x00b",
 		"public/a\x7fb",
 		"public/" + strings.Repeat("x", maxEntryIDLength),
+		"p/" + strings.Repeat("é", maxEntryIDLength-1),
 	} {
 		args, _ := json.Marshal(map[string]string{"entry_id": bad})
 		res, err := s.handleImportAPI(activeCtx("http://127.0.0.1:0"),
@@ -457,7 +458,12 @@ func TestMCPImportAPI_TraversalEntryIDIsInvalidParams(t *testing.T) {
 		}
 	}
 	// The legitimate shapes (literal slashes, a namespaced id) stay accepted.
-	for _, good := range []string{"public/googleapis.com/sheets", "internal/aws-prod~stripe.com", "stripe.com"} {
+	// The server's rule, not a stricter one: lengths are code points, so 320
+	// multi-byte characters still fit; C1 characters (U+0080–U+009F) pass.
+	for _, good := range []string{
+		"public/googleapis.com/sheets", "internal/aws-prod~stripe.com", "stripe.com",
+		"p/" + strings.Repeat("é", maxEntryIDLength-2), "public/a\u0085b",
+	} {
 		if err := checkEntryID(good); err != nil {
 			t.Errorf("checkEntryID(%q) must accept it: %v", good, err)
 		}
@@ -578,5 +584,33 @@ func TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry(t *testing.T) {
 	details, _ := payload["details"].(map[string]any)
 	if details["did_you_mean"] != "internal/stripe.com" {
 		t.Errorf("details = %v, want did_you_mean carried", payload["details"])
+	}
+}
+
+// TestMCPImportAPI_404DropsAMalformedDidYouMean: a suggestion that couldn't
+// name an entry is never relayed into a retry; the miss points at search.
+func TestMCPImportAPI_404DropsAMalformedDidYouMean(t *testing.T) {
+	for _, bad := range []string{"../access-requests", "public//x", "public/a\nb", "  "} {
+		body, _ := json.Marshal(map[string]any{"status": 404, "detail": "catalog entry not found", "did_you_mean": bad})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write(body)
+		}))
+		s := fastAccessServer(t)
+		res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"stripe.com"}`))
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%q: a resolve failure must be a soft error: %v", bad, err)
+		}
+		payload := decodeToolJSON(t, res)
+		if msg, _ := payload["error"].(string); strings.Contains(msg, "did you mean") {
+			t.Errorf("%q: a malformed suggestion was relayed: %q", bad, msg)
+		}
+		if payload["details"] != nil {
+			if d, _ := payload["details"].(map[string]any); d["did_you_mean"] != nil {
+				t.Errorf("%q: details carry the malformed suggestion: %v", bad, d)
+			}
+		}
 	}
 }

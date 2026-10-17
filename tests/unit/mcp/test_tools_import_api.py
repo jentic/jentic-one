@@ -243,6 +243,7 @@ async def test_missing_entry_id_is_invalid_params(services: None) -> None:
         "public/a\x00b",
         "public/a\x7fb",
         "public/" + "x" * 320,
+        "p/" + "é" * 319,
     ],
 )
 async def test_malformed_entry_id_is_invalid_params(services: None, bad: str) -> None:
@@ -256,7 +257,15 @@ async def test_malformed_entry_id_is_invalid_params(services: None, bad: str) ->
 
 
 @pytest.mark.parametrize(
-    "good", ["public/googleapis.com/sheets", "internal/aws-prod~stripe.com", "stripe.com"]
+    "good",
+    [
+        "public/googleapis.com/sheets",
+        "internal/aws-prod~stripe.com",
+        "stripe.com",
+        # The REST router's rule: lengths are code points and C1 passes.
+        "p/" + "é" * 318,
+        "public/a\x85b",
+    ],
 )
 def test_real_entry_ids_stay_accepted(good: str) -> None:
     validate_entry_id(good)  # must not raise
@@ -759,3 +768,18 @@ async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> No
     assert payload["error_code"] == "INTERNAL_ERROR"
     assert payload["job_id"] == "job_9"
     assert payload["next_tool"] == "get_execution_result"
+
+
+@pytest.mark.parametrize("suggestion", ["../access-requests", "public//x", "public/a\nb", "  "])
+async def test_malformed_did_you_mean_is_dropped(services: None, suggestion: str) -> None:
+    """A suggestion that couldn't name an entry is never relayed into a retry
+    (Go: ``didYouMean`` drops what ``checkEntryID`` rejects)."""
+    _FakeCatalogService.import_error = CatalogEntryNotFoundError(
+        "stripe.com", did_you_mean=suggestion
+    )
+    env = _env(["catalog:import", "jobs:read"])
+    with pytest.raises(MCPError) as err:
+        await dispatch_tool_call(env, "import_api", {"entry_id": "stripe.com"})
+    assert err.value.error.code == mcp_types.INVALID_PARAMS
+    assert "did you mean" not in str(err.value)
+    assert "search_catalog" in str(err.value)

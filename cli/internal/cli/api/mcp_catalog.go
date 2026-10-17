@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -317,15 +318,16 @@ const maxEntryIDLength = 320
 // which means a traversal-shaped value ("../access-requests", a leading "/",
 // empty or dot segments) would otherwise rewrite the route. The rules match
 // the server's (which answers such ids as a missing entry): no empty, "." or
-// ".." segment, no control character, at most maxEntryIDLength characters.
+// ".." segment, no character below U+0020 or U+007F, at most maxEntryIDLength
+// characters counted as code points (the server counts them that way).
 // The id is checked as a whole — the CLI never adds or strips a source prefix.
 func checkEntryID(entryID string) error {
 	const hint = " — pass the entry_id from a search_catalog hit verbatim"
-	if len(entryID) > maxEntryIDLength {
+	if utf8.RuneCountInString(entryID) > maxEntryIDLength {
 		return fmt.Errorf("invalid entry_id %q: longer than %d characters%s", entryID, maxEntryIDLength, hint)
 	}
 	for _, r := range entryID {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+		if r < 0x20 || r == 0x7f {
 			return fmt.Errorf("invalid entry_id %q: control characters are not allowed%s", entryID, hint)
 		}
 	}
