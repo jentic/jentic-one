@@ -44,7 +44,7 @@ class EventStreamService:
 
         Visibility-race note (the reason for ``overlap_seconds``)
         ----------------------------------------------------------
-        ``created_at`` is stamped when the ORM flushes the row, but the row only
+        ``created_at`` is stamped when the row is inserted, but the row only
         becomes visible to this poller once the WRITER's transaction commits —
         which can be noticeably later (an event emitted mid-transaction, e.g.
         ``agent.self_registered`` inside the DCR ``/register`` transaction, is
