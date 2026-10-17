@@ -241,8 +241,10 @@ class Context:
         ``broker.credential_cache_ttl_s`` is 0. Lazily constructed on first access.
         """
         if self._credential_selection_cache is None:
+            broker = self._config.broker
             self._credential_selection_cache = CredentialSelectionCache(
-                ttl_seconds=self._config.broker.credential_cache_ttl_s
+                ttl_seconds=broker.credential_cache_ttl_s,
+                max_headers=broker.credential_cache_max_headers,
             )
         return self._credential_selection_cache
 

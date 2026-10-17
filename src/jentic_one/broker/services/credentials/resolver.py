@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -18,7 +18,12 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
-from jentic_one.shared.credential_selection_cache import CredentialHeader, CredentialSelectionCache
+from jentic_one.shared.credential_selection_cache import (
+    STALE_NEGATIVE_SELECTION,
+    STALE_WINNER_CHANGED,
+    CredentialHeader,
+    CredentialSelectionCache,
+)
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
@@ -32,6 +37,9 @@ from jentic_one.shared.models.credentials import (
 )
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.url import server_variables_compatible
+
+# ``Credential.state`` of a row the broker may resolve.
+_USABLE_STATE = "connected"
 
 
 class ResolvedCredential(BaseModel):
@@ -82,8 +90,10 @@ class CredentialResolver:
 
     With a ``cache``, the vendor's candidate headers come from the
     :class:`CredentialSelectionCache` while fresh. Every filter, including the
-    caller's binding boundary, still runs on each call, and the winner's secret
-    material is always read from the control DB.
+    caller's binding boundary, still runs on each call, the winner's secret
+    material is always read from the control DB, and a failed selection (no
+    match, unknown id or name, ambiguity) is re-run on a fresh read before it is
+    raised.
     """
 
     def __init__(self, ctx: Context, *, cache: CredentialSelectionCache | None = None) -> None:
@@ -110,8 +120,8 @@ class CredentialResolver:
             credential_id: Optional exact credential id — the authoritative
                 disambiguation signal (``Jentic-Credential-Id``); applied before
                 the name filter and specificity narrowing.
-            allowed_credential_ids: When not ``None``, the **injection boundary**
-                (theme-5 Q-02): only these credential ids may resolve, filtered
+            allowed_credential_ids: When not ``None``, the **injection boundary**:
+                only these credential ids may resolve, filtered
                 *before* coverage matching. ``None`` means "no binding filter"
                 — only queued async payloads from before the boundary existed
                 omit the key; every live path passes the bound ids.
@@ -154,42 +164,82 @@ class CredentialResolver:
         cache = self._cache
         if cache is not None:
             cached = cache.get(api.vendor)
+            joined = False
+            if cached is None:
+                # Another request is already reading this vendor's headers: use
+                # its result rather than issue the same query.
+                cached = await cache.join_fill(api.vendor)
+                joined = cached is not None
             if cached is not None:
-                resolved = await self._resolve_cached(select_winner(cached))
-                if resolved is not None:
-                    return resolved
-                # The winner changed under the cached header: re-resolve fresh.
-                cache.discard(api.vendor)
+                try:
+                    winner = select_winner(cached)
+                except (
+                    CredentialNotProvisionedError,
+                    CredentialIdNotFoundError,
+                    CredentialNameNotFoundError,
+                    AmbiguousCredentialError,
+                ):
+                    # Headers a concurrent read just returned are as fresh as
+                    # this request's own read would be.
+                    if joined:
+                        raise
+                    # A negative outcome is never served from cached headers: a
+                    # credential connected, created or deleted by another process
+                    # must count on the caller's retry. Errors are rare, so the
+                    # re-read costs nothing on the happy path.
+                    cache.record_stale(STALE_NEGATIVE_SELECTION)
+                else:
+                    resolved = await self._resolve_cached(winner)
+                    if resolved is not None:
+                        cache.record_hit()
+                        return resolved
+                    # The winner changed under the cached header: re-resolve fresh.
+                    cache.record_stale(STALE_WINNER_CHANGED)
 
-        # Read-only: the header query and the winner's material query need no
-        # shared snapshot. At READ COMMITTED (the server default; the
-        # application sets no isolation level) each already takes its own, so
-        # autocommit drops the BEGIN/ROLLBACK round trips without changing what
-        # is read.
-        async with self._ctx.control_db.read_session() as session:
-            generation = cache.generation if cache is not None else 0
-            rows = await CredentialRepository.list_by_vendor(session, api.vendor)
-            headers = tuple(CredentialHeader.from_row(row) for row in rows)
-            if cache is not None:
-                cache.put(api.vendor, headers, generation=generation)
+        return await self._resolve_fresh(api.vendor, select_winner)
 
-            winner = select_winner(headers)
-            credential = next(row for row in rows if row.id == winner.id)
-            # ``list_by_vendor`` returns headers only; read secret material for
-            # the single winner alone, so unbound/inactive/non-covering
-            # candidates' rows are never selected (and 404/409 read none).
-            await CredentialRepository.load_material(session, [credential])
-            rel = CredentialRepository.material_relationship(credential.type)
-            material = getattr(credential, rel) if rel is not None else None
-            return self._build_resolved(winner, material)
+    async def _resolve_fresh(
+        self, vendor: str, select_winner: Callable[[Sequence[CredentialHeader]], CredentialHeader]
+    ) -> ResolvedCredential:
+        """Read the vendor's headers (refreshing the cache), select, read the winner's material."""
+        cache = self._cache
+        generation, token = cache.begin_fill(vendor) if cache is not None else (0, None)
+        try:
+            # Read-only: the header query and the winner's material query need no
+            # shared snapshot. At READ COMMITTED (the server default; the
+            # application sets no isolation level) each already takes its own, so
+            # autocommit drops the BEGIN/ROLLBACK round trips without changing what
+            # is read.
+            async with self._ctx.control_db.read_session() as session:
+                rows = await CredentialRepository.list_by_vendor(session, vendor)
+                headers = tuple(CredentialHeader.from_row(row) for row in rows)
+                if cache is not None:
+                    cache.end_fill(vendor, token, headers, generation=generation)
+                    token = None
+
+                winner = select_winner(headers)
+                credential = next(row for row in rows if row.id == winner.id)
+                # ``list_by_vendor`` returns headers only; read secret material for
+                # the single winner alone, so unbound/inactive/non-covering
+                # candidates' rows are never selected (and 404/409 read none).
+                await CredentialRepository.load_material(session, [credential])
+                rel = CredentialRepository.material_relationship(credential.type)
+                material = getattr(credential, rel) if rel is not None else None
+                return self._build_resolved(winner, material)
+        finally:
+            if cache is not None and token is not None:
+                # The read failed or was cancelled: release the waiters empty.
+                cache.end_fill(vendor, token, None, generation=generation)
 
     async def _resolve_cached(self, header: CredentialHeader) -> ResolvedCredential | None:
         """Build the cached winner, reading its material fresh; ``None`` when stale.
 
-        A type without material (``NO_AUTH``) needs no DB read. Otherwise the
-        single material read also returns the winner's current header, and any
-        difference from the cached one (deleted, disabled, re-typed, re-scoped,
-        renamed) sends the caller back to the DB.
+        A type without material (``NO_AUTH``) needs no DB read. Otherwise one
+        statement reads the winner's current header with its material child
+        (``None`` when it has no material row, e.g. a managed-provider OAuth
+        credential), and any difference from the cached header (deleted,
+        disabled, re-typed, re-scoped, renamed, state change) sends the caller
+        back to the DB.
         """
         if CredentialRepository.material_relationship(header.type) is None:
             return self._build_resolved(header, None)
@@ -214,7 +264,7 @@ class CredentialResolver:
         server_variables_unresolved: bool,
     ) -> CredentialHeader:
         """Pick the one credential for the call (see :meth:`resolve` for the order)."""
-        # Injection boundary (Q-02): an unbound credential must never be
+        # Injection boundary: an unbound credential must never be
         # considered, even if it covers the API. Applied before coverage
         # matching so nothing downstream (name filter, specificity, the
         # ambiguity 409 candidate list) can ever surface an unbound row.
@@ -229,7 +279,9 @@ class CredentialResolver:
         # once so the scope isn't recomputed per predicate below.
         covering: list[tuple[CredentialHeader, CredentialScope]] = []
         for c in candidates:
-            if not c.active:
+            # A ``pending`` (connect flow not finished) or ``failed`` row is not
+            # usable, the same rule the binding deriver applies.
+            if not c.active or c.state != _USABLE_STATE:
                 continue
             scope = canonical_credential_scope(
                 vendor=c.api_vendor, name=c.api_name, version=c.api_version

@@ -217,11 +217,21 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
-	// TTL (seconds) of the per-process cache of a vendor's non-secret credential
-	// headers that sync execute requests select from. Secret material, the caller's
-	// bindings and the audit event are never cached. A credential write served by
-	// this process clears the cache immediately; one served by another process takes
-	// effect within the TTL. 0 disables the cache.
+	// Upper bound on credential headers held by the per-process credential header
+	// cache (broker.credential_cache_ttl_s), summed over vendors; an empty vendor
+	// entry counts as one. Least-recently-used vendors are evicted first, and a
+	// vendor with more credentials than the bound is not cached.
+	CredentialCacheMaxHeaders int `json:"credential_cache_max_headers,omitempty,omitzero" yaml:"credential_cache_max_headers,omitempty" mapstructure:"credential_cache_max_headers,omitempty"`
+
+	// TTL (seconds, at most 60) of the per-process cache of a vendor's non-secret
+	// credential headers that sync execute requests select from. Secret material, the
+	// caller's bindings and the audit event are never cached. A credential write
+	// served by this process clears the cache when its transaction ends. For a write
+	// served by another process, for up to the TTL: a newly created or re-enabled
+	// credential may not yet win over (or make ambiguous) the cached winner, and a
+	// NO_AUTH winner's disable, re-type or server_variables edit is not seen. A
+	// deleted, disabled or edited secret-bearing winner is caught on the next call. 0
+	// disables the cache.
 	CredentialCacheTtlS float64 `json:"credential_cache_ttl_s,omitempty,omitzero" yaml:"credential_cache_ttl_s,omitempty" mapstructure:"credential_cache_ttl_s,omitempty"`
 
 	// Egress corresponds to the JSON schema field "egress".
@@ -278,8 +288,17 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
 	}
+	if v, ok := raw["credential_cache_max_headers"]; !ok || v == nil {
+		plain.CredentialCacheMaxHeaders = 10000
+	}
+	if 1 > plain.CredentialCacheMaxHeaders {
+		return fmt.Errorf("field %s: must be >= %v", "credential_cache_max_headers", 1)
+	}
 	if v, ok := raw["credential_cache_ttl_s"]; !ok || v == nil {
 		plain.CredentialCacheTtlS = 3.0
+	}
+	if 60 < plain.CredentialCacheTtlS {
+		return fmt.Errorf("field %s: must be <= %v", "credential_cache_ttl_s", 60)
 	}
 	if 0 > plain.CredentialCacheTtlS {
 		return fmt.Errorf("field %s: must be >= %v", "credential_cache_ttl_s", 0)

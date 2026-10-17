@@ -133,7 +133,9 @@ class Credential(AuditableMixin, ControlBase):
     )
 
 
-# A committed write to a credential header drops this process's broker
-# credential-selection cache, so an edit, disable or delete takes effect on the
-# next resolve here rather than after the TTL.
+# A unit-of-work write to a credential header drops this process's broker
+# credential-selection cache when its transaction ends (on commit, rollback or
+# close), so an edit, disable or delete takes effect on the next resolve here
+# rather than after the TTL. Bulk and raw-SQL writers call
+# ``mark_credentials_changed`` themselves.
 watch_credential_writes(Credential)

@@ -172,14 +172,17 @@ class CredentialRepository:
     @staticmethod
     async def get_active_material(
         session: AsyncSession, credential_id: str, stored_type: str
-    ) -> tuple[Credential, Any] | None:
+    ) -> tuple[Credential, Any | None] | None:
         """One active credential's header and material child, in a single statement.
 
-        The child row joined to its header, which must be active and of
-        ``stored_type``; the header's own secret-material relationships stay
-        unloaded. ``None`` when the type has no material, the credential is
-        gone, disabled or re-typed, or it has no child row; the caller cannot
-        tell these apart and must re-resolve from the vendor's headers.
+        The header, which must be active and of ``stored_type``, outer-joined
+        to its type's material child; the header's own secret-material
+        relationships stay unloaded. The child is ``None`` when the credential
+        has no material row, which is a valid state (a managed-provider OAuth
+        credential keeps no token row) that resolution from the vendor's
+        headers handles the same way. Returns ``None`` only when the
+        credential is gone, disabled or re-typed, or ``stored_type`` has no
+        material relationship.
         """
         rel = _MATERIAL_RELATIONSHIP.get(stored_type)
         if rel is None:
@@ -187,10 +190,10 @@ class CredentialRepository:
         prop = Credential.__mapper__.relationships[rel]
         child_cls: Any = prop.mapper.class_
         stmt = (
-            select(child_cls, Credential)
-            .join(Credential, Credential.id == child_cls.credential_id)
+            select(Credential, child_cls)
+            .outerjoin(child_cls, child_cls.credential_id == Credential.id)
             .where(
-                child_cls.credential_id == credential_id,
+                Credential.id == credential_id,
                 Credential.active.is_(True),
                 Credential.type == stored_type,
             )
@@ -202,7 +205,7 @@ class CredentialRepository:
         row = (await session.execute(stmt)).first()
         if row is None:
             return None
-        child, credential = row
+        credential, child = row
         return credential, child
 
     @staticmethod
