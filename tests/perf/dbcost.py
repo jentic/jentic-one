@@ -22,8 +22,10 @@ the control/admin numbers. It is restarted on exit, whatever else fails.
 Counting: ``statements`` is real SQL only; ``BEGIN``/``COMMIT``/``ROLLBACK`` are
 reported separately as ``tx_control``. ``transactions`` counts ``BEGIN`` — when
 ``pool_pre_ping`` is enabled (the default) each connection checkout's ping runs
-in its own ``BEGIN``/``ROLLBACK``, so it is roughly 2x the number of sessions
-opened. ``writes`` counts ``INSERT``/``UPDATE``/``DELETE``/``MERGE`` statements,
+in its own ``BEGIN``/``ROLLBACK``; a read-only session opened with
+``DatabaseSession.read_session`` runs in autocommit and adds no ``BEGIN`` of its
+own, so it costs one transaction (the ping) where any other session costs two.
+``writes`` counts ``INSERT``/``UPDATE``/``DELETE``/``MERGE`` statements,
 including a data-modifying ``WITH … INSERT/UPDATE/DELETE`` (a ``SELECT … FOR
 UPDATE`` is a read and is not counted).
 
@@ -203,7 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Idle window + measured window per combo, plus a broker recreate each.
     env.check_fresh(
-        callers={c for _, c in combos}, run_s=len(combos) * (2 * args.n / args.rate + 60)
+        callers={c for _, c in combos},
+        run_s=len(combos) * (2 * args.n / args.rate + 60),
+        shorten="lower -n, raise --rate, or drop --all",
     )
     rows: list[dict[str, Any]] = []
     state: dict[str, str | None] = {"variant": None}

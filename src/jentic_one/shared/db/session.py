@@ -38,6 +38,7 @@ from jentic_one.shared.db.errors import (
     DatabaseIntegrityError,
     DatabaseUnavailableError,
 )
+from jentic_one.shared.db.read_only import install_read_only_guard
 
 T = TypeVar("T")
 
@@ -334,3 +335,63 @@ class DatabaseSession:
                 )
                 if backoff_s > 0:
                     await asyncio.sleep(backoff_s * attempt)
+
+    @asynccontextmanager
+    async def read_session(self) -> AsyncGenerator[AsyncSession, None]:
+        """Yield a read-only session whose statements run in autocommit.
+
+        Built on :meth:`session`: the body runs inside it, so this method
+        shares its cleanup and any error mapping it applies.
+
+        Each statement runs as its own implicit transaction, so the driver sends
+        no ``BEGIN`` before the first statement and no ``ROLLBACK`` at close —
+        a single ``SELECT`` costs one round trip instead of three, excluding the
+        ``pool_pre_ping`` checkout ping. SQLAlchemy still fires its logical
+        ``begin``/``rollback`` events; the driver turns them into no-ops because
+        the connection is in autocommit.
+
+        Use it only for read-only sessions whose statements need no shared
+        snapshot. At ``READ COMMITTED`` (the Postgres server default; the
+        application sets no isolation level) each statement of a multi-statement
+        transaction takes its own snapshot anyway, so a read-only session sees
+        the same data with or without ``BEGIN``. A server, database or role
+        whose ``default_transaction_isolation`` is stricter (``REPEATABLE READ``
+        or ``SERIALIZABLE``) gives :meth:`session` one snapshot for the whole
+        session; here each statement still gets its own. Reads that must see
+        one snapshot use :meth:`transaction`.
+
+        Writes raise :class:`~sqlalchemy.exc.InvalidRequestError` instead of
+        committing: there is no transaction to roll back, so a flushed change
+        would be durable at once. The guard refuses an ORM flush with pending
+        changes (including an autoflush before a query) and any
+        ``INSERT``/``UPDATE``/``DELETE`` statement run through
+        ``Session.execute`` (ORM or Core DML, including DML nested in a Core
+        CTE, or textual SQL whose first verb after any comments is
+        ``INSERT``/``UPDATE``/``DELETE``/``MERGE``). It runs client-side and
+        costs no round trip. DML inside a textual CTE, and SQL sent below the
+        session (e.g. ``Connection.exec_driver_sql``), are not inspected.
+
+        Autocommit covers the session's first transaction only: it is applied
+        to the connection that transaction checks out. A ``commit()`` or
+        ``rollback()`` inside the body ends it, and the next statement autobegins
+        on a fresh checkout at the default level. Never end the transaction
+        inside the body.
+
+        On SQLite every pooled connection is already in driver autocommit
+        (``enable_sqlite_manual_begin``), so reads emit no ``BEGIN`` and the
+        isolation level is left alone. Setting ``AUTOCOMMIT`` there would make
+        SQLAlchemy reset the connection to its detected default on checkin,
+        which turns pysqlite's implicit ``BEGIN`` back on for every later user
+        of that pooled connection.
+
+        The autocommit level is applied after pool checkout, so a
+        ``pool_pre_ping`` ping still runs at the connection's default level. On
+        checkin SQLAlchemy restores that default; asyncpg then opens the next
+        transaction on that pooled connection with ``BEGIN ISOLATION LEVEL
+        <default>`` (e.g. ``READ COMMITTED``) rather than a bare ``BEGIN``.
+        """
+        async with self.session() as sess:
+            install_read_only_guard(sess)
+            if not self._is_sqlite:
+                await sess.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+            yield sess

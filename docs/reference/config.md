@@ -159,7 +159,8 @@ Observability settings (metrics, tracing knobs).
 | --- | ---- | ------- | ------- | ----------- |
 | `observability.metrics.exporter` | "otlp" \| "prometheus" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__METRICS__EXPORTER` |  |
 | `observability.metrics.export_interval_seconds` | integer | `15` | `JENTIC__OBSERVABILITY__METRICS__EXPORT_INTERVAL_SECONDS` |  |
-| `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` |  |
+| `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` | Where spans go. `none` records no spans at all (every span is non-recording), while trace ids are still generated and propagated: an inbound `traceparent` is honoured, outbound requests carry `traceparent`/`tracestate`, and execution records and logs keep their `trace_id`. With `none` the outbound `traceparent` has the sampled flag unset (`-00`) even when the caller sent `-01`, since this process records nothing. |
+| `observability.tracing.sample_ratio` | number (>= 0.0, <= 1.0) | `1.0` | `JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO` | Fraction of traces recorded and exported when `exporter` is `otlp` (1.0 records every trace). It caps every trace entering the process, including requests that arrive with a sampled `traceparent` (the CLI and MCP send one on every call), so a caller cannot force recording. A caller's unsampled `traceparent` stays unsampled. Ignored with `exporter: none`, and overridden by the standard `OTEL_TRACES_SAMPLER` environment variable when that is set (a warning is logged if this field is not 1.0). |
 
 ## `admin`
 
