@@ -113,8 +113,11 @@ def test_patch_agent_requires_agents_write(readonly_client: TestClient) -> None:
 def test_patch_agent_empty_body_returns_current(
     client: TestClient, mock_agent_svc: MagicMock
 ) -> None:
+    """An empty body goes through ``update_agent`` (which owns the no-op and
+    its ownership check) with no fields to change."""
     resp = client.patch("/agents/agnt_test123", json={})
 
     assert resp.status_code == 200
-    mock_agent_svc.update_agent.assert_not_called()
-    mock_agent_svc.get_agent.assert_called_once()
+    mock_agent_svc.update_agent.assert_awaited_once()
+    assert mock_agent_svc.update_agent.call_args.kwargs["update_data"] == {}
+    mock_agent_svc.get_agent.assert_not_called()
