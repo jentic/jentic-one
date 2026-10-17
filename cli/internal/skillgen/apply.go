@@ -45,7 +45,7 @@ func Apply(a Adapter, c Canonical, env DetectEnv, opts ApplyOptions) (Outcome, e
 		}
 	}
 
-	existing, err := os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env, not arbitrary input.
+	existing, err := readTarget(target)
 	if err != nil && !os.IsNotExist(err) {
 		return out, fmt.Errorf("read %s: %w", target, err)
 	}
@@ -293,7 +293,7 @@ func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 // readSidecar loads the provenance sidecar for an owned-file skill, reporting
 // whether a well-formed one was present.
 func readSidecar(skillMD string) (sidecar, bool) {
-	data, err := os.ReadFile(sidecarPath(skillMD))
+	data, err := readTarget(sidecarPath(skillMD))
 	if err != nil {
 		return sidecar{}, false
 	}
@@ -344,7 +344,7 @@ func Remove(a Adapter, c Canonical, env DetectEnv, opts RemoveOptions) (RemoveOu
 	target := a.Target(scope, c.Name, env)
 	out := RemoveOutcome{Path: target}
 
-	existing, err := os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env.
+	existing, err := readTarget(target)
 	if os.IsNotExist(err) {
 		out.Missing = true
 		return out, nil

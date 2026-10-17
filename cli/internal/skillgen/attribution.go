@@ -1,7 +1,5 @@
 package skillgen
 
-import "os"
-
 // Attributed reports whether the installed skill name at target carries
 // provenance proving Jentic wrote it: a named managed block for a shared file
 // (AGENTS.md), or a sidecar / legacy managed block for an owned SKILL.md. An
@@ -9,7 +7,7 @@ import "os"
 // installed (with UserEdits, so nothing overwrites it), but it is not ours to
 // offer to delete.
 func Attributed(a Adapter, target, name string) bool {
-	data, err := os.ReadFile(target) //nolint:gosec // target comes from adapter rules + env, not user input.
+	data, err := readTarget(target)
 	if err != nil {
 		return false
 	}

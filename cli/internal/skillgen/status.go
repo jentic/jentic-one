@@ -1,7 +1,5 @@
 package skillgen
 
-import "os"
-
 // InstallState reports whether one skill is actually installed at one adapter
 // target. "Detected" (the operator looks present) and "installed" (the skill
 // artifact exists on disk) are different facts — see jentic-one#752, where
@@ -34,7 +32,7 @@ func InstallStates(a Adapter, name string, env DetectEnv) []InstallState {
 		}
 		seen[target] = true
 		st := InstallState{Skill: name, Scope: scope, Path: target}
-		if data, err := os.ReadFile(target); err == nil { //nolint:gosec // target comes from adapter rules + env, not user input.
+		if data, err := readTarget(target); err == nil {
 			norm := []byte(normalizeNewlines(string(data)))
 			st.Installed, st.UserEdits = probeInstall(a, target, norm, name)
 		}

@@ -22,6 +22,21 @@ var errUnsafeReference = errors.New("reference resolves outside the skill direct
 // so a project-scope write is only made where the project itself lives.
 var errOutsideProject = errors.New("resolves outside the project directory")
 
+// errInGitMetadata marks a project-scope target whose resolved location is
+// inside the project's git metadata (.git/config, a hook, a worktree's or
+// submodule's gitdir). A symlinked AGENTS.md pointing there would otherwise
+// have the Jentic block appended to a file git parses or executes.
+var errInGitMetadata = errors.New("resolves into the git metadata directory")
+
+// errNotRegularFile marks a skill target that exists but is not a regular
+// file (a FIFO, device, socket or directory). Reading a FIFO blocks forever
+// and writing one feeds whatever reads it, so such a target is never touched.
+var errNotRegularFile = errors.New("is not a regular file")
+
+// maxGitFileSize bounds how much of a `.git` file or `commondir` file is read:
+// both hold a single path line.
+const maxGitFileSize = 4096
+
 // referencesDir is the reference subdirectory of a skill dir, relative to it.
 const referencesDir = "references"
 
@@ -86,7 +101,9 @@ func resolveExisting(path string) (string, error) {
 // through a symlinked path still contains its own files. This covers a
 // symlinked ./AGENTS.md (whose target would otherwise receive the Jentic
 // block) and a symlinked skill dir or ancestor (which would otherwise receive
-// SKILL.md, its sidecar and references). Nothing is written on refusal.
+// SKILL.md, its sidecar and references). A target inside the project's git
+// metadata is refused too (see inGitMetadata), even though it is "inside" the
+// project. Nothing is written on refusal.
 func confineToProject(cwd, target string) error {
 	absCwd, err := filepath.Abs(cwd)
 	if err != nil {
@@ -100,11 +117,109 @@ func confineToProject(cwd, target string) error {
 	if err != nil {
 		return fmt.Errorf("%w; edit the file it points to by hand", err)
 	}
+	if gitDir, ok := inGitMetadata(root, resolved); ok {
+		return fmt.Errorf("%s %w %s (it points to %s); Jentic does not write there, edit it by hand",
+			target, errInGitMetadata, gitDir, resolved)
+	}
 	if !within(root, resolved) {
 		return fmt.Errorf("%s %w %s (it points to %s); Jentic does not write there, edit it by hand",
 			target, errOutsideProject, root, resolved)
 	}
 	return nil
+}
+
+// inGitMetadata reports whether resolved (cleaned and symlink-resolved) lies
+// in the git metadata of the project at root, returning the metadata path it
+// hit. That is any path with a `.git` component below root — the project's
+// own .git directory or file, and a nested repo's or a superproject's
+// .git/modules — plus the directory a `.git` file names with `gitdir:` (a
+// linked worktree, a submodule or a --separate-git-dir checkout) and that
+// gitdir's `commondir` (the main repo's .git, which holds config and hooks).
+func inGitMetadata(root, resolved string) (string, bool) {
+	if rel, err := filepath.Rel(root, resolved); err == nil && filepath.IsLocal(rel) {
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			// Case-folded: macOS and Windows default to case-insensitive
+			// file systems, where .GIT is the same directory.
+			if strings.EqualFold(part, ".git") {
+				return filepath.Join(root, ".git"), true
+			}
+		}
+	}
+	for _, dir := range linkedGitDirs(root) {
+		if within(dir, resolved) {
+			return dir, true
+		}
+	}
+	return "", false
+}
+
+// linkedGitDirs returns the resolved gitdir a regular `.git` file at root
+// points to and, when that gitdir has one, its commondir. A missing,
+// unreadable or malformed `.git` file yields none: the component check in
+// inGitMetadata still covers the `.git` entry itself.
+func linkedGitDirs(root string) []string {
+	gitFile := filepath.Join(root, ".git")
+	gitdir, ok := readGitPointer(gitFile, "gitdir:", root)
+	if !ok {
+		return nil
+	}
+	dirs := []string{gitdir}
+	if common, ok := readGitPointer(filepath.Join(gitdir, "commondir"), "", gitdir); ok {
+		dirs = append(dirs, common)
+	}
+	return dirs
+}
+
+// readGitPointer reads a one-line git pointer file (`.git` with a "gitdir: "
+// prefix, or a gitdir's `commondir` with none) and returns the path it names,
+// made absolute against base and symlink-resolved where it exists. Only a
+// small regular file is read, so a FIFO or a huge file planted as `.git`
+// cannot stall or bloat the check.
+func readGitPointer(path, prefix, base string) (string, bool) {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxGitFileSize {
+		return "", false
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path is <project>/.git or the commondir file of the gitdir it names.
+	if err != nil {
+		return "", false
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	line = strings.TrimSpace(line)
+	if prefix != "" {
+		rest, found := strings.CutPrefix(line, prefix)
+		if !found {
+			return "", false
+		}
+		line = strings.TrimSpace(rest)
+	}
+	if line == "" {
+		return "", false
+	}
+	p := filepath.FromSlash(line)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(base, p)
+	}
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	return p, true
+}
+
+// readTarget reads a skill target, refusing one that exists but is not a
+// regular file once symlinks are followed: os.ReadFile on a FIFO blocks until
+// a writer appears, and a device or socket is never a skill file. A missing
+// target reports fs.ErrNotExist exactly as os.ReadFile does.
+func readTarget(target string) ([]byte, error) {
+	fi, err := os.Stat(target)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s %w (mode %s); edit it by hand", target, errNotRegularFile, fi.Mode().Type())
+	}
+	return os.ReadFile(target) //nolint:gosec // target is derived from adapter rules + env, not arbitrary input.
 }
 
 // referencesRoot opens skillDir as an os.Root and returns it once references/
