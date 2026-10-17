@@ -495,7 +495,9 @@ async def confirm_connect_session(
             browser_binding=binding.claim,
         )
     if isinstance(result, AuthCodeConfirmResult | ReauthorizeConfirmResult):
-        set_browser_binding_cookie(response, request, ctx, binding)
+        set_browser_binding_cookie(
+            response, request, ctx, binding, authorize_url=result.authorize_url
+        )
 
     if isinstance(result, DeviceAuthorizationConfirmResult):
         return DeviceAuthorizationConfirmSessionResponse(

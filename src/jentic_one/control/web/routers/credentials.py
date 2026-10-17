@@ -1117,7 +1117,9 @@ async def connect_credential(
     except ProviderError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
     if isinstance(challenge, AuthCodeChallenge):
-        set_browser_binding_cookie(response, request, ctx, binding)
+        set_browser_binding_cookie(
+            response, request, ctx, binding, authorize_url=challenge.authorize_url
+        )
         return AuthCodeConnectChallengeResponse(
             authorize_url=challenge.authorize_url, state=challenge.state
         )
