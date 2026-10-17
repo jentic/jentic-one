@@ -100,7 +100,7 @@ async def test_daily_buckets_groups_by_day(
 ) -> None:
     # Anchored at a fixed mid-day timestamp, not the wall clock: seeding relative
     # to ``now`` puts ``now - 30min`` on the previous day between 00:00 and
-    # 00:30 UTC (#1808). ``daily_buckets`` only takes a lower-bound cutoff, so
+    # 00:30 UTC (#1806). ``daily_buckets`` only takes a lower-bound cutoff, so
     # nothing here depends on the current time.
     now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
     # Two executions on the anchor day, one the day before — two day buckets.
