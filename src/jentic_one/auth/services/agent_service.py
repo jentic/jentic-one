@@ -1073,8 +1073,14 @@ class AgentService:
         credential bindings) is deliberately untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
-        get a uniform 404); changing ``owner_id`` is ``org:admin``-only.
+        get a uniform 404); changing ``owner_id`` is ``org:admin``-only. An
+        empty ``update_data`` is a no-op that returns the agent unchanged,
+        after the same ownership check.
         """
+        if not update_data:
+            async with self._ctx.admin_db.session() as session:
+                agent = await self._load_owned_agent(session, agent_id, identity=identity)
+                return await self._view(session, agent)
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await self._load_owned_agent(
