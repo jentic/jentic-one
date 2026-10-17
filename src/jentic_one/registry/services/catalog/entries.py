@@ -14,8 +14,8 @@ across sources and is what the control plane (credentials, bindings) keys on.
   any other source whose slugified vendor equals a curated vendor is namespaced
   to ``{source_slug}~{hint}`` (so no existing vendor-wide credential covers it),
   unless a ``catalog.catalog_api_id_mappings`` row allows that exact entry;
-- a missing or invalid hint, or a namespaced form that still collides with a
-  curated vendor or id once slugified, becomes
+- a missing or invalid hint, or a namespaced form whose slug still equals a
+  curated vendor's or id's slug, becomes
   ``{source_slug}~{slugify_api_field(external_id)}``.
 
 ``exclude_unowned`` is the read-side fail-safe: it drops any non-curated entry
@@ -212,8 +212,9 @@ class CatalogApiIdResolver:
         return _vendor_slug(catalog_api_id) in self._curated_vendors
 
     def _collides(self, namespaced: str) -> bool:
-        forms = {_vendor_slug(namespaced), slugify_api_field(namespaced)}
-        return bool(forms & (self._curated_vendors | self._curated_id_slugs))
+        # A namespaced id's identity vendor is the whole id, so its vendor slug
+        # and its id slug are the same form.
+        return slugify_api_field(namespaced) in (self._curated_vendors | self._curated_id_slugs)
 
     def mapped(self, source_slug: str, external_id: str) -> str | None:
         """The curated id a mapping row allows for this entry, if any."""
