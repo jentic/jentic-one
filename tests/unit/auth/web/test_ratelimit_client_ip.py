@@ -47,6 +47,8 @@ def _ip(trusted: list[str], socket_ip: str | None, forwarded: str | None = None)
         # IPv6 network entries.
         (["fd00::/8"], "fd12:3456::1", "2001:db8::42", "2001:db8::42"),
         (["fd00::/8"], "fe80::1", "2001:db8::42", "fe80::1"),
+        # A zone ID on a request address does not affect membership.
+        (["fe80::/10"], "fe80::1%eth0", "2001:db8::42", "2001:db8::42"),
         # A dual-stack listener reports IPv4 as IPv4-mapped IPv6.
         (["10.0.0.0/8"], "::ffff:10.1.2.3", "203.0.113.7", "203.0.113.7"),
         # An IPv4-mapped config entry is unmapped too.
