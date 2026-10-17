@@ -12,7 +12,26 @@ import socket
 from collections.abc import Iterator
 
 import asyncpg
-from sqlalchemy.exc import DBAPIError, DisconnectionError
+from sqlalchemy.exc import DBAPIError, DisconnectionError, SQLAlchemyError
+
+from jentic_one.shared.db.errors import (
+    DatabaseConsistencyError,
+    DatabaseDataError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
+
+# Errors whose message may carry SQL text or bound parameters: SQLAlchemy's,
+# the driver's, and the domain errors built from their ``str()``.
+_DATABASE_ERRORS: tuple[type[BaseException], ...] = (
+    SQLAlchemyError,
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+    DatabaseDataError,
+    DatabaseConsistencyError,
+)
 
 # Server-side conditions that drop or refuse sessions: SQLSTATE class 08
 # (connection exception, e.g. ``ConnectionDoesNotExistError``) plus the
@@ -131,6 +150,32 @@ def redact_sql(text: str) -> str:
     """
     head, _, _ = text.partition(_SQL_MARKER)
     return head.strip()
+
+
+def involves_database_error(exc: BaseException) -> bool:
+    """True when ``exc`` or any exception chained to it is a database error.
+
+    A rendered traceback prints every chained exception's message, and a
+    database error's message can carry the SQL statement and its bound
+    parameters. Callers use this to log a traceback only when none is present.
+    Unlike :func:`connection_loss_cause`, ``__context__`` is followed too,
+    because the traceback renders it.
+    """
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending and len(seen) < _MAX_CHAIN_DEPTH:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, _DATABASE_ERRORS):
+            return True
+        orig = getattr(current, "orig", None)
+        for link in (orig, current.__cause__, current.__context__):
+            if isinstance(link, BaseException):
+                pending.append(link)
+    # Past the depth cap the rest of the chain is unchecked; assume the worst.
+    return bool(pending)
 
 
 def describe_connection_loss(cause: BaseException, *, max_len: int = 200) -> str:
