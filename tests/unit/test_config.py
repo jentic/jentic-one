@@ -1225,6 +1225,65 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+def test_broker_streaming_persist_max_concurrency_default(config_file: Path) -> None:
+    assert load_config(config_file).broker.streaming_persist_max_concurrency == 5
+
+
+def test_broker_streaming_persist_max_concurrency_from_yaml(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    sample_config_dict["broker"] = {"streaming_persist_max_concurrency": 3}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.streaming_persist_max_concurrency == 3
+
+
+def test_broker_streaming_persist_max_concurrency_env_override(config_file: Path) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY": "7"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.broker.streaming_persist_max_concurrency == 7
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_broker_streaming_persist_max_concurrency_must_be_positive(
+    config_file: Path, value: str
+) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_MAX_CONCURRENCY": value}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="streaming_persist_max_concurrency"),
+    ):
+        load_config(config_file)
+
+
+def test_broker_streaming_persist_acquire_timeout_default_and_overrides(
+    tmp_path: Path, sample_config_dict: dict[str, Any], config_file: Path
+) -> None:
+    assert load_config(config_file).broker.streaming_persist_acquire_timeout_s == 5.0
+
+    sample_config_dict["broker"] = {"streaming_persist_acquire_timeout_s": 2.5}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    assert load_config(path).broker.streaming_persist_acquire_timeout_s == 2.5
+
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_ACQUIRE_TIMEOUT_S": "0.75"}
+    with patch.dict(os.environ, env, clear=False):
+        assert load_config(config_file).broker.streaming_persist_acquire_timeout_s == 0.75
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_broker_streaming_persist_acquire_timeout_must_be_positive(
+    config_file: Path, value: str
+) -> None:
+    env = {"JENTIC__BROKER__STREAMING_PERSIST_ACQUIRE_TIMEOUT_S": value}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="streaming_persist_acquire_timeout_s"),
+    ):
+        load_config(config_file)
+
+
 @pytest.mark.parametrize("value", [False, "false"])
 def test_broker_retired_direct_bindings_flag_false_is_rejected(
     tmp_path: Path, sample_config_dict: dict[str, Any], value: object

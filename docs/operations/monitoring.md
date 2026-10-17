@@ -169,7 +169,17 @@ correlate with traces by `trace_id`.
 
 A few instruments are worth alerting on by name:
 `broker.streaming_execution.persist_failures` (an execution completed but
-its record was silently dropped — the only signal that happened),
+its record was not written — the only signal that happened; the `reason`
+attribute separates `write_error` from `backlog_timeout`, no slot within
+`broker.streaming_persist_acquire_timeout_s`, and `cancelled`, typically
+shutdown; the matching log lines are `streaming_execution_persist_failed` and
+`streaming_execution_persist_abandoned`, whose `stage="writing"` means the
+record may still have landed),
+`broker.streaming_execution.persist_pending` (streaming persists waiting for,
+or holding, one of the `broker.streaming_persist_max_concurrency` slots — a
+steadily rising `state="waiting"` series means admin writes can't keep up;
+these persists run after the response is complete or the client has
+disconnected, and are not counted in `broker.admission.in_flight`),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
