@@ -30,6 +30,9 @@ logger = structlog.get_logger(__name__)
 #: bucket per request.
 IPV6_CLIENT_PREFIX = 64
 
+#: RFC 6052 well-known NAT64 prefix: the low 32 bits are the IPv4 client.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+
 
 def get_auth_backend(request: Request) -> SharedStateBackend:
     """Return the app's shared auth-state backend (rate limits, consent handles)."""
@@ -75,22 +78,43 @@ def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6A
     return None
 
 
+def _embedded_ipv4(addr: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 client an IPv6 address stands for, if it embeds one.
+
+    IPv4-mapped (``::ffff:a.b.c.d``, a dual-stack listener), well-known-prefix
+    NAT64 (``64:ff9b::a.b.c.d``, RFC 6052), 6to4 (``2002:abcd:ef01::/48``) and
+    Teredo addresses all carry the client's IPv4 address, so they are budgeted
+    as that IPv4 client rather than as an IPv6 /64.
+    """
+    if addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    if addr in _NAT64_WELL_KNOWN_PREFIX:
+        return ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
+    if addr.sixtofour is not None:
+        return addr.sixtofour
+    if addr.teredo is not None:
+        return addr.teredo[1]
+    return None
+
+
 def client_network(ip: str) -> str:
     """The network a client address is budgeted under.
 
-    An IPv4 address (including an IPv4-mapped IPv6 one, so a dual-stack
-    listener does not give one host two identities) stands for itself; any
-    other IPv6 address stands for its /64, so a host cannot rotate interface
-    IDs within its prefix to escape its budget. Link-local and unique-local
-    addresses follow the same /64 rule. A value that is not an IP address (no
-    socket peer, or an unparsable forwarded hop) is used as-is.
+    An IPv4 address stands for itself, as does an IPv6 address that embeds
+    one (see :func:`_embedded_ipv4`), so a dual-stack or translated path does
+    not give one client two identities. Any other IPv6 address stands for its
+    /64, so a host cannot rotate interface IDs within its prefix to escape
+    its budget; link-local and unique-local addresses follow the same rule.
+    A value that is not an IP address (no socket peer, or an unparsable
+    forwarded hop) is used as-is.
     """
     addr = _parse_client_address(ip)
     if addr is None:
         return ip
     if isinstance(addr, ipaddress.IPv6Address):
-        if addr.ipv4_mapped is not None:
-            return str(addr.ipv4_mapped)
+        embedded = _embedded_ipv4(addr)
+        if embedded is not None:
+            return str(embedded)
         network = ipaddress.IPv6Network((int(addr), IPV6_CLIENT_PREFIX), strict=False)
         return str(network)
     return str(addr)
