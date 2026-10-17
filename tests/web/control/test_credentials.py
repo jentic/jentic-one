@@ -1388,3 +1388,68 @@ async def test_direct_binding_widens_credential_visibility(
     # And an agent with no binding at all sees nothing (unchanged baseline).
     with _agent_client(web_context, "agnt_never_bound") as client:
         assert client.get(f"/credentials/{credential_id}").status_code == 404
+
+
+# --- Owner delegation is read-only on credential writes ---
+
+
+@pytest.fixture()
+async def owner_credential(
+    plain_writer_client: TestClient, web_context: Context
+) -> AsyncGenerator[str, None]:
+    """A credential created by the plain (non-admin) writer; removed afterwards."""
+    yield _create_api_key(plain_writer_client)
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM credentials WHERE created_by = :who"), {"who": _PLAIN_WRITER_SUB}
+        )
+        await session.commit()
+
+
+@pytest.fixture()
+def delegated_writer_agent_client(web_context: Context) -> Iterator[TestClient]:
+    """An agent of the plain writer holding credentials:write plus owner delegation."""
+    identity = Identity(
+        sub="agnt_webtest_delegated_writer",
+        email="delegated-writer@test.local",
+        permissions=_effective("credentials:read", "credentials:write", "owner:credentials:read"),
+        actor_type=ActorType.AGENT,
+        parent_actor_id=_PLAIN_WRITER_SUB,
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_owner_delegation_reads_but_cannot_write_owner_credential(
+    plain_writer_client: TestClient,
+    delegated_writer_agent_client: TestClient,
+    owner_credential: str,
+) -> None:
+    """owner:credentials:read shows the agent its owner's credential, read-only.
+
+    PATCH and DELETE answer the same 404 as a credential the agent cannot
+    see, even with credentials:write, and the row is unchanged.
+    """
+    path = f"/credentials/{owner_credential}"
+    before = plain_writer_client.get(path).json()
+    assert delegated_writer_agent_client.get(path).status_code == 200
+
+    resp = delegated_writer_agent_client.patch(
+        path, json={"type": "api_key", "name": "renamed", "key": "sk-web-test-other"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+    resp = delegated_writer_agent_client.delete(path)
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+
+    after = plain_writer_client.get(path)
+    assert after.status_code == 200
+    assert after.json()["name"] == before["name"] == "web-cred-589"
+    assert after.json()["updated_at"] == before["updated_at"]
+
+    # The owner still edits and deletes it.
+    resp = plain_writer_client.patch(path, json={"type": "api_key", "name": "owner-renamed"})
+    assert resp.status_code == 200, resp.text
+    assert plain_writer_client.delete(path).status_code == 204

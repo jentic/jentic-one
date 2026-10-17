@@ -255,6 +255,46 @@ class DatabaseSession:
                     # to the pool.
                     await conn.invalidate()
 
+    @asynccontextmanager
+    async def try_advisory_lock(self, key: int) -> AsyncGenerator[bool, None]:
+        """Try to take a cross-process, session-level advisory lock without waiting.
+
+        Yields ``True`` when this caller holds the lock for the block and
+        ``False`` when another session already holds it — the caller decides
+        what to do then (typically: skip, someone else is doing the work). The
+        lock is released on exit when it was acquired.
+
+        Single-flight counterpart of :meth:`advisory_lock`, with the same
+        connection model on Postgres (``pg_try_advisory_lock`` on a dedicated
+        AUTOCOMMIT connection, so the lock spans the block's own transactions
+        and never leaves a connection idle in a transaction; best-effort
+        release). Two acquisitions from the same process use different
+        connections, so they exclude each other just like two processes do.
+
+        On SQLite there is one process per database, so this is a no-op that
+        always yields ``True``; callers that also need in-process exclusion
+        must hold their own ``asyncio.Lock``.
+        """
+        if self._is_sqlite:
+            yield True
+            return
+        async with self.engine.connect() as raw:
+            conn = await raw.execution_options(isolation_level="AUTOCOMMIT")
+            acquired = bool(
+                (
+                    await conn.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": key})
+                ).scalar_one()
+            )
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    try:
+                        await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+                    except Exception as exc:  # best-effort release
+                        logger.warning("advisory_lock_release_failed", key=key, error=str(exc))
+                        await conn.invalidate()
+
     async def run_in_transaction(
         self,
         fn: Callable[[AsyncSession], Awaitable[T]],

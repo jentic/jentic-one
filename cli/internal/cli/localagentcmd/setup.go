@@ -255,7 +255,7 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 		// optional isolation step (container / sudo-shim). Both best-effort:
 		// registration failures are reported per runtime and isolation never
 		// blocks the non-isolated flow.
-		outcomes := a.registerMCPEntries(ctx, targets, false)
+		outcomes := a.registerMCPEntries(ctx, targets, false).outcomes
 		a.offerMCPIsolation(ctx, outcomes, !opts.yes && prompt.Promptable())
 	}
 

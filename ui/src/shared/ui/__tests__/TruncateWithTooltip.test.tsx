@@ -1,5 +1,6 @@
 import { renderWithProviders, screen, checkA11y, waitFor } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
+import { userEvent as browserUser } from 'vitest/browser';
 import { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
 const LONG = 'a very long string that will not fit inside a tiny fixed-width container';
@@ -9,7 +10,27 @@ function Narrow({ children }: { children: React.ReactNode }) {
 	return <div style={{ width: 40 }}>{children}</div>;
 }
 
+/**
+ * Rest the runner's real cursor in the viewport's bottom-right corner, clear
+ * of the top-left area every test renders into. Another file's real-pointer
+ * action can leave it over where the trigger mounts; Chromium then sends that
+ * trigger a real `mouseover`, which re-opens the bubble behind the synthetic
+ * hover/leave or Escape a test is asserting on.
+ */
+async function parkRealCursor(): Promise<void> {
+	const { unmount } = renderWithProviders(
+		<div
+			data-testid="cursor-park"
+			style={{ position: 'fixed', right: 0, bottom: 0, width: 4, height: 4 }}
+		/>,
+	);
+	await browserUser.hover(screen.getByTestId('cursor-park'));
+	unmount();
+}
+
 describe('TruncateWithTooltip', () => {
+	beforeEach(parkRealCursor);
+
 	it('renders its children inline', () => {
 		renderWithProviders(<TruncateWithTooltip>short</TruncateWithTooltip>);
 		expect(screen.getByText('short')).toBeInTheDocument();
