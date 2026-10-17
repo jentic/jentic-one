@@ -294,3 +294,40 @@ class DatabaseSession:
                 )
                 if backoff_s > 0:
                     await asyncio.sleep(backoff_s * attempt)
+
+    @asynccontextmanager
+    async def read_session(self) -> AsyncGenerator[AsyncSession, None]:
+        """Yield a read-only session whose statements run in autocommit.
+
+        Each statement runs as its own implicit transaction, so the driver sends
+        no ``BEGIN`` before the first statement and no ``ROLLBACK`` at close —
+        a single ``SELECT`` costs one round trip instead of three. SQLAlchemy
+        still fires its logical ``begin``/``rollback`` events; the driver turns
+        them into no-ops because the connection is in autocommit.
+
+        Use it only for read-only sessions whose statements need no shared
+        snapshot. Under Postgres' default ``READ COMMITTED`` each statement of a
+        multi-statement transaction takes its own snapshot anyway, so a read-only
+        session sees the same data with or without ``BEGIN``. Never write
+        through it: there is no transaction to roll back, so a flushed change is
+        committed at once. Writes, and reads that must see one snapshot, use
+        :meth:`transaction`.
+
+        On SQLite every pooled connection is already in driver autocommit
+        (``enable_sqlite_manual_begin``), so reads emit no ``BEGIN`` and the
+        isolation level is left alone. Setting ``AUTOCOMMIT`` there would make
+        SQLAlchemy reset the connection to its detected default on checkin,
+        which turns pysqlite's implicit ``BEGIN`` back on for every later user
+        of that pooled connection.
+
+        The autocommit level is applied after pool checkout, so a
+        ``pool_pre_ping`` ping still runs at the connection's default level.
+        """
+        factory = self.session_factory
+        async with factory() as sess:
+            try:
+                if not self._is_sqlite:
+                    await sess.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                yield sess
+            finally:
+                await sess.close()

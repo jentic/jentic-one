@@ -131,7 +131,9 @@ class CredentialResolver:
         covering-but-less-specific credential), and only then apply
         most-specific-wins to break ties.
         """
-        async with self._ctx.control_db.session() as session:
+        # Read-only: the header query and the winner's material query need no
+        # shared snapshot, so autocommit drops the BEGIN/ROLLBACK round trips.
+        async with self._ctx.control_db.read_session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
             # Injection boundary (Q-02): an unbound credential must never be

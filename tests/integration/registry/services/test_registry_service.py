@@ -27,6 +27,8 @@ from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.registry.services.errors import AmbiguousMatchError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.wiring import InProcessRegistryResolver
+from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
 
@@ -177,6 +179,36 @@ async def test_resolve_operation_issues_one_registry_statement(
         "v1",
     )
     assert result.path_params == {"petId": "123"}
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://api.acme.com/v1/pets/123", "https://api.unknown.example/v1/pets/123"],
+    ids=["hit", "miss"],
+)
+async def test_broker_resolve_operation_reads_without_begin_or_rollback(
+    registry_db: DatabaseSession, clean_url_index: None, url: str
+) -> None:
+    """The broker's URL lookup runs in autocommit: no BEGIN/ROLLBACK round trips (#1823).
+
+    The miss falls through to the host-regex query, so it pins the
+    multi-statement read path as well as the single-statement hit.
+    """
+    await _seed_operation(
+        registry_db,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        host="api.acme.com",
+        path_template="/v1/pets/{petId}",
+    )
+    resolver = InProcessRegistryResolver(registry_db)
+
+    with trace_round_trips(registry_db) as trace:
+        result = await resolver.resolve_operation(method="GET", url=url)
+
+    assert (result is not None) == url.startswith("https://api.acme.com")
+    trace.assert_no_begin_or_rollback()
 
 
 async def test_resolve_operation_ignores_display_name(
