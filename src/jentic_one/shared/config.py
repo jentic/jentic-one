@@ -700,17 +700,23 @@ _IPV4_MAPPED_NETWORK = ipaddress.IPv6Network("::ffff:0:0/96")
 # Address space no arbitrary internet host can hold. A trusted-proxy network
 # outside it lets any host in that range pick its own rate-limit identity via
 # ``X-Forwarded-For``, so such an entry is warned about at load.
-_NON_PUBLIC_PROXY_NETWORKS: tuple[TrustedProxyNetwork, ...] = (
+_NON_PUBLIC_IPV4_NETWORKS: tuple[ipaddress.IPv4Network, ...] = (
     ipaddress.IPv4Network("10.0.0.0/8"),
     ipaddress.IPv4Network("100.64.0.0/10"),
     ipaddress.IPv4Network("127.0.0.0/8"),
     ipaddress.IPv4Network("169.254.0.0/16"),
     ipaddress.IPv4Network("172.16.0.0/12"),
     ipaddress.IPv4Network("192.168.0.0/16"),
+)
+_NON_PUBLIC_IPV6_NETWORKS: tuple[ipaddress.IPv6Network, ...] = (
     ipaddress.IPv6Network("::1/128"),
     ipaddress.IPv6Network("fc00::/7"),
     ipaddress.IPv6Network("fe80::/10"),
 )
+
+# Networks already warned about: config is validated more than once per
+# process, and one warning per network is enough.
+_warned_public_trusted_proxies: set[str] = set()
 
 
 def parse_trusted_proxy(entry: str) -> TrustedProxyNetwork:
@@ -725,7 +731,7 @@ def parse_trusted_proxy(entry: str) -> TrustedProxyNetwork:
     if "%" in entry:
         raise ValueError(
             f"invalid auth.oauth_rate_limit.trusted_proxies entry {entry!r}: "
-            "IPv6 zone IDs are not supported"
+            "zone IDs ('%' suffix) are not supported"
         )
     try:
         network = ipaddress.ip_network(entry, strict=False)
@@ -741,9 +747,24 @@ def parse_trusted_proxy(entry: str) -> TrustedProxyNetwork:
 
 
 def _is_non_public_network(network: TrustedProxyNetwork) -> bool:
-    return any(
-        network.version == allowed.version and network.subnet_of(allowed)  # type: ignore[arg-type]
-        for allowed in _NON_PUBLIC_PROXY_NETWORKS
+    if isinstance(network, ipaddress.IPv4Network):
+        return any(network.subnet_of(allowed) for allowed in _NON_PUBLIC_IPV4_NETWORKS)
+    return any(network.subnet_of(allowed) for allowed in _NON_PUBLIC_IPV6_NETWORKS)
+
+
+def _warn_public_trusted_proxy_once(entry: str, network: TrustedProxyNetwork) -> None:
+    if str(network) in _warned_public_trusted_proxies:
+        return
+    _warned_public_trusted_proxies.add(str(network))
+    _logger.warning(
+        "trusted_proxies_network_includes_public_addresses",
+        entry=entry,
+        network=str(network),
+        detail=(
+            "any host inside a trusted proxy network can set X-Forwarded-For "
+            "and so choose its own OAuth rate-limit identity; list only the "
+            "addresses your reverse proxies hold"
+        ),
     )
 
 
@@ -820,7 +841,11 @@ class OAuthRateLimitConfig(BaseModel):
         description="Burst allowance on top of ``approval_status_rpm``.",
     )
 
-    _trusted_networks: tuple[TrustedProxyNetwork, ...] = PrivateAttr(default=())
+    # (entries, parsed networks): keyed on the entries so an assignment or a
+    # ``model_copy(update=...)`` after load can never leave a stale trust set.
+    _trusted_networks_cache: tuple[tuple[str, ...], tuple[TrustedProxyNetwork, ...]] = PrivateAttr(
+        default=((), ())
+    )
 
     @field_validator("trusted_proxies", mode="before")
     @classmethod
@@ -835,26 +860,27 @@ class OAuthRateLimitConfig(BaseModel):
         for entry in entries:
             network = parse_trusted_proxy(entry)
             if not _is_non_public_network(network):
-                _logger.warning(
-                    "trusted_proxies_network_includes_public_addresses",
-                    entry=entry,
-                    network=str(network),
-                    detail=(
-                        "any host inside a trusted proxy network can set X-Forwarded-For "
-                        "and so choose its own OAuth rate-limit identity; list only the "
-                        "addresses your reverse proxies hold"
-                    ),
-                )
+                _warn_public_trusted_proxy_once(entry, network)
         return entries
 
     def model_post_init(self, __context: object) -> None:
-        """Parse ``trusted_proxies`` once so request-time matching never re-parses."""
-        self._trusted_networks = tuple(parse_trusted_proxy(e) for e in self.trusted_proxies)
+        """Parse ``trusted_proxies`` at load so request-time matching never parses it."""
+        entries = tuple(self.trusted_proxies)
+        self._trusted_networks_cache = (entries, tuple(parse_trusted_proxy(e) for e in entries))
 
     @property
     def trusted_networks(self) -> tuple[TrustedProxyNetwork, ...]:
-        """The parsed ``trusted_proxies`` networks, for :func:`client_ip` matching."""
-        return self._trusted_networks
+        """The parsed ``trusted_proxies`` networks, for ``client_ip`` matching.
+
+        Parsed once per distinct entry list; a request only compares the
+        entries against the cache key.
+        """
+        entries = tuple(self.trusted_proxies)
+        cached_entries, networks = self._trusted_networks_cache
+        if entries != cached_entries:
+            networks = tuple(parse_trusted_proxy(e.strip()) for e in entries)
+            self._trusted_networks_cache = (entries, networks)
+        return networks
 
 
 class LocalLoginConfig(BaseModel):
