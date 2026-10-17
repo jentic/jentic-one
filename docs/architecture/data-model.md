@@ -109,7 +109,9 @@ holds the long-lived API-key alternative to the OAuth flow. The retired
 after the migration runner has moved every remaining service account to a
 successor agent (see the [release runbook](../development/releasing.md)).
 Token state lives in
-`access_tokens`/`refresh_tokens`/`authorization_codes`; permission grants in
+`access_tokens`/`refresh_tokens`/`authorization_codes`, and `assertion_jtis`
+holds the single-use record of each JWT-bearer assertion's `jti` (a digest,
+until shortly after the assertion expires); permission grants in
 `actor_permission_grants` and `user_permission_grants`. Operationally:
 `jobs`/`job_results` (the queue the `WorkerLoop` claims from),
 `execution_records` (append-only history of brokered calls), `events`, and
