@@ -29,10 +29,13 @@ var errNothingDetected = errors.New("no operators given and none detected")
 // promptable reports whether the huh pickers can actually run interactively.
 // It is the CLI-wide prompt.Promptable gate: TERM=dumb sessions (emacs shells,
 // many agent harnesses) are exactly the ones the #755 defaulting path is for,
-// so they are treated as non-interactive (jentic-one#841).
-func promptable() bool {
-	return prompt.Promptable()
-}
+// so they are treated as non-interactive (jentic-one#841). A variable so tests
+// can stand in a promptable terminal.
+var promptable = prompt.Promptable
+
+// operatorPicker runs the interactive operator multi-select; a variable so
+// tests can drive the interactive branch without a terminal.
+var operatorPicker = (*Cmd).pickOperators
 
 // skillOptions are shared across the skill subcommands.
 type skillOptions struct {
@@ -91,8 +94,16 @@ func newSkillInitCmd(a *Cmd) *cobra.Command {
 			"one: each operator uses its default scope unless --scope is given\n" +
 			"(preview with --dry-run). --skill limits the set (default: all shipped\n" +
 			"skills); there is no interactive skill picker.\n\n" +
-			"Non-interactively (--yes, pipes, agent sessions) it defaults to the\n" +
-			"detected operators, echoing each resolved path before writing.",
+			"Non-interactively (--yes, agent mode, pipes, agent sessions) it\n" +
+			"defaults to the detected operators, echoing each resolved path before\n" +
+			"writing.\n\n" +
+			"With --json (the default off-TTY and in agent mode) stdout carries one\n" +
+			"{schema_version, results, mcp} document with a per-(operator, skill,\n" +
+			"scope) outcome and the MCP registration outcome; side reports go to\n" +
+			"stderr. --json changes only the output shape: on a terminal the\n" +
+			"pickers still run (on stderr).\n\n" +
+			"An install recording a newer skill version than this CLI bundles is\n" +
+			"left alone (skipped_newer) unless --force.",
 		Example: "  jentic skill init\n" +
 			"  jentic skill init --operator claude,cursor\n" +
 			"  jentic skill init --skill jentic --all --yes\n" +
@@ -105,11 +116,12 @@ func newSkillInitCmd(a *Cmd) *cobra.Command {
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to target (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&opts.skills, "skill", nil, "skills to install (repeatable or comma-separated; default: all shipped)")
 	cmd.Flags().StringVar(&opts.scope, "scope", "", "placement scope: user or project (default: per-operator)")
-	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite content you have manually edited")
+	cmd.Flags().BoolVar(&opts.force, "force", false, forceFlagUsage)
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "non-interactive: no pickers; with no --operator/--all, target the detected operators")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print target paths without writing")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "target every supported operator")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
+	cmd.Flags().BoolVar(&opts.json, "json", false, skillJSONFlagUsage)
 	return cmd
 }
 
@@ -118,7 +130,12 @@ func newSkillListCmd(a *Cmd) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Show supported operators and where each skill is installed",
-		Args:  cobra.NoArgs,
+		Long: "list reports, per operator, whether its runtime is detected and where each\n" +
+			"shipped skill is installed (user and project scope), whether it has\n" +
+			"manual edits, and whether it is older than the copy bundled in this CLI\n" +
+			"(stale: vX installed, vY available). Refresh stale installs with\n" +
+			"`jentic skill update`.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.skillList(cmd, opts)
 		},
@@ -136,7 +153,8 @@ func newSkillUpdateCmd(a *Cmd) *cobra.Command {
 			"currently resolved base URL and rewrites it when the recorded content\n" +
 			"hash differs. A base-URL change therefore legitimately rewrites the\n" +
 			"jentic skill (its body carries the interpolated URL). Manually-edited\n" +
-			"content is reported and left alone unless --force.",
+			"content, and installs recording a newer skill version than this CLI\n" +
+			"bundles, are reported and left alone unless --force.",
 		Example: "  jentic skill update\n" +
 			"  jentic skill update --operator claude\n" +
 			"  jentic skill update --skill jentic --force",
@@ -147,9 +165,10 @@ func newSkillUpdateCmd(a *Cmd) *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to update (repeatable or comma-separated; default: all)")
 	cmd.Flags().StringSliceVar(&opts.skills, "skill", nil, "skills to update (repeatable or comma-separated; default: all shipped)")
-	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite content you have manually edited")
+	cmd.Flags().BoolVar(&opts.force, "force", false, forceFlagUsage)
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print what would change without writing")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
+	cmd.Flags().BoolVar(&opts.json, "json", false, skillJSONFlagUsage)
 	return cmd
 }
 
@@ -175,8 +194,15 @@ func newSkillRemoveCmd(a *Cmd) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.all, "all", false, "remove from every supported operator")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "remove even content you have manually edited")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print what would be removed without deleting anything")
+	cmd.Flags().BoolVar(&opts.json, "json", false, skillJSONFlagUsage)
 	return cmd
 }
+
+// skillJSONFlagUsage is the shared --json help text for the mutating verbs.
+const skillJSONFlagUsage = "force the JSON outcome envelope (default when stdout is not a TTY or in agent mode)"
+
+// forceFlagUsage is the shared --force help text for the writing verbs.
+const forceFlagUsage = "overwrite content you have manually edited, or downgrade an install newer than this CLI's copy"
 
 // detectEnv resolves the skill detection environment: the injected probe when
 // set (tests), otherwise the real OS — PATH and filesystem probes wired to the
@@ -276,6 +302,18 @@ func selectSkills(want []string) ([]string, error) {
 	return out, nil
 }
 
+// InstalledSkills reports every installed skill across all supported
+// operators and scopes (deduplicated by artifact), with its recorded and
+// bundled versions. It is a read-only probe for status surfaces such as
+// `jentic doctor`; it never writes.
+func (a *Cmd) InstalledSkills() ([]skillgen.InstalledSkill, error) {
+	env, err := a.detectEnv()
+	if err != nil {
+		return nil, err
+	}
+	return skillgen.InstalledStates(skillgen.DefaultRegistry(), env), nil
+}
+
 // canonicalSet loads the selected skills, stamped with the resolved base URL.
 // The deployment also serves this same canonical content at /skills/<name>.md
 // (#651); a hosted-fetch source can be wired here later. For now it always uses
@@ -347,7 +385,7 @@ func (a *Cmd) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts
 		a.echoDefaultedTargets(targets, env)
 		return targets, nil
 	default:
-		adapters, err = a.pickOperators(reg, env)
+		adapters, err = operatorPicker(a, reg, env)
 		if err != nil || len(adapters) == 0 {
 			return nil, err
 		}
@@ -504,27 +542,58 @@ func scopeLabel(ad skillgen.Adapter, scope, def skillgen.Scope, env skillgen.Det
 }
 
 func (a *Cmd) skillInit(cmd *cobra.Command, opts *skillOptions) error {
+	asJSON := wantsJSON(cmd, opts.json)
+	// In JSON mode stdout carries exactly one document, so the human side
+	// reports (defaulted-target echo, picker notices, MCP registration) go to
+	// stderr instead. The pickers themselves already draw on stderr, so
+	// --json alone changes only the output shape: a human on a terminal is
+	// still asked. Machine mode never prompts, so there a run with no
+	// --operator/--all takes the same detected-operators default as --yes.
+	human := a
+	if asJSON {
+		human = a.withOut(a.Err)
+	}
+	if isMachine(cmd) {
+		scripted := *opts
+		scripted.yes = true
+		opts = &scripted
+	}
+
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
 		return err
 	}
 
-	targets, err := a.chooseTargets(reg, env, opts)
+	targets, err := human.chooseTargets(reg, env, opts)
 	if err != nil {
 		// Esc/Ctrl-C in a picker is "never mind", not a failure — same
 		// Cancelled./exit-0 idiom as every other wizard in the CLI (and the
 		// same outcome as confirming an empty selection).
 		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+			fmt.Fprintln(human.Out, theme.Dim.Render("Cancelled."))
+			if asJSON {
+				return writeSkillResults(a.Out, nil, emptyMCPReport())
+			}
 			return nil
 		}
 		return err
 	}
 	if len(targets) == 0 {
+		if asJSON {
+			return writeSkillResults(a.Out, nil, emptyMCPReport())
+		}
 		return nil
 	}
 
+	if asJSON {
+		results, err := a.applySkills(targets, env, opts)
+		if err != nil {
+			return err
+		}
+		mcp := human.registerMCPEntries(cmd.Context(), targets, opts.dryRun)
+		return writeSkillResults(a.Out, results, mcp.report())
+	}
 	if err := a.writeSkill(targets, env, opts); err != nil {
 		return err
 	}
@@ -536,37 +605,77 @@ func (a *Cmd) skillInit(cmd *cobra.Command, opts *skillOptions) error {
 	return nil
 }
 
-// writeSkill renders each selected skill into each target and prints the
-// per-operator, per-skill outcome plus a closing hint. It is the shared body of
-// `skill init` and `setup` so both report writes identically. Targets are
-// resolved by the caller (so selection errors surface before any side effects).
+// applySkills renders each selected skill into each target and returns one
+// result per (operator, skill, scope), printing nothing. A per-target failure
+// is recorded as an "error" result and the rest continue; only a failure to
+// load the skill set itself is returned.
 //
 // For a shared AGENTS.md, each skill's named block is spliced in turn: Apply
 // re-reads the file between skills, so sibling blocks written earlier in the
 // loop are preserved and never clobbered.
-func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) error {
+func (a *Cmd) applySkills(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) ([]skillResult, error) {
 	set, err := a.canonicalSet(opts.baseURL, opts.skills)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]skillResult, 0, len(targets)*len(set))
+	shared := sharedArtifacts{}
+	for _, t := range targets {
+		for _, c := range set {
+			op := string(t.adapter.Operator())
+			if r, ok := shared.mirror(op, c.Name, t.adapter.Target(t.scope, c.Name, env)); ok {
+				results = append(results, r)
+				continue
+			}
+			out, aerr := skillgen.Apply(t.adapter, c, env, skillgen.ApplyOptions{
+				Scope:  t.scope,
+				Force:  opts.force,
+				DryRun: opts.dryRun,
+			})
+			r := skillResult{
+				Operator:  op,
+				Skill:     c.Name,
+				Scope:     string(t.scope),
+				Path:      out.Path,
+				Action:    applyAction(out, aerr),
+				DryRun:    opts.dryRun,
+				UserEdits: out.UserEdits,
+				Error:     errString(aerr),
+				err:       aerr,
+				applied:   out,
+			}
+			r.setNewer(out)
+			shared.record(r)
+			results = append(results, r)
+		}
+	}
+	return results, nil
+}
+
+// writeSkill renders each selected skill into each target and prints the
+// per-operator, per-skill outcome plus a closing hint. It is the shared body of
+// `skill init` and `setup` so both report writes identically. Targets are
+// resolved by the caller (so selection errors surface before any side effects).
+func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) error {
+	results, err := a.applySkills(targets, env, opts)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Heading.Render("Jentic skills"))
 
 	var wrote int
-	for _, t := range targets {
-		for _, c := range set {
-			out, aerr := skillgen.Apply(t.adapter, c, env, skillgen.ApplyOptions{
-				Scope:  t.scope,
-				Force:  opts.force,
-				DryRun: opts.dryRun,
-			})
-			if aerr != nil {
-				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s/%s: %v", t.adapter.Operator(), c.Name, aerr))
-				continue
-			}
-			a.reportOutcome(out, t.scope, opts.dryRun)
-			if out.Changed && !opts.dryRun {
-				wrote++
-			}
+	for _, r := range results {
+		if r.AppliedVia != "" {
+			a.reportShared(r)
+			continue
+		}
+		if r.err != nil {
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%s/%s: %v", r.Operator, r.Skill, r.err))
+			continue
+		}
+		a.reportOutcome(r.applied, skillgen.Scope(r.Scope), opts.dryRun)
+		if r.applied.Changed && !opts.dryRun {
+			wrote++
 		}
 	}
 
@@ -581,6 +690,13 @@ func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 	return nil
 }
 
+// reportShared prints the line for an operator whose artifact was already
+// handled by another operator's row in this run (a shared AGENTS.md).
+func (a *Cmd) reportShared(r skillResult) {
+	label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
+	fmt.Fprintln(a.Out, "  "+theme.Dimf("%-24s %s — same file as %s/%s (%s)", label, prettyPath(r.Path), r.AppliedVia, r.Skill, r.Action))
+}
+
 // reportOutcome prints a single (operator, skill) result line, tagged with the
 // scope the write resolved to so placement is always visible in the output.
 func (a *Cmd) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun bool) {
@@ -589,6 +705,8 @@ func (a *Cmd) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun b
 	switch {
 	case out.UserEdits:
 		fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — manual edits detected; re-run with --force to overwrite", label, rel))
+	case out.NewerInstalled:
+		fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — %s", label, rel, newerInstalledNote(out.InstalledVersion, out.AppliedVersion)))
 	case dryRun:
 		verb := "would update"
 		if out.Created {
@@ -615,7 +733,7 @@ func (a *Cmd) SkillUpdateDefault(cmd *cobra.Command) error {
 // currently resolved base URL and rewrites it when the recorded content hash
 // differs. It only touches installs that already exist — it never creates a new
 // one — so it is a refresh, not an install (#407).
-func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) SkillUpdate(cmd *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
@@ -638,16 +756,18 @@ func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 	if err != nil {
 		return err
 	}
-	byName := map[string]skillgen.Canonical{}
-	for _, c := range set {
-		byName[c.Name] = c
-	}
 
-	fmt.Fprintln(a.Out, theme.Heading.Render("Update Jentic skills"))
-	var changed, blocked int
+	results := make([]skillResult, 0)
+	shared := sharedArtifacts{}
 	for _, ad := range adapters {
 		for _, c := range set {
 			for _, st := range skillgen.InstallStates(ad, c.Name, env) {
+				// Check the shared set before the install probe: an earlier
+				// operator in this run may have just rewritten this file.
+				if r, ok := shared.mirror(string(ad.Operator()), c.Name, st.Path); ok {
+					results = append(results, r)
+					continue
+				}
 				if !st.Installed {
 					continue
 				}
@@ -656,26 +776,58 @@ func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 					Force:  opts.force,
 					DryRun: opts.dryRun,
 				})
-				label := fmt.Sprintf("%s/%s", ad.Operator(), c.Name)
-				switch {
-				case uerr != nil:
-					fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, uerr))
-				case out.UserEdits:
-					blocked++
-					fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — manual edits detected; re-run with --force to overwrite", label, prettyPath(out.Path)))
-				case out.Changed && opts.dryRun:
-					changed++
-					fmt.Fprintln(a.Out, "  "+theme.Infof("%-24s would update %s (%s scope)", label, prettyPath(out.Path), st.Scope))
-				case out.Changed:
-					changed++
-					fmt.Fprintln(a.Out, "  "+theme.Successf("%-24s updated %s (%s scope)", label, prettyPath(out.Path), st.Scope))
-				default:
-					fmt.Fprintln(a.Out, "  "+theme.Dimf("%-24s %s — already up to date", label, prettyPath(out.Path)))
+				// update only touches existing installs, so a write is always
+				// an update (never a create) and a no-op is "unchanged".
+				action := updateAction(out, uerr)
+				r := skillResult{
+					Operator:  string(ad.Operator()),
+					Skill:     c.Name,
+					Scope:     string(st.Scope),
+					Path:      out.Path,
+					Action:    action,
+					DryRun:    opts.dryRun,
+					UserEdits: out.UserEdits,
+					Error:     errString(uerr),
+					err:       uerr,
+					applied:   out,
 				}
+				r.setNewer(out)
+				shared.record(r)
+				results = append(results, r)
 			}
 		}
 	}
-	if changed == 0 && blocked == 0 {
+	if wantsJSON(cmd, opts.json) {
+		return writeSkillResults(a.Out, results, nil)
+	}
+
+	fmt.Fprintln(a.Out, theme.Heading.Render("Update Jentic skills"))
+	var changed, blocked, newer int
+	for _, r := range results {
+		label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
+		out := r.applied
+		switch {
+		case r.AppliedVia != "":
+			a.reportShared(r)
+		case r.err != nil:
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, r.err))
+		case out.UserEdits:
+			blocked++
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — manual edits detected; re-run with --force to overwrite", label, prettyPath(out.Path)))
+		case out.NewerInstalled:
+			newer++
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — %s", label, prettyPath(out.Path), newerInstalledNote(r.InstalledVersion, r.AvailableVersion)))
+		case out.Changed && opts.dryRun:
+			changed++
+			fmt.Fprintln(a.Out, "  "+theme.Infof("%-24s would update %s (%s scope)", label, prettyPath(out.Path), r.Scope))
+		case out.Changed:
+			changed++
+			fmt.Fprintln(a.Out, "  "+theme.Successf("%-24s updated %s (%s scope)", label, prettyPath(out.Path), r.Scope))
+		default:
+			fmt.Fprintln(a.Out, "  "+theme.Dimf("%-24s %s — already up to date", label, prettyPath(out.Path)))
+		}
+	}
+	if changed == 0 && blocked == 0 && newer == 0 {
 		fmt.Fprintln(a.Out, theme.Dim.Render("No installed skills to update."))
 	}
 	if opts.dryRun {
@@ -687,7 +839,7 @@ func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 	return nil
 }
 
-func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) skillRemove(cmd *cobra.Command, opts *skillOptions) error {
 	scope, err := resolveScope(opts.scope)
 	if err != nil {
 		return err
@@ -719,8 +871,8 @@ func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 		return errors.New("no operators given; pass --operator <names> or --all")
 	}
 
-	fmt.Fprintln(a.Out, theme.Heading.Render("Remove Jentic skills"))
-	var blocked int
+	results := make([]skillResult, 0)
+	shared := sharedArtifacts{}
 	for _, ad := range adapters {
 		for _, name := range skills {
 			c := skillgen.Canonical{Name: name}
@@ -728,11 +880,14 @@ func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 			// placement": probe both scopes and strip every install found, so
 			// an install made with --scope project (or via the interactive
 			// scope prompt) is removable without the user re-deriving its scope.
+			// A scope whose artifact an earlier operator in this run already
+			// removed (a shared AGENTS.md) is kept so its outcome is mirrored.
+			op := string(ad.Operator())
 			scopes := []skillgen.Scope{scope}
 			if scope == "" {
 				scopes = scopes[:0]
 				for _, st := range skillgen.InstallStates(ad, name, env) {
-					if st.Installed {
+					if _, done := shared.mirror(op, name, st.Path); st.Installed || done {
 						scopes = append(scopes, st.Scope)
 					}
 				}
@@ -740,27 +895,62 @@ func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 					continue
 				}
 			}
-			label := fmt.Sprintf("%s/%s", ad.Operator(), name)
 			for _, sc := range scopes {
+				if r, ok := shared.mirror(op, name, ad.Target(sc, name, env)); ok {
+					results = append(results, r)
+					continue
+				}
 				out, rerr := skillgen.Remove(ad, c, env, skillgen.RemoveOptions{
 					Scope:  sc,
 					Force:  opts.force,
 					DryRun: opts.dryRun,
 				})
-				switch {
-				case rerr != nil:
-					fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, rerr))
-				case out.UserEdits:
-					blocked++
-					fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — manual edits detected; re-run with --force to remove", label, prettyPath(out.Path)))
-				case out.Missing:
-					// Nothing to remove for this (skill, scope): stay quiet to
-					// avoid a wall of "nothing to remove" across the set.
-				case opts.dryRun:
-					fmt.Fprintln(a.Out, "  "+theme.Infof("%-24s would remove from %s", label, prettyPath(out.Path)))
-				case out.Removed:
-					fmt.Fprintln(a.Out, "  "+theme.Successf("%-24s removed from %s", label, prettyPath(out.Path)))
+				r := skillResult{
+					Operator:  op,
+					Skill:     name,
+					Scope:     string(sc),
+					Path:      out.Path,
+					Action:    removeAction(out, rerr),
+					DryRun:    opts.dryRun,
+					UserEdits: out.UserEdits,
+					Error:     errString(rerr),
+					err:       rerr,
 				}
+				// Only a result that touched the file is shared; a miss
+				// leaves the artifact for a later operator to act on.
+				if r.Action != skillActionNotInstalled {
+					shared.record(r)
+				}
+				results = append(results, r)
+			}
+		}
+	}
+	if wantsJSON(cmd, opts.json) {
+		return writeSkillResults(a.Out, results, nil)
+	}
+
+	fmt.Fprintln(a.Out, theme.Heading.Render("Remove Jentic skills"))
+	var blocked int
+	for _, r := range results {
+		label := fmt.Sprintf("%s/%s", r.Operator, r.Skill)
+		if r.AppliedVia != "" {
+			a.reportShared(r)
+			continue
+		}
+		switch r.Action {
+		case skillActionError:
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %v", label, r.err))
+		case skillActionUserEdits:
+			blocked++
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-24s %s — manual edits detected; re-run with --force to remove", label, prettyPath(r.Path)))
+		case skillActionNotInstalled:
+			// Nothing to remove for this (skill, scope): stay quiet to
+			// avoid a wall of "nothing to remove" across the set.
+		case skillActionRemoved:
+			if opts.dryRun {
+				fmt.Fprintln(a.Out, "  "+theme.Infof("%-24s would remove from %s", label, prettyPath(r.Path)))
+			} else {
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-24s removed from %s", label, prettyPath(r.Path)))
 			}
 		}
 	}

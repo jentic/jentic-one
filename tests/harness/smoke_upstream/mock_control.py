@@ -9,6 +9,7 @@ breaking, transport failures) can be driven deterministically from a test.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Final
 
@@ -29,9 +30,12 @@ _DISCONNECT_PREFIX: Final = b"partial-body-before-disconnect:"
 
 # Maps an X-Mock-Test-Id to the next index to consume from its status sequence.
 # Module-level so state survives across requests within a single test process;
-# tests clear it via ``reset_sequences()``. The harness only runs in an isolated
-# test namespace, so the unbounded dict growth is a non-issue.
-_sequence_cursors: dict[str, int] = {}
+# tests clear it via ``reset_sequences()``. Bounded LRU: load runs (tests/perf)
+# mint a fresh test id per logical request, so an unbounded dict would grow for
+# the life of the process. Evicting the least-recently-used cursor only resets
+# an id nobody has touched in the last ``_MAX_SEQUENCE_CURSORS`` requests.
+_MAX_SEQUENCE_CURSORS: Final = 10_000
+_sequence_cursors: OrderedDict[str, int] = OrderedDict()
 
 
 class MockDisconnectError(httpx.RemoteProtocolError):
@@ -85,6 +89,9 @@ def _next_sequence_status(test_id: str, sequence: list[int]) -> int:
     index = _sequence_cursors.get(test_id, 0)
     clamped = min(index, len(sequence) - 1)
     _sequence_cursors[test_id] = index + 1
+    _sequence_cursors.move_to_end(test_id)
+    while len(_sequence_cursors) > _MAX_SEQUENCE_CURSORS:
+        _sequence_cursors.popitem(last=False)
     return sequence[clamped]
 
 

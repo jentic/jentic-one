@@ -40,7 +40,8 @@ func newDoctorCmd(app *app) *cobra.Command {
 		Short: "Diagnose this agent's local jentic setup (read-only)",
 		Long: "doctor is the agent-side self-check. It verifies the things an agent needs to\n" +
 			"work — its config/state directories, a resolvable identity, a usable token or\n" +
-			"API key, control-plane reachability, and local clock skew — and prints a\n" +
+			"API key, control-plane reachability, local clock skew, and whether any\n" +
+			"installed skill is older than the bundled copy — and prints a\n" +
 			"pass/warn/fail report. It is read-only (never mints tokens or writes config)\n" +
 			"and, unlike `jenticctl doctor`, needs no operator tooling, so it runs where an\n" +
 			"agent actually lives. It exits non-zero when any check fails (warnings keep a\n" +
@@ -106,6 +107,7 @@ func (a *app) doctorE(cmd *cobra.Command, jsonFlag bool) error {
 	baseURL, token := d.checkIdentity(ctx)
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
+	d.checkSkills()
 
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return d.renderJSON()

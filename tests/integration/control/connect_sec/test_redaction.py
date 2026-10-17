@@ -14,15 +14,13 @@ import asyncio
 import json
 import logging
 import socket
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 import pytest
 import structlog
 import uvicorn
-from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import inspect, text
 
@@ -30,7 +28,6 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.logging import configure_logging
-from jentic_one.shared.metrics import reset_metrics
 from tests.integration.control.connect_sec.support import (
     AGENT,
     AGENT_ID,
@@ -58,15 +55,6 @@ _CIPHERTEXT_COLUMNS = {
     ("customer_api_keys", "encrypted_key"): _PASTED_KEY,
     ("oauth_client_credentials", "encrypted_client_secret"): _CLIENT_SECRET,
 }
-
-
-@pytest.fixture()
-def metric_reader() -> Iterator[InMemoryMetricReader]:
-    reader = InMemoryMetricReader()
-    reset_metrics()
-    metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
-    yield reader
-    reset_metrics()
 
 
 async def _table_rows(db: DatabaseSession) -> dict[str, list[dict[str, Any]]]:
@@ -108,7 +96,7 @@ async def _sweep_databases(ctx: Context, needles: tuple[str, ...]) -> list[str]:
 
 async def test_entered_secrets_and_poll_tokens_never_leak(
     env: Context,
-    metric_reader: InMemoryMetricReader,
+    otel_metric_reader: InMemoryMetricReader,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     await import_spec(env, KEY_SCHEME)
@@ -206,7 +194,7 @@ async def test_entered_secrets_and_poll_tokens_never_leak(
         audit_count = (await session.execute(text("SELECT COUNT(*) FROM audit_entries"))).scalar()
     assert audit_count and audit_count >= 3
     # Metrics: names, attributes, values.
-    data = metric_reader.get_metrics_data()
+    data = otel_metric_reader.get_metrics_data()
     assert data is not None
     exported = data.to_json()
     assert "connect" in exported
@@ -220,14 +208,17 @@ def _free_port() -> int:
 
 
 @pytest.fixture()
-def restore_logging() -> Iterator[None]:
+def restore_logging(request: pytest.FixtureRequest) -> None:
     root = logging.getLogger()
     handlers, level = root.handlers[:], root.level
     structlog_config = structlog.get_config()
-    yield
-    root.handlers[:] = handlers
-    root.setLevel(level)
-    structlog.configure(**structlog_config)
+
+    def _restore() -> None:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        structlog.configure(**structlog_config)
+
+    request.addfinalizer(_restore)
 
 
 class _Lines(logging.Handler):
