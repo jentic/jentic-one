@@ -628,6 +628,58 @@ def test_agent_cannot_purge_its_own_binding(
     assert resp.status_code == 204
 
 
+def test_agent_cannot_change_a_sibling_agents_bindings(
+    owner_client: TestClient,
+    self_agent_client: TestClient,
+    binding_agent_id: str,
+    test_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """``owner:agents:read`` shows an agent its owner's other agents, read-only.
+
+    With ``agents:write`` it still cannot bind, suspend, purge or resume a
+    binding on a sibling agent: each answers 404 like an agent it cannot
+    see, and the sibling's bindings are unchanged. Its own binding of the
+    owner's credential still works.
+    """
+    sibling_url = f"/agents/{test_agent_id}/credentials"
+    own_url = f"/agents/{binding_agent_id}/credentials"
+
+    resp = self_agent_client.post(sibling_url, json={"credential_id": control_credential_id})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "actor_not_found"
+    assert _suspended_rows(owner_client, test_agent_id) == {}
+
+    assert (
+        owner_client.post(sibling_url, json={"credential_id": control_credential_id}).status_code
+        == 201
+    )
+    assert self_agent_client.get(sibling_url).status_code == 200
+    for params in ({}, {"purge": "true"}):
+        resp = self_agent_client.delete(f"{sibling_url}/{control_credential_id}", params=params)
+        assert resp.status_code == 404
+        assert resp.json()["type"] == "actor_not_found"
+    assert _suspended_rows(owner_client, test_agent_id) == {control_credential_id: False}
+
+    assert owner_client.delete(f"{sibling_url}/{control_credential_id}").status_code == 204
+    resp = self_agent_client.post(f"{sibling_url}/{control_credential_id}:resume")
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "actor_not_found"
+    assert _suspended_rows(owner_client, test_agent_id) == {control_credential_id: True}
+
+    # Its own binding: bind the owner's credential, then suspend it.
+    resp = self_agent_client.post(own_url, json={"credential_id": control_credential_id})
+    assert resp.status_code == 201
+    assert self_agent_client.delete(f"{own_url}/{control_credential_id}").status_code == 204
+    assert _suspended_rows(owner_client, binding_agent_id) == {control_credential_id: True}
+
+    # The owner still manages the sibling's binding.
+    resp = owner_client.post(f"{sibling_url}/{control_credential_id}:resume")
+    assert resp.status_code == 200
+    resp = owner_client.delete(f"{sibling_url}/{control_credential_id}", params={"purge": "true"})
+    assert resp.status_code == 204
+
+
 @pytest.mark.asyncio
 async def test_purge_drops_inline_rules_so_rebind_starts_default_deny(
     owner_client: TestClient,

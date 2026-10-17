@@ -758,6 +758,22 @@ class AgentService:
                 ]
         return views
 
+    async def _load_binding_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Load the agent whose credential bindings the caller is changing.
+
+        Changing a binding is a write on the agent, so it takes the
+        owner-or-``org:admin`` check of :meth:`_load_owned_agent`, not read
+        visibility: ``owner:agents:read`` shows an agent its owner's other
+        agents but does not let it change their bindings. An agent may act on
+        its own bindings (the per-verb limits live in the callers). A missing
+        or foreign agent raises ``ActorNotFoundError``.
+        """
+        if agent_id == identity.sub:
+            return await self.get_agent(agent_id, identity=identity)
+        async with self._ctx.admin_db.session() as session:
+            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+            return await self._view(session, agent)
+
     async def bind_credential(
         self, agent_id: str, *, credential_id: str, identity: Identity
     ) -> CredentialBindingView:
@@ -766,7 +782,7 @@ class AgentService:
         Verifies the caller can see the target credential before writing the
         binding (control-DB lookup).
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         ref = None
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -829,7 +845,7 @@ class AgentService:
         admin-side delete then fails, the surviving binding has no inline
         rules and denies (fail-closed) rather than the other way round.
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
@@ -910,12 +926,13 @@ class AgentService:
 
         Resuming re-grants the agent the credential's secret at the broker,
         so it takes the same credential-ownership check as
-        :meth:`bind_credential` on top of agent visibility: a suspension set
+        :meth:`bind_credential` on top of the agent check
+        (:meth:`_load_binding_agent`): a suspension set
         by the credential's owner cannot be lifted by an agent owner who
         could not bind that credential themselves. The agent itself never
         lifts a suspension on its own binding (``org:admin`` aside).
         """
-        agent = await self.get_agent(agent_id, identity=identity)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
         if self._is_own_binding(agent_id, identity):
             raise CredentialNotVisibleError(credential_id)
         ref = None
