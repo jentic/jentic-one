@@ -1,11 +1,16 @@
-"""Integration tests: the hot-path event and execution writes skip the ORM flush (#1822).
+"""Integration tests: the hot-path event and execution writes skip the ORM unit of work (#1822).
 
 ``EventRepository.create`` (behind ``emit_event``) and ``record_execution`` write
-append-only rows with a Core ``INSERT``. These tests pin three things on both
-backends: no unit-of-work flush runs for those writes; the rows carry every
-default the ORM would have applied; and a failed insert has the transaction
-semantics of a failed flush. That last one rests on private SQLAlchemy API in
-``execute_core_insert``, so a SQLAlchemy upgrade that changes it fails here.
+append-only rows through ``insert_append_only_row``. These tests pin, on both
+backends: no flush runs and nothing enters the identity map for those writes;
+the rows carry every default the ORM would have applied; and a failed insert has
+the transaction semantics of a failed flush.
+
+The two failure-semantics tests are the ones that tell the helper apart from a
+bare ``session.execute(insert(...))``: the poison test (a swallowed failure must
+not let the transaction commit) and the swallowed-inside-a-savepoint tests (the
+credentials-service ``begin_nested()`` + ``emit_event_best_effort`` shape). A
+bare execute passes neither.
 """
 
 from __future__ import annotations
@@ -21,8 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.repos import event_repo
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.events import emit_credential_access, emit_event
+from jentic_one.shared.events import emit_credential_access, emit_event, emit_event_best_effort
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -112,8 +118,10 @@ async def test_hot_path_writes_skip_orm_flush_and_keep_orm_defaults(
             actor_type="agent",
             execution_id=execution_id,
         )
-        await session.commit()
         assert flushes == [0]
+        assert len(session.sync_session.identity_map) == 0
+        assert not session.new
+        await session.commit()
 
     async with admin_db.session() as session:
         events = {
@@ -186,18 +194,65 @@ async def test_failed_insert_poisons_the_session_like_a_failed_flush(
 
 
 @pytest.mark.asyncio
-async def test_failed_insert_inside_savepoint_rolls_back_only_the_savepoint(
+async def test_failure_swallowed_inside_savepoint_rolls_back_only_the_savepoint(
     admin_db: DatabaseSession,
 ) -> None:
-    """Inside ``begin_nested()`` a failed insert costs only the savepoint. The
-    enclosing transaction keeps its earlier writes and goes on to commit."""
+    """A failed insert that is caught *inside* ``begin_nested()`` costs exactly the
+    savepoint: the savepoint's earlier write is gone, and the enclosing
+    transaction keeps its writes and commits.
+
+    A bare execute fails this on both backends: on SQLite the savepoint is
+    released with its earlier write kept, and on PostgreSQL ``RELEASE SAVEPOINT``
+    hits the aborted transaction and raises.
+    """
     async with admin_db.transaction() as session:
         await _record(session, f"{_PREFIX}outer")
-        with pytest.raises(IntegrityError):
-            async with session.begin_nested():
+        async with session.begin_nested():
+            await _record(session, f"{_PREFIX}in_savepoint")
+            with pytest.raises(IntegrityError):
                 await _record(session, f"{_PREFIX}outer")
         await _record(session, f"{_PREFIX}after_savepoint")
 
     async with admin_db.session() as session:
         assert await session.get(ExecutionRecord, f"{_PREFIX}outer") is not None
+        assert await session.get(ExecutionRecord, f"{_PREFIX}in_savepoint") is None
+        assert await session.get(ExecutionRecord, f"{_PREFIX}after_savepoint") is not None
+
+
+@pytest.mark.asyncio
+async def test_best_effort_emit_failure_inside_savepoint_keeps_the_transaction(
+    admin_db: DatabaseSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The credentials-service shape: each ``emit_event_best_effort`` runs in its
+    own ``begin_nested()``, so one emit's swallowed failure drops only that
+    event and every other write in the transaction commits."""
+    duplicate_id = "evt_core1822duplicate0000000"
+    monkeypatch.setattr(event_repo, "generate_ksuid", lambda _prefix: duplicate_id)
+
+    async def _emit(summary: str) -> None:
+        await emit_event_best_effort(
+            session,
+            type=EventType.CREDENTIAL_STORED,
+            severity=EventSeverity.INFO,
+            summary=summary,
+            created_by=_ACTOR,
+            actor_id=_ACTOR,
+            actor_type="agent",
+        )
+
+    async with admin_db.transaction() as session:
+        await _record(session, f"{_PREFIX}outer")
+        async with session.begin_nested():
+            await _emit("first emit")
+        async with session.begin_nested():
+            await _record(session, f"{_PREFIX}in_savepoint")
+            await _emit("duplicate id, swallowed")
+        await _record(session, f"{_PREFIX}after_savepoint")
+
+    async with admin_db.session() as session:
+        events = (await session.scalars(select(Event).where(Event.actor_id == _ACTOR))).all()
+        assert [e.summary for e in events] == ["first emit"]
+        assert await session.get(ExecutionRecord, f"{_PREFIX}outer") is not None
+        assert await session.get(ExecutionRecord, f"{_PREFIX}in_savepoint") is None
         assert await session.get(ExecutionRecord, f"{_PREFIX}after_savepoint") is not None
