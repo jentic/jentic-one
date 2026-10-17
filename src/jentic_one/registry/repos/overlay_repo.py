@@ -7,13 +7,15 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, cast
 
-from sqlalchemy import and_, case, or_, select, update
+from sqlalchemy import and_, case, exists, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.overlays import Overlay
+from jentic_one.registry.repos.search.filters import ACTIVE_REVISION_STATES
 from jentic_one.shared.models import OverlayStatus
 
 
@@ -67,6 +69,19 @@ class OverlayRepository:
         status flip itself is a separate CAS via :meth:`set_status`.
         """
         result = await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_id_for_update(session: AsyncSession, overlay_id: str) -> Overlay | None:
+        """Fetch an overlay by id, row-locked (``SELECT … FOR UPDATE``) for the transaction.
+
+        Used by the A4b auto-deprecate so the overlay row cannot change between its guard
+        read and the CAS demote on Postgres (READ COMMITTED). SQLite ignores the lock
+        clause; its write transactions are already serialized (``BEGIN IMMEDIATE``).
+        """
+        result = await session.execute(
+            select(Overlay).where(Overlay.id == overlay_id).with_for_update()
+        )
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -240,6 +255,9 @@ class OverlayRepository:
         deprecated_at: datetime | None = None,
         deprecated_reason: str | None = None,
         expected_status: OverlayStatus | None = None,
+        expected_api_id: uuid.UUID | None = None,
+        expected_confirmed_revision_id: uuid.UUID | _Unset | None = _UNSET,
+        require_confirmed_revision_inactive: bool = False,
     ) -> int:
         """Set an overlay's status, returning the number of rows updated.
 
@@ -247,6 +265,15 @@ class OverlayRepository:
         expected_status`` (a compare-and-swap), so a caller can detect that it lost a
         race (``rowcount == 0``) instead of blindly overwriting a concurrent
         transition (e.g. two confirms, or confirm vs deprecate).
+
+        The remaining guards extend the same CAS to every field a caller's pre-check
+        read, so the decision and the write are one atomic statement on every backend
+        (Postgres READ COMMITTED lets a concurrent commit land between a plain SELECT
+        and the UPDATE): ``expected_api_id`` pins the overlay's API row,
+        ``expected_confirmed_revision_id`` pins its materialized revision (``None``
+        means "must still be NULL"; omit it to not check), and
+        ``require_confirmed_revision_inactive`` requires that the linked revision is not
+        an active (published/imported) revision — a NULL or dangling link passes.
         """
         values: dict[str, Any] = {"status": status, "updated_at": func.now()}
         if confirmed_at is not None:
@@ -260,6 +287,19 @@ class OverlayRepository:
         stmt = update(Overlay).where(Overlay.id == overlay_id)
         if expected_status is not None:
             stmt = stmt.where(Overlay.status == expected_status)
+        if expected_api_id is not None:
+            stmt = stmt.where(Overlay.api_id == expected_api_id)
+        if expected_confirmed_revision_id is None:
+            stmt = stmt.where(Overlay.confirmed_revision_id.is_(None))
+        elif not isinstance(expected_confirmed_revision_id, _Unset):
+            stmt = stmt.where(Overlay.confirmed_revision_id == expected_confirmed_revision_id)
+        if require_confirmed_revision_inactive:
+            stmt = stmt.where(
+                ~exists().where(
+                    ApiRevision.id == Overlay.confirmed_revision_id,
+                    ApiRevision.state.in_(ACTIVE_REVISION_STATES),
+                )
+            )
         result = cast(
             "CursorResult[Any]",
             await session.execute(stmt.values(**values)),

@@ -195,8 +195,9 @@ class CreateRevisionStage(BasePipelineStage):
                     # overlay*. The overlay's current revision is overlay-origin, so the
                     # origin-scoped archive below would leave it active and the new catalog
                     # revision would violate ix_api_revisions_one_active. Archive every
-                    # active revision instead (the overlay is auto-deprecated by the
-                    # handler in the same transaction; see ImportHandler).
+                    # active revision instead; ImportHandler then auto-deprecates the overlay
+                    # in a separate transaction when it lives on this API row and its
+                    # revision is no longer served (#1078).
                     #
                     # Trust boundary: ``supersede_active`` is a *server-set* flag. It is
                     # only ever stamped by ``CatalogService.import_entry`` after an
