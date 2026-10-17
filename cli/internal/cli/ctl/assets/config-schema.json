@@ -1146,7 +1146,7 @@
       "type": "object"
     },
     "MemoryBackendConfig": {
-      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry. Ignored by every other backend.",
+      "description": "Bounds for the in-process (``memory``) shared-state backend.\n\nEvery key belongs to a namespace, its prefix up to the first ``:``\n(``idem`` for Idempotency-Key records, ``idem-body`` for their stored\nresponse bodies, ``auth`` for the auth surface's single-use markers,\n``login-csrf`` for login CSRF nonces, ``cb`` for circuit-breaker counters\nand their open-circuit report claims, ``broker-authfail`` and\n``broker-authfail-emit`` for the broker's auth-failure counters,\n``mcp-session`` and ``mcp-session-cap`` for the MCP session-event dedupe,\nand so on). Each namespace has its own budget, so one key kind filling up\nnever starves another. A namespace that is full of live entries refuses\nnew writes (the request that needed it gets a 503) rather than evicting a\nlive entry; the telemetry namespaces (``broker-authfail*``, the ``cb``\nreport claims, ``mcp-session*``) only skip the count or fall back to the\ndatabase dedupe instead. Ignored by every other backend.",
       "properties": {
         "max_bytes_per_namespace": {
           "default": 16777216,
@@ -1639,7 +1639,7 @@
       "type": "object"
     },
     "StateBackendConfig": {
-      "description": "The process's shared-state backend (top-level ``state:`` section).\n\nOne backend per process holds the rate-limit buckets, circuit-breaker\ncounters, ``Idempotency-Key`` records and the auth surface's single-use\nmarkers of every surface the process serves.",
+      "description": "The process's shared-state backend (top-level ``state:`` section).\n\nOne backend per process holds the rate-limit buckets, circuit-breaker\ncounters, ``Idempotency-Key`` records, the auth surface's single-use\nmarkers, the broker's auth-failure counters and the MCP session-event\ndedupe of every surface the process serves.",
       "properties": {
         "backend": {
           "default": "memory",
