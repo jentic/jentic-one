@@ -52,9 +52,11 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// The "callback landed" effect: once the popup signals, the credential is
 		// connected. We flip the mock to report a connection on the next read.
 		let connected = false;
+		let reads = 0;
 		worker.use(
 			http.get('/credentials/:id', ({ params }) => {
 				if (String(params.id) !== id) return undefined;
+				reads += 1;
 				// runConnectFlow only inspects provider_account_ref / updated_at to
 				// decide "connected", so a minimal partial is enough here.
 				return HttpResponse.json({
@@ -69,21 +71,19 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// is broken, the test would hang past its timeout rather than resolve fast.
 		const flow = runConnectFlow(id, { pollMs: 60_000, timeoutMs: 120_000 });
 
-		// Simulate the popup completing then posting its advisory signal. Give the
-		// flow time to begin (connect → initial read → attach the message
-		// listener) before signalling; dispatch a few times to avoid a startup
-		// race where the first message lands before the listener is attached.
-		await new Promise((r) => setTimeout(r, 200));
+		// Simulate the popup completing then posting its advisory signal, once
+		// the flow's baseline read has been served (a flip before it would make
+		// the baseline look connected already, so no later read could differ).
+		// The listener is attached before the connect POST, so it is live by then,
+		// and one message wakes the 60 s poll wait.
+		await vi.waitFor(() => expect(reads).toBe(1));
 		connected = true;
-		for (let i = 0; i < 5; i += 1) {
-			window.dispatchEvent(
-				new MessageEvent('message', {
-					origin: window.location.origin,
-					data: { type: OAUTH_CONNECT_MESSAGE_TYPE, status: 'ok' },
-				}),
-			);
-			await new Promise((r) => setTimeout(r, 50));
-		}
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				origin: window.location.origin,
+				data: { type: OAUTH_CONNECT_MESSAGE_TYPE, status: 'ok' },
+			}),
+		);
 
 		const outcome = await flow;
 		expect(outcome.status).toBe('connected');
@@ -266,9 +266,11 @@ describe('runConnectFlow — device-code branch', () => {
 		const windowOpen = vi.spyOn(window, 'open');
 
 		let connected = false;
+		let reads = 0;
 		worker.use(
 			http.get('/credentials/:id', ({ params }) => {
 				if (String(params.id) !== id) return undefined;
+				reads += 1;
 				return HttpResponse.json({
 					credential_id: id,
 					provider_account_ref: connected ? 'connected' : null,
@@ -291,8 +293,10 @@ describe('runConnectFlow — device-code branch', () => {
 		});
 
 		// Simulate the human approving at the vendor and the scanner
-		// vaulting the token — the credential flips connected server-side.
-		await new Promise((r) => setTimeout(r, 100));
+		// vaulting the token — the credential flips connected server-side,
+		// after the flow's baseline read (a flip before it would make the
+		// baseline look connected already, so no poll could see a change).
+		await vi.waitFor(() => expect(reads).toBe(1));
 		connected = true;
 
 		const outcome = await flow;
