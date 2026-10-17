@@ -60,6 +60,23 @@ _BUILTIN_NAMESPACE_BUDGETS: dict[str, NamespaceBudget] = {
     ),
 }
 
+# Built-in per-owner shares for namespaces sized by ``max_entries_per_namespace``
+# / ``max_bytes_per_namespace``. ``login-csrf`` holds one nonce per
+# unauthenticated login page load, owned by the requesting client's network
+# (``login-csrf:<client-key>:<nonce>``; IPv4 address or IPv6 /64, keyed so the
+# address itself is not stored). A record is about 900 bytes budgeted (an
+# 87-byte key, a 64-byte value and the per-entry overhead), so the 16 MiB
+# default holds about 18,600 live nonces and a 0.02 share about 370 per
+# client within the 5-minute nonce TTL. That is twice what the default
+# ``auth.oauth_rate_limit`` authorize limiter (burst 30 + 30/min, keyed per
+# client network the same way) lets one network mint in a TTL, so a large
+# shared NAT or corporate egress IP hits the rate limiter before its share,
+# while a single host flooding the page (including one rotating addresses
+# inside its IPv6 /64) is refused without filling the namespace for everyone
+# else.
+LOGIN_CSRF_OWNER_SHARE = 0.02
+_BUILTIN_OWNER_SHARES: dict[str, float] = {"login-csrf": LOGIN_CSRF_OWNER_SHARE}
+
 
 class MemoryNamespaceBudgetConfig(BaseModel):
     """Entry-count and approximate byte budget for one memory-backend key namespace."""
@@ -78,10 +95,11 @@ class MemoryNamespaceBudgetConfig(BaseModel):
         le=1,
         description=(
             "Most of max_entries and max_bytes that one owner (the key's second "
-            "``:`` segment, for idem and idem-body the calling actor) may hold; "
+            "``:`` segment: for idem and idem-body the calling actor, for "
+            "login-csrf the client's IPv4 address or IPv6 /64) may hold; "
             "an owner over its share is refused without affecting the others. "
-            "Unset, it is 0.1 for idem and idem-body and unlimited elsewhere; "
-            "1.0 lets one owner use the whole namespace."
+            "Unset, it is 0.1 for idem and idem-body, 0.02 for login-csrf and "
+            "unlimited elsewhere; 1.0 lets one owner use the whole namespace."
         ),
     )
 
@@ -133,7 +151,12 @@ class MemoryBackendConfig(BaseModel):
             "before the first ``:``). Unless overridden here, idem (Idempotency-Key "
             "records) is 250000 entries / 134217728 bytes (128 MiB) and idem-body "
             "(their stored response bodies) 1000000 entries / 33554432 bytes "
-            "(32 MiB), each with a 0.1 per-caller share; every other namespace "
+            "(32 MiB), each with a 0.1 per-caller share; login-csrf (login page "
+            "CSRF nonces) uses max_entries_per_namespace / max_bytes_per_namespace "
+            "with a 0.02 per-client share, about 370 live nonces per IPv4 address "
+            "or IPv6 /64 at the defaults (about 900 bytes each, 5-minute TTL), "
+            "twice what the default authorize rate limit lets one client network "
+            "request in that time; every other namespace "
             "uses max_entries_per_namespace / max_bytes_per_namespace. The "
             "sustained idempotent request rate idem can hold is min(max_entries, "
             "max_bytes / record_bytes) / broker.idempotency.ttl_s, where "
@@ -149,11 +172,16 @@ class MemoryBackendConfig(BaseModel):
     def budgets(self) -> dict[str, NamespaceBudget]:
         """The per-namespace budgets: built-in defaults, then configured overrides."""
         budgets = dict(_BUILTIN_NAMESPACE_BUDGETS)
+        for name, builtin_share in _BUILTIN_OWNER_SHARES.items():
+            budgets[name] = NamespaceBudget(
+                max_entries=self.max_entries_per_namespace,
+                max_bytes=self.max_bytes_per_namespace,
+                max_owner_share=builtin_share,
+            )
         for name, b in self.namespaces.items():
-            builtin = _BUILTIN_NAMESPACE_BUDGETS.get(name)
             share = b.max_owner_share
-            if share is None and builtin is not None:
-                share = builtin.max_owner_share
+            if share is None and name in budgets:
+                share = budgets[name].max_owner_share
             budgets[name] = NamespaceBudget(
                 max_entries=b.max_entries, max_bytes=b.max_bytes, max_owner_share=share
             )

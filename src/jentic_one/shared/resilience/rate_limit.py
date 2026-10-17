@@ -51,9 +51,9 @@ class RateLimiter:
         self._burst = burst
         # Limiters sharing one store AND one namespace share buckets. The
         # default keeps the historical `rl:caller:` keyspace; a limiter whose
-        # keys could collide with another limiter's (e.g. two bare-IP-keyed
-        # limiters with different rate params) must pass its own namespace so
-        # each route drains only its own quota.
+        # keys could collide with another limiter's (e.g. two limiters keyed
+        # on the bare client network with different rate params) must pass its
+        # own namespace so each route drains only its own quota.
         self._key_prefix = f"rl:{namespace}:"
 
     async def acquire(self, actor_id: str, *, cost: int = 1) -> RateLimitOutcome:

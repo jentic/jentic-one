@@ -30,12 +30,16 @@ from the OAuth authorization flow, behind a default-off gate:
   is an explicit "Continue as <email>" button — never automatic — with a
   "Use a different account" link falling back to the form (rung 3).
 
-Security posture (see #1276): both routes take the existing per-client_id+IP
-authorize limiter (IP-keyed here — the client_id rides inside ``ls``); CSRF is
-a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
+Security posture (see #1276): both routes take the authorization flow's
+rate limiter (``check_rate_limit``, keyed by client network only — the
+client_id rides inside ``ls``, and any request parameter is caller-chosen);
+CSRF is a signed ``ls`` + single-use server-side nonce bound to that ``ls`` (no
 ambient credential — there is no cookie session to ride); failed auth
 re-renders one generic message (no user-enumeration *response* oracle, same
-posture as ``POST /auth/login``); accounts flagged ``must_change_password``
+posture as ``POST /auth/login``); each client network (IPv4 address or IPv6
+/64) may hold only a share of the live CSRF nonces, so one client flooding the
+form is answered 503 without refusing anyone else's login; accounts flagged
+``must_change_password``
 authenticate but cannot rejoin the flow until they rotate via the UI; the
 password only ever transits the system browser → server hop, never a native
 app.
@@ -49,8 +53,10 @@ pattern as the DCR front door — indistinguishable from not-shipped.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import html as html_mod
 import json
+import re
 import secrets
 import time
 from collections.abc import Callable, Coroutine
@@ -79,6 +85,7 @@ from jentic_one.auth.web.flow import (
     STATE_MAX_AGE_SECONDS,
     check_rate_limit,
     client_gate_passes,
+    derive_key,
     get_cached_oauth_client,
     get_consent_backend,
     is_platform_client,
@@ -88,7 +95,7 @@ from jentic_one.auth.web.flow import (
     verify_payload,
     write_local_consent_handle,
 )
-from jentic_one.auth.web.ratelimit import client_ip, get_auth_backend
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.auth.web.routers.authorize import get_authorize_service
 from jentic_one.auth.web.schemas.local_login import (
     OAuthSessionContinueRequest,
@@ -111,6 +118,12 @@ logger = structlog.get_logger(__name__)
 #: consent-handle window: long enough to type a password, short enough that a
 #: leaked form snapshot goes stale quickly.
 _CSRF_TTL_SECONDS = CONSENT_STATE_MAX_AGE_SECONDS
+
+#: The form's ``csrf`` value: ``<client-key>.<nonce>``. The client key is
+#: 32 lowercase hex characters and the nonce is ``secrets.token_urlsafe(32)``
+#: (43 URL-safe base64 characters), so neither half can contain ``.`` or the
+#: ``:`` that separates state-backend key segments.
+_CSRF_TOKEN_RE = re.compile(r"([0-9a-f]{32})\.([A-Za-z0-9_-]{43})")
 
 _GENERIC_FAILURE_MESSAGE = "Invalid email or password."
 
@@ -308,35 +321,72 @@ def _ls_digest(ls: str) -> str:
     return hashlib.sha256(ls.encode()).hexdigest()
 
 
-async def _mint_csrf_nonce(request: Request, ls: str) -> str:
-    """Mint a fresh single-use CSRF nonce, bound server-side to this ``ls``.
+def _csrf_client_key(request: Request, ctx: Context) -> str:
+    """The ``login-csrf`` owner for this request: a keyed digest of its client network.
+
+    The client network is the authorization-flow rate limiter's key
+    (:func:`client_rate_limit_key`: ``X-Forwarded-For`` is honoured only from
+    ``auth.oauth_rate_limit.trusted_proxies``). Keyed with a secret-derived
+    HMAC so the state backend never holds a raw or trivially reversible
+    address, and hex so it cannot contain the ``:`` that separates key
+    segments.
+    """
+    trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
+    network = client_rate_limit_key(request, trusted)
+    key = derive_key(ctx.config.admin.auth.jwt_secret.get_secret_value(), "login-csrf-client")
+    return hmac.new(key.encode(), network.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+async def _mint_csrf_nonce(request: Request, ls: str, ctx: Context) -> str:
+    """Mint a fresh single-use CSRF token, bound server-side to this ``ls``.
+
+    The nonce is stored as ``login-csrf:<client-key>:<nonce>``, so it counts
+    against the requesting client's share of the ``login-csrf`` namespace: a
+    client flooding the page is refused (503 + ``Retry-After``) once its
+    share is full, without refusing anyone else. The returned token is
+    ``<client-key>.<nonce>``, so the submit finds the record from the form
+    alone, even when the client's IP changes between rendering and submitting
+    (a phone moving between networks).
 
     The stored value is the digest of the ``ls`` the form was rendered for,
     so a nonce harvested from one flow (an attacker's own ``GET /login``)
     can never satisfy a submit for a different flow.
     """
+    client_key = _csrf_client_key(request, ctx)
     nonce = secrets.token_urlsafe(32)
     backend = get_consent_backend(request)
     await backend.set(
-        f"login-csrf:{nonce}", _ls_digest(ls).encode(), ttl_s=float(_CSRF_TTL_SECONDS)
+        f"login-csrf:{client_key}:{nonce}",
+        _ls_digest(ls).encode(),
+        ttl_s=float(_CSRF_TTL_SECONDS),
     )
-    return nonce
+    return f"{client_key}.{nonce}"
 
 
 async def _consume_csrf_nonce(csrf: str, ls: str, request: Request) -> bool:
-    """Validate + consume the nonce: minted for THIS ``ls``, unexpired, unused.
+    """Validate + consume the token: minted for THIS ``ls``, unexpired, unused.
+
+    The client key is read back from the token rather than recomputed from
+    the submitting request: the nonce is 256 random bits and bound to the
+    ``ls``, so the key only locates the record and choosing it gains a
+    caller nothing. A token that is not exactly ``<client-key>.<nonce>`` is
+    rejected before any lookup, so no caller-chosen text reaches a key.
 
     Two-step, mirroring the consent-handle replay guard: existence proves the
     server minted it inside the TTL window, the stored digest proves it was
     minted for this very ``ls``, and ``set_if_absent`` on a used-marker makes
     the first consumer win and every replay lose.
     """
+    match = _CSRF_TOKEN_RE.fullmatch(csrf)
+    if match is None:
+        return False
+    client_key, nonce = match.groups()
     backend = get_consent_backend(request)
-    stored = await backend.get(f"login-csrf:{csrf}")
-    if stored is None or stored.decode() != _ls_digest(ls):
+    stored = await backend.get(f"login-csrf:{client_key}:{nonce}")
+    if stored is None or not hmac.compare_digest(stored, _ls_digest(ls).encode()):
         return False
     return await backend.set_if_absent(
-        f"login-csrf-used:{csrf}", b"1", ttl_s=float(_CSRF_TTL_SECONDS)
+        f"login-csrf-used:{client_key}:{nonce}", b"1", ttl_s=float(_CSRF_TTL_SECONDS)
     )
 
 
@@ -442,7 +492,7 @@ async def login_page(
             )
             return RedirectResponse(url="/error?error=access_denied", status_code=302)
 
-    csrf = await _mint_csrf_nonce(request, ls)
+    csrf = await _mint_csrf_nonce(request, ls, ctx)
     return _render_login_page(ls, csrf)
 
 
@@ -506,7 +556,7 @@ async def login_submit(
         # re-render with a fresh nonce so a stale tab recovers with one more
         # submit. The password is deliberately not echoed back.
         logger.warning("local_login_csrf_rejected")
-        fresh = await _mint_csrf_nonce(request, ls)
+        fresh = await _mint_csrf_nonce(request, ls, ctx)
         return _render_login_page(
             ls, fresh, email=email, error="The form expired — please try again."
         )
@@ -540,7 +590,7 @@ async def login_submit(
         # unknown email, locked account) — same posture as POST /auth/login.
         # authenticate() has already counted the failure / applied the lockout.
         logger.info("local_login_failed", client_id=client_id)
-        fresh = await _mint_csrf_nonce(request, ls)
+        fresh = await _mint_csrf_nonce(request, ls, ctx)
         return _render_login_page(ls, fresh, email=email, error=_GENERIC_FAILURE_MESSAGE)
 
     if await auth_svc.password_rotation_required(user_id):
@@ -551,7 +601,7 @@ async def login_submit(
         # Post-auth, so no enumeration surface; the ls is NOT burned (the
         # user rotates in another tab and retries the same flow).
         logger.info("local_login_password_rotation_required", client_id=client_id)
-        fresh = await _mint_csrf_nonce(request, ls)
+        fresh = await _mint_csrf_nonce(request, ls, ctx)
         return _render_login_page(ls, fresh, email=email, error=_PASSWORD_ROTATION_MESSAGE)
 
     if not await _burn_login_state(ls, request):
@@ -615,12 +665,12 @@ def _get_session_continue_limiter(request: Request, ctx: Context) -> RateLimiter
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
     backend = get_auth_backend(request)
-    # Own bucket namespace (the RFC 7009 revocation pattern): keyed on bare
-    # IP, so it must not share a bucket with another bare-IP limiter carrying
-    # different rate/burst params. Reuses the exchange rpm/burst knobs
-    # (config schema unchanged): the endpoint is authenticated, one click
-    # sends one request, and its traffic is bounded by the same browser
-    # population as /oauth/token.
+    # Own bucket namespace (the RFC 7009 revocation pattern): keyed on the
+    # client network, so it must not share a bucket with another limiter
+    # keyed the same way but carrying different rate/burst params. Reuses
+    # the exchange rpm/burst knobs (config schema unchanged): the endpoint
+    # is authenticated, one click sends one request, and its traffic is
+    # bounded by the same browser population as /oauth/token.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.exchange_rpm,
@@ -634,16 +684,16 @@ def _get_session_continue_limiter(request: Request, ctx: Context) -> RateLimiter
 async def check_session_continue_rate_limit(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> None:
-    """Per-IP rate limiter for the session-continue exchange.
+    """Per-client-network rate limiter for the session-continue exchange.
 
-    Keyed by bare IP: the request's only other inputs are the bearer token
-    and the signed blob, and both are caller-supplied — a self-chosen key
-    component would let one host sidestep the bucket.
+    Keyed by client network only: the request's only other inputs are the
+    bearer token and the signed blob, and both are caller-supplied — a
+    self-chosen key component would let one host sidestep the bucket.
     """
     trusted = frozenset(ctx.config.auth.oauth_rate_limit.trusted_proxies)
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_session_continue_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
