@@ -17,6 +17,7 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | ---- | ----- | ------------------- |
 | `AppContainer` | `jentic_one.shared.web.container` | Inject a `Broker`; mount extra routers/installers after the built-in surfaces. |
 | `AppContainer.unregistered_url_handler` | `jentic_one.shared.web.container` (contract: `jentic_one.shared.web.protocols.UnregisteredUrlHandler`) | Intercept broker traffic to unregistered METHOD+URLs at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. Fires only on the standalone broker app — wire it via `jentic_one.broker.web.app.create_app`. |
+| `AppContainer.invalidation_bus` | `jentic_one.shared.web.container` (contract: `jentic_one.shared.invalidation.InvalidationBus`) | Replace the cross-process cache-invalidation transport (default: PostgreSQL `LISTEN`/`NOTIFY`, a no-op on SQLite). Prove it with `BaseInvalidationBusContract`. |
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
@@ -232,6 +233,38 @@ class TestMyStrategyCompliance(BaseSearchStrategyComplianceTest):
 class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
     def handler_factory(self) -> UnregisteredUrlHandler:
         return MyUnregisteredUrlHandler(...)
+```
+
+An `InvalidationBus` is checked by behaviour, not just signature:
+`BaseInvalidationBusContract` drives a live bus. Implement three hooks — a
+factory for an unstarted bus, `publish` (deliver a keyed change through your
+real transport) and `force_reconnect` (sever the connection; return `False` if
+the transport has none) — and inherit tests for topic routing, handler-failure
+isolation, the reconnect flush, and clean shutdown. The methods are `async`, so
+run them under pytest-asyncio:
+
+```python
+# my_ext/tests/test_invalidation_bus.py
+from collections.abc import Mapping, Sequence
+
+from jentic_one.shared.invalidation import InvalidationBus
+from jentic_one.testing import BaseInvalidationBusContract
+
+from my_ext.bus import MyBus
+
+
+class TestMyBusContract(BaseInvalidationBusContract):
+    async def bus_factory(self) -> InvalidationBus:
+        return MyBus(...)
+
+    async def publish(
+        self, bus: InvalidationBus, topic: str, keys: Mapping[str, Sequence[str]]
+    ) -> None:
+        await bus.send(topic, keys)  # MyBus's own transport
+
+    async def force_reconnect(self, bus: InvalidationBus) -> bool:
+        await bus.drop_connection()
+        return True
 ```
 
 These `Test*` subclasses are collected by pytest and fail loudly if your

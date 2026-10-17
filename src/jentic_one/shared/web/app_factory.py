@@ -23,6 +23,7 @@ from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.invalidation import InvalidationBus, build_invalidation_bus
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
@@ -33,6 +34,7 @@ from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
 from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.provider_refresh import ProviderConfigRefresher
 from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -495,6 +497,60 @@ async def _stop_telemetry(
         await client.aclose()
 
 
+def _resolve_invalidation_bus(ctx: Context, container: AppContainer) -> InvalidationBus:
+    """The container's injected bus, or the default for this process's databases."""
+    if container.invalidation_bus is not None:
+        return container.invalidation_bus
+    return build_invalidation_bus(ctx)
+
+
+async def _enter_invalidation_bus(stack: contextlib.AsyncExitStack, bus: InvalidationBus) -> None:
+    """Start ``bus`` and schedule its stop on ``stack``.
+
+    Entered first on the lifespan's exit stack — after ``ctx.startup()``, before
+    any container-injected lifespan — so it is the last of them to stop. Caches
+    subscribed while the app was being wired (installers run at build time),
+    so nothing is missed between ``start`` and the first request.
+    """
+    await bus.start()
+    stack.push_async_callback(bus.stop)
+
+
+def _subscribe_provider_refresh(
+    ctx: Context, bus: InvalidationBus
+) -> ProviderConfigRefresher | None:
+    """Keep ``ctx.providers`` in step with provider-config writes from any process.
+
+    Only a process that resolves providers (control, the broker) and can read
+    the admin DB subscribes; any other one opens no ``LISTEN`` for it.
+    """
+    if not (ctx.resolves_providers and ctx.is_db_allowed("admin")):
+        return None
+    refresher = ProviderConfigRefresher(ctx.refresh_providers)
+    refresher.subscribe(bus)
+    return refresher
+
+
+async def _enter_provider_refresh(
+    stack: contextlib.AsyncExitStack, refresher: ProviderConfigRefresher | None
+) -> None:
+    """Start ``refresher`` (after the bus) and schedule its stop on ``stack``.
+
+    The lifespan also stops it explicitly before ``ctx.shutdown()`` so no
+    rebuild runs against closing pools; the stack entry covers a startup that
+    fails before the lifespan's ``try`` is reached. ``stop`` is idempotent.
+    """
+    if refresher is None:
+        return
+    await refresher.start()
+    stack.push_async_callback(refresher.stop)
+
+
+async def _stop_provider_refresh(refresher: ProviderConfigRefresher | None) -> None:
+    if refresher is not None:
+        await refresher.stop()
+
+
 @asynccontextmanager
 async def _null_lifespan() -> AsyncGenerator[None]:
     """No-op surface lifespan used when a surface provides no extra_lifespan."""
@@ -539,6 +595,8 @@ def create_surface_app(
     control-plane identity surface.
     """
     container = container or AppContainer.default(ctx)
+    invalidation_bus = _resolve_invalidation_bus(ctx, container)
+    provider_refresher = _subscribe_provider_refresh(ctx, invalidation_bus)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -552,6 +610,8 @@ def create_surface_app(
             extra_lifespan(app) if extra_lifespan else _null_lifespan(),
             contextlib.AsyncExitStack() as lifespan_stack,
         ):
+            await _enter_invalidation_bus(lifespan_stack, invalidation_bus)
+            await _enter_provider_refresh(lifespan_stack, provider_refresher)
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             # Worker starts *inside* the surface lifespan so it can share any
@@ -588,6 +648,7 @@ def create_surface_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _stop_provider_refresh(provider_refresher)
                 await ctx.shutdown()
 
     # ``server.public_base_url`` names the control/auth surfaces' origin; a
@@ -597,6 +658,7 @@ def create_surface_app(
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
+    app.state.invalidation_bus = invalidation_bus
     if container.broker is not None:
         # Wire the injected broker into BOTH data-plane paths: the sync router
         # reads app.state.broker, while the async worker builds its broker via
@@ -691,6 +753,8 @@ def create_combined_app(
     extra routers/installers after all built-in surfaces.
     """
     container = container or AppContainer.default(ctx)
+    invalidation_bus = _resolve_invalidation_bus(ctx, container)
+    provider_refresher = _subscribe_provider_refresh(ctx, invalidation_bus)
     structlog.get_logger(__name__).info("creating combined app", apps=apps)
 
     @asynccontextmanager
@@ -701,6 +765,8 @@ def create_combined_app(
         # Container-injected lifespans (default empty) — entered after
         # ctx.startup(), exited in reverse order before ctx.shutdown().
         async with contextlib.AsyncExitStack() as lifespan_stack:
+            await _enter_invalidation_bus(lifespan_stack, invalidation_bus)
+            await _enter_provider_refresh(lifespan_stack, provider_refresher)
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             worker_task = _start_worker(ctx, set(apps))
@@ -719,10 +785,12 @@ def create_combined_app(
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
+                await _stop_provider_refresh(provider_refresher)
                 await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
+    root.state.invalidation_bus = invalidation_bus
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
     # root.state.broker; the async worker builds its broker via
