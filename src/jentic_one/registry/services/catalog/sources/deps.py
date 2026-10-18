@@ -6,7 +6,10 @@ wraps the catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``) with:
 
 - one pooled ``httpx.AsyncClient`` per source per process, over the egress-pinned
   transport, closed when the context shuts down;
-- the source's auth headers (sent only to the origin of each request URL);
+- the source's egress widening (``catalog.sources[].egress``) on top of
+  ``ingest.egress``, for this source's client only;
+- the source's auth headers, sent only to the origin of the request URL (never
+  across a redirect to another host), and only when the connector asks for them;
 - ``CATALOG_USER_AGENT``;
 - the source's fetch limits (``limits.py``): every request holds a slot on its
   lane, and a ``429`` blocks the source for its ``Retry-After``.
@@ -70,7 +73,7 @@ __all__ = [
     "UnboundedSourceLimits",
     "build_source_deps",
     "ensure_source_buckets",
-    "spec_fetch_lane",
+    "source_ingest_config",
 ]
 
 #: The lane a spec fetch takes when its connector names none. The update sweep
@@ -87,18 +90,25 @@ _GONE_STATUSES = frozenset({404, 410})
 class SourceHttpClient(Protocol):
     """The only HTTP surface a connector may use.
 
-    ``lane`` picks the fetch-limit lane: listings default to ``background``.
-    A spec fetch with no explicit lane takes the caller's
-    :data:`spec_fetch_lane` (``interactive`` for preview and import,
-    ``background`` for the update sweep), so connectors need not thread it.
+    ``lane`` picks the fetch-limit lane: listings default to ``background``,
+    spec fetches (preview, import, the update sweep) to ``interactive``.
+    ``authenticate=False`` sends the request without the source's credentials
+    (a connector passes it for a URL outside the origins it trusts with them).
     """
 
-    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
+    async def get_json(
+        self, url: str, *, lane: FetchLane = "background", authenticate: bool = True
+    ) -> dict[str, Any]:
         """GET ``url`` and decode a JSON object."""
         ...
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
+        self,
+        url: str,
+        *,
+        validator: str | None = None,
+        lane: FetchLane = "interactive",
+        authenticate: bool = True,
     ) -> SpecFetch:
         """GET ``url``'s raw bytes, conditionally on ``validator`` (an ETag)."""
         ...
@@ -166,9 +176,14 @@ class GuardedSourceHttpClient:
             retry_after = await self._limits.block(retry_after)
         return SourceUnavailableError(str(exc), retry_after_s=retry_after)
 
-    async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
+    async def _headers(self, authenticate: bool) -> dict[str, str]:
+        return dict(await self._auth.headers()) if authenticate else {}
+
+    async def get_json(
+        self, url: str, *, lane: FetchLane = "background", authenticate: bool = True
+    ) -> dict[str, Any]:
         async with self._limits.slot(lane):
-            headers = dict(await self._auth.headers())
+            headers = await self._headers(authenticate)
             try:
                 doc = await fetch_json(
                     url,
@@ -183,10 +198,15 @@ class GuardedSourceHttpClient:
         return doc
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
+        self,
+        url: str,
+        *,
+        validator: str | None = None,
+        lane: FetchLane = "interactive",
+        authenticate: bool = True,
     ) -> SpecFetch:
-        async with self._limits.slot(lane or spec_fetch_lane.get()):
-            headers = dict(await self._auth.headers())
+        async with self._limits.slot(lane):
+            headers = await self._headers(authenticate)
             try:
                 result = await fetch_bytes_conditional(
                     url,
@@ -231,7 +251,8 @@ class _SourceRuntime:
     """The pooled client and limits one source shares across this process."""
 
     def __init__(self, ctx: Context, cfg: CatalogSourceConfig) -> None:
-        ingest = ctx.config.ingest
+        ingest = source_ingest_config(ctx.config.ingest, cfg)
+        self.ingest = ingest
         self._ingest = ingest
         self._concurrency = cfg.fetch_concurrency
         self.limits = ProcessSourceLimits(
@@ -315,17 +336,26 @@ def _rate_bucket(ctx: Context, cfg: CatalogSourceConfig) -> RateBucket | None:
     )
 
 
-_RuntimeKey = tuple[int, float | None, int, float, float]
+_RuntimeKey = tuple[int, float | None, int, float, float, str]
 
 
-def _runtime_key(cfg: CatalogSourceConfig, ingest_timeout_s: float) -> _RuntimeKey:
+def source_ingest_config(ingest: IngestConfig, cfg: CatalogSourceConfig) -> IngestConfig:
+    """``ingest`` with ``cfg``'s egress widening applied (this source's requests only)."""
+    widened = cfg.egress.widen(ingest.egress)
+    if widened is ingest.egress:
+        return ingest
+    return ingest.model_copy(update={"egress": widened})
+
+
+def _runtime_key(cfg: CatalogSourceConfig, ingest: IngestConfig) -> _RuntimeKey:
     """The settings a source's runtime is built from; a change rebuilds it."""
     return (
         cfg.fetch_concurrency,
         cfg.requests_per_second,
         cfg.burst,
         cfg.interactive_share,
-        ingest_timeout_s,
+        ingest.fetch_timeout_s,
+        source_ingest_config(ingest, cfg).egress.model_dump_json(),
     )
 
 
@@ -351,7 +381,7 @@ def _runtimes(ctx: Context) -> _SourceRuntimes:
 
 
 def _runtime(ctx: Context, cfg: CatalogSourceConfig) -> _SourceRuntime:
-    key = _runtime_key(cfg, ctx.config.ingest.fetch_timeout_s)
+    key = _runtime_key(cfg, ctx.config.ingest)
     runtimes = _runtimes(ctx)
     current = runtimes.by_slug.get(cfg.slug)
     if current is not None and current[0] == key:
@@ -377,7 +407,7 @@ def build_source_deps(
         slug=cfg.slug,
         http=GuardedSourceHttpClient(
             cfg.slug,
-            ctx.config.ingest,
+            runtime.ingest,
             limits=runtime.limits,
             auth=resolver,
             client=runtime.client,

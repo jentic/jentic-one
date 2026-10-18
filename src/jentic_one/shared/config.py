@@ -47,6 +47,11 @@ from jentic_one.shared.url import (
     origins_equivalent,
     validate_redirect_uri,
 )
+from jentic_one.shared.url_validation import (
+    METADATA_HOSTNAMES,
+    is_metadata_host,
+    network_covers_metadata,
+)
 
 _logger = structlog.get_logger(__name__)
 
@@ -2137,32 +2142,94 @@ _CATALOG_SOURCE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 class SourceAuthConfig(BaseModel):
     """How a catalog source authenticates its requests.
 
-    Only ``none`` is built in; other resolver types are registered by extensions.
-    The secret itself never appears here: ``env`` names the variable holding it.
+    Built in: ``none``, ``bearer_from_env`` (``Authorization: Bearer <value of env>``)
+    and ``header_from_env`` (``<header>: <value of env>``); extensions register
+    more. The secret itself never appears here: ``env`` names the variable
+    holding it, read on every request.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str = Field(
-        default="none",
-        description=(
-            "Auth resolver type; it must be registered. Only none is built in; "
-            "startup fails on an unknown type."
-        ),
-    )
+    type: str = "none"
     env: str | None = Field(
-        default=None,
-        description=(
-            "Name of the environment variable holding the secret, for a credentialed "
-            "resolver to read; ignored by none."
-        ),
+        default=None, description="Environment variable holding the secret (never the secret)."
     )
     header: str | None = Field(
-        default=None,
+        default=None, description="Header name the secret is sent in (header_from_env only)."
+    )
+
+
+class SourceEgressConfig(BaseModel):
+    """Extra egress one catalog source's own client may use.
+
+    Added to ``ingest.egress`` for this source's requests only; no other source
+    and no other outbound client gets it. A range or domain that would reach a
+    cloud-metadata endpoint is refused at load.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_private_subnets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = Field(
+        default_factory=list,
         description=(
-            "Request header a credentialed resolver sends the secret in; ignored by none."
+            "Private CIDRs this source may reach (a resolved name must also match "
+            "allowed_internal_domains). A range containing a cloud-metadata address "
+            "(e.g. 169.254.169.254) is refused."
         ),
     )
+    allowed_internal_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Domain suffixes whose private addresses this source may reach. A "
+            "cloud-metadata host, or a suffix covering one, is refused."
+        ),
+    )
+
+    @field_validator("allowed_private_subnets", mode="before")
+    @classmethod
+    def _parse_subnets(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [ipaddress.ip_network(str(v), strict=False) for v in value]
+        return value
+
+    @field_validator("allowed_private_subnets")
+    @classmethod
+    def _no_metadata_subnets(
+        cls, value: list[ipaddress.IPv4Network | ipaddress.IPv6Network]
+    ) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        for network in value:
+            if network_covers_metadata(network):
+                raise ValueError(
+                    f"allowed_private_subnets: {network} contains a cloud-metadata address"
+                )
+        return value
+
+    @field_validator("allowed_internal_domains")
+    @classmethod
+    def _no_metadata_domains(cls, value: list[str]) -> list[str]:
+        for domain in value:
+            bare = domain.strip().lower().rstrip(".").lstrip(".")
+            if not bare:
+                raise ValueError("allowed_internal_domains: an entry is empty")
+            if is_metadata_host(bare) or any(
+                host == bare or host.endswith("." + bare) for host in METADATA_HOSTNAMES
+            ):
+                raise ValueError(
+                    f"allowed_internal_domains: {domain!r} would reach a cloud-metadata host"
+                )
+        return value
+
+    def widen(self, base: EgressConfig) -> EgressConfig:
+        """``base`` plus this source's subnets and domains."""
+        if not self.allowed_private_subnets and not self.allowed_internal_domains:
+            return base
+        subnets = [*base.allowed_private_subnets]
+        subnets.extend(str(n) for n in self.allowed_private_subnets if str(n) not in subnets)
+        domains = [*base.allowed_internal_domains]
+        domains.extend(d for d in self.allowed_internal_domains if d not in domains)
+        return base.model_copy(
+            update={"allowed_private_subnets": subnets, "allowed_internal_domains": domains}
+        )
 
 
 class SourceReadersConfig(BaseModel):
@@ -2269,6 +2336,18 @@ class CatalogSourceConfig(BaseModel):
         ),
     )
     auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)
+    egress: SourceEgressConfig = Field(
+        default_factory=SourceEgressConfig,
+        description="Extra egress for this source's requests only (added to ingest.egress).",
+    )
+    min_notify_interval_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "A :notify within this many seconds of the source's last started sync "
+            "joins it instead of asking for another."
+        ),
+    )
     readers: SourceReadersConfig | None = Field(
         default=None, description="Reader ACL; required for restricted sources only."
     )

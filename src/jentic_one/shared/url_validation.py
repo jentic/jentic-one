@@ -73,6 +73,9 @@ _BLOCKED_HOSTNAMES = frozenset(
     }
 )
 
+#: Cloud-metadata hostnames, refused whatever the egress policy says.
+METADATA_HOSTNAMES = _BLOCKED_HOSTNAMES
+
 # Cloud instance-metadata and platform-credential endpoints. Never exemptable by
 # an allowlist — a covering CIDR (e.g. 169.254.0.0/16 or fd00::/8) must NOT open
 # these, so instance or workload credentials can't be allowlisted by accident.
@@ -88,6 +91,24 @@ _METADATA_IPS = frozenset(
         ipaddress.ip_address("168.63.129.16"),  # Azure WireServer / host agent
     }
 )
+
+
+def network_covers_metadata(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
+    """Whether ``network`` contains a cloud-metadata or platform-credential address."""
+    return any(ip.version == network.version and ip in network for ip in _METADATA_IPS)
+
+
+def is_metadata_host(host: str) -> bool:
+    """Whether ``host`` (a name or an IP literal) is a cloud-metadata endpoint."""
+    name = _normalise_hostname(host).strip("[]")
+    if name in _BLOCKED_HOSTNAMES:
+        return True
+    try:
+        addr = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    embedded = embedded_ipv4(addr)
+    return addr in _METADATA_IPS or (embedded is not None and embedded in _METADATA_IPS)
 
 
 def validate_upstream_url(raw_url: str, egress: EgressConfig | None = None) -> str:

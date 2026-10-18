@@ -1,9 +1,10 @@
 """Catalog sources: the ``CatalogSource`` seam, built-in kinds and per-source sync.
 
-Importing this package registers the built-in ``git-manifest`` kind.
+Importing this package registers the built-in ``git-manifest`` and ``http-index`` kinds.
 """
 
 from jentic_one.registry.services.catalog.sources import git_manifest as _git_manifest
+from jentic_one.registry.services.catalog.sources import http_index as _http_index
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
     CatalogSourceFactory,
@@ -27,7 +28,7 @@ from jentic_one.registry.services.catalog.sources.registry import (
     resolve_catalog_source_kind,
 )
 
-del _git_manifest
+del _git_manifest, _http_index
 
 __all__ = [
     "CatalogSource",

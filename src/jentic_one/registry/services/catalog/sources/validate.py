@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
-from jentic_one.registry.services.catalog.sources.auth import registered_source_auth_types
+from jentic_one.registry.services.catalog.sources.auth import (
+    build_source_auth,
+    registered_source_auth_types,
+)
 from jentic_one.registry.services.catalog.sources.registry import (
     registered_catalog_source_kinds,
     resolve_catalog_source_kind,
@@ -58,6 +61,11 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
                 f"{where}.auth.type: unknown auth type {source.auth.type!r} "
                 f"(registered: {', '.join(sorted(auth_types))})"
             )
+        else:
+            try:
+                build_source_auth(source.auth)
+            except ValueError as exc:
+                errors.append(f"{where}.auth: {exc}")
         errors.extend(_reader_errors(where, source.visibility, source.readers))
 
     known = set(slugs)

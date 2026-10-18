@@ -157,14 +157,41 @@ def test_restricted_source_needs_readers_and_others_reject_them() -> None:
     assert "only a restricted source" in _errors(_cfg(sources=[public_with_readers]))
 
 
-def test_unknown_auth_type_fails_validation() -> None:
-    src = {
+def _with_auth(auth: dict[str, Any]) -> dict[str, Any]:
+    return {
         "slug": "public",
         "kind": "git-manifest",
         "settings": {"url": "https://x/a.json"},
-        "auth": {"type": "bearer_from_env", "env": "TOKEN"},
+        "auth": auth,
     }
-    assert "unknown auth type 'bearer_from_env'" in _errors(_cfg(sources=[src]))
+
+
+def test_unknown_auth_type_fails_validation() -> None:
+    errors = _errors(_cfg(sources=[_with_auth({"type": "vault", "env": "TOKEN"})]))
+    assert "unknown auth type 'vault'" in errors
+
+
+def test_malformed_env_auth_fails_validation() -> None:
+    errors = _errors(_cfg(sources=[_with_auth({"type": "header_from_env", "env": "TOKEN"})]))
+    assert "sources[slug=public].auth: auth type 'header_from_env' needs header" in errors
+
+
+def test_env_auth_is_accepted_without_reading_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CATALOG_TOKEN", raising=False)
+    check_catalog_config(
+        _cfg(sources=[_with_auth({"type": "bearer_from_env", "env": "CATALOG_TOKEN"})])
+    )
+
+
+def test_source_egress_rejects_cloud_metadata_at_load() -> None:
+    src = {
+        **_with_auth({"type": "none"}),
+        "egress": {"allowed_private_subnets": ["169.254.0.0/16"]},
+    }
+    with pytest.raises(ValidationError, match="cloud-metadata"):
+        _cfg(sources=[src])
 
 
 def test_registered_credentialed_auth_type_is_accepted(
