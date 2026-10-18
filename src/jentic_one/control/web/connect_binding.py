@@ -11,7 +11,14 @@ session, the approver who confirmed it).
 The cookie:
 
 * name ``jentic_connect_<first 16 hex chars of the hash>`` — one per flow, so
-  concurrent connects in one browser do not overwrite each other;
+  concurrent connects in one browser do not overwrite each other — prefixed
+  ``__Secure-`` whenever the cookie is ``Secure`` (below). Browsers accept a
+  ``__Secure-`` cookie only from an https response with ``Secure`` set, so a
+  party who can only write cookies over plain http cannot plant a binding
+  the callback would accept; the callback then reads only the prefixed name.
+  ``__Host-`` would also exclude cookies scoped to a parent domain, but it
+  requires ``Path=/``, which would send every binding cookie to every route;
+  the ``Path`` scoping below is kept instead;
 * ``HttpOnly``, ``SameSite=Lax`` (sent on the vendor's top-level redirect back),
   ``Max-Age`` equal to the state TTL;
 * ``Path`` = the path of the public callback URL (the one the vendor redirects
@@ -32,6 +39,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
+import structlog
 from fastapi import Request, Response
 
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
@@ -52,9 +60,53 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.links import public_base_url
 
+_logger = structlog.get_logger(__name__)
+
 #: Binding cookies a browser may accumulate (abandoned connects) before a
 #: callback expires the extras.
 MAX_BINDING_COOKIES = 10
+
+#: Name prefix of a binding cookie set with ``Secure`` (RFC 6265bis cookie prefixes).
+SECURE_COOKIE_PREFIX = "__Secure-"
+
+
+def warn_if_callback_on_another_host(ctx: Context) -> None:
+    """Log a WARNING at startup when the OAuth callback cannot see the binding cookie.
+
+    The binding cookie is host-only and set on the API host that started the
+    flow. When ``credentials.providers.direct_oauth2.redirect_uri`` names a
+    different host from ``server.public_base_url``, the browser never sends
+    the cookie to the callback, so every browser-bound OAuth connect ends on
+    the error page. Loopback aliases (``localhost`` / ``127.0.0.1``) are not
+    flagged: the callback hops between them. Without ``public_base_url`` the
+    starting host is only known per request, so nothing is compared.
+    """
+    provider_cfg = ctx.config.credentials.providers.get("direct_oauth2")
+    configured = getattr(provider_cfg, "redirect_uri", None)
+    base = ctx.config.server.public_base_url
+    if not configured or not base:
+        return
+    callback_host = (urlsplit(str(configured)).hostname or "").lower()
+    public_host = (urlsplit(str(base)).hostname or "").lower()
+    if callback_host == public_host or (
+        is_loopback_host(callback_host) and is_loopback_host(public_host)
+    ):
+        return
+    _logger.warning(
+        "oauth_callback_host_mismatch",
+        callback_host=callback_host,
+        public_host=public_host,
+        detail=(
+            "OAuth connects started in a browser are refused at the callback: the "
+            "browser-binding cookie is set on the public host and is not sent to "
+            "the callback host"
+        ),
+        actionable_step=(
+            "Serve credentials.providers.direct_oauth2.redirect_uri on the same host as "
+            "server.public_base_url (or unset it to derive the callback from "
+            "public_base_url), and register that URL with each vendor OAuth app."
+        ),
+    )
 
 
 def mint_browser_binding(request: Request) -> BrowserBinding:
@@ -72,22 +124,30 @@ def set_browser_binding_cookie(
 ) -> None:
     """Write ``binding`` to the calling browser for the flow ``authorize_url`` starts."""
     callback_url = flow_callback_url(request, ctx, _state_of(ctx, authorize_url))
+    secure = _secure(request, ctx, callback_url)
     response.set_cookie(
-        key=binding.cookie_name,
+        key=_cookie_name(binding.digest, secure=secure),
         value=binding.value,
         max_age=ctx.config.credentials.connect.state_ttl_seconds,
         path=_cookie_path(callback_url),
-        secure=_secure(request, ctx, callback_url),
+        secure=secure,
         httponly=True,
         samesite="lax",
     )
 
 
-def read_browser_binding_cookie(request: Request, state: ConnectState | None) -> str | None:
-    """The binding cookie for ``state``'s flow, if the request carries it."""
+def read_browser_binding_cookie(
+    request: Request, ctx: Context, state: ConnectState | None
+) -> str | None:
+    """The binding cookie for ``state``'s flow, if the request carries it.
+
+    On a deployment whose cookie is ``Secure`` only the ``__Secure-`` name
+    counts; an unprefixed cookie of the same flow is ignored.
+    """
     if state is None or not state.browser_binding_hash:
         return None
-    return request.cookies.get(browser_binding_cookie_name(state.browser_binding_hash))
+    secure = _secure(request, ctx, flow_callback_url(request, ctx, state))
+    return request.cookies.get(_cookie_name(state.browser_binding_hash, secure=secure))
 
 
 def clear_browser_binding_cookie(
@@ -106,23 +166,21 @@ def clear_browser_binding_cookie(
     if state is None or not state.browser_binding_hash:
         return
     callback_url = flow_callback_url(request, ctx, state)
-    own = browser_binding_cookie_name(state.browser_binding_hash)
+    secure = _secure(request, ctx, callback_url)
+    own = _cookie_name(state.browser_binding_hash, secure=secure)
+    family = _cookie_name("", secure=secure)
     names = [own]
     # Prune only from the browser that started this flow: a refused callback
     # proves nothing about the cookies it carries, so it touches only its own.
     if browser_binding_matches(state, request.cookies.get(own)):
-        others = [
-            name
-            for name in request.cookies
-            if name.startswith(BROWSER_BINDING_COOKIE_PREFIX) and name != own
-        ]
+        others = [name for name in request.cookies if name.startswith(family) and name != own]
         if len(others) >= MAX_BINDING_COOKIES:
             names += others
     for name in names:
         response.delete_cookie(
             key=name,
             path=_cookie_path(callback_url),
-            secure=_secure(request, ctx, callback_url),
+            secure=secure,
             httponly=True,
             samesite="lax",
         )
@@ -180,6 +238,12 @@ def loopback_alias_redirect(request: Request, state: ConnectState | None) -> str
     if parts.port is not None:
         netloc = f"{netloc}:{parts.port}"
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, ""))
+
+
+def _cookie_name(digest: str, *, secure: bool) -> str:
+    """The binding cookie name for ``digest`` (an empty digest gives the name prefix)."""
+    name = browser_binding_cookie_name(digest) if digest else BROWSER_BINDING_COOKIE_PREFIX
+    return f"{SECURE_COOKIE_PREFIX}{name}" if secure else name
 
 
 def _cookie_path(callback_url: str) -> str:
