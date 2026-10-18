@@ -7,6 +7,7 @@ import functools
 from typing import cast
 
 import pytest
+from structlog.testing import capture_logs
 
 from jentic_one.admin.services import user_hooks
 from jentic_one.admin.services.user_hooks import (
@@ -107,10 +108,44 @@ async def test_a_hook_that_overruns_its_budget_is_cut_off_and_counted(
     register_user_deleted_hook(_hanging)
     register_user_deleted_hook(_after)
 
-    await asyncio.wait_for(run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY), 5)
+    with capture_logs() as logs:
+        await asyncio.wait_for(run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY), 5)
 
     assert calls == ["usr_gone"]
     assert counted == [(1, {"hook": f"{__name__}.{_hanging.__qualname__}", "reason": "timeout"})]
+    [failure] = [e for e in logs if e["event"] == "user_deleted_hook_failed"]
+    assert failure["reason"] == "timeout"
+    assert failure["timeout_s"] == 0.01
+    # An expired budget has no hook traceback worth keeping.
+    assert "exc_info" not in failure
+
+
+async def test_a_timeout_error_raised_by_the_hook_itself_is_an_error_with_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counted: list[tuple[int, dict[str, str]]] = []
+    monkeypatch.setattr(
+        user_hooks.user_deleted_hook_failures_counter,
+        "add",
+        lambda amount, attributes: counted.append((amount, attributes)),
+    )
+
+    async def _driver_timeout(_ctx: Context, _user_id: str, _identity: Identity) -> None:
+        raise TimeoutError("driver timed out")
+
+    register_user_deleted_hook(_driver_timeout)
+
+    with capture_logs() as logs:
+        await run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY)
+
+    # The budget did not expire, so this is the hook's own failure, not ours.
+    assert counted == [
+        (1, {"hook": f"{__name__}.{_driver_timeout.__qualname__}", "reason": "error"})
+    ]
+    [failure] = [e for e in logs if e["event"] == "user_deleted_hook_failed"]
+    assert failure["reason"] == "error"
+    assert failure["exc_info"] is True
+    assert "timeout_s" not in failure
 
 
 async def _named_hook(_ctx: Context, _user_id: str, _identity: Identity, *, tag: str) -> None:

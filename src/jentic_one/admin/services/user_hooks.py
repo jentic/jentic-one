@@ -88,13 +88,19 @@ async def run_user_deleted_hooks(ctx: Context, user_id: str, *, identity: Identi
     """Run every registered hook for a committed user delete; log, count and skip failures.
 
     Each hook is bounded by ``USER_DELETED_HOOK_TIMEOUT_S``; a timeout is a
-    failure like any other ``Exception``.
+    failure like any other ``Exception``. Only an expired budget counts as
+    ``reason="timeout"``: a ``TimeoutError`` the hook raises itself (e.g. from
+    its own driver or HTTP client) is an ``error`` and keeps its traceback.
     """
     for hook in tuple(_USER_DELETED_HOOKS):
+        budget = asyncio.timeout(USER_DELETED_HOOK_TIMEOUT_S)
         try:
-            async with asyncio.timeout(USER_DELETED_HOOK_TIMEOUT_S):
+            async with budget:
                 await hook(ctx, user_id, identity)
         except TimeoutError:
+            if not budget.expired():
+                _log_hook_error(hook, user_id)
+                continue
             name = _hook_name(hook)
             user_deleted_hook_failures_counter.add(1, {"hook": name, "reason": "timeout"})
             logger.error(
@@ -105,12 +111,17 @@ async def run_user_deleted_hooks(ctx: Context, user_id: str, *, identity: Identi
                 timeout_s=USER_DELETED_HOOK_TIMEOUT_S,
             )
         except Exception:
-            name = _hook_name(hook)
-            user_deleted_hook_failures_counter.add(1, {"hook": name, "reason": "error"})
-            logger.error(
-                "user_deleted_hook_failed",
-                user_id=user_id,
-                hook=name,
-                reason="error",
-                exc_info=True,
-            )
+            _log_hook_error(hook, user_id)
+
+
+def _log_hook_error(hook: UserDeletedHook, user_id: str) -> None:
+    """Count and log the exception being handled as a hook ``error``, with traceback."""
+    name = _hook_name(hook)
+    user_deleted_hook_failures_counter.add(1, {"hook": name, "reason": "error"})
+    logger.error(
+        "user_deleted_hook_failed",
+        user_id=user_id,
+        hook=name,
+        reason="error",
+        exc_info=True,
+    )
