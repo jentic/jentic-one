@@ -89,96 +89,16 @@ is superseded by the next one — every release rebuilds all artifacts from
 scratch, so nothing is lost by skipping it.
 
 
-## Upgrading to the multi-source catalog release (0.44.0)
+## Upgrading to the multi-source catalog release (0.44.0): update tracking
 
-This release reads the catalog from any number of configured catalog sources
-instead of the single public-apis snapshot, and every catalog entry is
-addressed by an **`entry_id`** (`{source_slug}/{external_id}`, e.g.
-`public/stripe.com`). It is **breaking for catalog clients** — REST, MCP, and
-the CLI's agent-mode machine contract — so read this before rolling it out.
+Part of the same breaking release as the `entry_id` catalog changes (Parts 1b
+and 1c); it ships with them, never on its own.
 
-- **Upgrade every CLI with the server — the CLI and server must run the same
-  release.** A 0.44.0 CLI checks the server's `GET /health` version before its
-  first catalog call:
-  - a reported version older than 0.44.0 is refused with
-    `SERVER_INCOMPATIBLE` instead of a confusing 404;
-  - a `/health` that answers 5xx or 429 is a retryable `TRANSPORT_ERROR`;
-  - when `/health` reports no version (or a proxy answers it with 401/404),
-    the CLI checks the catalog response instead: entries without an
-    `entry_id` are refused with `SERVER_INCOMPATIBLE`.
-
-  An **older** CLI, or an older `jentic mcp` stdio server, talking to a
-  0.44.0 server fails: it builds `/catalog/{api_id}` paths the server answers
-  with `404`, and reads entries with empty ids. Source builds of the CLI
-  (version `dev`, or a `go install …@<branch>` pseudo-version) skip the check;
-  `go install …@v0.44.0` builds run it.
-- **Agent machine contract: `schema_version` is now `"2"`** on the
-  `jentic` CLI's agent-mode envelopes (the `--json` / `--mode agent` result,
-  list, error and `jentic execute` envelopes) and on every MCP tool result,
-  from both the `/mcp` mount and `jentic mcp`. Only the catalog entries
-  changed shape; the other envelopes moved to `"2"` with no field changes, so
-  an agent that pins `"1"` must accept `"2"`. The `jentic skill init`,
-  `skill update`, `skill remove` and `skill list` documents keep
-  `"schema_version": "1"`: their shape didn't change.
-- **Catalog entry fields** (REST `GET /catalog`, `jentic catalog … --json`,
-  and the `search_catalog` MCP tool):
-
-  | Before | Now |
-  |---|---|
-  | `api_id` | `entry_id` (pass it verbatim), plus the cross-source `catalog_api_id` |
-  | `spec_url` | removed |
-  | `path` | removed |
-  | `github_url` | `human_url` |
-  | `_links.github` | `_links.human` |
-  | — | added: `source_slug`, `display_vendor`, `title`, `alternates`, `_links.alternates`, `has_spec` |
-  | `manifest_age_seconds` | `oldest_source_sync_age_seconds` |
-
-- **Catalog routes take `entry_id`.** `GET /catalog/{entry_id}`,
-  `/operations`, `:import`, `:snooze` and `:unsnooze`. An old-style id
-  (`stripe.com`) gets a `404` whose body carries a `did_you_mean` field naming
-  the entry you can see. `jentic catalog show|import` repeat it as
-  `RESOLVE_FAILED` (exit 2) with the corrected command. The `import_api` MCP
-  tool answers an unknown or hidden `entry_id` with a JSON-RPC
-  `invalid_params` error on both surfaces, its message carrying the hint
-  (`did you mean 'public/stripe.com'?`). Saved list cursors stop working:
-  search the catalog again. When several sources carry the API,
-  `did_you_mean` names the one entry the catalog collapses them to; neither
-  surface follows it on its own, and `jentic catalog search` lists the others.
-- **`jentic catalog show|import <entry_id>`.** Both take the `entry_id` from
-  `jentic catalog search`; a malformed id (an empty, `.` or `..` segment, a
-  character below U+0020 or U+007F, more than 320 characters) is refused
-  before any request, the same rule the server applies.
-- **MCP `search_catalog` hits are narrower than the REST entry.** Both MCP
-  surfaces emit the same keys: no top-level `tags` or `human_url`; the human
-  page is `_links.human` (omitted when the entry has none), and
-  `_links.alternates` appears only when other entries were collapsed into
-  this one. `jentic catalog … --json` keeps `tags` and `human_url`.
-- **`jentic catalog show --json`** adds the preview's `server_variables`
-  (the first server's URL variables) and `required_schemes`; an `oauth2`
-  scheme in `security_schemes` carries its flows' URLs and scopes in
-  `flow_details`.
-- **APIs carry `catalog_entry_id`** (`GET /apis`, `GET /apis/{…}`): the
-  catalog entry the API was imported from. It is `null` for manual imports
-  and when the caller can't read the entry's source. The dashboard's
-  re-import and mute actions act on it directly, and are disabled when it is
-  `null`; only against a server that doesn't send the field do they look the
-  entry up by the API's `catalog_api_id`.
-- **`POST /catalog:refresh`** needs `catalog:sync` (implied by `org:admin`)
-  and syncs only the sources the caller can read. Its response adds
-  `sources` (each source's outcome) and `status: "partial"` when one of
-  them failed or was skipped; `catalog.refresh_deadline_seconds` (default 45)
-  bounds the whole refresh.
-- **MCP `import_api` takes `entry_id`.** `api_id`, `id` and `api` stay
-  accepted as aliases, so existing tool calls keep working once they send an
-  `entry_id` value. Both MCP surfaces (the `/mcp` mount and `jentic mcp`)
-  publish the renamed parameter; MCP clients that cache tool schemas pick it
-  up on their next `tools/list`.
-- **Config.** `catalog.manifest_url` and `catalog.manifest_max_age_seconds`
-  now fail boot; set `catalog.sources[…].settings.url` / `max_age_seconds`
-  instead. Three new permissions (`catalog:org:read`,
-  `catalog:restricted:read`, `catalog:sync`) are implied by `org:admin` and
-  granted to nobody else by default, so non-admin callers see public sources
-  only.
+- **Rollback drops update-check state.** The update checks are re-keyed from
+  spec URL to catalog entry. Downgrading below the backfill revision
+  (`c2d3e4f5a6b9`) deletes every `catalog_update_checks` row: update snoozes
+  and the "already notified" state are lost, so after the rollback the next
+  sweep re-notifies outstanding updates once and operators re-snooze them.
 
 
 ## Upgrading to the first theme-5 release
