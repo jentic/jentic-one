@@ -157,6 +157,12 @@ def _embedded_ipv4(addr: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
     NAT64 (``64:ff9b::a.b.c.d``, RFC 6052), 6to4 (``2002:abcd:ef01::/48``) and
     Teredo addresses all carry the client's IPv4 address, so they are budgeted
     as that IPv4 client rather than as an IPv6 /64.
+
+    A network-specific translation prefix (the RFC 8215 local-use
+    ``64:ff9b:1::/48`` or an operator's own) cannot be told apart from a
+    native IPv6 network, so it is grouped by /64 like one: behind such a
+    translator (SIIT in front of an IPv6-only server), every IPv4 client
+    mapped into one /64 of that prefix shares a single bucket.
     """
     if addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
