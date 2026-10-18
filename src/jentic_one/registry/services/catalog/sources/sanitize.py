@@ -99,7 +99,10 @@ def clean_human_url(value: str | None) -> str | None:
         return None
     if any(ch.isspace() for ch in candidate):
         return None
-    parsed = urlparse(candidate)
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:  # e.g. an unclosed IPv6 bracket
+        return None
     if parsed.scheme != "https" or not parsed.netloc:
         return None
     return candidate

@@ -877,6 +877,28 @@ def test_preview_source_unavailable_is_503_with_retry_after(
     assert r.headers["retry-after"] == retry_after
 
 
+@pytest.mark.parametrize(
+    "spec_url", ["https://[::1/openapi.json", "https://raw\uff0fgithubusercontent.com/x.json"]
+)
+async def test_preview_of_an_unparseable_spec_url_is_503(
+    web_config: AppConfig, spec_url: str
+) -> None:
+    """A stored spec URL the parser refuses is a source failure, not a 500."""
+    async with _deployment(web_config, [_public_source()]) as ctx:
+        async with ctx.registry_db.transaction() as session:
+            await session.execute(
+                update(CatalogEntryRow)
+                .where(CatalogEntryRow.entry_id == "public/stripe.com")
+                .values(spec_ref={"url": spec_url})
+            )
+        clear_snapshots()
+        with _client(ctx, ["org:admin"]) as tc:
+            r = tc.get("/catalog/public/stripe.com/operations")
+        assert r.status_code == 503
+        assert r.json()["type"].endswith("catalog_source_unavailable")
+        assert "\uff0f" not in r.text
+
+
 def test_preview_operations_q_filters_across_spec(admin_client: TestClient) -> None:
     _sync_now(admin_client)
     body = admin_client.get("/catalog/public/stripe.com/operations", params={"q": "create"}).json()

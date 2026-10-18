@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from jentic_one.registry.services.catalog.fetch import (
     CATALOG_USER_AGENT,
     MAX_RETRY_AFTER_SECONDS,
+    has_userinfo,
     parse_retry_after,
 )
 from jentic_one.registry.services.catalog.sources import deps as deps_module
@@ -33,7 +34,11 @@ from jentic_one.registry.services.catalog.sources.deps import (
     build_source_deps,
     spec_fetch_lane,
 )
-from jentic_one.registry.services.catalog.sources.http_index import HttpIndexSource
+from jentic_one.registry.services.catalog.sources.git_manifest import (
+    GitManifestSettings,
+    GitManifestSource,
+)
+from jentic_one.registry.services.catalog.sources.http_index import HttpIndexSource, index_changes
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
 from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
@@ -41,7 +46,9 @@ from jentic_one.registry.services.catalog.sources.protocol import (
     SourceUnavailableError,
     SpecBody,
     SpecGoneError,
+    Upserted,
 )
+from jentic_one.registry.services.catalog.sources.sanitize import clean_human_url
 from jentic_one.shared.config import CatalogSourceConfig, IngestConfig
 from jentic_one.testing.catalog_source import register_static_source_kind
 
@@ -258,6 +265,77 @@ async def test_redirect_location_is_parsed_by_httpx(
             await _http(handler).get_bytes(_URL)
         assert outcomes == [source_metrics.FETCH_TRANSIENT]
         assert len(seen) == 1
+
+
+#: URLs ``urlsplit`` refuses: an unclosed IPv6 bracket, and netlocs that change
+#: under NFKC normalisation (a full-width solidus; one after userinfo).
+_UNPARSEABLE = [
+    "https://[::1/x",
+    "https://specs\uff0fexample.com/openapi.json",
+    "https://u:chosen@specs\uff0fexample.com/openapi.json",  # pragma: allowlist secret
+    "[::1/x",
+]
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE)
+@pytest.mark.parametrize("method", ["get_json", "get_bytes"])
+@pytest.mark.asyncio
+async def test_unparseable_url_is_a_recorded_source_unavailable(
+    url: str, method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A URL the parsers cannot read is refused before sending, as a recorded
+    ``SourceUnavailableError`` that never repeats it, never a bare ``ValueError``."""
+    outcomes: list[str] = []
+    monkeypatch.setattr(
+        source_metrics, "record_fetch", lambda _slug, outcome: outcomes.append(outcome)
+    )
+    seen, handler = _recorder()
+    with pytest.raises(SourceUnavailableError, match="unparseable URL") as exc:
+        await getattr(_http(handler), method)(url)
+    assert "chosen" not in str(exc.value)
+    assert "\uff0f" not in str(exc.value)
+    assert outcomes == [source_metrics.FETCH_TRANSIENT]
+    assert seen == []
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE)
+def test_has_userinfo_never_raises_and_fails_closed(url: str) -> None:
+    assert has_userinfo(url) is True
+
+
+@pytest.mark.asyncio
+async def test_unparseable_url_health_is_unreachable() -> None:
+    seen, handler = _recorder()
+    deps = SimpleNamespace(http=_http(handler), clock=lambda: datetime(2026, 1, 1, tzinfo=UTC))
+    source = GitManifestSource(
+        GitManifestSettings(url="https://[::1/apis.json"),
+        deps=deps,  # type: ignore[arg-type]
+    )
+    health = await source.health()
+    assert (health.ok, health.reason) == (False, "unreachable")
+    assert seen == []
+
+
+def test_index_skips_spec_and_human_urls_it_cannot_parse() -> None:
+    """Upstream-controlled URLs that cannot be parsed leave the entry card-only."""
+    absolute = [url for url in _UNPARSEABLE if "://" in url]
+    doc = {
+        "apis": [
+            {
+                "aid": f"a{i}",
+                "humanURL": url,
+                "properties": [{"type": "OpenAPI", "url": url}],
+            }
+            for i, url in enumerate(absolute)
+        ]
+    }
+    changes = index_changes(doc, index_url="https://idx.example.com/apis.json")
+    assert len(changes) == len(absolute)
+    for change in changes:
+        assert isinstance(change, Upserted)
+        assert change.entry.spec_ref is None
+    for url in absolute:
+        assert clean_human_url(url) is None
 
 
 @pytest.mark.asyncio

@@ -162,13 +162,32 @@ class OriginCredentials:
     headers: Callable[[], Awaitable[Mapping[str, str]]]
 
 
+def _splits(url: str) -> bool:
+    """Whether ``urlsplit`` can read ``url`` (it refuses e.g. an unclosed IPv6
+    bracket, or a netloc that changes under NFKC normalisation)."""
+    try:
+        urlsplit(url)
+    except ValueError:
+        return False
+    return True
+
+
+def _parseable(url: str) -> bool:
+    """Whether ``url`` can be read as given and as the egress guard reads it
+    (:func:`with_default_scheme`)."""
+    return _splits(url) and _splits(with_default_scheme(url))
+
+
 def _parsed_userinfo(url: str) -> bool:
+    if not _splits(url):
+        # Fail closed: a URL whose userinfo cannot be read counts as carrying it.
+        return True
     parts = urlsplit(url)
     if parts.username is not None or parts.password is not None:
         return True
     try:
         return bool(httpx.URL(url).userinfo)
-    except httpx.InvalidURL:
+    except (httpx.InvalidURL, ValueError, TypeError):
         return False
 
 
@@ -179,6 +198,8 @@ def has_userinfo(url: str) -> bool:
     (:func:`with_default_scheme`), so a scheme-less ``user:pass@host/x`` counts.
     httpx turns userinfo into its own ``Authorization: Basic`` header, so a URL
     carrying it is never sent: whoever wrote the URL would choose that header.
+    A URL ``urlsplit`` cannot read counts too (see :func:`_parseable`).
+    Never raises.
     """
     return _parsed_userinfo(url) or _parsed_userinfo(with_default_scheme(url))
 
@@ -216,12 +237,15 @@ async def _send_capped(
 
 
 async def _validated(url: str, config: IngestConfig) -> str:
-    """The URL the egress guard returns for ``url``; refused if it carries userinfo.
+    """The URL the egress guard returns for ``url``; refused if it carries userinfo
+    or cannot be parsed.
 
     Userinfo is checked on the URL that would be sent, after the guard has
-    normalised it, as well as on ``url`` itself. Never echo the URL: it
-    carries a secret.
+    normalised it, as well as on ``url`` itself. Never echo the URL: it may
+    carry a secret, and the parser's own error repeats the netloc.
     """
+    if not _parseable(url):
+        raise CatalogFetchError("unsafe URL rejected: unparseable URL")
     refused = CatalogFetchError("unsafe URL rejected: URL carries credentials (user:pass@)")
     if has_userinfo(url):
         raise refused

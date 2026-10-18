@@ -137,7 +137,11 @@ def _spec_url(item: Mapping[str, Any], base: str) -> str | None:
         kind = prop.get("type")
         url = prop.get("url")
         if isinstance(kind, str) and kind.lower() in _SPEC_PROPERTY_TYPES and isinstance(url, str):
-            absolute = urljoin(base, url.strip())
+            try:
+                absolute = urljoin(base, url.strip())
+            except ValueError:
+                # Upstream-controlled and unparseable: skipped, never repeated.
+                continue
             if url_origin(absolute) is not None and not has_userinfo(absolute):
                 return absolute
     return None
@@ -148,7 +152,8 @@ def index_changes(
 ) -> list[EntryChange]:
     """The entries of an APIs.json-style index document, as listing changes.
 
-    A spec URL that is not http(s) or carries userinfo leaves its entry card-only.
+    A spec URL that is not http(s), carries userinfo, or cannot be parsed leaves
+    its entry card-only.
     """
     changes: list[EntryChange] = []
     seen: set[str] = set()
