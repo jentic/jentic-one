@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from jentic_one.registry.services.catalog.sources import auth as auth_module
 from jentic_one.registry.services.catalog.sources.validate import check_catalog_config
 from jentic_one.shared.catalog.source_types import DEFAULT_PUBLIC_MANIFEST_URL
 from jentic_one.shared.config import CatalogConfig, ConfigError
@@ -53,6 +54,18 @@ def test_disabled_legacy_source_disables_the_snapshot_auto_refresh() -> None:
             }
         ]
     )
+    assert cfg.legacy_max_age_seconds() == 0
+
+
+def test_dropping_the_legacy_source_stops_the_snapshot_manifest_egress() -> None:
+    """With no legacy source the snapshot neither auto-refreshes nor has a URL."""
+    cfg = _cfg(
+        sources=[
+            {"slug": "corp", "kind": "git-manifest", "settings": {"url": "https://c.example/a"}}
+        ]
+    )
+    assert cfg.legacy_source() is None
+    assert cfg.legacy_manifest_url() is None
     assert cfg.legacy_max_age_seconds() == 0
 
 
@@ -166,6 +179,21 @@ def test_unknown_auth_type_fails_validation() -> None:
         "auth": {"type": "bearer_from_env", "env": "TOKEN"},
     }
     assert "unknown auth type 'bearer_from_env'" in _errors(_cfg(sources=[src]))
+
+
+def test_registered_credentialed_auth_type_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source requests send no auth headers, so a registered non-``none`` type
+    fails startup instead of fetching unauthenticated."""
+    monkeypatch.setitem(auth_module._RESOLVERS, "token", lambda _cfg: auth_module.NoAuthResolver())
+    src = {
+        "slug": "public",
+        "kind": "git-manifest",
+        "settings": {"url": "https://x/a.json"},
+        "auth": {"type": "token"},
+    }
+    assert "'token' is not supported" in _errors(_cfg(sources=[src]))
 
 
 def test_deprecated_key_without_a_legacy_source_fails_validation() -> None:

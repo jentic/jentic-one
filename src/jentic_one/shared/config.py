@@ -2350,21 +2350,29 @@ class CatalogConfig(BaseModel):
             (s for s in self.effective_sources() if s.slug == self.legacy_source_slug), None
         )
 
-    def legacy_manifest_url(self) -> str:
-        """The manifest URL the snapshot refresh fetches (the legacy source's ``url``)."""
+    def legacy_manifest_url(self) -> str | None:
+        """The manifest URL the snapshot refresh fetches (the legacy source's ``url``).
+
+        ``None`` when no legacy source is configured: dropping it from
+        ``catalog.sources`` stops the snapshot's manifest egress.
+        """
         legacy = self.legacy_source()
-        if legacy is not None:
-            url = legacy.settings.get("url")
-            if isinstance(url, str) and url:
-                return url
+        if legacy is None:
+            return None
+        url = legacy.settings.get("url")
+        if isinstance(url, str) and url:
+            return url
         return self.manifest_url
 
     def legacy_max_age_seconds(self) -> int:
-        """Snapshot staleness gate (the legacy source's ``max_age_seconds``; 0 = manual)."""
+        """Snapshot staleness gate (the legacy source's ``max_age_seconds``; 0 = manual).
+
+        0 when no legacy source is configured, so nothing refreshes the snapshot.
+        """
         legacy = self.legacy_source()
-        if legacy is not None:
-            return legacy.max_age_seconds if legacy.enabled else 0
-        return self.manifest_max_age_seconds
+        if legacy is None:
+            return 0
+        return legacy.max_age_seconds if legacy.enabled else 0
 
 
 class McpOAuthConfig(BaseModel):

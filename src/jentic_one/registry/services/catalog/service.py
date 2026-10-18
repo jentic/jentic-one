@@ -167,27 +167,34 @@ class CatalogService:
         The same manifest document is also applied to the legacy catalog source
         (a shadow write: reads keep serving the snapshot). ``sync_sources`` syncs
         every other enabled source too; ``force`` overrides the mass-removal guard.
-        Source sync failures are logged and never fail the refresh.
+        Source sync failures are logged and never fail the refresh. With no legacy
+        source configured there is no manifest to fetch: the snapshot is left as
+        it is and only the other sources sync.
         """
+        manifest_url = self._cfg.legacy_manifest_url()
+        if manifest_url is None:
+            if sync_sources:
+                await self._sync_sources(None, others=True, force=force)
+            return CatalogRefreshResult(count=0)
         try:
-            doc = await fetch_json(self._cfg.legacy_manifest_url(), config=self._ingest_cfg)
+            doc = await fetch_json(manifest_url, config=self._ingest_cfg)
         except CatalogFetchError as exc:
             raise CatalogUnavailableError(f"catalog manifest unavailable: {exc}") from exc
 
         entries = [e.to_dict() for e in mb.parse_apis_json(doc)]
         async with self._ctx.registry_db.transaction() as session:
             count = await CatalogRepository.replace(
-                session, source_url=self._cfg.legacy_manifest_url(), entries=entries
+                session, source_url=manifest_url, entries=entries
             )
         await self._sync_sources(doc, others=sync_sources, force=force)
         return CatalogRefreshResult(count=count)
 
-    async def _sync_sources(self, doc: dict[str, Any], *, others: bool, force: bool) -> None:
+    async def _sync_sources(self, doc: dict[str, Any] | None, *, others: bool, force: bool) -> None:
         sync = CatalogSourceSync(self._ctx)
         legacy = self._cfg.legacy_source_slug
         try:
             await sync.register_sources()
-            if legacy in sync.sources:
+            if doc is not None and legacy in sync.sources:
                 outcome = await sync.sync_source(legacy, forced=force, stream=manifest_stream(doc))
                 logger.info("catalog_legacy_source_synced", status=outcome.status)
             if others:
