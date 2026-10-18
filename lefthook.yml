@@ -27,8 +27,8 @@ pre-commit:
       stage_fixed: true
     detect-secrets:
       # No glob: scan every staged file type, matching the CI gate
-      # (`make detect-secrets`). The wrapper keeps the baseline in slim form
-      # (no line numbers or timestamp) when the hook rewrites it.
+      # (`make detect-secrets`). The wrapper also trims entries for staged
+      # deletions ({staged_files} omits them) and keeps the baseline slim.
       run: uv run python -m tools.secrets_baseline hook {staged_files}
 
 commit-msg:

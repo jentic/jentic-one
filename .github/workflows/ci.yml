@@ -213,8 +213,9 @@ jobs:
         run: make lint
 
       # Fails on any potential secret not allowlisted in .secrets.baseline
-      # (or inline `pragma: allowlist secret`), on stale baseline entries, and
-      # on a baseline not in slim form. Fix with `make secrets-baseline`.
+      # (or inline `pragma: allowlist secret`), on stale baseline entries, on
+      # detector settings that differ from detect-secrets' defaults, and on a
+      # baseline not in slim form. Fix with `make secrets-baseline`.
       - name: Detect secrets
         run: make detect-secrets
   # OpenAPI Scorecard for the control and broker specs, via the official
