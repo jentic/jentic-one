@@ -242,68 +242,150 @@ class CatalogListResponse(BaseModel):
     )
 
 
-#: A refreshed source's run outcome (``SyncOutcome.status``).
-CatalogRefreshSourceStatus = Literal[
-    "applied", "suspect_empty", "superseded", "busy", "disabled", "failed", "skipped"
-]
+class CatalogSourceReadersResponse(BaseModel):
+    """Who may read a ``restricted`` source (operator view only)."""
 
-
-class CatalogRefreshSourceResponse(BaseModel):
-    """One refreshed source's run outcome."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [{"slug": "public", "status": "applied", "error_code": None}]
-        }
+    permissions: list[str] = Field(
+        description="Any one of these permissions grants read access.",
+        examples=[["catalog:read:partner"]],
+    )
+    actor_ids: list[str] = Field(
+        description="These actors may read the source.", examples=[["agent_abc123"]]
     )
 
-    slug: str = Field(description="The source's slug.", examples=["public"])
-    status: CatalogRefreshSourceStatus = Field(
+
+class CatalogSourceWarningResponse(BaseModel):
+    """An operator-facing problem with one source's mapping or rows."""
+
+    code: str = Field(
         description=(
-            "Run outcome: applied, suspect_empty (held by the mass-removal guard), "
-            "superseded, busy (another run holds the source; this refresh applied "
-            "nothing for it), disabled, failed, or skipped (the refresh deadline "
-            "passed before it started; the scanner syncs it)."
+            "`mapping_unmatched`: a mapping row matches no curated id, so it is ignored; "
+            "`ownership_conflict`: an entry claims a local API another source owns."
         ),
-        examples=["applied"],
+        examples=["mapping_unmatched"],
     )
-    error_code: str | None = Field(
+    external_id: str = Field(description="The source's id for the entry.", examples=["stripe"])
+    catalog_api_id: str = Field(
+        description="The catalog API the warning concerns.", examples=[ex.CATALOG_API_ID]
+    )
+    local_api: str | None = Field(
         default=None,
-        description="Why a failed or skipped run did not apply, e.g. listing_timeout.",
-        examples=["listing_timeout"],
+        description="`vendor/name/version` of the local API, for an ownership conflict.",
+        examples=["stripe.com/stripe/2024-06-20"],
     )
 
 
-class CatalogRefreshResponse(BaseModel):
-    """Outcome of a catalog refresh, over the sources the caller may read."""
+class CatalogSourceResponse(BaseModel):
+    """One configured catalog source and its sync state.
+
+    The operator fields (``enabled`` to ``warnings``) are present only for an
+    ``org:admin`` caller.
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
                 {
-                    "count": 5231,
-                    "status": "refreshed",
-                    "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+                    "slug": "public",
+                    "kind": "jentic-public-apis",
+                    "visibility": "public",
+                    "status": "ok",
+                    "last_sync_at": "2026-01-15T10:30:00Z",
+                    "live_entries": 5231,
+                    "consecutive_failures": 0,
+                    "sync_pending": False,
                 }
             ]
         }
     )
 
-    count: int = Field(
-        description="Live entries of the refreshed sources after the sync.", examples=[5231]
+    slug: str = Field(description="Source slug, the `entry_id` prefix.", examples=["public"])
+    kind: str = Field(description="Source kind.", examples=["jentic-public-apis"])
+    visibility: str = Field(
+        description="`public` or `restricted` (readable only by its readers).",
+        examples=["public"],
     )
-    status: Literal["refreshed", "partial"] = Field(
-        default="refreshed",
-        description=(
-            "refreshed when no refreshed source failed, was held by another run "
-            "(busy) or was skipped; partial otherwise (those keep serving their last "
-            "applied entries)."
-        ),
-        examples=["refreshed"],
+    status: str = Field(description="Outcome of the last sync.", examples=["ok"])
+    last_sync_at: datetime | None = Field(
+        description="When the last successful sync finished.",
+        examples=["2026-01-15T10:30:00Z"],
     )
-    sources: list[CatalogRefreshSourceResponse] = Field(
+    live_entries: int = Field(description="Entries the source currently lists.", examples=[5231])
+    consecutive_failures: int = Field(
+        description="Failed syncs since the last success.", examples=[0]
+    )
+    sync_pending: bool = Field(
+        description="A sync is requested or wanted and has not started yet.", examples=[False]
+    )
+    enabled: bool | None = Field(
+        default=None, description="Whether the source is synced (operator only).", examples=[True]
+    )
+    trust: str | None = Field(
+        default=None, description="Source trust level (operator only).", examples=["curated"]
+    )
+    precedence: int | None = Field(
+        default=None,
+        description="Rank when sources list the same API; lower wins (operator only).",
+        examples=[0],
+    )
+    readers: CatalogSourceReadersResponse | None = Field(
+        default=None, description="Readers of a restricted source (operator only)."
+    )
+    warnings: list[CatalogSourceWarningResponse] | None = Field(
+        default=None, description="Mapping and ownership problems (operator only)."
+    )
+
+
+class CatalogSourceListResponse(BaseModel):
+    """The configured catalog sources the caller can see."""
+
+    data: list[CatalogSourceResponse] = Field(description="Sources, ordered by slug.")
+
+
+class CatalogSourceNotifyRequest(BaseModel):
+    """Optional body for ``POST /catalog/sources/{slug}:notify``."""
+
+    external_ids: list[str] = Field(
         default_factory=list,
-        description="Each refreshed source's outcome, in sync order.",
+        max_length=100,
+        description=(
+            "Ids the upstream says changed (at most 100). A hint only: the sync still "
+            "lists the whole source."
+        ),
+        examples=[["stripe"]],
+    )
+
+
+class CatalogSourceSyncResponse(BaseModel):
+    """Acknowledgement of a requested sync; the sync runs in the background."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "slug": "public",
+                    "status": "queued",
+                    "forced": False,
+                    "due_at": "2026-01-15T10:30:00Z",
+                }
+            ]
+        }
+    )
+
+    slug: str = Field(description="Source slug.", examples=["public"])
+    status: str = Field(
+        description=(
+            "`queued`: this call requested the sync; `coalesced`: it joined a sync already pending."
+        ),
+        examples=["queued"],
+    )
+    forced: bool = Field(description="The sync overrides the mass-removal guard.", examples=[False])
+    due_at: datetime | None = Field(
+        description=(
+            "Earliest time the sync may start (a run in progress finishes first); null "
+            "once the sync is already wanted."
+        ),
+        examples=["2026-01-15T10:30:00Z"],
     )
 
 

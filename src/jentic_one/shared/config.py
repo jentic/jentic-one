@@ -2284,7 +2284,8 @@ class CatalogSourceConfig(BaseModel):
         ge=0,
         description=(
             "Background sync interval. 0 disables automatic sync and background "
-            "egress for this source; a manual refresh still syncs it."
+            "egress for this source; a requested sync (POST /catalog/sources/{slug}:sync) "
+            "still syncs it."
         ),
     )
     max_removal_ratio: float = Field(
@@ -2427,10 +2428,11 @@ class CatalogConfig(BaseModel):
     # app_factory when both the registry + admin DBs are present) runs one sweep per
     # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
     # (If-None-Match) and emitting a ``catalog.update_available`` event when the
-    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
-    # sweep. A given API is re-probed at most once per this interval (a persistent
-    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
-    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
+    # upstream spec changed. A requested sync (``POST /catalog/sources/{slug}:sync``)
+    # also triggers a sweep once it runs. A given API is re-probed at most once per
+    # this interval (a persistent per-API gate, so scanner + requested syncs don't
+    # double-probe). Zero disables the sweep + scanner entirely (kill switch for
+    # air-gapped installs — no event spam,
     # no egress). Standalone-registry deployments (no admin DB) get no scanner.
     update_check_interval_seconds: int = 86400
     # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off

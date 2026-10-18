@@ -298,6 +298,19 @@ class CatalogEntryNotFoundError(RegistryServiceError):
         self.did_you_mean = did_you_mean
 
 
+class CatalogSourceNotFoundError(RegistryServiceError):
+    """Raised when a catalog source is unknown or hidden from the caller (one answer for both).
+
+    A source that cannot take the requested action (``:notify`` on a source
+    with no push support) answers the same way, so the reply never tells a
+    hidden source from a missing one.
+    """
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"Catalog source '{slug}' not found")
+        self.slug = slug
+
+
 class ForcedSyncForbiddenError(RegistryServiceError):
     """Raised when ``force=true`` is sent by a caller without ``org:admin``.
 
@@ -306,7 +319,7 @@ class ForcedSyncForbiddenError(RegistryServiceError):
     """
 
     def __init__(self) -> None:
-        super().__init__("A forced catalog source sync requires the 'org:admin' permission")
+        super().__init__("A forced catalog source sync requires the 'org:admin' permission.")
 
 
 class SourceSwitchForbiddenError(RegistryServiceError):

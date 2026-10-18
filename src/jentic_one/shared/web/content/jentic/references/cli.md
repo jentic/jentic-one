@@ -199,8 +199,9 @@ since import (also surfaced by `jenticctl status`). Re-importing promotes
 the new spec to **live**, changing behavior, so this is an **operator**
 decision: **suggest** the re-import (`jentic catalog import <entry_id>`)
 to the operator and let them run it — never silently re-import on your own.
-(`jentic catalog refresh` rebuilds the catalog manifest from upstream but
-requires `org:admin`, so it too is an operator action.)
+(`jentic catalog refresh` asks the backend to re-sync every catalog source
+from upstream but requires `catalog:sync` (an operator grant), so it too is an
+operator action.)
 
 To read the connected backend's identity facts in this lane:
 

@@ -2,9 +2,10 @@
 
 Handlers only: project CatalogService views into web schemas and build links.
 No DB access, no try/except (service errors map to Problem Details via the
-registry error handler). Action verbs use the colon pattern (``:refresh``,
-``:import``). Route ordering matters: ``/operations`` is declared before the bare
-``/{entry_id:path}`` because the ``:path`` converter greedily eats slashes.
+registry error handler). Action verbs use the colon pattern (``:sync``,
+``:import``). Route ordering matters: ``/operations`` and ``/catalog/sources`` are
+declared before the bare ``/{entry_id:path}`` because the ``:path`` converter
+greedily eats slashes.
 
 An ``entry_id`` is ``{source_slug}/{external_id}`` and the external id may itself
 contain slashes (``public/googleapis.com/admin``), so the path parameter uses
@@ -27,19 +28,25 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
-from jentic_one.registry.services.errors import (
-    CatalogEntryNotFoundError,
-    ForcedSyncForbiddenError,
+from jentic_one.registry.services.catalog.source_ops import (
+    CatalogSourceOps,
+    CatalogSourceView,
+    SourceSyncRequestView,
 )
-from jentic_one.registry.web.deps import get_catalog_service
+from jentic_one.registry.services.errors import CatalogEntryNotFoundError
+from jentic_one.registry.web.deps import get_catalog_service, get_catalog_source_ops
 from jentic_one.registry.web.schemas.apis import ApiImportLinksResponse, ApiImportResponse
 from jentic_one.registry.web.schemas.catalog import (
     CatalogEntryLinksResponse,
     CatalogEntryResponse,
     CatalogListResponse,
-    CatalogRefreshResponse,
-    CatalogRefreshSourceResponse,
     CatalogSnoozeRequest,
+    CatalogSourceListResponse,
+    CatalogSourceNotifyRequest,
+    CatalogSourceReadersResponse,
+    CatalogSourceResponse,
+    CatalogSourceSyncResponse,
+    CatalogSourceWarningResponse,
     OperationPreviewListResponse,
     PreviewInfoResponse,
     PreviewOperationResponse,
@@ -51,7 +58,7 @@ from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import effective_permissions, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, gone, problem
+from jentic_one.shared.web.openapi_responses import conflict, gone, not_found, problem
 
 router = APIRouter()
 
@@ -335,6 +342,142 @@ async def preview_catalog_operations(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
+_SOURCE_SLUG_DESCRIPTION = "Catalog source slug, as `GET /catalog/sources` lists it."
+
+SourceSlugPath = Annotated[
+    str,
+    Path(
+        description=_SOURCE_SLUG_DESCRIPTION,
+        max_length=64,
+        openapi_examples=ex.example("public"),
+    ),
+]
+
+
+def _source_response(view: CatalogSourceView) -> CatalogSourceResponse:
+    return CatalogSourceResponse(
+        slug=view.slug,
+        kind=view.kind,
+        visibility=view.visibility,
+        status=view.status,
+        last_sync_at=view.last_sync_at,
+        live_entries=view.live_entries,
+        consecutive_failures=view.consecutive_failures,
+        sync_pending=view.sync_pending,
+        enabled=view.enabled,
+        trust=view.trust,
+        precedence=view.precedence,
+        readers=(
+            CatalogSourceReadersResponse(
+                permissions=list(view.readers.permissions),
+                actor_ids=list(view.readers.actor_ids),
+            )
+            if view.readers is not None
+            else None
+        ),
+        warnings=(
+            [
+                CatalogSourceWarningResponse(
+                    code=w.code,
+                    external_id=w.external_id,
+                    catalog_api_id=w.catalog_api_id,
+                    local_api=w.local_api,
+                )
+                for w in view.warnings
+            ]
+            if view.warnings is not None
+            else None
+        ),
+    )
+
+
+def _sync_response(view: SourceSyncRequestView) -> JSONResponse:
+    resp = CatalogSourceSyncResponse(
+        slug=view.slug, status=view.status, forced=view.forced, due_at=view.due_at
+    )
+    return JSONResponse(status_code=202, content=resp.model_dump(mode="json"))
+
+
+@router.get("/catalog/sources", response_model=CatalogSourceListResponse)
+async def list_catalog_sources(
+    identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
+    ops: CatalogSourceOps = Depends(get_catalog_source_ops),
+) -> JSONResponse:
+    """List the catalog sources the caller can see, with their sync state.
+
+    An ``org:admin`` caller sees every configured source, plus its readers,
+    trust, precedence and a ``warnings`` list (mapping rows that match no entry,
+    entries claiming an API another source owns).
+    """
+    views = await ops.list_sources(permissions=permissions, actor_id=identity.sub or None)
+    resp = CatalogSourceListResponse(data=[_source_response(v) for v in views])
+    return JSONResponse(content=resp.model_dump(mode="json"))
+
+
+@router.post(
+    "/catalog/sources/{slug}:sync",
+    status_code=202,
+    response_model=CatalogSourceSyncResponse,
+    responses=not_found("The source does not exist or the caller cannot see it."),
+)
+async def sync_catalog_source(
+    slug: SourceSlugPath,
+    identity: Identity = get_current_identity(required_permissions=["catalog:sync"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
+    ops: CatalogSourceOps = Depends(get_catalog_source_ops),
+    force: bool = Query(
+        default=False,
+        description=(
+            "Apply the sync even when it would remove more entries than the source's "
+            "mass-removal guard allows (`org:admin`)."
+        ),
+        openapi_examples=ex.example(False),
+    ),
+) -> JSONResponse:
+    """Request a sync of one catalog source; it runs in the background.
+
+    Answers ``202`` at once: the sync starts through the source's lease, after
+    any run in progress. A request while one is pending joins it.
+    ``force=true`` (``org:admin``) skips the mass-removal guard for that run.
+    """
+    view = await ops.request_sync(
+        slug, permissions=permissions, actor_id=identity.sub or None, force=force
+    )
+    return _sync_response(view)
+
+
+@router.post(
+    "/catalog/sources/{slug}:notify",
+    status_code=202,
+    response_model=CatalogSourceSyncResponse,
+    responses=not_found(
+        "The source does not exist, the caller cannot see it, or it takes no push notifications."
+    ),
+)
+async def notify_catalog_source(
+    slug: SourceSlugPath,
+    body: CatalogSourceNotifyRequest | None = None,
+    identity: Identity = get_current_identity(required_permissions=["catalog:sync"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
+    ops: CatalogSourceOps = Depends(get_catalog_source_ops),
+) -> JSONResponse:
+    """Tell the catalog a push-capable source changed; a sync follows in the background.
+
+    Single-flight per source: a notification joins a pending sync, and one
+    within the source's ``min_notify_interval_seconds`` of the last run's start
+    queues a sync for when that interval ends. ``external_ids`` is a hint only;
+    the sync still lists the whole source.
+    """
+    view = await ops.notify(
+        slug,
+        permissions=permissions,
+        actor_id=identity.sub or None,
+        external_ids=body.external_ids if body is not None else (),
+    )
+    return _sync_response(view)
+
+
 @router.get(
     "/catalog/{entry_id:path}", response_model=CatalogEntryResponse, response_model_by_alias=True
 )
@@ -354,49 +497,6 @@ async def get_catalog_entry(
         _checked_entry_id(entry_id), permissions=permissions, actor_id=identity.sub or None
     )
     resp = _entry_response(request, view)
-    return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
-
-
-@router.post("/catalog:refresh", status_code=200, response_model=CatalogRefreshResponse)
-async def refresh_catalog(
-    identity: Identity = get_current_identity(required_permissions=["catalog:sync"]),
-    permissions: frozenset[str] = Depends(effective_permissions),
-    svc: CatalogService = Depends(get_catalog_service),
-    force: bool = Query(
-        default=False,
-        description=(
-            "Apply each source's sync even when it would remove more entries than "
-            "the source's mass-removal guard allows (`org:admin`)."
-        ),
-        openapi_examples=ex.example(False),
-    ),
-) -> JSONResponse:
-    """Sync now every enabled catalog source the caller may read (catalog:sync).
-
-    Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
-    of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-    ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
-    gives each one's outcome. Sources the caller cannot read are not synced or
-    reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
-    for this run.
-    """
-    if force and ORG_ADMIN not in permissions:
-        raise ForcedSyncForbiddenError()
-    result = await svc.refresh(permissions=permissions, actor_id=identity.sub or None, force=force)
-    # An explicit operator "refresh now" is the strongest "check upstream" signal,
-    # so trigger the update-notify sweep too. Fire-and-forget: never block the
-    # refresh response on it.
-    svc.trigger_update_notify_sweep()
-    resp = CatalogRefreshResponse(
-        count=result.count,
-        status="partial" if result.partial else "refreshed",
-        sources=[
-            CatalogRefreshSourceResponse.model_validate(
-                {"slug": o.slug, "status": o.status, "error_code": o.error_code}
-            )
-            for o in result.sources
-        ],
-    )
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 

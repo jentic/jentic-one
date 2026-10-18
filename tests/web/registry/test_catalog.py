@@ -49,7 +49,8 @@ from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.snapshot import clear_snapshots
-from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
+from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, SyncOutcome
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.api_key_resolver import AGENT_API_KEY_PREFIX
@@ -298,6 +299,19 @@ async def _job_source(ctx: Context, job_id: str) -> dict[str, Any]:
         return dict(row.payload["sources"][0])
 
 
+def _run_scanner(tc: TestClient) -> list[SyncOutcome]:
+    """Run one ``CatalogSourceSyncScanner`` tick on the app's loop, as its task would."""
+    ctx: Context = tc.app.state.ctx  # type: ignore[attr-defined]
+    return tc.portal.call(CatalogSourceSyncScanner(ctx).tick)  # type: ignore[union-attr]
+
+
+def _sync_now(tc: TestClient) -> None:
+    """Request a sync of every source the caller sees, then let the scanner run them."""
+    for source in tc.get("/catalog/sources").json()["data"]:
+        assert tc.post(f"/catalog/sources/{source['slug']}:sync").status_code == 202
+    _run_scanner(tc)
+
+
 async def _seed(ctx: Context, api_ids: list[str]) -> None:
     """Serve ``api_ids`` from the public manifest and sync it."""
     _LISTINGS[_MANIFEST_URL] = list(api_ids)
@@ -311,112 +325,43 @@ def test_list_catalog_requires_auth(unauthed_client: TestClient) -> None:
     assert unauthed_client.get("/catalog").status_code == 401
 
 
-def test_refresh_rejects_non_admin_token(web_context: Context) -> None:
+def test_sync_requires_catalog_sync(web_context: Context) -> None:
     """A valid identity without catalog:sync is rejected with 403 (not just presence)."""
-    with _client(web_context, []) as tc:
-        assert tc.post("/catalog:refresh").status_code == 403
+    with _client(web_context, ["capabilities:read"]) as tc:
+        assert tc.post("/catalog/sources/public:sync").status_code == 403
 
 
-def test_catalog_sync_refreshes_but_only_org_admin_forces(web_context: Context) -> None:
-    with _client(web_context, ["catalog:sync"]) as tc:
-        assert tc.post("/catalog:refresh").status_code == 200
-        forced = tc.post("/catalog:refresh", params={"force": "true"})
-        assert forced.status_code == 403
-        assert forced.json()["type"].endswith("forced_sync_forbidden")
-
-
-async def test_catalog_sync_refresh_covers_only_the_sources_the_caller_can_read(
-    web_config: AppConfig,
-) -> None:
-    """A ``catalog:sync`` caller without ``catalog:org:read`` neither syncs nor
-    learns anything about an ``org`` source: not its entries, outcome or slug."""
-    _LISTINGS[_CORP_URL] = ["corp-a.example", "corp-b.example", "corp-c.example"]
-    async with Context(_config(web_config, [_public_source(), _corp_source()])) as ctx:
-        with _client(ctx, ["catalog:sync"]) as tc:
-            r = tc.post("/catalog:refresh")
-            assert r.status_code == 200
-            assert r.json() == {
-                "count": 2,
-                "status": "refreshed",
-                "sources": [{"slug": "public", "status": "applied", "error_code": None}],
-            }
-            async with ctx.registry_db.session() as session:
-                corp = await CatalogSourceRepository.get(session, "corp")
-            assert corp is not None and corp.last_applied_run_id is None
-
-            # Every source failing: the 502 names only the visible one.
-            del _LISTINGS[_MANIFEST_URL]
-            del _LISTINGS[_CORP_URL]
-            failed = tc.post("/catalog:refresh")
-            assert failed.status_code == 502
-            assert "public" in failed.json()["detail"]
-            assert b"corp" not in failed.content
-
-        with _client(ctx, ["catalog:sync", "catalog:org:read"]) as tc:
-            _LISTINGS[_MANIFEST_URL] = ["stripe.com", "slack.com"]
-            r = tc.post("/catalog:refresh")
-            assert r.status_code == 200
-            assert r.json()["status"] == "partial"
-            assert [(s["slug"], s["status"]) for s in r.json()["sources"]] == [
-                ("public", "applied"),
-                ("corp", "failed"),
-            ]
-
-
-async def test_refresh_of_a_source_held_by_another_run_is_partial(
-    web_config: AppConfig,
-) -> None:
-    """``busy`` applied nothing for that source, so the refresh is ``partial``, and
-    a 502 lists a busy source as not refreshed rather than unavailable."""
-    _LISTINGS[_CORP_URL] = ["corp-a.example"]
-    sources = [_public_source(), _corp_source(visibility="public")]
-    async with Context(_config(web_config, sources)) as ctx:
-        await _truncate(ctx)
-        await CatalogSourceSync(ctx).register_sources()
-        async with ctx.registry_db.transaction() as session:
-            assert await CatalogSourceRepository.claim_lease(
-                session, slug="corp", owner="other-run", lease_seconds=600
-            )
-        with _client(ctx, ["catalog:sync"]) as tc:
-            r = tc.post("/catalog:refresh")
-            assert r.status_code == 200
-            assert r.json()["status"] == "partial"
-            assert [(s["slug"], s["status"]) for s in r.json()["sources"]] == [
-                ("public", "applied"),
-                ("corp", "busy"),
-            ]
-
-            del _LISTINGS[_MANIFEST_URL]
-            failed = tc.post("/catalog:refresh")
-            assert failed.status_code == 502
-            detail = failed.json()["detail"]
-            assert detail.startswith("catalog sources unavailable (public: ")
-            assert detail.endswith("; not refreshed (corp: busy)")
-        await _truncate(ctx)
-
-
-def test_refresh_invalid_token_401(unauthed_client: TestClient) -> None:
+def test_sync_invalid_token_401(unauthed_client: TestClient) -> None:
     resp = unauthed_client.post(
-        "/catalog:refresh", headers={"Authorization": "Bearer not-a-real-token"}
+        "/catalog/sources/public:sync", headers={"Authorization": "Bearer not-a-real-token"}
     )
     assert resp.status_code == 401
 
 
-def test_refresh_without_auth_401(unauthed_client: TestClient) -> None:
-    assert unauthed_client.post("/catalog:refresh").status_code == 401
+def test_sync_without_auth_401(unauthed_client: TestClient) -> None:
+    assert unauthed_client.post("/catalog/sources/public:sync").status_code == 401
 
 
-# ── refresh + list ───────────────────────────────────────────────────────────
+def test_refresh_route_is_gone(admin_client: TestClient) -> None:
+    """``POST /catalog/sources/{slug}:sync`` replaced ``POST /catalog:refresh``."""
+    assert admin_client.post("/catalog:refresh").status_code in (404, 405)
 
 
-def test_refresh_then_list(admin_client: TestClient) -> None:
-    r = admin_client.post("/catalog:refresh")
-    assert r.status_code == 200
-    assert r.json() == {
-        "count": 2,
-        "status": "refreshed",
-        "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+# ── sync + list ──────────────────────────────────────────────────────────────
+
+
+def test_sync_then_list(admin_client: TestClient) -> None:
+    r = admin_client.post("/catalog/sources/public:sync")
+    assert r.status_code == 202
+    body = r.json()
+    assert {k: body[k] for k in ("slug", "status", "forced")} == {
+        "slug": "public",
+        "status": "queued",
+        "forced": False,
     }
+    assert body["due_at"] is not None
+    assert admin_client.post("/catalog/sources/public:sync").json()["status"] == "coalesced"
+    _run_scanner(admin_client)
 
     listing = admin_client.get("/catalog")
     assert listing.status_code == 200
@@ -436,10 +381,8 @@ def test_refresh_then_list(admin_client: TestClient) -> None:
     assert "manifest_age_seconds" not in body
 
 
-async def test_refresh_syncs_into_catalog_entries(
-    admin_client: TestClient, web_context: Context
-) -> None:
-    assert admin_client.post("/catalog:refresh").status_code == 200
+async def test_sync_writes_catalog_entries(admin_client: TestClient, web_context: Context) -> None:
+    _sync_now(admin_client)
     async with web_context.registry_db.session() as session:
         rows = (
             await session.execute(
@@ -449,17 +392,13 @@ async def test_refresh_syncs_into_catalog_entries(
             )
         ).all()
     assert sorted(rows) == [("public/slack.com", "slack.com"), ("public/stripe.com", "stripe.com")]
-    forced = admin_client.post("/catalog:refresh", params={"force": "true"})
-    assert forced.status_code == 200
-    assert forced.json()["count"] == 2
-    assert forced.json()["status"] == "refreshed"
 
 
 async def test_reads_ignore_the_legacy_snapshot_table(
     admin_client: TestClient, web_context: Context
 ) -> None:
     """``catalog_snapshots`` no longer backs reads: a stale row there changes nothing."""
-    assert admin_client.post("/catalog:refresh").status_code == 200
+    _sync_now(admin_client)
     before = admin_client.get("/catalog").json()
     async with web_context.registry_db.session() as session:
         session.add(
@@ -474,10 +413,10 @@ async def test_reads_ignore_the_legacy_snapshot_table(
     assert _ids(after) == _ids(before)
 
 
-async def test_refresh_force_overrides_a_suspect_empty_listing(
+async def test_forced_sync_overrides_a_suspect_empty_listing(
     admin_client: TestClient, web_context: Context
 ) -> None:
-    assert admin_client.post("/catalog:refresh").status_code == 200
+    _sync_now(admin_client)
 
     async def _live() -> list[str]:
         async with web_context.registry_db.session() as session:
@@ -499,12 +438,14 @@ async def test_refresh_force_overrides_a_suspect_empty_listing(
 
     # Upstream now lists nothing: the guard holds the removal of every row.
     _LISTINGS[_MANIFEST_URL] = []
-    assert admin_client.post("/catalog:refresh").status_code == 200
+    _sync_now(admin_client)
     assert await _live() == ["public/slack.com", "public/stripe.com"]
     assert await _status() == "suspect_empty"
 
-    forced = admin_client.post("/catalog:refresh", params={"force": "true"})
-    assert forced.status_code == 200
+    forced = admin_client.post("/catalog/sources/public:sync", params={"force": "true"})
+    assert forced.status_code == 202
+    assert forced.json()["forced"] is True
+    _run_scanner(admin_client)
     assert await _live() == []
     assert await _status() == "ok"
     async with web_context.registry_db.session() as session:
@@ -622,14 +563,14 @@ async def test_first_sync_over_the_fetch_timeout_fails_and_stops_blocking_reads(
 
 
 def test_list_search_filter(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     body = admin_client.get("/catalog", params={"q": "stripe"}).json()
     assert _ids(body) == ["public/stripe.com"]
 
 
 def test_search_never_matches_the_source_slug(admin_client: TestClient) -> None:
     """The scorer tokenises ``catalog_api_id``, never ``entry_id``."""
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     assert admin_client.get("/catalog", params={"q": "public"}).json()["data"] == []
 
 
@@ -746,7 +687,7 @@ async def test_cursor_past_end_returns_empty_terminal_page(
 
 
 def test_invalid_cursor_returns_400(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.get("/catalog", params={"cursor": "not-a-valid-cursor!!!"})
     assert r.status_code == 400
 
@@ -757,7 +698,7 @@ def test_malformed_but_base64_cursor_returns_400(admin_client: TestClient) -> No
 
 
 def test_limit_out_of_bounds_rejected(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     assert admin_client.get("/catalog", params={"limit": 0}).status_code == 422
     assert admin_client.get("/catalog", params={"limit": 201}).status_code == 422
 
@@ -781,7 +722,7 @@ async def test_registered_follows_catalog_entry_id(
     admin_client: TestClient, web_context: Context
 ) -> None:
     """``registered`` reads the API's ``catalog_entry_id``, not its revision's URL."""
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     assert admin_client.get("/catalog/public/stripe.com").json()["registered"] is False
 
     # A revision of the entry's spec URL without a recorded entry id is not registered.
@@ -822,7 +763,7 @@ async def test_registered_follows_catalog_entry_id(
 
 
 def test_get_entry(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.get("/catalog/public/stripe.com")
     assert r.status_code == 200
     body = r.json()
@@ -832,7 +773,7 @@ def test_get_entry(admin_client: TestClient) -> None:
 
 
 def test_get_unknown_entry_404(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.get("/catalog/public/does-not-exist.com")
     assert r.status_code == 404
     assert r.json()["type"].endswith("catalog_entry_not_found")
@@ -841,7 +782,7 @@ def test_get_unknown_entry_404(admin_client: TestClient) -> None:
 
 def test_legacy_api_id_404_names_the_visible_winner(admin_client: TestClient) -> None:
     """An id in the old ``api_id`` form misses with a hint at its entry_id."""
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.get("/catalog/stripe.com")
     assert r.status_code == 404
     assert r.json()["did_you_mean"] == "public/stripe.com"
@@ -859,7 +800,7 @@ def test_legacy_api_id_404_names_the_visible_winner(admin_client: TestClient) ->
     ],
 )
 def test_traversal_shaped_ids_are_missing(admin_client: TestClient, path: str) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     assert admin_client.get(path).status_code == 404
 
 
@@ -889,7 +830,7 @@ async def test_card_only_entry_answers_409_on_preview_and_import(
 
 
 def test_preview_operations(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.get("/catalog/public/stripe.com/operations")
     assert r.status_code == 200
     body = r.json()
@@ -899,7 +840,7 @@ def test_preview_operations(admin_client: TestClient) -> None:
 
 def test_preview_spec_gone_is_410(admin_client: TestClient) -> None:
     """The entry is listed but its source no longer serves the spec: 410, not 404."""
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     _SPEC_FAILURES[_spec_url(_MANIFEST_BASE, "stripe.com")] = (404, {})
     r = admin_client.get("/catalog/public/stripe.com/operations")
     assert r.status_code == 410
@@ -914,7 +855,7 @@ def test_preview_source_unavailable_is_503_with_retry_after(
     admin_client: TestClient, status: int, headers: dict[str, str], retry_after: str
 ) -> None:
     """A throttled or failing source is transient: 503 with the wait in ``Retry-After``."""
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     _SPEC_FAILURES[_spec_url(_MANIFEST_BASE, "stripe.com")] = (status, headers)
     r = admin_client.get("/catalog/public/stripe.com/operations")
     assert r.status_code == 503
@@ -923,14 +864,14 @@ def test_preview_source_unavailable_is_503_with_retry_after(
 
 
 def test_preview_operations_q_filters_across_spec(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     body = admin_client.get("/catalog/public/stripe.com/operations", params={"q": "create"}).json()
     assert body["total"] == 1
     assert body["data"][0]["method"] == "POST"
 
 
 def test_preview_operations_q_is_case_insensitive(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     body = admin_client.get(
         "/catalog/public/stripe.com/operations", params={"q": "LISTCHARGES"}
     ).json()
@@ -939,7 +880,7 @@ def test_preview_operations_q_is_case_insensitive(admin_client: TestClient) -> N
 
 
 def test_preview_operations_offset_limit_paginates(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     path = "/catalog/public/stripe.com/operations"
     fbody = admin_client.get(path, params={"limit": 1, "offset": 0}).json()
     assert fbody["total"] == 2
@@ -952,7 +893,7 @@ def test_preview_operations_offset_limit_paginates(admin_client: TestClient) -> 
 
 
 def test_preview_operations_q_bounds(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     path = "/catalog/public/stripe.com/operations"
     assert admin_client.get(path, params={"q": "x" * 501}).status_code == 422
     at_max = admin_client.get(path, params={"q": "x" * 500})
@@ -964,7 +905,7 @@ def test_preview_operations_q_bounds(admin_client: TestClient) -> None:
 
 
 async def test_import_entry_enqueues_job(admin_client: TestClient, web_context: Context) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     r = admin_client.post("/catalog/public/stripe.com:import")
     assert r.status_code == 202
     body = r.json()
@@ -978,7 +919,7 @@ async def test_import_entry_enqueues_job(admin_client: TestClient, web_context: 
 
 
 def test_import_unknown_entry_404(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     assert admin_client.post("/catalog/public/nope.com:import").status_code == 404
 
 
@@ -1667,7 +1608,7 @@ async def test_unrecorded_holder_switches_only_with_credentials_write(
 
 
 async def test_switch_source_without_a_conflict_is_a_no_op(admin_client: TestClient) -> None:
-    admin_client.post("/catalog:refresh")
+    _sync_now(admin_client)
     plain = admin_client.post("/catalog/public/stripe.com:import")
     switched = admin_client.post(
         "/catalog/public/stripe.com:import", params={"switch_source": "true"}

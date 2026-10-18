@@ -467,9 +467,10 @@ class CatalogService:
     def trigger_update_notify_sweep(self) -> None:
         """Fire-and-forget the update-notify sweep after an operator refresh.
 
-        Called by ``POST /catalog:refresh``: an intentional "check upstream now"
-        should sweep too. Catalog reads never trigger it; the periodic sweep is
-        ``CatalogUpdateScanner``'s (:meth:`run_update_sweep`).
+        Public entry point for both the lazy refresh-on-read (``_safe_refresh``) and
+        a requested sync (``POST /catalog/sources/{slug}:sync``, fired by the source
+        sync scanner once the run ends) — an intentional "check upstream now"
+        should sweep too.
 
         The sweep issues up to N conditional GETs, so awaiting it inline would hold
         the refresh response on the whole batch. We detach it into a background

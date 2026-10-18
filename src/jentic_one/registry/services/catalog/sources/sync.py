@@ -131,6 +131,33 @@ def _sqlite_lock(slug: str) -> asyncio.Lock:
     return locks.setdefault(slug, asyncio.Lock())
 
 
+#: ``SourceWarning.code`` values.
+WARNING_MAPPING_UNMATCHED = "mapping_unmatched"
+WARNING_OWNERSHIP_CONFLICT = "ownership_conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class OwnershipConflict:
+    """An imported API holding a ``catalog_api_id`` a curated source now owns."""
+
+    entry_id: str
+    catalog_api_id: str
+    vendor: str
+    name: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceWarning:
+    """An operator-facing problem with one source's configuration or rows."""
+
+    code: str
+    external_id: str
+    catalog_api_id: str
+    #: ``vendor/name/version`` of the local API, for an ownership conflict.
+    local_api: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class SyncOutcome:
     """What one sync attempt did."""
@@ -426,6 +453,9 @@ class CatalogSourceSync:
             )
             row = await CatalogSourceRepository.get(session, slug) if claimed else None
             watermark = row.watermark if row is not None else None
+            # A pending forced-sync request rides on whichever run claims next.
+            if claimed and await CatalogSourceRepository.take_forced(session, slug):
+                forced = True
         if not claimed:
             return SyncOutcome(slug=slug, status=OUTCOME_BUSY)
         if stream is None:
@@ -806,17 +836,13 @@ class CatalogSourceSync:
         ]
         await CatalogSourceRepository.mark_reresolve_wanted(session, slugs)
 
-    async def _record_ownership_conflicts(
-        self, session: Any, slug: str, resolver: CatalogApiIdResolver
-    ) -> int:
-        """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
-
-        Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
-        credentials), so each one is logged, and the source's conflict gauge is
-        set to the count.
-        """
+    @staticmethod
+    async def _ownership_conflicts(
+        session: Any, slug: str, resolver: CatalogApiIdResolver
+    ) -> list[OwnershipConflict]:
+        """Imported APIs from ``slug`` that hold a curated-owned id they are not mapped to."""
         prefix = f"{slug}/"
-        conflicts = 0
+        conflicts: list[OwnershipConflict] = []
         for vendor, name, version, api_id, entry_id in await ApiRepository.imported_from_source(
             session, slug
         ):
@@ -825,18 +851,73 @@ class CatalogSourceSync:
             mapped = resolver.mapped(slug, entry_id.removeprefix(prefix))
             if mapped is not None and mapped.lower() == api_id.lower():
                 continue
-            conflicts += 1
+            conflicts.append(
+                OwnershipConflict(
+                    entry_id=entry_id,
+                    catalog_api_id=api_id,
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                )
+            )
+        return conflicts
+
+    async def _record_ownership_conflicts(
+        self, session: Any, slug: str, resolver: CatalogApiIdResolver
+    ) -> int:
+        """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
+
+        Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
+        credentials), so each one is logged and counted, once per API row.
+        """
+        conflicts = await self._ownership_conflicts(session, slug, resolver)
+        for conflict in conflicts:
             logger.warning(
                 "catalog_ownership_conflict",
                 source=slug,
-                entry_id=entry_id,
-                catalog_api_id=api_id,
-                api_vendor=vendor,
-                api_name=name,
-                api_version=version,
+                entry_id=conflict.entry_id,
+                catalog_api_id=conflict.catalog_api_id,
+                api_vendor=conflict.vendor,
+                api_name=conflict.name,
+                api_version=conflict.version,
             )
-        metrics.record_ownership_conflicts(slug, conflicts)
-        return conflicts
+        if conflicts:
+            metrics.record_ownership_conflicts(slug, len(conflicts))
+        return len(conflicts)
+
+    async def source_warnings(self) -> dict[str, list[SourceWarning]]:
+        """Each configured source's operator warnings, computed from the current rows.
+
+        Mapping rows that match no curated id (ignored, so their entries stay
+        namespaced) and, for non-curated sources, imported APIs whose
+        ``catalog_api_id`` a curated source now owns. Names local APIs, so it is
+        for operators only.
+        """
+        warnings: dict[str, list[SourceWarning]] = {slug: [] for slug in self._sources}
+        async with self._ctx.registry_db.session() as session:
+            resolver = await self._resolver(session)
+            for row in resolver.unmatched_mappings:
+                if row.source in warnings:
+                    warnings[row.source].append(
+                        SourceWarning(
+                            code=WARNING_MAPPING_UNMATCHED,
+                            external_id=row.external_id,
+                            catalog_api_id=row.catalog_api_id,
+                        )
+                    )
+            for cfg in self._sources.values():
+                if self._is_curated(cfg):
+                    continue
+                for conflict in await self._ownership_conflicts(session, cfg.slug, resolver):
+                    warnings[cfg.slug].append(
+                        SourceWarning(
+                            code=WARNING_OWNERSHIP_CONFLICT,
+                            external_id=conflict.entry_id.removeprefix(f"{cfg.slug}/"),
+                            catalog_api_id=conflict.catalog_api_id,
+                            local_api=f"{conflict.vendor}/{conflict.name}/{conflict.version}",
+                        )
+                    )
+        return warnings
 
     async def reresolve_source(self, slug: str) -> int:
         """Re-run the resolver over a source's stored rows; returns how many ids changed.

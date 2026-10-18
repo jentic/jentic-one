@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select, update
@@ -34,7 +35,10 @@ from jentic_one.registry.services.catalog.entries import (
 from jentic_one.registry.services.catalog.sources import metrics
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
-from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
+from jentic_one.registry.services.catalog.sources.scanner import (
+    CatalogSourceSyncScanner,
+    wake_source_sync_scanner,
+)
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -1040,3 +1044,83 @@ async def test_mapping_applies_curated_casing_at_apply(catalog_ctx: CtxFactory) 
         assert sync._mappings == [
             CatalogApiIdMapping(source="corp", external_id="pay", catalog_api_id="STRIPE.com")
         ]
+
+
+# ── requested syncs (``:sync`` / ``:notify``) ─────────────────────────────────
+
+
+async def test_requested_sync_waits_for_the_run_holding_the_lease(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request made mid-run is answered by a run that starts after it, never inline."""
+    async with catalog_ctx(
+        sources=[git_source("public", trust="curated", max_age_seconds=0)]
+    ) as ctx:
+        await CatalogSourceSync(ctx).register_sources()
+        async with ctx.registry_db.transaction() as session:
+            assert await CatalogSourceRepository.claim_lease(
+                session, slug="public", owner="csyn_running", lease_seconds=60
+            )
+            await CatalogSourceRepository.request_sync(
+                session, slug="public", due_at=None, forced=True
+            )
+        async with ctx.registry_db.transaction() as session:
+            assert await CatalogSourceRepository.promote_due_syncs(session) == []
+        held = await _source(ctx, "public")
+        assert (held.sync_due_at is not None, held.sync_wanted_at) == (True, None)
+
+        async with ctx.registry_db.transaction() as session:
+            await CatalogSourceRepository.release_lease(
+                session, slug="public", owner="csyn_running"
+            )
+        monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
+        outcomes = await CatalogSourceSyncScanner(ctx).tick()
+        assert [(o.slug, o.status) for o in outcomes] == [("public", "applied")]
+        drained = await _source(ctx, "public")
+        assert (drained.sync_due_at, drained.sync_wanted_at, drained.sync_forced_at) == (
+            None,
+            None,
+            None,
+        )
+        async with ctx.registry_db.session() as session:
+            forced = (await session.execute(select(CatalogSyncRun.forced))).scalars().all()
+        assert forced == [True]
+
+
+async def test_a_later_request_never_postpones_an_earlier_one(catalog_ctx: CtxFactory) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        await CatalogSourceSync(ctx).register_sources()
+        soon = utcnow() + timedelta(seconds=30)
+        async with ctx.registry_db.transaction() as session:
+            await CatalogSourceRepository.request_sync(
+                session, slug="public", due_at=soon, forced=False
+            )
+            await CatalogSourceRepository.request_sync(
+                session, slug="public", due_at=soon + timedelta(minutes=5), forced=False
+            )
+            due = await CatalogSourceRepository.sync_due_at(session, "public")
+            assert await CatalogSourceRepository.promote_due_syncs(session) == []
+        assert due is not None
+        assert abs((due - soon).total_seconds()) < 1
+        async with ctx.registry_db.session() as session:
+            assert await CatalogSourceRepository.next_sync_due_at(session) == due
+
+
+async def test_wake_source_sync_scanner_cuts_the_wait_short(catalog_ctx: CtxFactory) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        scanner = CatalogSourceSyncScanner(ctx, tick_seconds=3600)
+        ticks = asyncio.Event()
+
+        async def _tick() -> list[Any]:
+            ticks.set()
+            scanner.stop()
+            return []
+
+        scanner.tick = _tick  # type: ignore[method-assign]
+        scanner.boot = AsyncMock()  # type: ignore[method-assign]
+        task = asyncio.create_task(scanner.run())
+        await asyncio.sleep(0.05)
+        assert not ticks.is_set()
+        wake_source_sync_scanner(ctx)
+        await asyncio.wait_for(ticks.wait(), timeout=5)
+        await asyncio.wait_for(task, timeout=5)
