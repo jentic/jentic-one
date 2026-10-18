@@ -1091,6 +1091,49 @@ async def test_hidden_source_is_byte_identical_to_its_absence(
     assert b"corp" not in b"".join(body for _, body in mcp[:3])
 
 
+@pytest.mark.parametrize("failure", [(404, {}), (503, {"retry-after": "9"})])
+async def test_hidden_entry_with_failing_spec_is_byte_identical_to_its_absence(
+    web_config: AppConfig, monkeypatch: pytest.MonkeyPatch, failure: tuple[int, dict[str, str]]
+) -> None:
+    """A hidden entry's source failing its spec fetch still answers the plain 404.
+
+    Visibility is checked before any fetch, so neither ``410 catalog_spec_gone``
+    nor ``503`` can reveal that a hidden source lists the entry.
+    """
+    frozen = datetime(2026, 1, 1, tzinfo=UTC)
+    paths = ["/catalog/corp/stripe.com/operations", "/catalog/corp/corp-only.example/operations"]
+
+    async def _answers(ctx: Context) -> list[tuple[int, bytes, str | None]]:
+        with _client(ctx, _BYTE_IDENTITY_PERMISSIONS) as tc:
+            out = []
+            for path in paths:
+                r = tc.get(path)
+                out.append((r.status_code, r.content, r.headers.get("retry-after")))
+            return out
+
+    _LISTINGS[_CORP_URL] = ["stripe.com", "corp-only.example"]
+    async with _deployment(web_config, [_public_source()]) as ctx:
+        _pin_sync_times(monkeypatch, frozen)
+        without_org = await _answers(ctx)
+    await _truncate_all(web_config)
+    for api_id in ("stripe.com", "corp-only.example"):
+        _SPEC_FAILURES[_spec_url(_CORP_BASE, api_id)] = failure
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        _pin_sync_times(monkeypatch, frozen)
+        with_org = await _answers(ctx)
+        # The failure is real: a caller who can see the source gets it.
+        with _client(ctx, ["org:admin"]) as admin:
+            seen = admin.get("/catalog/corp/corp-only.example/operations").status_code
+    assert seen == (410 if failure[0] == 404 else 503)
+    assert with_org == without_org
+    assert [status for status, _, _ in with_org] == [404, 404]
+    assert all(retry_after is None for _, _, retry_after in with_org)
+
+
 def _pin_sync_times(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
     """Freeze the clocks the listing ages and the MCP stamp read, so two deployments
     compare byte-for-byte."""
