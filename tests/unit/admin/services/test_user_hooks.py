@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 from typing import cast
 
 import pytest
@@ -81,7 +83,68 @@ async def test_a_failing_hook_is_skipped_and_later_hooks_still_run(
 
     assert calls == ["usr_gone"]
     # Only the failing hook is counted, named by module and qualname.
-    assert counted == [(1, {"hook": f"{__name__}.{_failing.__qualname__}"})]
+    assert counted == [(1, {"hook": f"{__name__}.{_failing.__qualname__}", "reason": "error"})]
+
+
+async def test_a_hook_that_overruns_its_budget_is_cut_off_and_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    counted: list[tuple[int, dict[str, str]]] = []
+    monkeypatch.setattr(user_hooks, "USER_DELETED_HOOK_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(
+        user_hooks.user_deleted_hook_failures_counter,
+        "add",
+        lambda amount, attributes: counted.append((amount, attributes)),
+    )
+
+    async def _hanging(_ctx: Context, _user_id: str, _identity: Identity) -> None:
+        await asyncio.Event().wait()
+
+    async def _after(_ctx: Context, user_id: str, _identity: Identity) -> None:
+        calls.append(user_id)
+
+    register_user_deleted_hook(_hanging)
+    register_user_deleted_hook(_after)
+
+    await asyncio.wait_for(run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY), 5)
+
+    assert calls == ["usr_gone"]
+    assert counted == [(1, {"hook": f"{__name__}.{_hanging.__qualname__}", "reason": "timeout"})]
+
+
+async def _named_hook(_ctx: Context, _user_id: str, _identity: Identity, *, tag: str) -> None:
+    raise RuntimeError(tag)
+
+
+class _CallableHook:
+    async def __call__(self, _ctx: Context, _user_id: str, _identity: Identity) -> None:
+        raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize(
+    ("hook", "expected"),
+    [
+        (functools.partial(_named_hook, tag="x"), f"{__name__}._named_hook"),
+        (_CallableHook(), f"{__name__}._CallableHook"),
+    ],
+    ids=["partial", "callable-instance"],
+)
+async def test_failure_metric_names_a_hook_without_a_qualname_stably(
+    monkeypatch: pytest.MonkeyPatch, hook: user_hooks.UserDeletedHook, expected: str
+) -> None:
+    counted: list[tuple[int, dict[str, str]]] = []
+    monkeypatch.setattr(
+        user_hooks.user_deleted_hook_failures_counter,
+        "add",
+        lambda amount, attributes: counted.append((amount, attributes)),
+    )
+    register_user_deleted_hook(hook)
+
+    await run_user_deleted_hooks(_CTX, "usr_gone", identity=_IDENTITY)
+
+    # No memory address: the name is the same in every process.
+    assert counted == [(1, {"hook": expected, "reason": "error"})]
 
 
 async def test_no_hooks_registered_is_a_no_op() -> None:
