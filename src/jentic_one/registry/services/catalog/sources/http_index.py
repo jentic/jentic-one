@@ -21,11 +21,12 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps
+from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
     EntryChange,
     JsonScalar,
@@ -47,20 +48,6 @@ _SPEC_PROPERTY_TYPES = frozenset({"openapi", "swagger", "x-openapi", "x-openapi-
 
 #: Most entries one source may list.
 MAX_HTTP_INDEX_ENTRIES = 10_000
-
-_Origin = tuple[str, str, int]
-
-
-def _origin(url: str) -> _Origin | None:
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in ("http", "https") or not parts.hostname:
-        return None
-    try:
-        port = parts.port
-    except ValueError:
-        return None
-    return scheme, parts.hostname.lower(), port or (443 if scheme == "https" else 80)
 
 
 class HttpIndexSpec(BaseModel):
@@ -108,7 +95,7 @@ def _spec_url(item: Mapping[str, Any], base: str) -> str | None:
         url = prop.get("url")
         if isinstance(kind, str) and kind.lower() in _SPEC_PROPERTY_TYPES and isinstance(url, str):
             absolute = urljoin(base, url.strip())
-            if _origin(absolute) is not None:
+            if url_origin(absolute) is not None:
                 return absolute
     return None
 
@@ -191,14 +178,22 @@ class HttpIndexSource:
         trusted = (
             [self._index_url] if self._index_url else [str(s.spec_url) for s in settings.specs]
         )
-        self._auth_origins = frozenset(o for o in map(_origin, trusted) if o is not None)
+        self._auth_origins = frozenset(o for o in map(url_origin, trusted) if o is not None)
+
+    @classmethod
+    def credential_urls(cls, settings: BaseModel) -> list[str]:
+        """The configured index URL, or every static spec URL (never index-listed ones)."""
+        assert isinstance(settings, HttpIndexSettings)
+        if settings.index_url is not None:
+            return [str(settings.index_url)]
+        return [str(s.spec_url) for s in settings.specs]
 
     @classmethod
     def build(cls, cfg: CatalogSourceConfig, *, deps: SourceDeps) -> HttpIndexSource:
         return cls(HttpIndexSettings.model_validate(cfg.settings), deps=deps)
 
     def _trusted(self, url: str) -> bool:
-        origin = _origin(url)
+        origin = url_origin(url)
         return origin is not None and origin in self._auth_origins
 
     def list_entries(self, *, since: str | None) -> ListStream:
@@ -217,7 +212,7 @@ class HttpIndexSource:
         self, ref: Mapping[str, JsonScalar], *, validator: str | None = None
     ) -> SpecFetch:
         url = ref.get("url")
-        if not isinstance(url, str) or _origin(url) is None:
+        if not isinstance(url, str) or url_origin(url) is None:
             raise SpecGoneError("http-index spec_ref carries no http(s) url")
         return await self._deps.http.get_bytes(
             url, validator=validator, authenticate=self._trusted(url)

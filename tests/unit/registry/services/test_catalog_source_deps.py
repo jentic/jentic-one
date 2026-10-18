@@ -39,6 +39,7 @@ from jentic_one.registry.services.catalog.sources.protocol import (
     SpecGoneError,
 )
 from jentic_one.shared.config import CatalogSourceConfig, IngestConfig
+from jentic_one.testing.catalog_source import register_static_source_kind
 
 _URL = "https://specs.example.com/openapi.json"
 
@@ -59,7 +60,12 @@ def _http(
 ) -> GuardedSourceHttpClient:
     client = _client(handler)
     return GuardedSourceHttpClient(
-        "corp", IngestConfig(), limits=limits, auth=_Auth(), client=lambda: client
+        "corp",
+        IngestConfig(),
+        limits=limits,
+        auth=_Auth(),
+        client=lambda: client,
+        credential_origins=frozenset({("https", "specs.example.com", 443)}),
     )
 
 
@@ -214,6 +220,7 @@ class _Ctx:
 
 
 def _source(**kw: object) -> CatalogSourceConfig:
+    register_static_source_kind()
     return CatalogSourceConfig.model_validate(
         {"slug": "corp", "kind": "static", "settings": {}, **kw}
     )
@@ -270,28 +277,103 @@ async def test_429_through_source_deps_blocks_both_lanes(
         await callback()
 
 
-class _LaneRecorder(ProcessSourceLimits):
-    """Process limits that remember the lane of every slot taken."""
+# ── credentials go only to configured origins ─────────────────────────────────
 
-    def __init__(self) -> None:
-        super().__init__("corp", concurrency=2, interactive_share=0.5)
-        self.lanes: list[str] = []
+_TOKEN_ENV = "JENTIC_TEST_SOURCE_TOKEN"
 
-    def slot(self, lane: Any) -> Any:
-        self.lanes.append(lane)
-        return super().slot(lane)
+
+@pytest.fixture()
+def answering_transport(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
+    """Route the pooled client through a mock that answers every request with ``{}``."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/redirect":
+            return httpx.Response(302, headers={"location": "https://foreign.example.net/x"})
+        return httpx.Response(200, content=b"{}")
+
+    monkeypatch.setattr(
+        deps_module, "build_pinned_transport", lambda _egress: httpx.MockTransport(handler)
+    )
+    monkeypatch.setenv(_TOKEN_ENV, "source-token")
+    return seen
+
+
+def _auth(**extra: object) -> dict[str, object]:
+    return {"type": "bearer_from_env", "env": _TOKEN_ENV, **extra}
+
+
+def _authorized(seen: list[httpx.Request]) -> dict[str, str | None]:
+    return {str(r.url): r.headers.get("authorization") for r in seen}
 
 
 @pytest.mark.asyncio
-async def test_spec_fetch_lane_defaults_to_interactive_and_follows_the_caller() -> None:
-    """Preview/import fetch on ``interactive``; the update sweep sets ``background``."""
-    limits = _LaneRecorder()
-    http = _http(lambda _req: httpx.Response(200, content=b"{}"), limits=limits)
-    await http.get_bytes(_URL)
-    token = spec_fetch_lane.set("background")
-    try:
-        await http.get_bytes(_URL)
-        await http.get_bytes(_URL, lane="interactive")
-    finally:
-        spec_fetch_lane.reset(token)
-    assert limits.lanes == ["interactive", "background", "interactive"]
+async def test_git_manifest_credential_never_reaches_a_listed_spec_host(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "git-manifest",
+            "settings": {"url": "https://raw.example.com/corp/apis.json"},
+            "auth": _auth(),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_json("https://raw.example.com/corp/apis.json")
+    await deps.http.get_bytes("https://raw.example.com/corp/stripe.json")
+    await deps.http.get_bytes("https://attacker.example.net/spec.json")
+    assert _authorized(answering_transport) == {
+        "https://raw.example.com/corp/apis.json": "Bearer source-token",
+        "https://raw.example.com/corp/stripe.json": "Bearer source-token",
+        "https://attacker.example.net/spec.json": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_http_index_credential_never_reaches_an_index_listed_foreign_host(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "http-index",
+            "settings": {"index_url": "https://index.example.com/apis.json"},
+            "auth": _auth(),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    # Even a connector that asks for credentials on the listed spec gets none.
+    await deps.http.get_bytes("https://cdn.foreign.example/spec.json", authenticate=True)
+    await deps.http.get_bytes("https://index.example.com/redirect")
+    seen = answering_transport
+    assert seen[0].headers.get("authorization") is None
+    assert seen[1].headers["authorization"] == "Bearer source-token"
+    assert str(seen[2].url) == "https://foreign.example.net/x"
+    assert "authorization" not in seen[2].headers  # stripped across the redirect
+
+
+@pytest.mark.asyncio
+async def test_kind_naming_no_urls_sends_credentials_only_to_explicit_origins(
+    answering_transport: list[httpx.Request],
+) -> None:
+    plain = _source(auth=_auth())
+    deps = build_source_deps(_Ctx(), plain)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://specs.example.com/a.json")
+    assert answering_transport[-1].headers.get("authorization") is None  # default deny
+
+    explicit = _source(slug="corp2", auth=_auth(origins=["https://specs.example.com"]))
+    deps = build_source_deps(_Ctx(), explicit)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://specs.example.com/a.json")
+    await deps.http.get_bytes("http://specs.example.com/a.json")  # another scheme: another origin
+    assert answering_transport[-2].headers["authorization"] == "Bearer source-token"
+    assert answering_transport[-1].headers.get("authorization") is None
+
+
+@pytest.mark.parametrize(
+    "origin", ["ftp://specs.example.com", "https://specs.example.com/path", "specs.example.com"]
+)
+def test_auth_origins_must_be_http_origins(origin: str) -> None:
+    with pytest.raises(ValueError):
+        _source(auth=_auth(origins=[origin]))

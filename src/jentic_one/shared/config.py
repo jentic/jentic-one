@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import structlog
 import yaml
@@ -2157,6 +2157,26 @@ class SourceAuthConfig(BaseModel):
     header: str | None = Field(
         default=None, description="Header name the secret is sent in (header_from_env only)."
     )
+    origins: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra origins (scheme://host[:port]) that may receive the credential. By "
+            "default it goes only to the origins the source's settings name (a "
+            "git-manifest's url, an http-index index_url or static spec_urls), never to "
+            "a host a listing points at."
+        ),
+    )
+
+    @field_validator("origins")
+    @classmethod
+    def _http_origins(cls, value: list[str]) -> list[str]:
+        for origin in value:
+            parts = urlsplit(origin)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError(f"auth.origins entry {origin!r} is not an http(s) origin")
+            if parts.path not in ("", "/") or parts.query or parts.fragment:
+                raise ValueError(f"auth.origins entry {origin!r} must be an origin, not a URL")
+        return value
 
 
 class SourceEgressConfig(BaseModel):

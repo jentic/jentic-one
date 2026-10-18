@@ -8,8 +8,11 @@ wraps the catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``) with:
   transport, closed when the context shuts down;
 - the source's egress widening (``catalog.sources[].egress``) on top of
   ``ingest.egress``, for this source's client only;
-- the source's auth headers, sent only to the origin of the request URL (never
-  across a redirect to another host), and only when the connector asks for them;
+- the source's auth headers, sent only when the request URL's origin is one the
+  source's configuration names (``origins.credential_origins``: the kind's own
+  configured URLs plus ``auth.origins``), never across a redirect to another
+  host, and only when the connector asks for them. A URL a listing returns
+  earns no credential, whatever the kind;
 - ``CATALOG_USER_AGENT``;
 - the source's fetch limits (``limits.py``): every request holds a slot on its
   lane, and a ``429`` blocks the source for its ``Retry-After``.
@@ -50,6 +53,11 @@ from jentic_one.registry.services.catalog.sources.limits import (
     MemoryRateBucket,
     ProcessSourceLimits,
     RateBucket,
+)
+from jentic_one.registry.services.catalog.sources.origins import (
+    Origin,
+    credential_origins,
+    url_origin,
 )
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
@@ -158,6 +166,7 @@ class GuardedSourceHttpClient:
         auth: SourceAuthResolver | None = None,
         client: Callable[[], httpx.AsyncClient | None] | None = None,
         user_agent: str = CATALOG_USER_AGENT,
+        credential_origins: frozenset[Origin] = frozenset(),
     ) -> None:
         self._slug = slug
         self._ingest = ingest
@@ -165,6 +174,7 @@ class GuardedSourceHttpClient:
         self._auth: SourceAuthResolver = auth or NoAuthResolver()
         self._client = client or (lambda: None)
         self._user_agent = user_agent
+        self._credential_origins = credential_origins
 
     async def _failed(self, exc: CatalogFetchError) -> Exception:
         if exc.status_code in _GONE_STATUSES:
@@ -176,14 +186,17 @@ class GuardedSourceHttpClient:
             retry_after = await self._limits.block(retry_after)
         return SourceUnavailableError(str(exc), retry_after_s=retry_after)
 
-    async def _headers(self, authenticate: bool) -> dict[str, str]:
-        return dict(await self._auth.headers()) if authenticate else {}
+    async def _headers(self, url: str, authenticate: bool) -> dict[str, str]:
+        """The auth headers for ``url``: none unless its origin is a configured one."""
+        if not authenticate or url_origin(url) not in self._credential_origins:
+            return {}
+        return dict(await self._auth.headers())
 
     async def get_json(
         self, url: str, *, lane: FetchLane = "background", authenticate: bool = True
     ) -> dict[str, Any]:
         async with self._limits.slot(lane):
-            headers = await self._headers(authenticate)
+            headers = await self._headers(url, authenticate)
             try:
                 doc = await fetch_json(
                     url,
@@ -206,7 +219,7 @@ class GuardedSourceHttpClient:
         authenticate: bool = True,
     ) -> SpecFetch:
         async with self._limits.slot(lane):
-            headers = await self._headers(authenticate)
+            headers = await self._headers(url, authenticate)
             try:
                 result = await fetch_bytes_conditional(
                     url,
@@ -411,6 +424,7 @@ def build_source_deps(
             limits=runtime.limits,
             auth=resolver,
             client=runtime.client,
+            credential_origins=credential_origins(cfg),
         ),
         auth=resolver,
         limits=runtime.limits,
