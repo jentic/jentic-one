@@ -16,7 +16,7 @@ import {
 	useReimportFromCatalog,
 	useSnoozeCatalogUpdate,
 } from '@/modules/workspace/api';
-import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
+import type { ApiKey, CatalogTarget, WorkspaceApi } from '@/modules/workspace/api';
 import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 
 function relativeTime(iso: string): string | null {
@@ -71,17 +71,21 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	// dialog first (the "close the overlay-update loop" flow). When `origin` is
 	// absent (older backend), we treat it as catalog and re-import directly.
 	const isOverlayOrigin = api.origin === 'overlay';
-	// The catalog entry is addressed by its `api_id`. For umbrella specs that id is
-	// `domain/sub` (e.g. `nytimes.com/article_search`), which the API's vendor alone
-	// can't resolve — so prefer the real `catalogApiId` surfaced by the backend and
-	// fall back to the vendor only for older backends that don't emit it.
-	const catalogApiId = api.catalogApiId ?? api.api.vendor;
+	// Update and Mute act on the catalog entry this API was imported from: its
+	// own `catalogEntryId` (null when its source is hidden from the caller, and
+	// then they fail rather than guess). A backend that predates the field gets
+	// the `catalogApiId` (`domain/sub` for umbrella specs, which the vendor alone
+	// can't resolve), falling back to the vendor for backends that emit neither.
+	const target: CatalogTarget = {
+		entryId: api.catalogEntryId,
+		catalogApiId: api.catalogApiId ?? api.api.vendor,
+	};
 
 	const handleReimportClick = () => {
 		if (isOverlayOrigin) {
 			setConfirmOpen(true);
 		} else {
-			reimport(catalogApiId);
+			reimport(target);
 		}
 	};
 
@@ -105,7 +109,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 							variant="ghost"
 							size="sm"
 							loading={isSnoozing}
-							onClick={() => snooze(catalogApiId)}
+							onClick={() => snooze(target)}
 							data-testid="workspace-snooze"
 						>
 							<BellOff size={14} aria-hidden="true" />
@@ -192,7 +196,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				onClose={() => setConfirmOpen(false)}
 				onConfirm={() => {
 					setConfirmOpen(false);
-					reimport(catalogApiId);
+					reimport(target);
 				}}
 			/>
 		</section>

@@ -69,6 +69,8 @@ export function toWorkspaceApi(value: unknown): WorkspaceApi {
 	return {
 		api: toApiRef(r.api),
 		catalogApiId: strOrNull(r.catalog_api_id),
+		catalogEntryId:
+			r.catalog_entry_id === undefined ? undefined : strOrNull(r.catalog_entry_id),
 		displayName: strOrNull(r.display_name),
 		description: strOrNull(r.description),
 		iconUrl: strOrNull(r.icon_url),

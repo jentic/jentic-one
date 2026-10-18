@@ -73,6 +73,7 @@ export class WorkspaceApiError extends Error {
 }
 
 function toWorkspaceError(error: unknown, fallback: string): WorkspaceApiError {
+	if (error instanceof WorkspaceApiError) return error;
 	if (error instanceof ApiError) {
 		const body = error.body as { detail?: string; type?: string } | undefined;
 		return new WorkspaceApiError(
@@ -206,15 +207,37 @@ export async function deleteApi(key: ApiKey): Promise<void> {
 }
 
 /**
- * Run a catalog call keyed by the API's `catalog_api_id`, following the 404's
- * `did_you_mean` once. The catalog routes take an `entry_id`; an id without a
- * visible source prefix misses with a hint naming the visible entry for it,
- * which is the entry the API was imported from when that one is registered.
+ * The catalog entry a workspace API's Update/Mute acts on: its own
+ * `catalog_entry_id` from the APIs response (`null` when the backend withholds
+ * it because the caller can't read the entry's source; `undefined` from a
+ * backend that predates the field), plus its `catalog_api_id`.
+ */
+export interface CatalogTarget {
+	entryId?: string | null;
+	catalogApiId: string;
+}
+
+/**
+ * Run a catalog call for a workspace API. With the API's own `entry_id` the call
+ * goes straight to that entry — never to another entry sharing its
+ * `catalog_api_id` — and a 404 (the entry is gone or its source hidden) is final.
+ * A withheld entry (`null`) fails without a request: guessing would act on a
+ * different entry. Only a backend that never sends the field (`undefined`) gets
+ * the `catalog_api_id` call that follows the 404's `did_you_mean` once.
  */
 async function withCatalogEntry<T>(
-	catalogApiId: string,
+	target: CatalogTarget,
 	call: (entryId: string) => Promise<T>,
 ): Promise<T> {
+	if (target.entryId) return call(target.entryId);
+	if (target.entryId === null) {
+		throw new WorkspaceApiError(
+			"This API's catalog source isn't visible to you, so it can't be updated or muted from here.",
+			404,
+			null,
+		);
+	}
+	const { catalogApiId } = target;
 	try {
 		return await call(catalogApiId);
 	} catch (error) {
@@ -230,19 +253,19 @@ async function withCatalogEntry<T>(
 }
 
 /**
- * Re-import a catalog-backed API from the public catalog to adopt an upstream
- * spec update (Flow-3 "Update available"). Enqueues an async import of the
- * catalog entry for the API's `catalog_api_id` (`POST /catalog/{entry_id}:import`) and returns
- * the queued job — the same endpoint Discover uses to import. On success the
- * API's `update_available` clears on the next `GET /apis` read.
+ * Re-import a catalog-backed API from the catalog to adopt an upstream spec
+ * update (Flow-3 "Update available"). Enqueues an async import of the API's
+ * catalog entry (`POST /catalog/{entry_id}:import`) and returns the queued job —
+ * the same endpoint Discover uses to import. On success the API's
+ * `update_available` clears on the next `GET /apis` read.
  *
  * NOTE: sibling-module boundaries forbid reaching into Discover's repository, so
  * this thin wrapper mirrors Discover's `importCatalogEntry` against the shared
  * `CatalogService` (the repository tier is the sanctioned place to touch it).
  */
-export async function reimportCatalogEntry(catalogApiId: string): Promise<ImportJob> {
+export async function reimportCatalogEntry(target: CatalogTarget): Promise<ImportJob> {
 	try {
-		const res = await withCatalogEntry(catalogApiId, (entryId) =>
+		const res = await withCatalogEntry(target, (entryId) =>
 			CatalogService.importCatalogEntry({ entryId }),
 		);
 		return { jobId: res.job_id, status: res.status };
@@ -321,17 +344,17 @@ export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<
 /**
  * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
  *
- * The backend exposes `POST /catalog/{api_id}:snooze` (optional `{snoozed_until}`
+ * The backend exposes `POST /catalog/{entry_id}:snooze` (optional `{snoozed_until}`
  * body), gated on `events:write` and served by the generated `CatalogService`
  * (its `:unsnooze` counterpart has no UI yet). `snoozedUntil` omitted → mute
  * until a newer upstream digest lands; a value → time-boxed snooze.
  */
 export async function snoozeCatalogEntry(
-	catalogApiId: string,
+	target: CatalogTarget,
 	snoozedUntil?: string | null,
 ): Promise<void> {
 	try {
-		await withCatalogEntry(catalogApiId, (entryId) =>
+		await withCatalogEntry(target, (entryId) =>
 			CatalogService.snoozeCatalogEntry({
 				entryId,
 				requestBody:

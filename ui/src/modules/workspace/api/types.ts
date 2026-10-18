@@ -42,6 +42,13 @@ export interface WorkspaceApi {
 	/** Catalog identity slug (`domain[/sub-api]`) recorded at import, when any —
 	 * the preferred friendly-title source. */
 	catalogApiId: string | null;
+	/**
+	 * The catalog `entry_id` this API was imported from, when the caller can read
+	 * its source — the id Update and Mute act on. Null for manual imports and
+	 * for an entry whose source is hidden from the caller; absent (undefined)
+	 * only from a backend that predates the field.
+	 */
+	catalogEntryId?: string | null;
 	displayName: string | null;
 	description: string | null;
 	iconUrl: string | null;

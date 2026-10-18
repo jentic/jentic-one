@@ -1332,17 +1332,25 @@ class CatalogService:
     async def _resolve_local_api(
         session: Any, state: _ReadState, entry: CatalogEntry
     ) -> tuple[uuid.UUID, Any] | None:
-        """Resolve an entry to its local ``(api_id, check_row)`` via the served spec URL.
+        """Resolve an entry to its local ``(api_id, check_row)``.
 
-        ``None`` when no served revision's ``source_url`` matches the entry's spec
-        URL — the caller maps that to a 404.
+        The API recorded as imported from this entry wins, so two entries that
+        share a ``catalog_api_id`` or a spec URL never act on each other's API.
+        An API with no recorded entry is found via its served spec URL. ``None``
+        when neither matches — the caller maps that to a 404.
         """
-        spec_url = state.snapshot.spec_urls.get(entry.entry_id)
-        if spec_url is None:
-            return None
-        current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
-        if current is None:
-            return None
-        local_api_id, _revision_id = current
+        local_api_id = await ApiRepository.live_api_id_for_catalog_entry_id(session, entry.entry_id)
+        if local_api_id is None:
+            spec_url = state.snapshot.spec_urls.get(entry.entry_id)
+            if spec_url is None:
+                return None
+            current = await ApiRevisionRepository.current_revision_for_source_url(session, spec_url)
+            if current is None:
+                return None
+            local_api_id, _revision_id = current
+            api = await ApiRepository.get_by_id(session, local_api_id)
+            if api is None or api.catalog_entry_id not in (None, entry.entry_id):
+                # That spec URL is served by an API imported from another entry.
+                return None
         check = await CatalogUpdateCheckRepository.get(session, local_api_id)
         return local_api_id, check

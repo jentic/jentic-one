@@ -59,6 +59,7 @@ export type { SpecDiffEntry } from '@/modules/workspace/api/specDiff';
 
 export { formatApiKey } from '@/modules/workspace/api/apiId';
 export type { ApiKey } from '@/modules/workspace/api/apiId';
+export type { CatalogTarget } from '@/modules/workspace/api/client';
 
 export type {
 	WorkspaceApi,

@@ -33,6 +33,7 @@ import {
 	rollbackOverlay,
 	snoozeCatalogEntry,
 } from '@/modules/workspace/api/client';
+import type { CatalogTarget } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
 import {
@@ -527,8 +528,8 @@ export function useOverlayActions(key: ApiKey) {
  *
  * The "Update available" surface offers a Mute affordance that suppresses
  * further update notifications until a NEWER upstream version appears
- * (mute-until-newer → no `snoozed_until`). Keyed by the API's catalog `api_id`
- * (the same id the re-import uses). On success we toast and invalidate the
+ * (mute-until-newer → no `snoozed_until`). Keyed by the API's catalog entry
+ * (the same target the re-import uses). On success we toast and invalidate the
  * API's detail cache so the banner re-reads (the backend clears
  * `update_available` while snoozed).
  */
@@ -536,7 +537,7 @@ export function useSnoozeCatalogUpdate(key: ApiKey) {
 	const queryClient = useQueryClient();
 
 	const mutation = useMutation({
-		mutationFn: (apiId: string) => snoozeCatalogEntry(apiId),
+		mutationFn: (target: CatalogTarget) => snoozeCatalogEntry(target),
 		onSuccess: () => {
 			toast({
 				variant: 'success',
@@ -557,7 +558,7 @@ export function useSnoozeCatalogUpdate(key: ApiKey) {
 	});
 
 	return {
-		snooze: (apiId: string) => mutation.mutate(apiId),
+		snooze: (target: CatalogTarget) => mutation.mutate(target),
 		isSnoozing: mutation.isPending,
 	};
 }
@@ -591,7 +592,7 @@ export function useDeleteApi() {
  *
  * The API detail surface shows a "Re-import" affordance when the API reports
  * `update_available`. Clicking it re-runs the catalog import for the API's
- * catalog `api_id` (`POST /catalog/{id}:import`) — the same async job Discover
+ * catalog entry (`POST /catalog/{entry_id}:import`) — the same async job Discover
  * enqueues. Import is async: the 202 only means *queued*, and the new revision
  * (which clears `update_available` server-side) doesn't exist yet. Invalidating
  * on the 202 therefore re-reads the *stale* API and the "Update available" badge
@@ -616,14 +617,14 @@ export function useReimportFromCatalog(key: ApiKey) {
 	}, []);
 
 	const reimport = useCallback(
-		async (apiId: string): Promise<void> => {
+		async (target: CatalogTarget): Promise<void> => {
 			setIsReimporting(true);
 			try {
-				const job = await reimportCatalogEntry(apiId);
+				const job = await reimportCatalogEntry(target);
 				toast({
 					variant: 'success',
 					title: 'Re-import started',
-					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
+					description: `Pulling the latest spec from the catalog (job ${job.jobId}). This can take a moment.`,
 				});
 
 				const status = await pollJobToTerminal({
@@ -664,8 +665,8 @@ export function useReimportFromCatalog(key: ApiKey) {
 	);
 
 	return {
-		reimport: (apiId: string) => {
-			void reimport(apiId);
+		reimport: (target: CatalogTarget) => {
+			void reimport(target);
 		},
 		isReimporting,
 	};

@@ -75,6 +75,7 @@ class ApiPageItem(BaseModel):
     name: str
     version: str
     catalog_api_id: str | None
+    catalog_entry_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
@@ -106,6 +107,7 @@ class ApiView:
     name: str
     version: str
     catalog_api_id: str | None
+    catalog_entry_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
@@ -203,6 +205,7 @@ class ApiService:
                         name=row.name,
                         version=row.version,
                         catalog_api_id=row.catalog_api_id,
+                        catalog_entry_id=row.catalog_entry_id,
                         display_name=row.display_name,
                         description=row.description,
                         icon_url=row.icon_url,
@@ -530,6 +533,7 @@ class ApiService:
             name=api.name,
             version=api.version,
             catalog_api_id=api.catalog_api_id,
+            catalog_entry_id=api.catalog_entry_id,
             display_name=api.display_name,
             description=api.description,
             icon_url=api.icon_url,

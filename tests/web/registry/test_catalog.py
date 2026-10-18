@@ -1176,6 +1176,79 @@ async def test_registered_alternates_are_counted_and_listed(web_config: AppConfi
             assert body["registered_count"] == 1
 
 
+async def _serve(ctx: Context, api_id: uuid.UUID) -> None:
+    """Promote the API's only revision so it serves (``current_revision_id`` set)."""
+    async with ctx.registry_db.transaction() as session:
+        revision = (
+            await session.execute(select(ApiRevision).where(ApiRevision.api_id == api_id))
+        ).scalar_one()
+        revision.state = "live"
+        api = await session.get(Api, api_id)
+        assert api is not None
+        api.current_revision_id = revision.id
+
+
+async def test_update_and_mute_act_on_the_apis_own_entry(web_config: AppConfig) -> None:
+    """Two registered entries share ``stripe.com``: each API's response names its own
+    entry, and re-import / snooze through that entry act on that API only."""
+    _LISTINGS[_CORP_URL] = ["stripe.com"]
+    async with _deployment(
+        web_config,
+        [_public_source(), _corp_source()],
+        catalog_api_id_mappings=[_STRIPE_MAPPING],
+    ) as ctx:
+        ids: dict[str, uuid.UUID] = {}
+        for source, base in (("public", _MANIFEST_BASE), ("corp", _CORP_BASE)):
+            spec_url = _spec_url(base, "stripe.com")
+            ids[source] = await _register(
+                ctx,
+                f"{source}/stripe.com",
+                vendor="stripe-com",
+                name=f"stripe-{source}",
+                spec_url=spec_url,
+                catalog_api_id="stripe.com",
+            )
+            await _serve(ctx, ids[source])
+            await _outdate(ctx, ids[source], spec_url)
+        permissions = ["org:admin", "events:write"]
+        with _client(ctx, permissions) as tc:
+            apis = {a["api"]["name"]: a for a in tc.get("/apis").json()["data"]}
+            assert apis["stripe-public"]["catalog_entry_id"] == "public/stripe.com"
+            assert apis["stripe-corp"]["catalog_entry_id"] == "corp/stripe.com"
+            detail = tc.get("/apis/stripe-com/stripe-public/1.0").json()
+            assert detail["catalog_entry_id"] == "public/stripe.com"
+
+            # The collapse winner is corp; acting on public's entry still hits public.
+            r = tc.post("/catalog/public/stripe.com:import")
+            assert r.status_code == 202
+            job = await _job_source(ctx, r.json()["job_id"])
+            assert (job["vendor"], job["api_name"]) == ("stripe-com", "stripe-public")
+            assert tc.post("/catalog/public/stripe.com:snooze").status_code == 204
+        async with ctx.registry_db.session() as session:
+            checks = {
+                c.local_api_id: c
+                for c in (await session.execute(select(CatalogUpdateCheck))).scalars()
+            }
+        assert checks[ids["public"]].snoozed_digest is not None
+        assert checks[ids["corp"]].snoozed_digest is None
+
+        # A caller who can't read corp gets no entry id for the corp API.
+        with _client(ctx, ["apis:read"]) as tc:
+            apis = {a["api"]["name"]: a for a in tc.get("/apis").json()["data"]}
+        assert apis["stripe-public"]["catalog_entry_id"] == "public/stripe.com"
+        assert apis["stripe-corp"]["catalog_entry_id"] is None
+
+
+async def test_api_without_a_recorded_entry_names_its_legacy_entry(
+    web_config: AppConfig,
+) -> None:
+    async with _deployment(web_config, [_public_source()]) as ctx:
+        await _unrecorded_stripe(ctx)
+        with _client(ctx, ["apis:read"]) as tc:
+            [api] = tc.get("/apis").json()["data"]
+        assert api["catalog_entry_id"] == "public/stripe.com"
+
+
 async def test_outdated_only_lists_a_newly_registered_winner(web_config: AppConfig) -> None:
     """An import that makes the lower-precedence entry the winner lists it as outdated."""
     _LISTINGS[_CORP_URL] = ["stripe.com"]
