@@ -149,7 +149,17 @@ By participating, you agree to uphold it.
 | [ruff](https://docs.astral.sh/ruff/) | Linting + formatting (`make lint` / `make fix`) |
 | mypy (strict) | Static type checking (`make typecheck`) |
 | lefthook | Git hooks (pre-commit lint + secrets, commit-msg lint) |
-| detect-secrets | Secrets scanning (`make detect-secrets`) |
+| detect-secrets | Secrets scanning: `make detect-secrets` (CI gate), `make secrets-baseline` (regenerate) |
+
+### Secrets baseline
+
+`.secrets.baseline` allowlists known test-fixture secrets. It is stored in
+slim form (no line numbers, no timestamp), so editing a file that holds a
+known fixture does not change it. Always regenerate it with
+`make secrets-baseline`, never with raw `detect-secrets scan --baseline` (CI
+rejects the non-slim output). For a one-off false positive, prefer an inline
+`# pragma: allowlist secret` comment. If a rebase or merge conflicts on the
+baseline, take either side and run `make secrets-baseline`.
 
 ## Testing
 

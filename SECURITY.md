@@ -64,7 +64,9 @@ Jentic One is designed so that **credentials never leave the data plane**:
 
 ## Secrets in the Repository
 
-This repository runs `detect-secrets` as a pre-commit hook. Never commit
+This repository runs `detect-secrets` as a pre-commit hook and as a CI gate
+(`make detect-secrets`) that fails on any finding not allowlisted in
+`.secrets.baseline`. Never commit
 credentials, API keys, tokens, or private keys. Configuration secrets are
 supplied at runtime via environment variables or a secret manager.
 
