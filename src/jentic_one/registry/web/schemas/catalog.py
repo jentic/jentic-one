@@ -242,6 +242,12 @@ class CatalogListResponse(BaseModel):
     )
 
 
+#: A refreshed source's run outcome (``SyncOutcome.status``).
+CatalogRefreshSourceStatus = Literal[
+    "applied", "suspect_empty", "superseded", "busy", "disabled", "failed", "skipped"
+]
+
+
 class CatalogRefreshSourceResponse(BaseModel):
     """One refreshed source's run outcome."""
 
@@ -252,11 +258,12 @@ class CatalogRefreshSourceResponse(BaseModel):
     )
 
     slug: str = Field(description="The source's slug.", examples=["public"])
-    status: str = Field(
+    status: CatalogRefreshSourceStatus = Field(
         description=(
             "Run outcome: applied, suspect_empty (held by the mass-removal guard), "
-            "superseded, busy (another run holds the source), failed, or skipped "
-            "(the refresh deadline passed before it started; the scanner syncs it)."
+            "superseded, busy (another run holds the source; this refresh applied "
+            "nothing for it), disabled, failed, or skipped (the refresh deadline "
+            "passed before it started; the scanner syncs it)."
         ),
         examples=["applied"],
     )
@@ -288,8 +295,9 @@ class CatalogRefreshResponse(BaseModel):
     status: Literal["refreshed", "partial"] = Field(
         default="refreshed",
         description=(
-            "refreshed when no refreshed source failed or was skipped; partial "
-            "otherwise (the failed ones keep serving their last applied entries)."
+            "refreshed when no refreshed source failed, was held by another run "
+            "(busy) or was skipped; partial otherwise (those keep serving their last "
+            "applied entries)."
         ),
         examples=["refreshed"],
     )

@@ -16,13 +16,13 @@ export type CatalogRefreshResponse = {
      */
     sources?: Array<CatalogRefreshSourceResponse>;
     /**
-     * refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+     * refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
      */
     status?: CatalogRefreshResponse.status;
 };
 export namespace CatalogRefreshResponse {
     /**
-     * refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+     * refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
      */
     export enum status {
         REFRESHED = 'refreshed',

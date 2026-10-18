@@ -342,6 +342,39 @@ func (e CatalogRefreshResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for CatalogRefreshSourceResponseStatus.
+const (
+	CatalogRefreshSourceResponseStatusApplied      CatalogRefreshSourceResponseStatus = "applied"
+	CatalogRefreshSourceResponseStatusBusy         CatalogRefreshSourceResponseStatus = "busy"
+	CatalogRefreshSourceResponseStatusDisabled     CatalogRefreshSourceResponseStatus = "disabled"
+	CatalogRefreshSourceResponseStatusFailed       CatalogRefreshSourceResponseStatus = "failed"
+	CatalogRefreshSourceResponseStatusSkipped      CatalogRefreshSourceResponseStatus = "skipped"
+	CatalogRefreshSourceResponseStatusSuperseded   CatalogRefreshSourceResponseStatus = "superseded"
+	CatalogRefreshSourceResponseStatusSuspectEmpty CatalogRefreshSourceResponseStatus = "suspect_empty"
+)
+
+// Valid indicates whether the value is a known member of the CatalogRefreshSourceResponseStatus enum.
+func (e CatalogRefreshSourceResponseStatus) Valid() bool {
+	switch e {
+	case CatalogRefreshSourceResponseStatusApplied:
+		return true
+	case CatalogRefreshSourceResponseStatusBusy:
+		return true
+	case CatalogRefreshSourceResponseStatusDisabled:
+		return true
+	case CatalogRefreshSourceResponseStatusFailed:
+		return true
+	case CatalogRefreshSourceResponseStatusSkipped:
+		return true
+	case CatalogRefreshSourceResponseStatusSuperseded:
+		return true
+	case CatalogRefreshSourceResponseStatusSuspectEmpty:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2666,13 +2699,13 @@ type CatalogRefreshResponse struct {
 	// Examples: [{"slug":"public","status":"applied"}]
 	Sources *[]CatalogRefreshSourceResponse `json:"sources,omitempty"`
 
-	// Status refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+	// Status refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
 	//
 	// Examples: refreshed
 	Status *CatalogRefreshResponseStatus `json:"status,omitempty"`
 }
 
-// CatalogRefreshResponseStatus refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+// CatalogRefreshResponseStatus refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
 //
 // Examples: refreshed
 type CatalogRefreshResponseStatus string
@@ -2691,11 +2724,16 @@ type CatalogRefreshSourceResponse struct {
 	// Examples: public
 	Slug string `json:"slug"`
 
-	// Status Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source), failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
+	// Status Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
 	//
 	// Examples: applied
-	Status string `json:"status"`
+	Status CatalogRefreshSourceResponseStatus `json:"status"`
 }
+
+// CatalogRefreshSourceResponseStatus Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
+//
+// Examples: applied
+type CatalogRefreshSourceResponseStatus string
 
 // CatalogSnoozeRequest Body for “POST /catalog/{entry_id}:snooze“.
 //
@@ -10791,7 +10829,7 @@ type ClientInterface interface {
 	//
 	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
 	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-	// ``partial`` when a refreshed source failed or was skipped; ``sources``
+	// ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
 	// gives each one's outcome. Sources the caller cannot read are not synced or
 	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
 	// for this run.
@@ -14475,7 +14513,7 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEd
 //
 // Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
 // of them together by “catalog.refresh_deadline_seconds“. “status“ is
-// “partial“ when a refreshed source failed or was skipped; “sources“
+// “partial“ when a refreshed source failed, was busy or was skipped; “sources“
 // gives each one's outcome. Sources the caller cannot read are not synced or
 // reported. “force=true“ (“org:admin“) overrides the mass-removal guard
 // for this run.
@@ -27331,7 +27369,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
 	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-	// ``partial`` when a refreshed source failed or was skipped; ``sources``
+	// ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
 	// gives each one's outcome. Sources the caller cannot read are not synced or
 	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
 	// for this run.
@@ -45645,7 +45683,7 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 //
 // Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
 // of them together by “catalog.refresh_deadline_seconds“. “status“ is
-// “partial“ when a refreshed source failed or was skipped; “sources“
+// “partial“ when a refreshed source failed, was busy or was skipped; “sources“
 // gives each one's outcome. Sources the caller cannot read are not synced or
 // reported. “force=true“ (“org:admin“) overrides the mass-removal guard
 // for this run.

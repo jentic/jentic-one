@@ -4312,7 +4312,7 @@
           },
           "status": {
             "default": "refreshed",
-            "description": "refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).",
+            "description": "refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).",
             "enum": [
               "refreshed",
               "partial"
@@ -4363,7 +4363,16 @@
             "type": "string"
           },
           "status": {
-            "description": "Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source), failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).",
+            "description": "Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).",
+            "enum": [
+              "applied",
+              "suspect_empty",
+              "superseded",
+              "busy",
+              "disabled",
+              "failed",
+              "skipped"
+            ],
             "examples": [
               "applied"
             ],
@@ -33469,18 +33478,18 @@
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "The request conflicts with the current state of the resource.",
-                  "instance": "/example/path",
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com/operations",
                   "status": 409,
                   "title": "Conflict",
-                  "type": "conflict"
+                  "type": "catalog_entry_has_no_spec"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             },
-            "description": "The catalog entry has no spec (card-only)."
+            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
           },
           "422": {
             "content": {
@@ -33676,18 +33685,18 @@
             "content": {
               "application/problem+json": {
                 "example": {
-                  "detail": "The request conflicts with the current state of the resource.",
-                  "instance": "/example/path",
+                  "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+                  "instance": "/catalog/public/slack.com:import",
                   "status": 409,
                   "title": "Conflict",
-                  "type": "conflict"
+                  "type": "catalog_entry_has_no_spec"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             },
-            "description": "The catalog entry has no spec (card-only)."
+            "description": "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`)."
           },
           "422": {
             "content": {
@@ -34110,7 +34119,7 @@
     "/catalog:refresh": {
       "description": "`POST`: Refresh Catalog.",
       "post": {
-        "description": "Sync now every enabled catalog source the caller may read (catalog:sync).\n\nEach source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all\nof them together by ``catalog.refresh_deadline_seconds``. ``status`` is\n``partial`` when a refreshed source failed or was skipped; ``sources``\ngives each one's outcome. Sources the caller cannot read are not synced or\nreported. ``force=true`` (``org:admin``) overrides the mass-removal guard\nfor this run.",
+        "description": "Sync now every enabled catalog source the caller may read (catalog:sync).\n\nEach source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all\nof them together by ``catalog.refresh_deadline_seconds``. ``status`` is\n``partial`` when a refreshed source failed, was busy or was skipped; ``sources``\ngives each one's outcome. Sources the caller cannot read are not synced or\nreported. ``force=true`` (``org:admin``) overrides the mass-removal guard\nfor this run.",
         "operationId": "refreshCatalog",
         "parameters": [
           {

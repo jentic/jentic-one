@@ -178,7 +178,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                409: `The catalog entry has no spec (card-only).`,
+                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -217,7 +217,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                409: `The catalog entry has no spec (card-only).`,
+                409: `The catalog entry has no spec (card-only; type \`catalog_entry_has_no_spec\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -304,7 +304,7 @@ export class CatalogService {
      *
      * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
      * of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-     * ``partial`` when a refreshed source failed or was skipped; ``sources``
+     * ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
      * gives each one's outcome. Sources the caller cannot read are not synced or
      * reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
      * for this run.

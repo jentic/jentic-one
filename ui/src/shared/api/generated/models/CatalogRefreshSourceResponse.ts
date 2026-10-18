@@ -15,8 +15,22 @@ export type CatalogRefreshSourceResponse = {
      */
     slug: string;
     /**
-     * Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source), failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
+     * Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
      */
-    status: string;
+    status: CatalogRefreshSourceResponse.status;
 };
+export namespace CatalogRefreshSourceResponse {
+    /**
+     * Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
+     */
+    export enum status {
+        APPLIED = 'applied',
+        SUSPECT_EMPTY = 'suspect_empty',
+        SUPERSEDED = 'superseded',
+        BUSY = 'busy',
+        DISABLED = 'disabled',
+        FAILED = 'failed',
+        SKIPPED = 'skipped',
+    }
+}
 

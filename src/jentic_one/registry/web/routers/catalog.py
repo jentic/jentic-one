@@ -20,7 +20,7 @@ one (``404``, same body), and reads with the caller's effective permissions.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -67,6 +67,20 @@ EntryIdPath = Annotated[
     str,
     Path(description=_ENTRY_ID_DESCRIPTION, openapi_examples=ex.example(ex.CATALOG_ENTRY_ID)),
 ]
+
+
+def _card_only_conflict(path: str) -> dict[int | str, dict[str, Any]]:
+    """The 409 a card-only entry (listed without a spec) answers on ``path``."""
+    return conflict(
+        "The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).",
+        example={
+            "type": "catalog_entry_has_no_spec",
+            "title": "Conflict",
+            "status": 409,
+            "detail": "Catalog entry 'public/slack.com' has no spec to preview or import",
+            "instance": path,
+        },
+    )
 
 
 def _checked_entry_id(entry_id: str) -> str:
@@ -227,7 +241,7 @@ async def list_catalog(
     "/catalog/{entry_id:path}/operations",
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
-    responses=conflict("The catalog entry has no spec (card-only)."),
+    responses=_card_only_conflict("/catalog/public/slack.com/operations"),
 )
 async def preview_catalog_operations(
     entry_id: EntryIdPath,
@@ -354,7 +368,7 @@ async def refresh_catalog(
 
     Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
     of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-    ``partial`` when a refreshed source failed or was skipped; ``sources``
+    ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
     gives each one's outcome. Sources the caller cannot read are not synced or
     reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
     for this run.
@@ -370,7 +384,9 @@ async def refresh_catalog(
         count=result.count,
         status="partial" if result.partial else "refreshed",
         sources=[
-            CatalogRefreshSourceResponse(slug=o.slug, status=o.status, error_code=o.error_code)
+            CatalogRefreshSourceResponse.model_validate(
+                {"slug": o.slug, "status": o.status, "error_code": o.error_code}
+            )
             for o in result.sources
         ],
     )
@@ -382,7 +398,7 @@ async def refresh_catalog(
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
-    responses=conflict("The catalog entry has no spec (card-only)."),
+    responses=_card_only_conflict("/catalog/public/slack.com:import"),
 )
 async def import_catalog_entry(
     request: Request,

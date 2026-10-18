@@ -586,7 +586,7 @@ components:
     ApiImportResponse:
       description: Acknowledgement payload for an asynchronous import job.
       examples:
-      - &id223
+      - &id222
         _links: *id008
         job_id: job_6968b3985e8c9902207afaeb
         status: queued
@@ -2677,7 +2677,7 @@ components:
           type: array
         status:
           default: refreshed
-          description: refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+          description: refreshed when no refreshed source failed, was held by another run (busy) or was skipped; partial otherwise (those keep serving their last applied entries).
           enum:
           - refreshed
           - partial
@@ -2709,7 +2709,15 @@ components:
           title: Slug
           type: string
         status:
-          description: 'Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source), failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).'
+          description: 'Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source; this refresh applied nothing for it), disabled, failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).'
+          enum:
+          - applied
+          - suspect_empty
+          - superseded
+          - busy
+          - disabled
+          - failed
+          - skipped
           examples:
           - applied
           title: Status
@@ -16094,7 +16102,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: &id222
+              example: &id223
                 detail: The request conflicts with the current state of the resource.
                 instance: /example/path
                 status: 409
@@ -19660,10 +19668,15 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example:
+                detail: Catalog entry 'public/slack.com' has no spec to preview or import
+                instance: /catalog/public/slack.com/operations
+                status: 409
+                title: Conflict
+                type: catalog_entry_has_no_spec
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The catalog entry has no spec (card-only).
+          description: The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).
         '422':
           content:
             application/problem+json:
@@ -19738,7 +19751,7 @@ paths:
         '202':
           content:
             application/json:
-              example: *id223
+              example: *id222
               schema:
                 $ref: '#/components/schemas/ApiImportResponse'
           description: Successful Response
@@ -19766,10 +19779,15 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example:
+                detail: Catalog entry 'public/slack.com' has no spec to preview or import
+                instance: /catalog/public/slack.com:import
+                status: 409
+                title: Conflict
+                type: catalog_entry_has_no_spec
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The catalog entry has no spec (card-only).
+          description: The catalog entry has no spec (card-only; type `catalog_entry_has_no_spec`).
         '422':
           content:
             application/problem+json:
@@ -19868,7 +19886,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
@@ -19994,7 +20012,7 @@ paths:
 
         Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
         of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
-        ``partial`` when a refreshed source failed or was skipped; ``sources``
+        ``partial`` when a refreshed source failed, was busy or was skipped; ``sources``
         gives each one's outcome. Sources the caller cannot read are not synced or
         reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
         for this run.
@@ -20308,7 +20326,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The session's OAuth app changed; start a new session
@@ -20686,7 +20704,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale
@@ -22244,7 +22262,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Credential is not connectable
@@ -23467,7 +23485,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23579,7 +23597,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23683,7 +23701,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -24195,7 +24213,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The API declares no supported scheme, or its hosts cannot be pinned
@@ -24659,7 +24677,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26008,7 +26026,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26305,7 +26323,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27436,7 +27454,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27534,7 +27552,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -28765,7 +28783,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin
@@ -28965,7 +28983,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The email is already in use
@@ -29071,7 +29089,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Would remove org:admin from the last active org:admin
@@ -29164,7 +29182,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin

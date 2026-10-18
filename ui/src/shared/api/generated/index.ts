@@ -55,7 +55,7 @@ export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksRespon
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
 export { CatalogRefreshResponse } from './models/CatalogRefreshResponse';
-export type { CatalogRefreshSourceResponse } from './models/CatalogRefreshSourceResponse';
+export { CatalogRefreshSourceResponse } from './models/CatalogRefreshSourceResponse';
 export type { CatalogSnoozeRequest } from './models/CatalogSnoozeRequest';
 export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
 export type { ClaimRequest } from './models/ClaimRequest';
