@@ -405,19 +405,28 @@ async def _stop_catalog_update_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _validate_catalog_sources(ctx: Context, enabled_apps: set[str]) -> None:
+    """Fail startup on an invalid ``catalog.sources`` block (registry surface only).
+
+    Runs before any background task starts, so a ``ConfigError`` leaves nothing
+    running that the lifespan would have to stop.
+    """
+    if "registry" in enabled_apps and ctx.has_db("registry"):
+        validate_catalog_sources(ctx)
+
+
 def _start_catalog_source_scanner(
     ctx: Context,
     enabled_apps: set[str],
 ) -> tuple[CatalogSourceSyncScanner, asyncio.Task[None]] | None:
-    """Validate ``catalog.sources`` and start the catalog source sync scanner.
+    """Start the catalog source sync scanner.
 
     A registry-surface background job that needs only the registry DB (sources,
-    entries and sync runs all live there). An invalid ``catalog.sources`` block
-    fails startup here, before any scanner runs.
+    entries and sync runs all live there). ``catalog.sources`` is validated
+    earlier, by ``_validate_catalog_sources``.
     """
     if "registry" not in enabled_apps or not ctx.has_db("registry"):
         return None
-    validate_catalog_sources(ctx)
     scanner = CatalogSourceSyncScanner(ctx)
     task = asyncio.create_task(scanner.run())
     _logger.info("catalog_source_sync_scanner_task_started")
@@ -681,6 +690,7 @@ def create_surface_app(
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
             # extra_lifespan).
+            _validate_catalog_sources(ctx, enabled_apps)
             worker_task = _start_worker(
                 ctx,
                 enabled_apps,
@@ -979,6 +989,7 @@ def create_combined_app(
         async with contextlib.AsyncExitStack() as lifespan_stack:
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
+            _validate_catalog_sources(ctx, set(apps))
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
