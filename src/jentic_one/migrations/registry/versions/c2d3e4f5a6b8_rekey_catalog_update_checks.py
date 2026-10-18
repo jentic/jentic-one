@@ -3,10 +3,10 @@
 The update-notify sweep now probes an API through the catalog source that
 lists it, so each check row records the entry it probes rather than a spec URL:
 
-- ``spec_url`` is replaced by ``catalog_entry_id`` (``{source_slug}/{external_id}``),
-  backfilled from the tracked API. Nullable: an API imported before entries were
-  recorded gets its entry id from the registry's boot reconcile, and the next
-  sweep fills the check row in;
+- ``spec_url`` is replaced by ``catalog_entry_id`` (``{source_slug}/{external_id}``).
+  Nullable: the next revision backfills it from the tracked API, and an API
+  imported before entries were recorded gets its entry id from the registry's
+  boot reconcile, after which the next sweep fills the check row in;
 - ``last_seen_etag`` is renamed ``last_seen_validator`` (whatever the source
   returns to revalidate with; for a URL source still the ETag);
 - ``last_seen_content_hint`` is added: the entry's listing hint when last
@@ -14,8 +14,8 @@ lists it, so each check row records the entry it probes rather than a spec URL:
 
 The row key (``local_api_id``) and the snooze columns are unchanged.
 
-The downgrade deletes every check row (sweep scratch state, rebuilt by the next
-sweep, which also drops snoozes) and restores the old columns.
+Schema only; the backfill is the next revision. The downgrade restores the old
+columns (that revision's downgrade has already emptied the table).
 
 Revision ID: c2d3e4f5a6b8
 Revises: b1c2d3e4f5a7
@@ -43,13 +43,6 @@ def upgrade() -> None:
         batch.alter_column(
             "last_seen_etag", new_column_name="last_seen_validator", existing_type=sa.Text()
         )
-    op.execute(
-        sa.text(
-            "UPDATE catalog_update_checks SET catalog_entry_id = ("
-            "SELECT apis.catalog_entry_id FROM apis "
-            "WHERE apis.id = catalog_update_checks.local_api_id)"
-        )
-    )
     with op.batch_alter_table(_TABLE) as batch:
         batch.drop_column("spec_url")
     op.create_index("ix_catalog_update_checks_catalog_entry_id", _TABLE, ["catalog_entry_id"])
@@ -57,7 +50,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_catalog_update_checks_catalog_entry_id", table_name=_TABLE)
-    op.execute(sa.text("DELETE FROM catalog_update_checks"))
     with op.batch_alter_table(_TABLE) as batch:
         batch.add_column(sa.Column("spec_url", sa.String(2048), nullable=False, server_default=""))
         batch.alter_column(
