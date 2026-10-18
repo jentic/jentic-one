@@ -16102,7 +16102,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: &id223
+              example: &id221
                 detail: The request conflicts with the current state of the resource.
                 instance: /example/path
                 status: 409
@@ -19665,10 +19665,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '409':
+          content:
+            application/problem+json:
+              example: *id221
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: '`catalog_entry_has_no_spec`: the entry is card-only (lists no spec).'
         '410':
           content:
             application/problem+json:
-              example: &id222
+              example: &id223
                 detail: The resource is no longer available and the operation has self-closed.
                 instance: /example/path
                 status: 410
@@ -19776,13 +19783,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '409':
+          content:
+            application/problem+json:
+              example: *id221
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: '`catalog_entry_has_no_spec`: the entry is card-only (lists no spec).'
         '410':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: '`catalog_spec_gone`: the entry lists no spec to import.'
+          description: '`catalog_spec_gone`: the entry''s source no longer has a spec for it.'
         '422':
           content:
             application/problem+json:
@@ -19881,7 +19895,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
@@ -20321,7 +20335,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The session's OAuth app changed; start a new session
@@ -20699,7 +20713,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale
@@ -22257,7 +22271,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Credential is not connectable
@@ -23480,7 +23494,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23592,7 +23606,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23696,7 +23710,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -24208,7 +24222,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The API declares no supported scheme, or its hosts cannot be pinned
@@ -24672,7 +24686,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26021,7 +26035,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26318,7 +26332,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27449,7 +27463,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27547,7 +27561,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -28778,7 +28792,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin
@@ -28978,7 +28992,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The email is already in use
@@ -29084,7 +29098,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Would remove org:admin from the last active org:admin
@@ -29177,7 +29191,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id223
+              example: *id221
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin
@@ -29415,7 +29429,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Setup already complete — the first admin exists and this endpoint is closed.

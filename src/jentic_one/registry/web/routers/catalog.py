@@ -242,6 +242,7 @@ async def list_catalog(
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
     responses={
+        **conflict("`catalog_entry_has_no_spec`: the entry is card-only (lists no spec)."),
         **gone("`catalog_spec_gone`: the entry's source no longer has a spec for it."),
         503: problem(
             "`catalog_source_unavailable`: the entry's source is throttled or down; "
@@ -404,7 +405,10 @@ async def refresh_catalog(
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
-    responses=gone("`catalog_spec_gone`: the entry lists no spec to import."),
+    responses={
+        **conflict("`catalog_entry_has_no_spec`: the entry is card-only (lists no spec)."),
+        **gone("`catalog_spec_gone`: the entry's source no longer has a spec for it."),
+    },
 )
 async def import_catalog_entry(
     request: Request,
