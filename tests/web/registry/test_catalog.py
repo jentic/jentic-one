@@ -317,7 +317,8 @@ async def _sync_all(ctx: Context) -> None:
     """Register and sync every configured source once, in configured order."""
     sync = CatalogSourceSync(ctx)
     await sync.register_sources()
-    await sync.sync_all()
+    for slug in sync.sources:
+        await sync.sync_source(slug)
 
 
 async def _seed(ctx: Context, api_ids: list[str]) -> None:

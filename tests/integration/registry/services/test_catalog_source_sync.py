@@ -662,7 +662,7 @@ async def test_scanner_flags_the_legacy_source_on_max_age(
         assert (await _source(ctx, "public")).sync_wanted_at is None
 
 
-async def test_sync_all_bounds_each_listing_so_a_stuck_source_never_stalls_the_rest(
+async def test_listing_timeout_fails_a_stuck_source_so_it_never_stalls_the_next(
     catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sources = [git_source("public", trust="curated"), git_source("corp")]
@@ -678,7 +678,10 @@ async def test_sync_all_bounds_each_listing_so_a_stuck_source_never_stalls_the_r
             "build_source",
             lambda self, cfg: _scripted_source(streams[cfg.slug])(self, cfg),
         )
-        outcomes = await asyncio.wait_for(sync.sync_all(listing_timeout_s=0.05), timeout=5)
+        outcomes = [
+            await asyncio.wait_for(sync.sync_source(slug, listing_timeout_s=0.05), timeout=5)
+            for slug in sync.sources
+        ]
         assert [(o.slug, o.status, o.error_code) for o in outcomes] == [
             ("public", "failed", "listing_timeout"),
             ("corp", "applied", None),

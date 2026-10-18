@@ -208,7 +208,7 @@ async def _run(args: argparse.Namespace, config: AppConfig) -> bool:
         start = time.perf_counter()
         sync = CatalogSourceSync(ctx)
         await sync.register_sources()
-        outcomes = await sync.sync_all()
+        outcomes = [await sync.sync_source(slug) for slug in sync.sources]
         print(f"synced   {len(outcomes)} sources in {time.perf_counter() - start:.1f} s")
         print(f"RSS      {_current_rss_mib():.0f} MiB after sync + GC")
 
