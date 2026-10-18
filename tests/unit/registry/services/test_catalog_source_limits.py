@@ -17,6 +17,7 @@ from jentic_one.registry.services.catalog.sources.limits import (
     LaneSemaphore,
     MemoryRateBucket,
     ProcessSourceLimits,
+    background_reserve,
     background_slots,
     refill_and_take,
 )
@@ -187,3 +188,85 @@ async def test_block_with_bucket_blocks_the_bucket() -> None:
         async with limits.slot("background"):
             pass
     assert raised.value.retry_after_s == pytest.approx(12.0)
+    # The block reached the bucket too, so other processes sharing it see it.
+    taken = await bucket.take("interactive")
+    assert taken.blocked
+    assert taken.wait_s == pytest.approx(12.0)
+
+
+# ── small bursts (the reserve never starves the background lane) ─────────────
+
+
+@pytest.mark.parametrize(
+    ("burst", "share", "expected"),
+    [(1, 0.5, 0.0), (1, 0.99, 0.0), (2, 0.5, 1.0), (2, 0.9, 1.0), (4, 0.5, 2.0), (4, 0.9, 3.0)],
+)
+def test_background_reserve_leaves_one_token(burst: int, share: float, expected: float) -> None:
+    assert background_reserve(burst, share) == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("burst", "share"), [(1, 0.5), (2, 0.9), (4, 0.9)])
+async def test_full_small_bucket_grants_background(burst: int, share: float) -> None:
+    """With any burst and share, a full bucket still grants a background token."""
+    bucket = MemoryRateBucket(rate=1.0, burst=burst, interactive_share=share, clock=_Clock())
+    assert (await bucket.take("background")).granted
+
+
+# ── slot waits are bounded too ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_slot_wait_beyond_max_fails_fast() -> None:
+    """A request queued behind a full concurrency gate fails after ``max_wait_s``."""
+    limits = ProcessSourceLimits("corp", concurrency=1, interactive_share=0.0, max_wait_s=0.2)
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder() -> None:
+        async with limits.slot("interactive"):
+            held.set()
+            await release.wait()
+
+    task = asyncio.create_task(holder())
+    await held.wait()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(SourceUnavailableError) as raised:
+        async with limits.slot("interactive"):
+            pass
+    assert loop.time() - started < 1.0
+    assert raised.value.retry_after_s == pytest.approx(0.2)
+    assert limits.in_flight == 1  # the timed-out waiter took nothing
+    release.set()
+    await task
+    assert limits.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_block_while_queued_fails_the_waiter_fast() -> None:
+    """A 429 that lands while a request waits for its slot fails that request."""
+    limits = ProcessSourceLimits("corp", concurrency=1, interactive_share=0.0, max_wait_s=5.0)
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder() -> None:
+        async with limits.slot("interactive"):
+            held.set()
+            await release.wait()
+
+    task = asyncio.create_task(holder())
+    await held.wait()
+
+    async def waiter() -> None:
+        async with limits.slot("interactive"):
+            pass
+
+    queued = asyncio.create_task(waiter())
+    await asyncio.sleep(0)
+    await limits.block(3.0)
+    release.set()
+    await task
+    with pytest.raises(SourceUnavailableError):
+        await queued
+    assert limits.in_flight == 0

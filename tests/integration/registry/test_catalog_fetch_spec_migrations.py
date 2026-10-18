@@ -216,3 +216,17 @@ async def test_db_bucket_creates_its_row_on_first_take(
     async with registry_db.session() as session:
         rows = (await session.execute(text("SELECT tokens FROM catalog_source_buckets"))).all()
     assert [round(r[0]) for r in rows] == [3]
+
+
+@pytest.mark.parametrize(("burst", "share"), [(1, 0.5), (2, 0.9)])
+async def test_db_bucket_full_small_bucket_grants_background(
+    registry_db: DatabaseSession,
+    integration_context: Context,
+    clean: None,
+    burst: int,
+    share: float,
+) -> None:
+    """The interactive reserve never takes a small bucket's last token from background."""
+    _require_postgres(registry_db)
+    bucket = _bucket(integration_context, _Clock(), burst=burst, share=share)
+    assert (await bucket.take("background")).granted
