@@ -5,6 +5,8 @@ Drives revision ``a1c3e5f7b9d2`` against the real integration admin database
 ``ix_events_created_by_actor`` exists, matches the ORM declaration, and
 replaces the single-column ``ix_events_created_by``; downgrading restores the
 single-column index and removes the new one; re-upgrading round-trips back.
+On PostgreSQL, an INVALID index left by a failed concurrent build is rebuilt
+by a re-run instead of failing it or being kept.
 """
 
 from __future__ import annotations
@@ -17,11 +19,12 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import Table, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.shared.config import AppConfig
-from jentic_one.shared.db.session import DatabaseSession
-from tests.harness.postgres import alembic_config_for
+from jentic_one.shared.db.session import DatabaseSession, get_database_url
+from tests.harness.postgres import alembic_config_for, superuser_config
 
 pytestmark = pytest.mark.integration
 
@@ -94,3 +97,48 @@ async def test_events_created_by_actor_index_round_trips(
 
     await asyncio.to_thread(command.upgrade, cfg, "head")
     assert await _index_defs(admin_db) == at_head
+
+
+async def test_upgrade_rebuilds_an_invalid_leftover_index(
+    integration_config: AppConfig,
+    admin_db: DatabaseSession,
+    restore_admin_head: None,
+) -> None:
+    """A failed ``CONCURRENTLY`` build leaves an INVALID index; a re-run replaces it."""
+    async with admin_db.session() as session:
+        if session.bind.dialect.name != "postgresql":
+            pytest.skip("INVALID indexes exist only on PostgreSQL")
+    cfg = _admin_cfg(integration_config)
+    await asyncio.to_thread(command.downgrade, cfg, _PARENT_REV)
+
+    # Stand in for a failed build: an index of the new name, on the wrong
+    # columns, marked INVALID (only a superuser may flip ``indisvalid``).
+    db_config = integration_config.databases.admin
+    engine = create_async_engine(get_database_url(superuser_config(db_config)))
+    try:
+        async with engine.begin() as conn:
+            schema = db_config.schema_name
+            await conn.execute(text(f'CREATE INDEX {_NEW_INDEX} ON "{schema}".events (actor_id)'))
+            await conn.execute(
+                text(
+                    "UPDATE pg_index SET indisvalid = false WHERE indexrelid = "
+                    f"'\"{schema}\".{_NEW_INDEX}'::regclass"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+    at_head = await _index_defs(admin_db)
+    assert _column_list(at_head[_NEW_INDEX]) == _NEW_COLUMNS
+    assert _OLD_INDEX not in at_head
+    async with admin_db.session() as session:
+        valid = await session.scalar(
+            text(
+                "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
+                " WHERE c.relname = :name AND c.relnamespace = to_regnamespace(current_schema())"
+            ),
+            {"name": _NEW_INDEX},
+        )
+    assert valid is True
