@@ -206,8 +206,15 @@ class Context:
         self._retired_providers = [
             entry for entry in self._retired_providers if not (force or entry[0] <= now)
         ]
-        for batch in due:
-            await aclose_providers(batch)
+        # Due batches leave the queue before any await, so a concurrent call
+        # never closes the same batch twice. A cancelled close re-queues the
+        # batches it had not reached, so shutdown still closes them.
+        for index, batch in enumerate(due):
+            try:
+                await aclose_providers(batch)
+            except BaseException:
+                self._retired_providers.extend((now, rest) for rest in due[index + 1 :])
+                raise
 
     def decrypt_provider_config(self, cfg: dict[str, object]) -> dict[str, object]:
         """Return a copy of a stored provider config with secret fields decrypted.

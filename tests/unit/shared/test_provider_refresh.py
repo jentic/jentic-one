@@ -294,6 +294,28 @@ async def test_shutdown_closes_the_live_registry_providers() -> None:
     assert provider.closed
 
 
+async def test_cancelled_close_requeues_the_batches_it_had_not_reached() -> None:
+    """A refresh cancelled mid-close (the refresher stopping) leaves nothing unclosed."""
+    ctx = _ctx_without_dbs()
+    entered = asyncio.Event()
+
+    class _Hanging(StaticProvider):
+        async def aclose(self) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+    later = _ClosingProvider(ctx)
+    ctx._retired_providers = [(0.0, [_Hanging()]), (0.0, [later])]
+    closing = asyncio.create_task(ctx._close_retired_providers())
+    await entered.wait()
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert not later.closed
+    await ctx.shutdown()
+    assert later.closed
+
+
 async def test_failing_close_does_not_stop_the_others() -> None:
     ctx = _ctx_without_dbs()
 

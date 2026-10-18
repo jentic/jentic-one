@@ -175,8 +175,10 @@ load-bearing:
 2. **Shutdown**, with a drain step first: the broker's admission gate
    reports unready (so the load balancer deregisters the instance) →
    scanners stop → the job worker drains → telemetry flushes → the
-   provider-config refresher stops → `ctx.shutdown()` (closes the
-   providers) → container-injected lifespans exit in reverse → the
+   provider-config refresher stops → the surface installers' shutdown
+   handlers run (closing the auth and control shared-state backends) →
+   `ctx.shutdown()` (closes the providers) → container-injected lifespans
+   exit in reverse → the
    invalidation bus stops → the surface lifespan closes the shared HTTP
    client. Draining the worker
    *before* closing the client matters: an async execution mid-flight must
