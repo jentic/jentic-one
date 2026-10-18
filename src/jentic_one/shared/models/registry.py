@@ -17,6 +17,9 @@ class ApiRevisionSourceType(StrEnum):
 
     URL = "url"
     INLINE = "inline"
+    #: Fetched from a catalog entry through its source (``source_url`` is set
+    #: when the entry's source fetches by URL).
+    CATALOG = "catalog"
     UNKNOWN = "unknown"
 
 

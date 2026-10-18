@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock
 
@@ -28,6 +29,8 @@ from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_api_id
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
+    CatalogSourceUnavailableError,
+    CatalogSpecGoneError,
     OverlaySupersedeForbiddenError,
     RevisionStateConflictError,
 )
@@ -693,6 +696,32 @@ async def test_overlay_supersede_refusal_maps_to_broker_denied(services: None) -
     assert "operator" in payload["actionable_step"]
 
 
+async def test_catalog_spec_gone_is_not_retryable(services: None) -> None:
+    """The entry's source has no spec for it: steer to another hit, never a retry."""
+    _FakeCatalogService.import_error = CatalogSpecGoneError("corp/stripe.com")
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "corp/stripe.com"})
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == "search_catalog"
+
+
+async def test_catalog_source_unavailable_is_retryable_with_wait(services: None) -> None:
+    """A throttled source is transient: retryable, with the wait the source asked for."""
+    _FakeCatalogService.import_error = CatalogSourceUnavailableError(
+        "corp/stripe.com", retry_after_s=12.2
+    )
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": "corp/stripe.com"})
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["retryable"] is True
+    assert payload["retry_after_s"] == 13
+
+
 async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> None:
     """A completed job whose result fetch fails surfaces with the job_id —
     the model polls get_execution_result rather than re-importing blind."""
@@ -705,3 +734,43 @@ async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> No
     assert payload["error_code"] == "INTERNAL_ERROR"
     assert payload["job_id"] == "job_9"
     assert payload["next_tool"] == "get_execution_result"
+
+
+# ── parity with the stdio server (shared fixture) ────────────────────────────
+
+_CATALOG_ERRORS = (
+    Path(__file__).resolve().parents[3]
+    / "cli"
+    / "tests"
+    / "golden"
+    / "testdata"
+    / "mcp"
+    / "import_api_catalog_errors.json"
+)
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(_CATALOG_ERRORS.read_text()), ids=lambda case: case["name"]
+)
+async def test_catalog_source_errors_match_the_shared_fixture(
+    services: None, case: dict[str, Any]
+) -> None:
+    """The HTTP mount answers exactly what the Go stdio server answers for the same 410/503.
+
+    ``mcp_catalog_test.go`` replays the same fixture against the stdio server, so
+    the two surfaces cannot drift.
+    """
+    if case["status"] == 410:
+        _FakeCatalogService.import_error = CatalogSpecGoneError(case["api_id"])
+    else:
+        _FakeCatalogService.import_error = CatalogSourceUnavailableError(
+            case["api_id"], retry_after_s=case["retry_after"]
+        )
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": case["api_id"]})
+    assert result.is_error
+    payload = _payload(result)
+    assert str(_FakeCatalogService.import_error) == case["detail"]
+    payload.pop("schema_version", None)
+    payload.pop("instance", None)
+    assert payload == case["payload"]

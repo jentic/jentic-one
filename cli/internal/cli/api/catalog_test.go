@@ -531,3 +531,23 @@ func TestTruncate(t *testing.T) {
 		t.Errorf("truncate should pass short strings, got %q", got)
 	}
 }
+
+func TestCatalogEntryErr_MapsSourceErrors(t *testing.T) {
+	gone := catalogEntryErr(&HTTPError{StatusCode: http.StatusGone, Body: `{"type":"catalog_spec_gone","detail":"gone"}`}, "corp/x")
+	var coded *ux.CodedError
+	if !errors.As(gone, &coded) || coded.Code != ux.CodeResolveFailed || coded.Msg != "gone" {
+		t.Fatalf("410 = %#v, want RESOLVE_FAILED with the server's detail", gone)
+	}
+	busy := catalogEntryErr(&HTTPError{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       `{"type":"catalog_source_unavailable","detail":"busy."}`,
+		RetryAfter: "7",
+	}, "corp/x")
+	if !errors.As(busy, &coded) || coded.Code != ux.CodeTransportError || coded.Details["retry_after_s"] != 7 {
+		t.Fatalf("503 = %#v, want TRANSPORT_ERROR with retry_after_s 7", busy)
+	}
+	other := &HTTPError{StatusCode: http.StatusServiceUnavailable, Body: `{"type":"governed_hosts_unavailable"}`}
+	if got := catalogEntryErr(other, "corp/x"); got != error(other) {
+		t.Fatalf("an unrelated 503 must pass through, got %#v", got)
+	}
+}

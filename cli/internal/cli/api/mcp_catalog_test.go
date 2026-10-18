@@ -7,9 +7,14 @@ package api
 // their recovery pointers.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -485,5 +490,74 @@ func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
 	}
 	if payload["next_tool"] != "get_started" {
 		t.Errorf("next_tool = %v, want get_started", payload["next_tool"])
+	}
+}
+
+// TestMCPImportAPI_CatalogSourceErrorsMatchSharedFixture replays the shared
+// 410/503 fixture against the stdio server. tests/unit/mcp/test_tools_import_api.py
+// replays the same file against the HTTP mount, so the two cannot drift.
+func TestMCPImportAPI_CatalogSourceErrorsMatchSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "golden", "testdata", "mcp", "import_api_catalog_errors.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var cases []struct {
+		Name       string         `json:"name"`
+		APIID      string         `json:"api_id"`
+		Status     int            `json:"status"`
+		Type       string         `json:"type"`
+		Detail     string         `json:"detail"`
+		RetryAfter *int           `json:"retry_after"`
+		Payload    map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.RetryAfter != nil {
+					w.Header().Set("Retry-After", strconv.Itoa(*tc.RetryAfter))
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.Status)
+				body, _ := json.Marshal(map[string]any{
+					"type": tc.Type, "title": http.StatusText(tc.Status), "status": tc.Status,
+					"detail": tc.Detail,
+				})
+				_, _ = w.Write(body)
+			}))
+			defer srv.Close()
+
+			s := fastAccessServer(t)
+			args, _ := json.Marshal(map[string]string{"api_id": tc.APIID})
+			res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", string(args)))
+			if err != nil {
+				t.Fatalf("handleImportAPI: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result")
+			}
+			payload := decodeToolJSON(t, res)
+			delete(payload, "schema_version")
+			delete(payload, "instance")
+			// JSON numbers decode as float64 on both sides; compare as decoded JSON.
+			want, _ := json.Marshal(tc.Payload)
+			got, _ := json.Marshal(payload)
+			var wantV, gotV any
+			_ = json.Unmarshal(want, &wantV)
+			_ = json.Unmarshal(got, &gotV)
+			if !reflect.DeepEqual(gotV, wantV) {
+				t.Errorf("payload mismatch\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
+func TestRetryAfterSeconds(t *testing.T) {
+	for raw, want := range map[string]int{"": 5, "x": 5, "-1": 5, "0": 1, "0.2": 1, "12": 12, "12.1": 13} {
+		if got := retryAfterSeconds(raw); got != want {
+			t.Errorf("retryAfterSeconds(%q) = %d, want %d", raw, got, want)
+		}
 	}
 }

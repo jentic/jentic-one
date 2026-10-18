@@ -2,10 +2,11 @@
 
 Unlike the unit tests (which mock every repo + session), these drive
 ``CatalogService._run_update_notify_sweep`` / ``_probe_one`` end-to-end against
-the real ``registry_db`` + ``admin_db``, stubbing **only** the out-of-process HTTP
-boundary (``fetch_bytes_conditional``). This exercises the multi-session
-orchestration (read check → fetch → upsert txn → admin emit txn) and the
-digest-based dedupe against persisted state — the parts unit mocks can't catch.
+the real ``registry_db`` + ``admin_db`` and a real live ``catalog_entries`` row,
+stubbing **only** the source fetch (``CatalogSpecFetcher.fetch_row``). This
+exercises the multi-session orchestration (read check → fetch → upsert txn →
+admin emit txn), the entry-keyed candidate selection and the digest-based dedupe
+against persisted state — the parts unit mocks can't catch.
 """
 
 from __future__ import annotations
@@ -21,10 +22,11 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
-from jentic_one.registry.services.catalog.fetch import ConditionalFetch
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.sources.protocol import NotModified, SpecBody
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.events import EventType
@@ -32,7 +34,39 @@ from jentic_one.shared.models.events import EventType
 pytestmark = pytest.mark.integration
 
 _SWEEP = "jentic_one.registry.services.catalog.service"
+_FETCH_ROW = "jentic_one.registry.services.catalog.spec_fetch.CatalogSpecFetcher.fetch_row"
 _SPEC_URL = "https://raw.githubusercontent.com/jentic/x/main/openapi.json"
+#: A live entry of the default (enabled) ``public`` source.
+_ENTRY_ID = "public/notify-test.com"
+
+
+def _changed(digest: str, validator: str = '"v2"', content: bytes = b"{}") -> SpecBody:
+    return SpecBody(
+        content=content, media_type="application/json", validator=validator, digest=digest
+    )
+
+
+async def _list_entry(
+    db: DatabaseSession, *, content_hint: str | None = None, removed: bool = False
+) -> None:
+    """Make ``_ENTRY_ID`` a row the ``public`` source lists (or has stopped listing)."""
+    now = datetime.now(UTC)
+    async with db.session() as session:
+        session.add(
+            CatalogEntryRow(
+                entry_id=_ENTRY_ID,
+                source_slug="public",
+                external_id="notify-test.com",
+                catalog_api_id_hint="notify-test.com",
+                catalog_api_id="notify-test.com",
+                spec_ref={"url": _SPEC_URL},
+                tags=[],
+                content_hint=content_hint,
+                seen_at=now,
+                removed_at=now if removed else None,
+            )
+        )
+        await session.commit()
 
 
 @pytest.fixture()
@@ -42,6 +76,9 @@ async def clean_state(
     async def _wipe() -> None:
         async with registry_db.session() as session:
             await session.execute(delete(CatalogUpdateCheck))
+            await session.execute(
+                delete(CatalogEntryRow).where(CatalogEntryRow.entry_id == _ENTRY_ID)
+            )
             await session.execute(delete(ApiRevision).where(ApiRevision.source_url == _SPEC_URL))
             await session.execute(delete(Api).where(Api.vendor == "notify-test.com"))
             await session.commit()
@@ -58,8 +95,9 @@ async def clean_state(
 
 @pytest.fixture()
 async def registered_api(registry_db: DatabaseSession, clean_state: None) -> Api:
-    """A registered API with a published revision carrying a source_url + digest."""
-    api = Api(vendor="notify-test.com", name="widgets", version="v1")
+    """An API imported from a live catalog entry, with a published revision + digest."""
+    await _list_entry(registry_db)
+    api = Api(vendor="notify-test.com", name="widgets", version="v1", catalog_entry_id=_ENTRY_ID)
     async with registry_db.session() as session:
         session.add(api)
         await session.flush()
@@ -90,11 +128,9 @@ async def test_sweep_emits_event_and_records_check(
 ) -> None:
     """A changed upstream digest emits one event and persists the notify state."""
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
 
     events = await _events(integration_context)
@@ -104,23 +140,23 @@ async def test_sweep_emits_event_and_records_check(
     assert evt.data["api_id"] == str(registered_api.id)
     assert evt.data["upstream_digest"] == "sha256:upstream-new"
     assert evt.data["current_digest"] == "sha256:registered"
+    assert evt.data["catalog_entry_id"] == _ENTRY_ID
     assert evt.data["spec_url"] == _SPEC_URL
 
     async with integration_context.registry_db.session() as session:
         check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
     assert check is not None
     assert check.last_notified_digest == "sha256:upstream-new"
-    assert check.last_seen_etag == '"v2"'
+    assert check.catalog_entry_id == _ENTRY_ID
+    assert check.last_seen_validator == '"v2"'
 
 
 async def test_sweep_dedupes_across_runs(integration_context: Context, registered_api: Api) -> None:
     """A second sweep observing the same upstream digest does not re-emit."""
     integration_context.config.catalog.update_check_interval_seconds = 1
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
         # Force the per-API interval gate open by clearing last_checked_at.
         async with integration_context.registry_db.transaction() as session:
@@ -138,11 +174,9 @@ async def test_sweep_no_event_when_upstream_matches_registered(
 ) -> None:
     """Upstream digest equal to the registered revision's digest → no event."""
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    same = ConditionalFetch(
-        not_modified=False, etag='"v1"', content=b"{}", digest="sha256:registered"
-    )
+    same = _changed("sha256:registered", '"v1"')
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=same):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=same):
         await svc._run_update_notify_sweep()
 
     assert await _events(integration_context) == []
@@ -170,7 +204,8 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
     real_digest = hashlib.sha256(body).hexdigest()
     assert ":" not in real_digest  # bare hex, matching the ingest convention
 
-    api = Api(vendor="notify-test.com", name="widgets", version="v1")
+    await _list_entry(registry_db)
+    api = Api(vendor="notify-test.com", name="widgets", version="v1", catalog_entry_id=_ENTRY_ID)
     async with registry_db.session() as session:
         session.add(api)
         await session.flush()
@@ -187,9 +222,9 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
         await session.commit()
 
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    same = ConditionalFetch(not_modified=False, etag='"v1"', content=body, digest=real_digest)
+    same = _changed(real_digest, '"v1"', body)
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=same):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=same):
         await svc._run_update_notify_sweep()
 
     assert await _events(integration_context) == []
@@ -201,13 +236,14 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
     assert check.last_notified_digest == real_digest
 
 
-# ── Phase 4: origin-scoped candidates + outdated derivation ──────────────────
+# ── candidates: APIs imported from a live entry ──────────────────────────────
 
 
-async def test_sweep_skips_manual_revision_not_in_manifest(
+async def test_sweep_skips_api_not_imported_from_an_entry(
     integration_context: Context, registry_db: DatabaseSession, clean_state: None
 ) -> None:
-    """A manual (origin=NULL) revision whose source_url isn't a manifest entry is skipped."""
+    """An API that records no catalog entry (a manual import) is never probed."""
+    await _list_entry(registry_db)
     api = Api(vendor="notify-test.com", name="manual", version="v1")
     async with registry_db.session() as session:
         session.add(api)
@@ -219,42 +255,104 @@ async def test_sweep_skips_manual_revision_not_in_manifest(
                 spec_digest="sha256:registered",
                 source_type="url",
                 source_url=_SPEC_URL,
-                origin=None,  # manual import
+                origin=None,  # manual import of the same URL
             )
         )
         await session.commit()
 
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
     svc = CatalogService(integration_context)
-    with patch(
-        f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed
-    ) as fetch:
-        # No catalog snapshot exists → manifest_spec_urls is empty → the manual spec is
-        # out of scope and never fetched.
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=_changed("sha256:new")) as fetch:
         await svc._run_update_notify_sweep()
 
     fetch.assert_not_called()
     assert await _events(integration_context) == []
 
 
-async def test_outdated_spec_urls_reflects_notify_then_clears_on_adopt(
+async def test_sweep_skips_api_whose_entry_was_tombstoned(
+    integration_context: Context, registry_db: DatabaseSession, clean_state: None
+) -> None:
+    """An entry its source no longer lists is not tracked: no fetch, no event."""
+    await _list_entry(registry_db, removed=True)
+    api = Api(vendor="notify-test.com", name="gone", version="v1", catalog_entry_id=_ENTRY_ID)
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        session.add(
+            ApiRevision(
+                api_id=api.id,
+                state="published",
+                spec_digest="sha256:registered",
+                source_type="catalog",
+                source_url=_SPEC_URL,
+                origin="catalog",
+            )
+        )
+        await session.commit()
+
+    integration_context.config.catalog.update_check_interval_seconds = 86400
+    svc = CatalogService(integration_context)
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=_changed("sha256:new")) as fetch:
+        await svc._run_update_notify_sweep()
+
+    fetch.assert_not_called()
+    assert await _events(integration_context) == []
+
+
+async def test_sweep_unchanged_content_hint_skips_the_fetch(
+    integration_context: Context, registry_db: DatabaseSession, registered_api: Api
+) -> None:
+    """Once a hint is recorded, an entry still listing it is not fetched again."""
+    async with registry_db.session() as session:
+        row = (
+            await session.execute(
+                select(CatalogEntryRow).where(CatalogEntryRow.entry_id == _ENTRY_ID)
+            )
+        ).scalar_one()
+        row.content_hint = "sha:abc"
+        await session.commit()
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    svc = CatalogService(integration_context)
+    with patch(
+        _FETCH_ROW, new_callable=AsyncMock, return_value=_changed("sha256:registered")
+    ) as fetch:
+        await svc._run_update_notify_sweep()
+        assert fetch.await_count == 1  # first probe: nothing recorded yet
+        async with registry_db.transaction() as session:
+            check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+            assert check is not None
+            assert check.last_seen_content_hint == "sha:abc"
+            check.last_checked_at = None  # reopen the interval gate
+        await svc._run_update_notify_sweep()
+        assert fetch.await_count == 1  # same hint: short-circuited
+
+        async with registry_db.transaction() as session:
+            row = (
+                await session.execute(
+                    select(CatalogEntryRow).where(CatalogEntryRow.entry_id == _ENTRY_ID)
+                )
+            ).scalar_one()
+            row.content_hint = "sha:def"
+            check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+            assert check is not None
+            check.last_checked_at = None
+        await svc._run_update_notify_sweep()
+        assert fetch.await_count == 2  # the hint moved: fetched again
+
+
+async def test_outdated_entry_ids_reflects_notify_then_clears_on_adopt(
     integration_context: Context, registered_api: Api
 ) -> None:
-    """outdated_spec_urls surfaces a notified update, then drops once the digest is adopted."""
+    """outdated_entry_ids surfaces a notified update, then drops once the digest is adopted."""
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
 
     async with integration_context.registry_db.session() as session:
-        outdated = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
-    assert _SPEC_URL in outdated  # notified digest != current revision digest
+        outdated = await CatalogUpdateCheckRepository.outdated_entry_ids(session)
+    assert _ENTRY_ID in outdated  # notified digest != current revision digest
 
     # Simulate adopting the upstream: the current revision's digest now equals the
     # notified digest (as a re-import would produce).
@@ -267,8 +365,8 @@ async def test_outdated_spec_urls_reflects_notify_then_clears_on_adopt(
         rev.spec_digest = "sha256:upstream-new"
 
     async with integration_context.registry_db.session() as session:
-        outdated_after = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
-    assert _SPEC_URL not in outdated_after
+        outdated_after = await CatalogUpdateCheckRepository.outdated_entry_ids(session)
+    assert _ENTRY_ID not in outdated_after
 
 
 async def test_outdated_clears_when_upstream_reverts_to_served(
@@ -278,7 +376,7 @@ async def test_outdated_clears_when_upstream_reverts_to_served(
 
     Regression for the stuck-badge revert path: ``_probe_one`` never
     lowers ``last_notified_digest`` on a no-change probe (correct, for event dedupe), but
-    the read surface (``outdated_api_ids`` / ``outdated_spec_urls``) keys off that same
+    the read surface (``outdated_api_ids`` / ``outdated_entry_ids``) keys off that same
     field. So without a fix, this sequence stuck the badge permanently:
 
     1. served digest is ``sha256:registered``; upstream publishes ``sha256:upstream-new``
@@ -299,25 +397,21 @@ async def test_outdated_clears_when_upstream_reverts_to_served(
     svc = CatalogService(integration_context)
 
     # 1. Upstream advances → notify, API becomes outdated.
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    changed = _changed("sha256:upstream-new")
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
 
     async with integration_context.registry_db.session() as session:
         assert registered_api.id in await CatalogUpdateCheckRepository.outdated_api_ids(session)
-        assert _SPEC_URL in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+        assert _ENTRY_ID in await CatalogUpdateCheckRepository.outdated_entry_ids(session)
 
     # 2. Upstream reverts to the served content. Reopen the interval gate first.
     async with integration_context.registry_db.transaction() as session:
         check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
         assert check is not None
         check.last_checked_at = None
-    reverted = ConditionalFetch(
-        not_modified=False, etag='"v1"', content=b"{}", digest="sha256:registered"
-    )
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=reverted):
+    reverted = _changed("sha256:registered", '"v1"')
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=reverted):
         await svc._run_update_notify_sweep()
 
     # 3. No new event (nothing changed vs served) AND the API is no longer outdated.
@@ -327,7 +421,7 @@ async def test_outdated_clears_when_upstream_reverts_to_served(
         assert check_after is not None
         assert check_after.last_notified_digest == "sha256:registered"  # pinned to served
         assert registered_api.id not in await CatalogUpdateCheckRepository.outdated_api_ids(session)
-        assert _SPEC_URL not in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+        assert _ENTRY_ID not in await CatalogUpdateCheckRepository.outdated_entry_ids(session)
 
 
 async def test_outdated_ignores_stale_draft_when_served_revision_adopted(
@@ -335,17 +429,15 @@ async def test_outdated_ignores_stale_draft_when_served_revision_adopted(
 ) -> None:
     """A stale non-archived draft must not keep an API outdated after the served revision adopts.
 
-    Regression: ``outdated_spec_urls`` must compare the notified digest against the *single*
+    Regression: ``outdated_entry_ids`` must compare the notified digest against the *single*
     served revision (current-or-newest), not "any non-archived revision". An API can keep a
     never-promoted draft alongside its live revision; once the live revision adopts the
     upstream the API must drop out of the outdated set even though the draft still differs.
     """
     integration_context.config.catalog.update_check_interval_seconds = 86400
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
 
     async with integration_context.registry_db.transaction() as session:
@@ -374,20 +466,20 @@ async def test_outdated_ignores_stale_draft_when_served_revision_adopted(
         )
 
     async with integration_context.registry_db.session() as session:
-        outdated = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
-    assert _SPEC_URL not in outdated
+        outdated = await CatalogUpdateCheckRepository.outdated_entry_ids(session)
+    assert _ENTRY_ID not in outdated
 
 
-async def test_outdated_api_ids_does_not_collide_across_apis_sharing_a_spec_url(
+async def test_outdated_api_ids_does_not_collide_across_apis_sharing_an_entry(
     integration_context: Context, registry_db: DatabaseSession, clean_state: None
 ) -> None:
-    """Two APIs sharing one upstream spec_url must be flagged independently.
+    """Two APIs tracking one catalog entry must be flagged independently.
 
-    Regression for the ``spec_url``-keyed collision: ``outdated_api_ids`` (used by the
-    per-API surfaces) must flag only the genuinely-outdated API, even when a sibling API
-    imported from the *same* ``source_url`` is already up to date. ``outdated_spec_urls``
-    (the manifest-keyed catalog form) legitimately can't disambiguate a shared URL, which is
-    exactly why the /apis surfaces key on api_id instead.
+    ``outdated_api_ids`` (used by the per-API surfaces) must flag only the
+    genuinely-outdated API, even when a sibling API imported from the *same* entry is
+    already up to date. ``outdated_entry_ids`` (the entry-keyed catalog form) legitimately
+    can't disambiguate a shared entry, which is exactly why the /apis surfaces key on
+    api_id instead.
     """
     shared_url = _SPEC_URL
     stale = Api(vendor="notify-test.com", name="stale", version="v1")
@@ -424,8 +516,8 @@ async def test_outdated_api_ids_does_not_collide_across_apis_sharing_a_spec_url(
             await CatalogUpdateCheckRepository.upsert(
                 session,
                 local_api_id=api.id,
-                spec_url=shared_url,
-                etag='"v2"',
+                catalog_entry_id=_ENTRY_ID,
+                validator='"v2"',
                 digest="sha256:new",
                 checked_at=now,
                 notified_digest="sha256:new",
@@ -441,28 +533,48 @@ async def test_outdated_api_ids_does_not_collide_across_apis_sharing_a_spec_url(
 # ── #941: emit-then-mark durability ──────────────────────────────────────────
 
 
+@pytest.mark.parametrize("second_probe", ["same_hint", "not_modified"])
 async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
-    integration_context: Context, registered_api: Api
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    clean_state: None,
+    second_probe: str,
 ) -> None:
     """#941: a *failed emit* must NOT advance the notify marker (no permanent suppression).
 
     The change path uses the raising ``emit_event`` (not the swallowing best-effort
     wrapper) exactly so a transient admin-DB emit failure propagates to the sweep's per-API
-    guard and the marker is left unadvanced. Patching ``emit_event`` here reproduces the
-    real production seam (a raising emit), unlike patching the best-effort wrapper — which
-    in production swallows and would let the marker advance. On the next healthy sweep the
-    change re-emits rather than being deduped against a notification that never landed.
+    guard and the marker is left unadvanced.
+
+    The first probe records the new digest, validator and listing hint before the emit
+    fails. So the next sweep sees nothing new upstream: the entry still lists the same
+    ``content_hint`` (no fetch at all), or the source answers not-modified to the stored
+    validator. Either way it must re-decide the recorded, never-notified change and emit.
     """
+    await _list_entry(registry_db, content_hint="hint-1")
+    api = Api(vendor="notify-test.com", name="widgets", version="v1", catalog_entry_id=_ENTRY_ID)
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        session.add(
+            ApiRevision(
+                api_id=api.id,
+                state="published",
+                spec_digest="sha256:registered",
+                source_type="url",
+                source_url=_SPEC_URL,
+                origin="catalog",
+            )
+        )
+        await session.commit()
     integration_context.config.catalog.update_check_interval_seconds = 1
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
 
     # First sweep: the emit raises (transient admin-DB error). The per-API guard isolates
     # it; the API must be left unmarked (no notified digest) so it is not deduped away.
     with (
-        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed),
+        patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed),
         patch(
             f"{_SWEEP}.emit_event",
             new_callable=AsyncMock,
@@ -473,28 +585,55 @@ async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
 
     assert await _events(integration_context) == []  # nothing emitted
     async with integration_context.registry_db.session() as session:
-        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check is not None
-    # Observation persisted (we did fetch), but the notify marker was NOT advanced —
-    # so the change is still outstanding and will re-emit.
+    # Observation persisted (we did fetch), but the notify marker was NOT advanced.
     assert check.last_seen_digest == "sha256:upstream-new"
+    assert check.last_seen_content_hint == "hint-1"
+    assert check.last_seen_validator == '"v2"'
     assert check.last_notified_digest is None
     assert check.last_notified_event_class is None
 
-    # Second sweep with a healthy emit: it re-emits (the bug would have suppressed it).
     async with integration_context.registry_db.transaction() as session:
-        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
         assert check is not None
         check.last_checked_at = None  # reopen the per-API interval gate
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    if second_probe == "same_hint":
+        # The entry still lists the hint the first probe recorded: no fetch at all.
+        fetch = AsyncMock(side_effect=AssertionError("an unchanged hint must not fetch"))
+    else:
+        # The source stops publishing hints and answers 304 to the stored validator.
+        async with registry_db.transaction() as session:
+            row = (
+                await session.execute(
+                    select(CatalogEntryRow).where(CatalogEntryRow.entry_id == _ENTRY_ID)
+                )
+            ).scalar_one()
+            row.content_hint = None
+        fetch = AsyncMock(return_value=NotModified(validator='"v2"'))
+    with patch(_FETCH_ROW, fetch):
         await svc._run_update_notify_sweep()
 
+    if second_probe == "not_modified":
+        assert fetch.await_args is not None
+        assert fetch.await_args.kwargs["validator"] == '"v2"'
     events = await _events(integration_context)
     assert len(events) == 1  # re-emitted, not permanently suppressed
+    assert events[0].data["upstream_digest"] == "sha256:upstream-new"
     async with integration_context.registry_db.session() as session:
-        check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check_after = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check_after is not None
     assert check_after.last_notified_digest == "sha256:upstream-new"
+    assert check_after.last_seen_digest == "sha256:upstream-new"
+
+    # A third sweep with nothing new is a no-op again (no duplicate event).
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check is not None
+        check.last_checked_at = None
+    with patch(_FETCH_ROW, AsyncMock(return_value=NotModified(validator='"v2"'))):
+        await svc._run_update_notify_sweep()
+    assert len(await _events(integration_context)) == 1
 
 
 async def test_sweep_crash_after_emit_before_mark_re_emits_at_most_once(
@@ -509,13 +648,11 @@ async def test_sweep_crash_after_emit_before_mark_re_emits_at_most_once(
     which is strictly better than the permanent suppression the old ordering caused.
     """
     integration_context.config.catalog.update_check_interval_seconds = 1
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
 
     with (
-        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed),
+        patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed),
         patch(
             f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified",
             new_callable=AsyncMock,
@@ -537,7 +674,7 @@ async def test_sweep_crash_after_emit_before_mark_re_emits_at_most_once(
         check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
         assert check is not None
         check.last_checked_at = None
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
 
     assert len(await _events(integration_context)) == 2  # duplicate, not suppressed
@@ -556,11 +693,9 @@ async def test_sweep_marks_notified_after_successful_emit_and_dedupes(
     written after the emit, so a second sweep observing the same digest is deduped.
     """
     integration_context.config.catalog.update_check_interval_seconds = 1
-    changed = ConditionalFetch(
-        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
-    )
+    changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
-    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
         await svc._run_update_notify_sweep()
         async with integration_context.registry_db.transaction() as session:
             check = await CatalogUpdateCheckRepository.get(session, registered_api.id)

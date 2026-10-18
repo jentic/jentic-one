@@ -17,6 +17,7 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.jobs.errors import RetryLaterJobError, TerminalJobError
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import JobKind, JobStatus
@@ -178,3 +179,57 @@ async def test_completion_clears_visibility(admin_db: DatabaseSession, clean_job
     job = await _get(admin_db, job_id)
     assert job.status == JobStatus.COMPLETED
     assert job.visible_at is None
+
+
+class _RaiseHandler:
+    """Raises the given exception — drives the handler-steered retry paths."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def execute(
+        self,
+        job_id: str,
+        session: Any,
+        *,
+        payload: dict[str, Any] | None = None,
+        created_by: str | None = None,
+        actor_type: str | None = None,
+    ) -> JobResultPayload:
+        raise self._exc
+
+
+async def test_terminal_job_error_fails_without_retry(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A ``TerminalJobError`` fails the job at once, with budget left."""
+    job_id = await _insert_job(admin_db)
+    cfg = WorkerConfig(max_attempts=5)
+    worker = WorkerLoop(
+        admin_db, _registry(_RaiseHandler(TerminalJobError("spec is gone"))), worker_config=cfg
+    )
+
+    await worker._tick()
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.FAILED
+    assert job.attempts == 1
+    assert "spec is gone" in (job.error or "")
+
+
+async def test_retry_later_job_error_waits_at_least_its_retry_after(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A ``RetryLaterJobError`` requeues no sooner than ``retry_after_s``."""
+    job_id = await _insert_job(admin_db)
+    cfg = WorkerConfig(max_attempts=3, retry_backoff_base_s=1.0)
+    exc = RetryLaterJobError("source throttled", retry_after_s=120.0)
+    worker = WorkerLoop(admin_db, _registry(_RaiseHandler(exc)), worker_config=cfg)
+
+    await worker._tick()
+
+    job = await _get(admin_db, job_id)
+    assert job.status == JobStatus.QUEUED
+    assert job.visible_at is not None
+    wait = job.visible_at.replace(tzinfo=None) - datetime.now(UTC).replace(tzinfo=None)
+    assert wait > timedelta(seconds=100)

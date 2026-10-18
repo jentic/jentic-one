@@ -1,9 +1,11 @@
 """Integration tests for CatalogUpdateCheckRepository + the notify join query.
 
-Verifies the ``catalog_update_checks`` model round-trips against real PostgreSQL
-(KSUID id, unique ``local_api_id``, selective ``notified_digest`` write) and that
+Verifies the ``catalog_update_checks`` model round-trips against a real database
+(KSUID id, unique ``local_api_id``, the ``catalog_entry_id`` it tracks, selective
+``notified_digest`` write, validator/hint reset on an entry switch) and that
 ``ApiRevisionRepository.registered_specs_for_notify`` joins revisions to their API
-identity, excludes archived revisions, and de-duplicates per API.
+identity, only lists APIs imported from a catalog entry, excludes archived
+revisions, and de-duplicates per API.
 """
 
 from __future__ import annotations
@@ -21,6 +23,20 @@ from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
 
+_ENTRY_ID = "public/test.com"
+
+
+@pytest.fixture()
+async def catalog_api(registry_db: DatabaseSession, sample_api: Api) -> Api:
+    """``sample_api``, recorded as imported from the catalog entry ``_ENTRY_ID``."""
+    async with registry_db.session() as session:
+        api = await session.get(Api, sample_api.id)
+        assert api is not None
+        api.catalog_entry_id = _ENTRY_ID
+        await session.commit()
+    sample_api.catalog_entry_id = _ENTRY_ID
+    return sample_api
+
 
 async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_api: Api) -> None:
     """First upsert inserts a KSUID-id row; the second updates it in place."""
@@ -29,8 +45,8 @@ async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_
         row = await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v1"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
             digest="digest-1",
             checked_at=now,
         )
@@ -43,8 +59,8 @@ async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_
         again = await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v2"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v2"',
             digest="digest-2",
             checked_at=now,
             notified_digest="digest-2",
@@ -53,7 +69,8 @@ async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_
         await session.commit()
 
     assert again.id == row_id  # same row, updated in place
-    assert again.last_seen_etag == '"v2"'
+    assert again.catalog_entry_id == _ENTRY_ID
+    assert again.last_seen_validator == '"v2"'
     assert again.last_seen_digest == "digest-2"
     assert again.last_notified_digest == "digest-2"
     # The event class the digest fired under round-trips (part of the dedupe key).
@@ -69,8 +86,8 @@ async def test_upsert_does_not_clear_notified_digest_on_none(
         await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v1"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
             digest="digest-1",
             checked_at=now,
             notified_digest="digest-1",
@@ -81,8 +98,8 @@ async def test_upsert_does_not_clear_notified_digest_on_none(
         row = await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v1"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
             digest=None,
             checked_at=now,
         )
@@ -92,13 +109,13 @@ async def test_upsert_does_not_clear_notified_digest_on_none(
 
 
 async def test_registered_specs_for_notify_joins_identity_and_excludes_archived(
-    registry_db: DatabaseSession, sample_api: Api
+    registry_db: DatabaseSession, catalog_api: Api
 ) -> None:
     """The notify query returns identity+digest for non-archived, source_url'd revisions."""
     async with registry_db.session() as session:
         session.add(
             ApiRevision(
-                api_id=sample_api.id,
+                api_id=catalog_api.id,
                 state="published",
                 spec_digest="sha256:live",
                 source_type="url",
@@ -108,7 +125,7 @@ async def test_registered_specs_for_notify_joins_identity_and_excludes_archived(
         # An archived revision from a different URL must be excluded.
         session.add(
             ApiRevision(
-                api_id=sample_api.id,
+                api_id=catalog_api.id,
                 state="archived",
                 spec_digest="sha256:old",
                 source_type="url",
@@ -120,20 +137,21 @@ async def test_registered_specs_for_notify_joins_identity_and_excludes_archived(
     async with registry_db.session() as session:
         specs = await ApiRevisionRepository.registered_specs_for_notify(session)
 
-    mine = [s for s in specs if s.api_id == sample_api.id]
+    mine = [s for s in specs if s.api_id == catalog_api.id]
     assert len(mine) == 1
     spec = mine[0]
+    assert spec.catalog_entry_id == _ENTRY_ID
     assert spec.source_url == "https://example.com/openapi.json"
     assert spec.spec_digest == "sha256:live"
-    assert spec.vendor == sample_api.vendor
-    assert spec.name == sample_api.name
-    assert spec.version == sample_api.version
+    assert spec.vendor == catalog_api.vendor
+    assert spec.name == catalog_api.name
+    assert spec.version == catalog_api.version
     # Non-overlay revision → no overlay base digest.
     assert spec.overlay_base_digest is None
 
 
 async def test_registered_specs_for_notify_threads_overlay_base_digest(
-    registry_db: DatabaseSession, sample_api: Api
+    registry_db: DatabaseSession, catalog_api: Api
 ) -> None:
     """An overlay-origin current revision surfaces its overlay_base_digest to the sweep.
 
@@ -142,7 +160,7 @@ async def test_registered_specs_for_notify_threads_overlay_base_digest(
     """
     async with registry_db.session() as session:
         rev = ApiRevision(
-            api_id=sample_api.id,
+            api_id=catalog_api.id,
             state="published",
             origin="overlay",
             spec_digest="sha256:overlaid",
@@ -156,20 +174,20 @@ async def test_registered_specs_for_notify_threads_overlay_base_digest(
     async with registry_db.session() as session:
         specs = await ApiRevisionRepository.registered_specs_for_notify(session)
 
-    mine = [s for s in specs if s.api_id == sample_api.id]
+    mine = [s for s in specs if s.api_id == catalog_api.id]
     assert len(mine) == 1
     assert mine[0].origin == "overlay"
     assert mine[0].overlay_base_digest == "sha256:base"
 
 
 async def test_registered_specs_for_notify_picks_deterministic_revision(
-    registry_db: DatabaseSession, sample_api: Api
+    registry_db: DatabaseSession, catalog_api: Api
 ) -> None:
     """With >1 live revision, selection is deterministic: current_revision_id wins,
     else newest created_at — never DB-row-order-dependent (would cause spurious
     notifies against a stale digest/source_url)."""
     older = ApiRevision(
-        api_id=sample_api.id,
+        api_id=catalog_api.id,
         state="published",
         spec_digest="sha256:older",
         source_type="url",
@@ -177,7 +195,7 @@ async def test_registered_specs_for_notify_picks_deterministic_revision(
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     newer = ApiRevision(
-        api_id=sample_api.id,
+        api_id=catalog_api.id,
         state="draft",
         spec_digest="sha256:newer",
         source_type="url",
@@ -192,25 +210,113 @@ async def test_registered_specs_for_notify_picks_deterministic_revision(
     # No current_revision_id → newest created_at wins.
     async with registry_db.session() as session:
         specs = await ApiRevisionRepository.registered_specs_for_notify(session)
-    mine = [s for s in specs if s.api_id == sample_api.id]
+    mine = [s for s in specs if s.api_id == catalog_api.id]
     assert len(mine) == 1
     assert mine[0].spec_digest == "sha256:newer"
     assert mine[0].source_url == "https://example.com/newer.json"
 
     # current_revision_id set to the OLDER revision → it overrides recency.
     async with registry_db.session() as session:
-        api = await session.get(Api, sample_api.id)
+        api = await session.get(Api, catalog_api.id)
         assert api is not None
         api.current_revision_id = older_id
         await session.commit()
 
     async with registry_db.session() as session:
         specs = await ApiRevisionRepository.registered_specs_for_notify(session)
-    mine = [s for s in specs if s.api_id == sample_api.id]
+    mine = [s for s in specs if s.api_id == catalog_api.id]
     assert len(mine) == 1
     assert mine[0].spec_digest == "sha256:older"
     assert mine[0].source_url == "https://example.com/older.json"
     assert newer_id != older_id  # sanity: two distinct revisions existed
+
+
+async def test_registered_specs_for_notify_skips_apis_without_an_entry(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """An API not imported from a catalog entry is never a sweep candidate."""
+    async with registry_db.session() as session:
+        session.add(
+            ApiRevision(
+                api_id=sample_api.id,
+                state="published",
+                spec_digest="sha256:live",
+                source_type="url",
+                source_url="https://example.com/openapi.json",
+            )
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        specs = await ApiRevisionRepository.registered_specs_for_notify(session)
+    assert [s for s in specs if s.api_id == sample_api.id] == []
+
+
+async def test_upsert_on_another_entry_drops_the_old_validator_and_hint(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """An API that now tracks another entry does not revalidate with the old entry's validator."""
+    now = datetime.now(UTC)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
+            content_hint="sha:1",
+            digest="digest-1",
+            checked_at=now,
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        row = await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            catalog_entry_id="corp/test.com",
+            validator=None,
+            content_hint=None,
+            digest=None,
+            checked_at=now,
+        )
+        await session.commit()
+
+    assert row.catalog_entry_id == "corp/test.com"
+    assert row.last_seen_validator is None
+    assert row.last_seen_content_hint is None
+    # The last digest seen is kept: it is the API's, not the entry's.
+    assert row.last_seen_digest == "digest-1"
+
+
+async def test_upsert_stores_the_content_hint_as_given(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A hint is stored, and a probe without one clears it (no stale short-circuit)."""
+    now = datetime.now(UTC)
+    async with registry_db.session() as session:
+        row = await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            catalog_entry_id=_ENTRY_ID,
+            validator=None,
+            content_hint="sha:1",
+            digest="digest-1",
+            checked_at=now,
+        )
+        await session.commit()
+        assert row.last_seen_content_hint == "sha:1"
+
+    async with registry_db.session() as session:
+        row = await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            catalog_entry_id=_ENTRY_ID,
+            validator=None,
+            digest=None,
+            checked_at=now,
+        )
+        await session.commit()
+    assert row.last_seen_content_hint is None
 
 
 async def _seed_outdated(
@@ -234,8 +340,8 @@ async def _seed_outdated(
         await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v1"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
             digest=notified_digest,
             checked_at=now,
             notified_digest=notified_digest,
@@ -306,8 +412,8 @@ async def test_snooze_does_not_hide_a_newer_digest(
         await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v2"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v2"',
             digest="sha256:B",
             checked_at=now,
             notified_digest="sha256:B",
@@ -347,7 +453,7 @@ async def test_expired_snooze_re_lights_without_explicit_now(
     """A lapsed time-boxed snooze re-lights even when the caller doesn't thread ``now``.
 
     Regression: the per-API surfaces (``/apis`` list, single-API view) and the single
-    catalog ``get()`` call ``outdated_api_ids``/``outdated_spec_urls`` *without* ``now``.
+    catalog ``get()`` call ``outdated_api_ids``/``outdated_entry_ids`` *without* ``now``.
     ``_not_snoozed`` used to treat any non-null ``snoozed_until`` as still-active when
     ``now`` was None, so an expired time-boxed snooze stayed hidden forever on those
     surfaces. ``_not_snoozed`` now defaults ``now`` to the current UTC time, so a lapsed
@@ -367,8 +473,8 @@ async def test_expired_snooze_re_lights_without_explicit_now(
         # No `now` passed — the default clock must still see the snooze as expired.
         ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
         assert sample_api.id in ids
-        urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
-        assert "https://example.com/openapi.json" in urls
+        entry_ids = await CatalogUpdateCheckRepository.outdated_entry_ids(session)
+        assert _ENTRY_ID in entry_ids
 
 
 async def test_future_snooze_still_excludes_without_explicit_now(
@@ -399,8 +505,8 @@ async def test_mark_notified_updates_existing_row(
         await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=sample_api.id,
-            spec_url="https://example.com/openapi.json",
-            etag='"v1"',
+            catalog_entry_id=_ENTRY_ID,
+            validator='"v1"',
             digest="digest-up",
             checked_at=now,
         )

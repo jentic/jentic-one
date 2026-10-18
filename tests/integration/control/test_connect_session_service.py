@@ -15,6 +15,7 @@ find them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from collections.abc import AsyncGenerator
@@ -86,10 +87,12 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.ingest.fetch import CatalogSpec
 from jentic_one.registry.services.catalog.entries import build_catalog_entry
 from jentic_one.registry.services.catalog.manifest_builder import catalog_api_name
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.snapshot import clear_snapshots
+from jentic_one.registry.services.catalog.spec_fetch import CatalogRefResolver
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
@@ -409,19 +412,15 @@ async def clean_registry_and_bindings(
     await _truncate()
 
 
-def _spec_client() -> AsyncMock:
-    """An httpx.AsyncClient double serving the test spec for any GET."""
+def _catalog_spec() -> CatalogSpec:
+    """The test spec, as the catalog entry's source returns it."""
     body = _TESTDEV_OPENAPI.encode()
-    response = AsyncMock()
-    response.status_code = 200
-    response.text = _TESTDEV_OPENAPI
-    response.content = body
-    response.headers = {"content-length": str(len(body))}
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=response)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    return client
+    return CatalogSpec(
+        content=body,
+        digest=hashlib.sha256(body).hexdigest(),
+        media_type="application/json",
+        source_url="https://catalog.example.com/testdev/openapi.json",
+    )
 
 
 async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None) -> Api:
@@ -440,12 +439,12 @@ async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None)
     )
     source = CatalogService(ctx)._to_import_source(
         entry,
-        "https://catalog.example.com/testdev/openapi.json",
         Identity(sub=_USER_ID, permissions=["org:admin"]),
         vendor=None,
         name=name or catalog_api_name(_TESTDEV_CATALOG_ID, [_TESTDEV_CATALOG_ID]),
+        switch_source=False,
     )
-    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=_spec_client()):
+    with patch.object(CatalogRefResolver, "resolve", new=AsyncMock(return_value=_catalog_spec())):
         await ImportHandler(ctx).execute(
             job_id=str(uuid.uuid4()),
             session=None,

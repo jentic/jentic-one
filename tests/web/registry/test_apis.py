@@ -324,8 +324,8 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
         await CatalogUpdateCheckRepository.upsert(
             session,
             local_api_id=api.id,
-            spec_url="https://upstream.example/openapi.json",
-            etag='"v2"',
+            catalog_entry_id="public/published-over-catalog.com",
+            validator='"v2"',
             digest="sha256:upstream-new",
             checked_at=datetime.now(UTC),
             notified_digest="sha256:upstream-new",  # != served f"sha256:{vendor}-api-v1"

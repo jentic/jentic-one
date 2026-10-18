@@ -54,17 +54,20 @@ async def _flush_new_revision(session: AsyncSession) -> None:
 
 @dataclass(frozen=True)
 class RegisteredSpec:
-    """A sweep candidate: a registered API's spec URL + its current identity/digest."""
+    """A sweep candidate: an API imported from a catalog entry + its served identity/digest."""
 
     api_id: uuid.UUID
-    source_url: str
+    #: The catalog entry the API was imported from (the probe target).
+    catalog_entry_id: str
+    #: The served revision's ``source_url`` (provenance only; ``None`` when the
+    #: entry's source does not fetch by URL).
+    source_url: str | None
     spec_digest: str | None
     vendor: str
     name: str
     version: str
-    #: Current revision's provenance marker (``"catalog"``, ``"overlay"``, or ``None``
-    #: for a manual import). The update-notify sweep uses it to decide whether the spec
-    #: is upstream-tracked (see ``ORIGIN_CATALOG`` / ``ORIGIN_OVERLAY``).
+    #: Served revision's provenance marker (``"catalog"``, ``"overlay"``, or ``None``
+    #: for a manual import); the sweep classifies overlay conflicts on it.
     origin: str | None
     #: For an overlay-origin current revision: the ``spec_digest`` of the base the
     #: overlay was materialized over. The sweep compares the upstream digest against
@@ -295,6 +298,28 @@ class ApiRevisionRepository:
             select(Api.id, Api.current_revision_id)
             .join(ApiRevision, ApiRevision.id == Api.current_revision_id)
             .where(ApiRevision.source_url == source_url)
+            .limit(1)
+        )
+        row = result.first()
+        if row is None or row[1] is None:
+            return None
+        return (row[0], row[1])
+
+    @staticmethod
+    async def current_revision_for_catalog_entry_id(
+        session: AsyncSession, catalog_entry_id: str
+    ) -> tuple[uuid.UUID, uuid.UUID] | None:
+        """The ``(api_id, current_revision_id)`` of the API imported from a catalog entry.
+
+        The entry-keyed twin of :meth:`current_revision_for_source_url`: the oldest
+        API recording ``catalog_entry_id`` that has a current revision. ``None``
+        when no such API exists (or it has only an unpromoted draft).
+        """
+        result = await session.execute(
+            select(Api.id, Api.current_revision_id)
+            .where(Api.catalog_entry_id == catalog_entry_id)
+            .where(Api.current_revision_id.is_not(None))
+            .order_by(Api.created_at, Api.id)
             .limit(1)
         )
         row = result.first()
@@ -539,14 +564,16 @@ class ApiRevisionRepository:
     async def registered_specs_for_notify(
         session: AsyncSession,
     ) -> list[RegisteredSpec]:
-        """Non-archived revisions that carry a ``source_url`` — the sweep candidates.
+        """The served revision of every API imported from a catalog entry — the sweep candidates.
 
         Joins each candidate revision to its API's identity + current spec digest so
         the update-notify sweep can build an event payload and dedupe without a
-        second query. Exactly one row per ``api_id``: an API commonly has multiple
+        second query. Only APIs recording a ``catalog_entry_id`` are candidates (an
+        overlay is a revision of the same API, so it is covered). Exactly one row per
+        ``api_id``: an API commonly has multiple
         non-archived revisions (imports create drafts that are never auto-promoted),
         so we must pick a **deterministic** one or the sweep would compare upstream
-        against a row-order-dependent digest/``source_url`` and fire spurious
+        against a row-order-dependent digest and fire spurious
         notifications. Selection order: the API's ``current_revision_id`` if set,
         then newest ``created_at``, then ``id`` as a final tiebreak (matching the
         ``ix_api_revisions_api_id_created_at_id`` index).
@@ -559,6 +586,7 @@ class ApiRevisionRepository:
         result = await session.execute(
             select(
                 ApiRevision.api_id,
+                Api.catalog_entry_id,
                 ApiRevision.source_url,
                 ApiRevision.spec_digest,
                 ApiRevision.origin,
@@ -568,7 +596,7 @@ class ApiRevisionRepository:
                 Api.version,
             )
             .join(Api, Api.id == ApiRevision.api_id)
-            .where(ApiRevision.source_url.is_not(None))
+            .where(Api.catalog_entry_id.is_not(None))
             .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
             .order_by(
                 ApiRevision.api_id,
@@ -581,6 +609,7 @@ class ApiRevisionRepository:
         specs: list[RegisteredSpec] = []
         for (
             api_id,
+            catalog_entry_id,
             source_url,
             spec_digest,
             origin,
@@ -595,6 +624,7 @@ class ApiRevisionRepository:
             specs.append(
                 RegisteredSpec(
                     api_id=api_id,
+                    catalog_entry_id=catalog_entry_id,
                     source_url=source_url,
                     spec_digest=spec_digest,
                     vendor=vendor,

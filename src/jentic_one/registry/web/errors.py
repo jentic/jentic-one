@@ -13,6 +13,8 @@ from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
+    CatalogSourceUnavailableError,
+    CatalogSpecGoneError,
     CatalogUnavailableError,
     GovernedHostsUnavailableError,
     HostChangeRequiresOperatorError,
@@ -95,6 +97,11 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     SearchUnavailableError: (501, "search_unsupported"),
     SpecFileMissingError: (500, "spec_file_missing"),
     CatalogUnavailableError: (502, "catalog_unavailable"),
+    # The entry is listed but its source says the spec is permanently gone:
+    # 410 tells clients not to retry (404 stays reserved for missing/hidden ids).
+    CatalogSpecGoneError: (410, "catalog_spec_gone"),
+    # The entry's source is throttled or down: transient, retry after the header.
+    CatalogSourceUnavailableError: (503, "catalog_source_unavailable"),
     # A registry process serving /governed-hosts without the admin or control
     # DB is misdeployed (SURFACE_DB_DEPS should have granted them) — 503 so
     # callers retry a healthy replica; never a bare 500, never an empty 200.
@@ -118,9 +125,11 @@ _SAFE_DETAILS: dict[type[Exception], str] = {
 def _add_allow_header(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
-    """Add Allow header for 405s; add ``did_you_mean`` to a catalog-entry 404 that has one."""
+    """Add Allow (405) and Retry-After (catalog 503); add a catalog 404's ``did_you_mean``."""
     if status_code == 405 and hasattr(exc, "allowed_methods"):
         response.headers["Allow"] = ", ".join(exc.allowed_methods)
+    if isinstance(exc, CatalogSourceUnavailableError):
+        response.headers["Retry-After"] = str(exc.retry_after_s)
     if isinstance(exc, CatalogEntryNotFoundError) and exc.did_you_mean is not None:
         body = json.loads(bytes(response.body))
         body["did_you_mean"] = exc.did_you_mean

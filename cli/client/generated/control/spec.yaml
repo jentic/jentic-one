@@ -2642,7 +2642,7 @@ components:
     CatalogRefreshResponse:
       description: Acknowledgement of a catalog refresh.
       examples:
-      - &id223
+      - &id224
         count: 5231
         status: refreshed
       properties:
@@ -2687,7 +2687,7 @@ components:
     ChangePasswordRequest:
       description: Payload for changing own password.
       examples:
-      - &id288
+      - &id289
         current_password: example-password
         new_password: example-new-password
       properties:
@@ -2736,7 +2736,7 @@ components:
     ConnectRequestBody:
       description: Request body for initiating a credential connect flow.
       examples:
-      - &id234
+      - &id235
         extra: &id039
           prompt: consent
         scopes: &id040
@@ -2763,7 +2763,7 @@ components:
     ConnectSessionListResponse:
       description: Cursor-paginated envelope of connect-session summaries.
       examples:
-      - &id224
+      - &id225
         data: &id041
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           connected_as: octocat
@@ -2922,7 +2922,7 @@ components:
         vanished row) all read as ``pending`` so the endpoint is not a lifecycle
         oracle either.
       examples:
-      - &id269
+      - &id270
         status: pending
       properties:
         status:
@@ -2942,7 +2942,7 @@ components:
     CreateAdminRequest:
       description: Payload for first-run admin creation (one-time setup).
       examples:
-      - &id293
+      - &id294
         email: admin@example.com
         first_name: Ada
         last_name: Lovelace
@@ -2991,7 +2991,7 @@ components:
     CredentialAgentListResponse:
       description: Paginated list of agents directly bound to a credential.
       examples:
-      - &id228
+      - &id229
         data: &id042
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_name: billing-assistant
@@ -3309,7 +3309,7 @@ components:
     CredentialCreateResponse:
       description: 'Create response: redacted + secret shown once.'
       examples:
-      - &id226
+      - &id227
         credential:
           active: true
           api:
@@ -3383,7 +3383,7 @@ components:
     CredentialListResponse:
       description: Paginated list of credentials.
       examples:
-      - &id225
+      - &id226
         data: &id047
         - *id046
         has_more: true
@@ -3567,7 +3567,7 @@ components:
     CurrentUserResponse:
       description: Current user profile.
       examples:
-      - &id287
+      - &id288
         active: true
         created_at: '2026-01-15T09:30:00Z'
         email: ada@example.com
@@ -3696,7 +3696,7 @@ components:
       additionalProperties: false
       description: Approve or deny a pending held execution.
       examples:
-      - &id245
+      - &id246
         decision: deny
         reason: Not this account
       properties:
@@ -3966,7 +3966,7 @@ components:
     EventListResponse:
       description: Paginated list of events.
       examples:
-      - &id237
+      - &id238
         data: &id051
         - _links: *id050
           actor_id: usr_6968b3987ee4c3ec0b4ee3b9
@@ -4015,7 +4015,7 @@ components:
     EventResponse:
       description: Event representation in API responses.
       examples:
-      - &id240
+      - &id241
         _links: *id050
         actor_id: usr_6968b3987ee4c3ec0b4ee3b9
         actor_type: user
@@ -4129,7 +4129,7 @@ components:
     ExecutionListResponse:
       description: Paginated list of executions.
       examples:
-      - &id242
+      - &id243
         data: &id054
         - _links:
             self: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
@@ -4203,7 +4203,7 @@ components:
     ExecutionResponse:
       description: Execution record representation in API responses.
       examples:
-      - &id247
+      - &id248
         _links: *id055
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
@@ -4392,7 +4392,7 @@ components:
     ExecutionStatsResponse:
       description: Aggregated execution statistics for the dashboard.
       examples:
-      - &id257
+      - &id258
         daily_buckets: &id058
         - *id057
         success_rate_percent: 93.75
@@ -4524,7 +4524,7 @@ components:
         This is a documented deviation from the list-endpoint pagination
         convention.
       examples:
-      - &id248
+      - &id249
         data: &id061
         - api.github.com
         - api.stripe.com
@@ -4606,7 +4606,7 @@ components:
     HeldExecutionDetailResponse:
       description: A held execution with the agent context and the held request a reviewer decides on.
       examples:
-      - &id244
+      - &id245
         _links: &id062
           execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           result: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
@@ -4884,7 +4884,7 @@ components:
     HeldExecutionListResponse:
       description: A page of held executions.
       examples:
-      - &id243
+      - &id244
         data: &id065
         - _links: *id064
           agent_id: agnt_6968b3984d1c238dbe7e2e29
@@ -4941,7 +4941,7 @@ components:
     HeldExecutionResponse:
       description: A call held for a human decision, and where it stands.
       examples:
-      - &id246
+      - &id247
         _links: *id064
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api_name: stripe
@@ -5197,7 +5197,7 @@ components:
         it *thinks* it is pointed to confirm it is talking to the intended backend
         (e.g. a local install vs. a remote one) before diagnosing "missing" data.
       examples:
-      - &id250
+      - &id251
         backend: remote
         broker_url: https://broker.jentic.example.com
         canonical_base_url: https://jentic.example.com
@@ -5259,7 +5259,7 @@ components:
       additionalProperties: false
       description: Start connecting a credential for a vendor or a registry API.
       examples:
-      - &id251
+      - &id252
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api: *id066
         auth_type: oauth2
@@ -5368,7 +5368,7 @@ components:
     IntrospectResponse:
       description: RFC 7662 introspection response.
       examples:
-      - &id270
+      - &id271
         active: true
         exp: 1769903999
         scope: apis:read capabilities:execute
@@ -5420,7 +5420,7 @@ components:
     InviteIssuedResponse:
       description: Response when an invite token is issued.
       examples:
-      - &id292
+      - &id293
         expires_at: '2026-01-22T09:30:00Z'
         token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
       properties:
@@ -5489,7 +5489,7 @@ components:
     JobListResponse:
       description: Paginated list of jobs.
       examples:
-      - &id253
+      - &id254
         data: &id070
         - _links: *id069
           actor_id: agnt_6968b3984d1c238dbe7e2e29
@@ -5534,7 +5534,7 @@ components:
     JobResponse:
       description: Job representation in API responses.
       examples:
-      - &id254
+      - &id255
         _links: *id069
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
@@ -5722,7 +5722,7 @@ components:
     McpConfigRegistrationRequest:
       description: Report that an MCP config entry was written for one agent runtime.
       examples:
-      - &id255
+      - &id256
         runtime: cursor
       properties:
         runtime:
@@ -5737,7 +5737,7 @@ components:
     McpConfigRegistrationResponse:
       description: Acknowledgement of a config-registration report.
       examples:
-      - &id256
+      - &id257
         recorded: true
         runtime: cursor
       properties:
@@ -6053,7 +6053,7 @@ components:
       additionalProperties: false
       description: Payload for creating a new note.
       examples:
-      - &id259
+      - &id260
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: observed
         related_execution_id: exec_6968b3982706c619fe73f0cf
@@ -6173,7 +6173,7 @@ components:
       additionalProperties: false
       description: Payload for updating an existing note (partial).
       examples:
-      - &id260
+      - &id261
         body: Stripe returns 401 unless the secret key is sent as a Bearer token; Basic auth with an empty password also works.
         confidence: verified
         related_execution_id: exec_6968b3982706c619fe73f0cf
@@ -6438,7 +6438,7 @@ components:
     OAuthAppRegistrationListResponse:
       description: Paginated list of OAuth app registrations.
       examples:
-      - &id261
+      - &id262
         data: &id087
         - api_vendor: github
           authorization_endpoint: https://github.com/login/device/code
@@ -6499,7 +6499,7 @@ components:
         ``secret_last_rotated_at`` so an admin can see rotation history without
         being able to read the material.
       examples:
-      - &id262
+      - &id263
         api_vendor: github
         authorization_endpoint: https://github.com/login/device/code
         authorize_url: https://github.com/login/oauth/authorize
@@ -6672,7 +6672,7 @@ components:
       additionalProperties: false
       description: Rotate the client secret on an auth-code registration.
       examples:
-      - &id264
+      - &id265
         client_secret: example-secret
       properties:
         client_secret:
@@ -6692,7 +6692,7 @@ components:
       additionalProperties: false
       description: Partial update — fields not present are left untouched.
       examples:
-      - &id263
+      - &id264
         authorization_endpoint: https://github.com/login/device/code
         authorize_url: https://github.com/login/oauth/authorize
         default_scopes: &id089
@@ -6804,7 +6804,7 @@ components:
         ``oauth-clients:write`` — so global redaction buys nothing worth that
         collision.
       examples:
-      - &id267
+      - &id268
         action: approve
         state: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
       properties:
@@ -6836,7 +6836,7 @@ components:
         metadata — so the anonymous poll endpoint cannot be used to read client
         details out of the registry.
       examples:
-      - &id268
+      - &id269
         status: approved
       properties:
         status:
@@ -7165,7 +7165,7 @@ components:
     OAuthClientRegistrationRequest:
       description: POST /oauth-clients request body (RFC 7591 client metadata subset).
       examples:
-      - &id265
+      - &id266
         application_type: native
         client_name: Cursor
         grant_types: &id091
@@ -7276,7 +7276,7 @@ components:
         ``registration_access_token`` (D12 — no RFC 7592 self-management surface;
         clients retry ``/authorize``, they don't poll).
       examples:
-      - &id266
+      - &id267
         application_type: native
         client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         client_id_issued_at: 1767225600
@@ -8907,7 +8907,7 @@ components:
     PermissionListResponse:
       description: List of available permissions.
       examples:
-      - &id277
+      - &id278
         data: &id117
         - description: Create, update, and disable users
           grantable_by_caller: true
@@ -8971,7 +8971,7 @@ components:
     PermissionRuleListResponse:
       description: List of permission rules.
       examples:
-      - &id229
+      - &id230
         data: &id119
         - _comment: Read-only access to charges.
           _system: false
@@ -9148,7 +9148,7 @@ components:
       additionalProperties: false
       description: Request body for :test — dry-run a request shape against the binding's rules.
       examples:
-      - &id231
+      - &id232
         method: GET
         operation_id: listCharges
         path: /v1/charges
@@ -9181,7 +9181,7 @@ components:
     PermissionTestResponse:
       description: Dry-run result matching :class:`PermissionTestResult`.
       examples:
-      - &id232
+      - &id233
         allowed: true
         credential_id: cred_6968b39855d91a3561684b32
         effect: allow
@@ -9272,7 +9272,7 @@ components:
     PermissionsPatchRequest:
       description: Patch permission rules — add and/or remove.
       examples:
-      - &id230
+      - &id231
         add: &id126
         - *id125
         remove: &id127
@@ -9698,7 +9698,7 @@ components:
     ProviderDiscoveryResponse:
       description: Discovery response listing all available credential providers.
       examples:
-      - &id227
+      - &id228
         providers: &id136
         - *id135
       properties:
@@ -9787,7 +9787,7 @@ components:
     RedeemInviteRequest:
       description: Payload for redeeming an invite token.
       examples:
-      - &id294
+      - &id295
         invite_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         password: example-password
       properties:
@@ -9817,7 +9817,7 @@ components:
     RegisterRequest:
       description: POST /register request body.
       examples:
-      - &id278
+      - &id279
         client_name: invoice-reconciler
         grant_types: &id138
         - urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -9879,7 +9879,7 @@ components:
     RegisterResponse:
       description: POST /register 201 response.
       examples:
-      - &id279
+      - &id280
         claim_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         client_id: agnt_6968b3984d1c238dbe7e2e29
         grant_types: &id140
@@ -9950,7 +9950,7 @@ components:
     RegistrationStatusResponse:
       description: GET /register/{agent_id} response.
       examples:
-      - &id280
+      - &id281
         client_id: agnt_6968b3984d1c238dbe7e2e29
         grant_types: &id141
         - urn:ietf:params:oauth:grant-type:jwt-bearer
@@ -10002,7 +10002,7 @@ components:
         secret-less client's lineage binding; ignored on the bearer-authenticated
         JSON arm, where the platform identity scopes the revocation instead.
       examples:
-      - &id271
+      - &id272
         client_id: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         token: rt_example-refresh-token
         token_type_hint: refresh_token
@@ -10037,7 +10037,7 @@ components:
     RootHealthResponse:
       description: Liveness body of the canonical root ``GET /health`` probe.
       examples:
-      - &id249
+      - &id250
         status: ok
         version: 1.0.0
       properties:
@@ -10089,7 +10089,7 @@ components:
     RuleSetAttachRequest:
       description: Point a direct agent↔credential binding at a shared rule set.
       examples:
-      - &id233
+      - &id234
         rule_set_id: prs_6968b3987c22b63e87e79f05
       properties:
         rule_set_id:
@@ -10105,7 +10105,7 @@ components:
     RuleSetCreateRequest:
       description: Create a shared permission rule set (theme 5 phase 1, Q-04).
       examples:
-      - &id274
+      - &id275
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
         rules: &id142
@@ -10143,7 +10143,7 @@ components:
     RuleSetListResponse:
       description: Paginated list of rule sets.
       examples:
-      - &id273
+      - &id274
         data: &id143
         - created_at: '2026-01-15T09:30:00Z'
           created_by: usr_6968b3987ee4c3ec0b4ee3b9
@@ -10185,7 +10185,7 @@ components:
     RuleSetResponse:
       description: Rule set detail — the ordered rules plus its referencing-binding count.
       examples:
-      - &id275
+      - &id276
         binding_count: 3
         created_at: '2026-01-15T09:30:00Z'
         created_by: usr_6968b3987ee4c3ec0b4ee3b9
@@ -10329,7 +10329,7 @@ components:
     RuleSetUpdateRequest:
       description: Rename or re-describe a rule set.
       examples:
-      - &id276
+      - &id277
         description: Allows GET requests to the Stripe API; denies everything else.
         name: Stripe read-only
       properties:
@@ -10401,7 +10401,7 @@ components:
       additionalProperties: false
       description: POST /search request body.
       examples:
-      - &id281
+      - &id282
         apis: &id146
         - stripe.com/stripe
         cursor: eyJkIjogMC4yODE2LCAiaWQiOiAib3BfZjkyZDY5ZjE2MjFmMzgxYmNlOGFhZmY0NzA1M2M2MWIwNjlmZmUzNCJ9
@@ -10461,7 +10461,7 @@ components:
     SearchResponse:
       description: Cursor-paginated search results page.
       examples:
-      - &id282
+      - &id283
         data: &id149
         - *id148
         has_more: true
@@ -10708,7 +10708,7 @@ components:
     SetPermissionsRequest:
       description: Request body for setting user permissions.
       examples:
-      - &id291
+      - &id292
         permissions: &id154
         - users:write
         - agents:read
@@ -10940,7 +10940,7 @@ components:
     TokenResponse:
       description: Token endpoint success response.
       examples:
-      - &id272
+      - &id273
         access_token: at_example-access-token
         expires_in: 3600
         id_token: example-id-token
@@ -11097,7 +11097,7 @@ components:
     UsageResponse:
       description: Full usage statistics response.
       examples:
-      - &id258
+      - &id259
         bucket_seconds: 86400
         buckets: &id159
         - *id158
@@ -11325,7 +11325,7 @@ components:
     UserCreateRequest:
       description: Request body for creating a new user.
       examples:
-      - &id285
+      - &id286
         email: ada@example.com
         first_name: Ada
         last_name: Lovelace
@@ -11375,7 +11375,7 @@ components:
     UserCreatedResponse:
       description: Response after user creation including invite token.
       examples:
-      - &id286
+      - &id287
         invite_expires_at: '2026-01-22T09:30:00Z'
         invite_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         user: &id165
@@ -11420,7 +11420,7 @@ components:
     UserListResponse:
       description: Paginated list of users.
       examples:
-      - &id284
+      - &id285
         data: &id166
         - active: true
           auth_provider: external
@@ -11468,7 +11468,7 @@ components:
     UserResponse:
       description: User representation in API responses.
       examples:
-      - &id289
+      - &id290
         active: true
         auth_provider: external
         created_at: '2026-01-15T09:30:00Z'
@@ -11582,7 +11582,7 @@ components:
     UserUpdateRequest:
       description: Request body for updating a user.
       examples:
-      - &id290
+      - &id291
         email: ada.lovelace@example.com
         first_name: Ada
         last_name: Lovelace
@@ -11622,7 +11622,7 @@ components:
     VendorListResponse:
       description: The vendors the caller can connect a credential for.
       examples:
-      - &id295
+      - &id296
         data: &id167
         - catalog_api_id: github.com/api.github.com
           display_name: GitHub
@@ -11736,7 +11736,7 @@ components:
     VersionResponse:
       description: The running app version and the latest release known to this backend.
       examples:
-      - &id283
+      - &id284
         current: 0.42.2
         latest: 0.43.0
         update_available: true
@@ -16028,7 +16028,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: &id222
+              example: &id223
                 detail: The request conflicts with the current state of the resource.
                 instance: /example/path
                 status: 409
@@ -19591,6 +19591,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '410':
+          content:
+            application/problem+json:
+              example: &id222
+                detail: The resource is no longer available and the operation has self-closed.
+                instance: /example/path
+                status: 410
+                title: Gone
+                type: gone
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: '`catalog_spec_gone`: the entry''s source no longer has a spec for it.'
         '422':
           content:
             application/problem+json:
@@ -19611,7 +19623,7 @@ paths:
               example: *id177
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
+          description: '`catalog_source_unavailable`: the entry''s source is throttled or down; retry after the `Retry-After` header.'
         default:
           content:
             application/problem+json:
@@ -19690,6 +19702,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '410':
+          content:
+            application/problem+json:
+              example: *id222
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: '`catalog_spec_gone`: the entry lists no spec to import.'
         '422':
           content:
             application/problem+json:
@@ -19788,7 +19807,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
@@ -19934,7 +19953,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id223
+              example: *id224
               schema:
                 $ref: '#/components/schemas/CatalogRefreshResponse'
           description: Successful Response
@@ -20086,7 +20105,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id224
+              example: *id225
               schema:
                 $ref: '#/components/schemas/ConnectSessionListResponse'
           description: Successful Response
@@ -20223,7 +20242,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The session's OAuth app changed; start a new session
@@ -20601,7 +20620,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale
@@ -20791,7 +20810,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id225
+              example: *id226
               schema:
                 $ref: '#/components/schemas/CredentialListResponse'
           description: Successful Response
@@ -20880,7 +20899,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id226
+              example: *id227
               schema:
                 $ref: '#/components/schemas/CredentialCreateResponse'
           description: Successful Response
@@ -20949,7 +20968,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id227
+              example: *id228
               schema:
                 $ref: '#/components/schemas/ProviderDiscoveryResponse'
           description: Successful Response
@@ -21358,7 +21377,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id228
+              example: *id229
               schema:
                 $ref: '#/components/schemas/CredentialAgentListResponse'
           description: Successful Response
@@ -21463,7 +21482,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id229
+              example: *id230
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -21564,7 +21583,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id230
+            example: *id231
             schema:
               $ref: '#/components/schemas/PermissionsPatchRequest'
         description: Patch permission rules — add and/or remove.
@@ -21573,7 +21592,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id229
+              example: *id230
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -21686,7 +21705,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id229
+              example: *id230
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -21795,7 +21814,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id231
+            example: *id232
             schema:
               $ref: '#/components/schemas/PermissionTestRequest'
         description: Request body for :test — dry-run a request shape against the binding's rules.
@@ -21804,7 +21823,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id232
+              example: *id233
               schema:
                 $ref: '#/components/schemas/PermissionTestResponse'
           description: Successful Response
@@ -22017,7 +22036,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id233
+            example: *id234
             schema:
               $ref: '#/components/schemas/RuleSetAttachRequest'
         description: Point a direct agent↔credential binding at a shared rule set.
@@ -22117,7 +22136,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id234
+            example: *id235
             schema:
               $ref: '#/components/schemas/ConnectRequestBody'
         description: Request body for initiating a credential connect flow.
@@ -22159,7 +22178,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Credential is not connectable
@@ -22279,7 +22298,7 @@ paths:
         examples:
           example:
             summary: Example query value for `event_type`
-            value: &id235
+            value: &id236
             - import.completed
         in: query
         name: event_type
@@ -22287,7 +22306,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id235
+            - *id236
             items:
               examples:
               - import.completed
@@ -22296,13 +22315,13 @@ paths:
           - type: 'null'
           description: Only return events of one of these types; repeat the parameter for several.
           examples:
-          - *id235
+          - *id236
           title: Event Type
       - description: Only return events with one of these severities; repeat the parameter for several.
         examples:
           example:
             summary: Example query value for `severity`
-            value: &id236
+            value: &id237
             - warning
             - error
         in: query
@@ -22311,7 +22330,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id236
+            - *id237
             items:
               $ref: '#/components/schemas/EventSeverity'
               examples:
@@ -22320,7 +22339,7 @@ paths:
           - type: 'null'
           description: Only return events with one of these severities; repeat the parameter for several.
           examples:
-          - *id236
+          - *id237
           title: Severity
       - description: Only return events whose `requires_action` flag matches.
         examples:
@@ -22471,7 +22490,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id237
+              example: *id238
               schema:
                 $ref: '#/components/schemas/EventListResponse'
           description: Successful Response
@@ -22560,7 +22579,7 @@ paths:
         examples:
           example:
             summary: Example query value for `event_type`
-            value: &id238
+            value: &id239
             - import.completed
         in: query
         name: event_type
@@ -22568,7 +22587,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id238
+            - *id239
             items:
               examples:
               - import.completed
@@ -22577,13 +22596,13 @@ paths:
           - type: 'null'
           description: Only return events of one of these types; repeat the parameter for several.
           examples:
-          - *id238
+          - *id239
           title: Event Type
       - description: Only return events with one of these severities; repeat the parameter for several.
         examples:
           example:
             summary: Example query value for `severity`
-            value: &id239
+            value: &id240
             - warning
             - error
         in: query
@@ -22592,7 +22611,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id239
+            - *id240
             items:
               $ref: '#/components/schemas/EventSeverity'
               examples:
@@ -22601,7 +22620,7 @@ paths:
           - type: 'null'
           description: Only return events with one of these severities; repeat the parameter for several.
           examples:
-          - *id239
+          - *id240
           title: Severity
       - description: Only return events whose `requires_action` flag matches.
         examples:
@@ -22779,7 +22798,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id240
+              example: *id241
               schema:
                 $ref: '#/components/schemas/EventResponse'
           description: Successful Response
@@ -22885,7 +22904,7 @@ paths:
         examples:
           example:
             summary: Example query value for `status`
-            value: &id241
+            value: &id242
             - completed
             - failed
         in: query
@@ -22894,7 +22913,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id241
+            - *id242
             items:
               examples:
               - completed
@@ -22903,7 +22922,7 @@ paths:
           - type: 'null'
           description: Only return executions with one of these terminal statuses (`completed` or `failed`); repeat the parameter for several.
           examples:
-          - *id241
+          - *id242
           title: Status
       - description: Only return executions started at or after this time (RFC 3339).
         examples:
@@ -23036,7 +23055,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id242
+              example: *id243
               schema:
                 $ref: '#/components/schemas/ExecutionListResponse'
           description: Successful Response
@@ -23179,7 +23198,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id243
+              example: *id244
               schema:
                 $ref: '#/components/schemas/HeldExecutionListResponse'
           description: Successful Response
@@ -23268,7 +23287,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id244
+              example: *id245
               schema:
                 $ref: '#/components/schemas/HeldExecutionDetailResponse'
           description: Successful Response
@@ -23400,7 +23419,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23468,7 +23487,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id245
+            example: *id246
             schema:
               $ref: '#/components/schemas/DecideHeldExecutionRequest'
         description: Approve or deny a pending held execution.
@@ -23477,7 +23496,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id246
+              example: *id247
               schema:
                 $ref: '#/components/schemas/HeldExecutionResponse'
           description: Successful Response
@@ -23512,7 +23531,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23581,7 +23600,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id246
+              example: *id247
               schema:
                 $ref: '#/components/schemas/HeldExecutionResponse'
           description: Successful Response
@@ -23616,7 +23635,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -23679,7 +23698,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id247
+              example: *id248
               schema:
                 $ref: '#/components/schemas/ExecutionResponse'
           description: Successful Response
@@ -23787,7 +23806,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id248
+              example: *id249
               schema:
                 $ref: '#/components/schemas/GovernedHostsResponse'
           description: Successful Response
@@ -23872,7 +23891,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id249
+              example: *id250
               schema:
                 $ref: '#/components/schemas/RootHealthResponse'
           description: Successful Response
@@ -24048,7 +24067,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id250
+              example: *id251
               schema:
                 $ref: '#/components/schemas/InstanceIdentityResponse'
           description: Successful Response
@@ -24086,7 +24105,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id251
+            example: *id252
             schema:
               $ref: '#/components/schemas/IntegrationsConnectRequest'
         description: Start connecting a credential for a vendor or a registry API.
@@ -24128,7 +24147,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The API declares no supported scheme, or its hosts cannot be pinned
@@ -24207,7 +24226,7 @@ paths:
         examples:
           example:
             summary: Example query value for `status`
-            value: &id252
+            value: &id253
             - running
         in: query
         name: status
@@ -24215,7 +24234,7 @@ paths:
         schema:
           anyOf:
           - examples:
-            - *id252
+            - *id253
             items:
               examples:
               - running
@@ -24224,7 +24243,7 @@ paths:
           - type: 'null'
           description: Only return jobs in one of these states; repeat the parameter for several.
           examples:
-          - *id252
+          - *id253
           title: Status
       - description: Only return jobs created at or after this time (RFC 3339).
         examples:
@@ -24303,7 +24322,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id253
+              example: *id254
               schema:
                 $ref: '#/components/schemas/JobListResponse'
           description: Successful Response
@@ -24387,7 +24406,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id254
+              example: *id255
               schema:
                 $ref: '#/components/schemas/JobResponse'
           description: Successful Response
@@ -24557,7 +24576,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id254
+              example: *id255
               schema:
                 $ref: '#/components/schemas/JobResponse'
           description: Successful Response
@@ -24592,7 +24611,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -24649,7 +24668,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id255
+            example: *id256
             schema:
               $ref: '#/components/schemas/McpConfigRegistrationRequest'
         description: Report that an MCP config entry was written for one agent runtime.
@@ -24658,7 +24677,7 @@ paths:
         '202':
           content:
             application/json:
-              example: *id256
+              example: *id257
               schema:
                 $ref: '#/components/schemas/McpConfigRegistrationResponse'
           description: Successful Response
@@ -24821,7 +24840,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id257
+              example: *id258
               schema:
                 $ref: '#/components/schemas/ExecutionStatsResponse'
           description: Successful Response
@@ -25032,7 +25051,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id258
+              example: *id259
               schema:
                 $ref: '#/components/schemas/UsageResponse'
           description: Successful Response
@@ -25308,7 +25327,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id259
+            example: *id260
             schema:
               $ref: '#/components/schemas/NoteCreateRequest'
         description: Payload for creating a new note.
@@ -25589,7 +25608,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id260
+            example: *id261
             schema:
               $ref: '#/components/schemas/NoteUpdateRequest'
         description: Payload for updating an existing note (partial).
@@ -25755,7 +25774,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id261
+              example: *id262
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationListResponse'
           description: Successful Response
@@ -25842,7 +25861,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id262
+              example: *id263
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -25959,7 +25978,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26020,7 +26039,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id262
+              example: *id263
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -26111,7 +26130,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id263
+            example: *id264
             schema:
               $ref: '#/components/schemas/OAuthAppRegistrationUpdateRequest'
         description: Partial update — fields not present are left untouched.
@@ -26120,7 +26139,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id262
+              example: *id263
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -26212,7 +26231,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id264
+            example: *id265
             schema:
               $ref: '#/components/schemas/OAuthAppRegistrationRotateSecretRequest'
         description: Rotate the client secret on an auth-code registration.
@@ -26221,7 +26240,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id262
+              example: *id263
               schema:
                 $ref: '#/components/schemas/OAuthAppRegistrationResponse'
           description: Successful Response
@@ -26256,7 +26275,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -26318,7 +26337,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id265
+            example: *id266
             schema:
               $ref: '#/components/schemas/OAuthClientRegistrationRequest'
         description: POST /oauth-clients request body (RFC 7591 client metadata subset).
@@ -26327,7 +26346,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id266
+              example: *id267
               schema:
                 $ref: '#/components/schemas/OAuthClientRegistrationResponse'
           description: Successful Response
@@ -26477,7 +26496,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id267
+            example: *id268
             schema:
               $ref: '#/components/schemas/OAuthApprovalDecisionRequest'
         description: |-
@@ -26500,7 +26519,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id268
+              example: *id269
               schema:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
@@ -26592,7 +26611,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id268
+              example: *id269
               schema:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
@@ -26764,7 +26783,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id269
+              example: *id270
               schema:
                 $ref: '#/components/schemas/ConsentAgentStatusResponse'
           description: Successful Response
@@ -26864,7 +26883,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id270
+              example: *id271
               schema:
                 $ref: '#/components/schemas/IntrospectResponse'
           description: Successful Response
@@ -26960,7 +26979,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id271
+            example: *id272
             schema:
               $ref: '#/components/schemas/RevokeRequest'
           application/x-www-form-urlencoded:
@@ -27178,7 +27197,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id272
+              example: *id273
               schema:
                 $ref: '#/components/schemas/TokenResponse'
           description: Successful Response
@@ -27271,7 +27290,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id273
+              example: *id274
               schema:
                 $ref: '#/components/schemas/RuleSetListResponse'
           description: Successful Response
@@ -27347,7 +27366,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id274
+            example: *id275
             schema:
               $ref: '#/components/schemas/RuleSetCreateRequest'
         description: Create a shared permission rule set (theme 5 phase 1, Q-04).
@@ -27356,7 +27375,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id275
+              example: *id276
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -27384,7 +27403,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27482,7 +27501,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Conflict
@@ -27543,7 +27562,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id275
+              example: *id276
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -27638,7 +27657,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id276
+            example: *id277
             schema:
               $ref: '#/components/schemas/RuleSetUpdateRequest'
         description: Rename or re-describe a rule set.
@@ -27647,7 +27666,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id275
+              example: *id276
               schema:
                 $ref: '#/components/schemas/RuleSetResponse'
           description: Successful Response
@@ -27757,7 +27776,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id229
+              example: *id230
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -27840,7 +27859,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id277
+              example: *id278
               schema:
                 $ref: '#/components/schemas/PermissionListResponse'
           description: Successful Response
@@ -27908,7 +27927,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id278
+            example: *id279
             schema:
               $ref: '#/components/schemas/RegisterRequest'
         description: POST /register request body.
@@ -27917,7 +27936,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id279
+              example: *id280
               schema:
                 $ref: '#/components/schemas/RegisterResponse'
           description: Successful Response
@@ -28064,7 +28083,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id280
+              example: *id281
               schema:
                 $ref: '#/components/schemas/RegistrationStatusResponse'
           description: Successful Response
@@ -28202,7 +28221,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id281
+            example: *id282
             schema:
               $ref: '#/components/schemas/SearchRequest'
         description: POST /search request body.
@@ -28211,7 +28230,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id282
+              example: *id283
               schema:
                 $ref: '#/components/schemas/SearchResponse'
           description: Successful Response
@@ -28287,7 +28306,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id283
+              example: *id284
               schema:
                 $ref: '#/components/schemas/VersionResponse'
           description: Successful Response
@@ -28369,7 +28388,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id284
+              example: *id285
               schema:
                 $ref: '#/components/schemas/UserListResponse'
           description: Successful Response
@@ -28434,7 +28453,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id285
+            example: *id286
             schema:
               $ref: '#/components/schemas/UserCreateRequest'
         description: Request body for creating a new user.
@@ -28443,7 +28462,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id286
+              example: *id287
               schema:
                 $ref: '#/components/schemas/UserCreatedResponse'
           description: Successful Response
@@ -28512,7 +28531,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id287
+              example: *id288
               schema:
                 $ref: '#/components/schemas/CurrentUserResponse'
           description: Successful Response
@@ -28585,7 +28604,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id288
+            example: *id289
             schema:
               $ref: '#/components/schemas/ChangePasswordRequest'
         description: Payload for changing own password.
@@ -28713,7 +28732,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin
@@ -28778,7 +28797,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id289
+              example: *id290
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -28869,7 +28888,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id290
+            example: *id291
             schema:
               $ref: '#/components/schemas/UserUpdateRequest'
         description: Request body for updating a user.
@@ -28878,7 +28897,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id289
+              example: *id290
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -28913,7 +28932,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The email is already in use
@@ -28975,7 +28994,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id291
+            example: *id292
             schema:
               $ref: '#/components/schemas/SetPermissionsRequest'
         description: Request body for setting user permissions.
@@ -28984,7 +29003,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id289
+              example: *id290
               schema:
                 $ref: '#/components/schemas/UserResponse'
           description: Successful Response
@@ -29019,7 +29038,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Would remove org:admin from the last active org:admin
@@ -29112,7 +29131,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id222
+              example: *id223
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The user is the last active org:admin
@@ -29254,7 +29273,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id292
+              example: *id293
               schema:
                 $ref: '#/components/schemas/InviteIssuedResponse'
           description: Successful Response
@@ -29327,7 +29346,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id293
+            example: *id294
             schema:
               $ref: '#/components/schemas/CreateAdminRequest'
         description: Payload for first-run admin creation (one-time setup).
@@ -29350,12 +29369,7 @@ paths:
         '410':
           content:
             application/problem+json:
-              example:
-                detail: The resource is no longer available and the operation has self-closed.
-                instance: /example/path
-                status: 410
-                title: Gone
-                type: gone
+              example: *id222
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Setup already complete — the first admin exists and this endpoint is closed.
@@ -29400,7 +29414,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id294
+            example: *id295
             schema:
               $ref: '#/components/schemas/RedeemInviteRequest'
         description: Payload for redeeming an invite token.
@@ -29469,7 +29483,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id295
+              example: *id296
               schema:
                 $ref: '#/components/schemas/VendorListResponse'
           description: Successful Response
