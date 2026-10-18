@@ -246,7 +246,9 @@ A catalog source kind (a class registered with
 `register_catalog_source_kind`, from
 `jentic_one.registry.services.catalog.sources`) lists the entries a backend
 offers and fetches one entry's spec. Its interface is **provisional** and may
-still change. Prove a kind honours the seam by subclassing `SourceContract`:
+still change. Register source kinds and source auth types at import time:
+`catalog.sources` is validated at startup before extension lifespans run, so a
+kind registered from a lifespan fails startup as an unknown kind. Prove a kind honours the seam by subclassing `SourceContract`:
 it checks that `is_full` is declared before iteration, `summary()` is only
 valid once the listing is drained, `NotModified` is honoured when the kind
 declares conditional fetch, `SpecGoneError` / `SourceUnavailableError` reach
