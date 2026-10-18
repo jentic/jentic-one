@@ -4,11 +4,11 @@ Replay records, auth-failure counters, circuit-open dedupe and MCP session
 counters must be shared by every process serving the deployment: the
 ``jti`` record lives in the admin database, the rest on the shared state
 backend (``Context.state_backend``). A module-level ``dict``/``set``/cache in
-these modules would be per-process again and silently diverge once more than
-one replica runs. This test fails if one creeps back in.
+these modules would be per-process and silently diverge once more than one
+replica runs. This test fails on any such binding.
 
-Two scopes: the modules this state moved out of are checked strictly (any
-module-level mutable binding); the surrounding packages are checked for
+Two scopes: the modules that read and write this state are checked strictly
+(any module-level mutable binding); the surrounding packages are checked for
 lower-case module-level mutables, since an UPPER_CASE binding is by
 convention a read-only lookup table. Anything genuinely process-local is
 allowlisted below with the reason. Separately, only the state factory may
