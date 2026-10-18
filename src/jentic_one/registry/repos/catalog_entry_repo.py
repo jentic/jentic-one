@@ -156,9 +156,12 @@ class CatalogSyncRunRepository:
     async def sweep_staged(session: AsyncSession, *, older_than: datetime) -> int:
         """Delete staged rows older than ``older_than`` whose run no longer holds a lease.
 
-        A run that still owns its source's lease (expired or not) can still apply,
-        and a full listing's apply treats every unstaged live row as removed, so
-        its staged rows are never touched however long it has been staging.
+        A run that still owns its source's lease can still apply, and a full
+        listing's apply treats every unstaged live row as removed, so its staged
+        rows are never touched however long it has been staging. Leases that
+        expired long ago are cleared first (see
+        ``CatalogSourceRepository.clear_expired_leases``), so a dead run whose
+        source is never synced again does not keep its rows.
         """
         result = await session.execute(
             delete(CatalogStagedEntry).where(

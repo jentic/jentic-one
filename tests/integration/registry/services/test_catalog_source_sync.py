@@ -579,7 +579,13 @@ async def test_refresh_without_a_legacy_source_fetches_no_manifest(
     async with catalog_ctx(sources=[git_source("corp")]) as ctx:
         svc = CatalogService(ctx)
         assert not svc._is_stale(None)
-        assert (await svc.refresh(sync_sources=True)).count == 0
+        with capture_logs() as logs:
+            assert (await svc.refresh(sync_sources=True)).count == 0
+        assert {
+            "event": "catalog_snapshot_refresh_skipped",
+            "reason": "no_legacy_source",
+            "log_level": "info",
+        } in logs
         assert set(await _rows(ctx, "corp")) == {"a.io"}
 
 
@@ -603,7 +609,7 @@ class _SweepOnSummary(ScriptedStream):
                 .where(CatalogSyncRun.status == "running")
                 .values(started_at=long_ago)
             )
-        await self._sync.sweep_abandoned_staging(older_than=utcnow() - timedelta(hours=1))
+        await self._sync.sweep_abandoned_staging()
         return await super().summary()
 
 
@@ -647,7 +653,7 @@ async def test_sweep_closes_a_dead_run_and_drops_its_staging(catalog_ctx: CtxFac
                         created_at=started,
                     )
                 )
-        assert await sync.sweep_abandoned_staging(older_than=utcnow() - timedelta(hours=1)) == 1
+        assert await sync.sweep_abandoned_staging() == 1
         async with ctx.registry_db.session() as session:
             dead_row = await session.get(CatalogSyncRun, dead)
             recent_row = await session.get(CatalogSyncRun, recent)
@@ -657,6 +663,53 @@ async def test_sweep_closes_a_dead_run_and_drops_its_staging(catalog_ctx: CtxFac
         assert (dead_row.status, dead_row.error_code) == ("failed", "abandoned")
         assert dead_row.finished_at is not None
         assert recent_row is not None and recent_row.status == "running"
+
+
+async def test_sweep_clears_a_long_expired_lease_and_drops_its_dead_run(
+    catalog_ctx: CtxFactory,
+) -> None:
+    """A dead run on a source nothing syncs again (disabled here) still loses its
+    lease, staging and ``running`` row; a lease that only just expired is kept."""
+    sources = [git_source("public", trust="curated", enabled=False), git_source("corp")]
+    async with catalog_ctx(sources=sources) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        dead, lapsing = generate_ksuid("csyn"), generate_ksuid("csyn")
+        long_ago = utcnow() - timedelta(hours=3)
+        async with ctx.registry_db.transaction() as session:
+            for run_id, slug, lease_until in (
+                (dead, "public", long_ago),
+                (lapsing, "corp", utcnow() - timedelta(minutes=5)),
+            ):
+                await session.execute(
+                    update(CatalogSourceRow)
+                    .where(CatalogSourceRow.slug == slug)
+                    .values(sync_lease_owner=run_id, sync_lease_until=lease_until)
+                )
+                await CatalogSyncRunRepository.create(
+                    session, run_id=run_id, slug=slug, started_at=long_ago, forced=False
+                )
+                session.add(
+                    CatalogStagedEntry(
+                        sync_run_id=run_id,
+                        op="upsert",
+                        external_id="a.io",
+                        tags=[],
+                        created_at=long_ago,
+                    )
+                )
+        assert await sync.sweep_abandoned_staging() == 1
+        public, corp = await _source(ctx, "public"), await _source(ctx, "corp")
+        assert (public.sync_lease_owner, public.sync_lease_until) == (None, None)
+        assert corp.sync_lease_owner == lapsing
+        async with ctx.registry_db.session() as session:
+            dead_row = await session.get(CatalogSyncRun, dead)
+            lapsing_row = await session.get(CatalogSyncRun, lapsing)
+            staged = (await session.execute(select(CatalogStagedEntry.sync_run_id))).scalars()
+            assert set(staged) == {lapsing}
+        assert dead_row is not None
+        assert (dead_row.status, dead_row.error_code) == ("failed", "abandoned")
+        assert lapsing_row is not None and lapsing_row.status == "running"
 
 
 async def test_sweep_prunes_old_runs_but_keeps_the_last_applied_one(
@@ -671,10 +724,7 @@ async def test_sweep_prunes_old_runs_but_keeps_the_last_applied_one(
             await session.execute(
                 update(CatalogSyncRun).values(finished_at=utcnow() - timedelta(days=40))
             )
-        await sync.sweep_abandoned_staging(
-            older_than=utcnow() - timedelta(hours=1),
-            runs_finished_before=utcnow() - timedelta(days=30),
-        )
+        await sync.sweep_abandoned_staging(run_retention=timedelta(days=30))
         last_applied = (await _source(ctx, "public")).last_applied_run_id
         async with ctx.registry_db.session() as session:
             kept = (await session.execute(select(CatalogSyncRun.id))).scalars().all()

@@ -157,6 +157,24 @@ class CatalogSourceRepository:
         return bool(getattr(result, "rowcount", 0))
 
     @staticmethod
+    async def clear_expired_leases(session: AsyncSession, *, expired_before: datetime) -> int:
+        """Drop every lease whose expiry is before ``expired_before``.
+
+        ``expired_before`` comes from :meth:`run_clock`, so it is on the same
+        clock the lease expiry was written with. Returns the number cleared.
+        """
+        result = await session.execute(
+            update(CatalogSourceRow)
+            .where(
+                CatalogSourceRow.sync_lease_owner.is_not(None),
+                CatalogSourceRow.sync_lease_until < expired_before,
+            )
+            .values(sync_lease_owner=None, sync_lease_until=None)
+            .execution_options(synchronize_session=False)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    @staticmethod
     async def lock_for_apply(session: AsyncSession, slug: str) -> None:
         """Serialise apply and re-resolve transactions for one source (Postgres).
 

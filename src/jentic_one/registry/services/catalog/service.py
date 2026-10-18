@@ -173,6 +173,9 @@ class CatalogService:
         """
         manifest_url = self._cfg.legacy_manifest_url()
         if manifest_url is None:
+            # Reads keep serving the snapshot from the last legacy fetch, so say
+            # why it did not change (``count`` is 0, not the snapshot's size).
+            logger.info("catalog_snapshot_refresh_skipped", reason="no_legacy_source")
             if sync_sources:
                 await self._sync_sources(None, others=True, force=force)
             return CatalogRefreshResult(count=0)

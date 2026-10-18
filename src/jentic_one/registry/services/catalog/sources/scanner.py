@@ -29,7 +29,6 @@ from jentic_one.registry.services.catalog.sources.sync import (
     CatalogSourceSync,
     SyncOutcome,
 )
-from jentic_one.shared.db.utils import utcnow
 
 if TYPE_CHECKING:
     from jentic_one.shared.context import Context
@@ -39,10 +38,6 @@ logger = structlog.get_logger(__name__)
 #: How often the loop wakes. Syncs are rare (max-age gated); this bounds how
 #: promptly a wanted flag is noticed.
 _TICK_SECONDS = 30.0
-
-#: Staged rows and ``running`` runs older than this, whose run no longer holds
-#: its source's lease, belong to a process that died mid-run.
-_ABANDONED_STAGING_AGE = timedelta(hours=1)
 
 #: Finished ``catalog_sync_runs`` rows are kept this long.
 _SYNC_RUN_RETENTION = timedelta(days=30)
@@ -105,11 +100,7 @@ class CatalogSourceSyncScanner:
         for row in rows:
             if row.slug in sync.sources and row.reresolve_wanted_at is not None:
                 await sync.reresolve_source(row.slug)
-        now = utcnow()
-        await sync.sweep_abandoned_staging(
-            older_than=now - _ABANDONED_STAGING_AGE,
-            runs_finished_before=now - _SYNC_RUN_RETENTION,
-        )
+        await sync.sweep_abandoned_staging(run_retention=_SYNC_RUN_RETENTION)
         return outcomes
 
     def stop(self) -> None:

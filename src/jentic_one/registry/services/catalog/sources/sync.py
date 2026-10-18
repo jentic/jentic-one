@@ -33,7 +33,7 @@ import time
 import weakref
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -99,6 +99,11 @@ OUTCOME_BUSY = "busy"
 OUTCOME_DISABLED = "disabled"
 
 ERROR_LEASE_LOST = "lease_lost"
+
+#: Staged rows and ``running`` runs older than this, whose run no longer holds
+#: its source's lease, belong to a process that died mid-run; a lease that
+#: expired longer ago than this is cleared.
+ABANDONED_STAGING_AGE = timedelta(hours=1)
 
 #: SQLite's per-source apply locks, one set per event loop (an ``asyncio.Lock``
 #: belongs to the loop it first waits on).
@@ -713,28 +718,43 @@ class CatalogSourceSync:
         return changed
 
     async def sweep_abandoned_staging(
-        self, *, older_than: datetime, runs_finished_before: datetime | None = None
+        self,
+        *,
+        staging_age: timedelta = ABANDONED_STAGING_AGE,
+        run_retention: timedelta | None = None,
     ) -> int:
         """Clean up after runs whose process died before finishing them.
 
-        Deletes their staged rows and marks their ``running`` rows ``failed``
-        (``abandoned``); a run still holding its source's lease is left alone
-        however old it is. With ``runs_finished_before`` it also prunes sync
-        history older than that. Returns the number of staged rows deleted.
+        Every cutoff is measured from the database clock (``run_clock``), the
+        clock lease expiries and run start times are written with. First clears
+        leases that expired more than ``staging_age`` ago: a live run renews its
+        lease every third of its length and stops when a renewal fails, so such a
+        lease belongs to a dead run, and nothing else would clear it if its
+        source is never synced again. Then deletes staged rows older than
+        ``staging_age`` and marks ``running`` rows started before then
+        ``failed`` (``abandoned``); a run still holding its source's lease is
+        left alone. With ``run_retention`` it also prunes sync history finished
+        longer ago than that. Returns the number of staged rows deleted.
         """
         async with self._ctx.registry_db.transaction() as session:
-            swept = await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
+            now = await CatalogSourceRepository.run_clock(session)
+            cutoff = now - staging_age
+            leases = await CatalogSourceRepository.clear_expired_leases(
+                session, expired_before=cutoff
+            )
+            swept = await CatalogSyncRunRepository.sweep_staged(session, older_than=cutoff)
             closed = await CatalogSyncRunRepository.close_abandoned(
-                session, older_than=older_than, now=utcnow()
+                session, older_than=cutoff, now=now
             )
             pruned = 0
-            if runs_finished_before is not None:
+            if run_retention is not None:
                 pruned = await CatalogSyncRunRepository.prune_finished(
-                    session, finished_before=runs_finished_before
+                    session, finished_before=now - run_retention
                 )
-        if swept or closed or pruned:
+        if leases or swept or closed or pruned:
             logger.info(
                 "catalog_source_runs_swept",
+                leases_cleared=leases,
                 staged_deleted=swept,
                 runs_abandoned=closed,
                 runs_pruned=pruned,
