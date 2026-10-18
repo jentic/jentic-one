@@ -1901,7 +1901,7 @@
             }
           ],
           "default": null,
-          "description": "Reserved for credentialed source auth; not used yet.",
+          "description": "Name of the environment variable holding the secret, for a credentialed resolver to read; ignored by none.",
           "title": "Env"
         },
         "header": {
@@ -1914,12 +1914,12 @@
             }
           ],
           "default": null,
-          "description": "Reserved for credentialed source auth; not used yet.",
+          "description": "Request header a credentialed resolver sends the secret in; ignored by none.",
           "title": "Header"
         },
         "type": {
           "default": "none",
-          "description": "Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet.",
+          "description": "Auth resolver type; it must be registered. Only none is built in; startup fails on an unknown type.",
           "title": "Type",
           "type": "string"
         }

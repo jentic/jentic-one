@@ -335,9 +335,9 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.sources.<n>.requests_per_second` | number (> 0) \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__REQUESTS_PER_SECOND` | Request rate shared by every process (a database-backed token bucket). null limits concurrency only, with no bucket and no database round trip. |
 | `catalog.sources.<n>.burst` | integer (>= 1) | `4` | `JENTIC__CATALOG__SOURCES__<N>__BURST` | Token bucket capacity; only used with requests_per_second. |
 | `catalog.sources.<n>.interactive_share` | number (>= 0.0, < 1.0) | `0.5` | `JENTIC__CATALOG__SOURCES__<N>__INTERACTIVE_SHARE` | Share of the concurrency slots and of the burst kept for interactive preview and import, so background work (listings, the update sweep) never takes the last of them. |
-| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` | Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet. |
-| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` | Reserved for credentialed source auth; not used yet. |
-| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` | Reserved for credentialed source auth; not used yet. |
+| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` | Auth resolver type; it must be registered. Only none is built in; startup fails on an unknown type. |
+| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` | Name of the environment variable holding the secret, for a credentialed resolver to read; ignored by none. |
+| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` | Request header a credentialed resolver sends the secret in; ignored by none. |
 | `catalog.sources.<n>.readers.permissions` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__PERMISSIONS` |  |
 | `catalog.sources.<n>.readers.actor_ids` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__ACTOR_IDS` |  |
 | `catalog.sources.<n>.settings` | object | — | `JENTIC__CATALOG__SOURCES__<N>__SETTINGS` | Kind-specific settings. |

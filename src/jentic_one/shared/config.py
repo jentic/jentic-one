@@ -2146,15 +2146,22 @@ class SourceAuthConfig(BaseModel):
     type: str = Field(
         default="none",
         description=(
-            "Only none is accepted (startup fails on any other type); credentialed "
-            "source auth is not supported yet."
+            "Auth resolver type; it must be registered. Only none is built in; "
+            "startup fails on an unknown type."
         ),
     )
     env: str | None = Field(
-        default=None, description="Reserved for credentialed source auth; not used yet."
+        default=None,
+        description=(
+            "Name of the environment variable holding the secret, for a credentialed "
+            "resolver to read; ignored by none."
+        ),
     )
     header: str | None = Field(
-        default=None, description="Reserved for credentialed source auth; not used yet."
+        default=None,
+        description=(
+            "Request header a credentialed resolver sends the secret in; ignored by none."
+        ),
     )
 
 
