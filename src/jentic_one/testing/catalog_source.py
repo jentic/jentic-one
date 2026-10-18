@@ -91,7 +91,7 @@ class FakeSourceHttp:
         return self.json_responses[url]
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
     ) -> SpecFetch:
         del lane
         self._check(url)

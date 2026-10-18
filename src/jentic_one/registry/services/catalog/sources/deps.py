@@ -22,6 +22,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -69,7 +70,15 @@ __all__ = [
     "UnboundedSourceLimits",
     "build_source_deps",
     "ensure_source_buckets",
+    "spec_fetch_lane",
 ]
+
+#: The lane a spec fetch takes when its connector names none. The update sweep
+#: sets ``background`` so a bulk probe never drains the slots and token reserve
+#: preview and import wait on.
+spec_fetch_lane: ContextVar[FetchLane] = ContextVar(
+    "catalog_spec_fetch_lane", default="interactive"
+)
 
 #: Upstream statuses that mean "this spec is permanently gone".
 _GONE_STATUSES = frozenset({404, 410})
@@ -78,8 +87,10 @@ _GONE_STATUSES = frozenset({404, 410})
 class SourceHttpClient(Protocol):
     """The only HTTP surface a connector may use.
 
-    ``lane`` picks the fetch-limit lane: listings default to ``background``,
-    spec fetches (preview, import, the update sweep) to ``interactive``.
+    ``lane`` picks the fetch-limit lane: listings default to ``background``.
+    A spec fetch with no explicit lane takes the caller's
+    :data:`spec_fetch_lane` (``interactive`` for preview and import,
+    ``background`` for the update sweep), so connectors need not thread it.
     """
 
     async def get_json(self, url: str, *, lane: FetchLane = "background") -> dict[str, Any]:
@@ -87,7 +98,7 @@ class SourceHttpClient(Protocol):
         ...
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
     ) -> SpecFetch:
         """GET ``url``'s raw bytes, conditionally on ``validator`` (an ETag)."""
         ...
@@ -172,9 +183,9 @@ class GuardedSourceHttpClient:
         return doc
 
     async def get_bytes(
-        self, url: str, *, validator: str | None = None, lane: FetchLane = "interactive"
+        self, url: str, *, validator: str | None = None, lane: FetchLane | None = None
     ) -> SpecFetch:
-        async with self._limits.slot(lane):
+        async with self._limits.slot(lane or spec_fetch_lane.get()):
             headers = dict(await self._auth.headers())
             try:
                 result = await fetch_bytes_conditional(

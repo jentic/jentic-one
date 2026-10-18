@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -28,6 +29,7 @@ from jentic_one.registry.services.catalog.sources import deps as deps_module
 from jentic_one.registry.services.catalog.sources.deps import (
     GuardedSourceHttpClient,
     build_source_deps,
+    spec_fetch_lane,
 )
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
 from jentic_one.registry.services.catalog.sources.protocol import (
@@ -266,3 +268,30 @@ async def test_429_through_source_deps_blocks_both_lanes(
     assert 0 < again.value.retry_after_s <= 20.0
     for callback in ctx.shutdown:
         await callback()
+
+
+class _LaneRecorder(ProcessSourceLimits):
+    """Process limits that remember the lane of every slot taken."""
+
+    def __init__(self) -> None:
+        super().__init__("corp", concurrency=2, interactive_share=0.5)
+        self.lanes: list[str] = []
+
+    def slot(self, lane: Any) -> Any:
+        self.lanes.append(lane)
+        return super().slot(lane)
+
+
+@pytest.mark.asyncio
+async def test_spec_fetch_lane_defaults_to_interactive_and_follows_the_caller() -> None:
+    """Preview/import fetch on ``interactive``; the update sweep sets ``background``."""
+    limits = _LaneRecorder()
+    http = _http(lambda _req: httpx.Response(200, content=b"{}"), limits=limits)
+    await http.get_bytes(_URL)
+    token = spec_fetch_lane.set("background")
+    try:
+        await http.get_bytes(_URL)
+        await http.get_bytes(_URL, lane="interactive")
+    finally:
+        spec_fetch_lane.reset(token)
+    assert limits.lanes == ["interactive", "background", "interactive"]

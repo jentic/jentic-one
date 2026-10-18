@@ -71,6 +71,7 @@ from jentic_one.registry.services.catalog.snapshot import (
     store_snapshot,
 )
 from jentic_one.registry.services.catalog.sources import digests
+from jentic_one.registry.services.catalog.sources.deps import spec_fetch_lane
 from jentic_one.registry.services.catalog.sources.protocol import NotModified
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
 from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
@@ -738,7 +739,13 @@ class CatalogService:
             prior_validator = (
                 check.last_seen_validator if same_entry and check is not None else None
             )
-            result = await fetcher.fetch_row(entry, validator=prior_validator)
+            # A bulk probe: the background lane, so it never takes the slots and
+            # tokens a user's preview or import waits on.
+            lane = spec_fetch_lane.set("background")
+            try:
+                result = await fetcher.fetch_row(entry, validator=prior_validator)
+            finally:
+                spec_fetch_lane.reset(lane)
             if isinstance(result, NotModified):
                 if pending is None:
                     await self._record_unchanged(
