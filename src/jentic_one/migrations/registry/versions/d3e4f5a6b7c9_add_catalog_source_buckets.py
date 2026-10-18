@@ -8,7 +8,7 @@ Every process fetching from the source takes its tokens from this row.
 The downgrade drops the table.
 
 Revision ID: d3e4f5a6b7c9
-Revises: c2d3e4f5a6b8
+Revises: c2d3e4f5a6b9
 Create Date: 2026-10-17
 
 """
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d3e4f5a6b7c9"  # pragma: allowlist secret
-down_revision: str | None = "c2d3e4f5a6b8"  # pragma: allowlist secret
+down_revision: str | None = "c2d3e4f5a6b9"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

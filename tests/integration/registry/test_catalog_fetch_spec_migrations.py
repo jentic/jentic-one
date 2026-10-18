@@ -37,6 +37,7 @@ pytestmark = pytest.mark.integration
 
 _BEFORE_REKEY = "b1c2d3e4f5a7"  # pragma: allowlist secret
 _REKEY_REV = "c2d3e4f5a6b8"  # pragma: allowlist secret
+_BACKFILL_REV = "c2d3e4f5a6b9"  # pragma: allowlist secret
 _BUCKETS_REV = "d3e4f5a6b7c9"  # pragma: allowlist secret
 
 
@@ -78,7 +79,8 @@ def test_revisions_chain_onto_the_tree(integration_config: AppConfig) -> None:
     script = ScriptDirectory.from_config(cfg)
     assert len(script.get_heads()) == 1
     assert script.get_revision(_REKEY_REV).down_revision == _BEFORE_REKEY
-    assert script.get_revision(_BUCKETS_REV).down_revision == _REKEY_REV
+    assert script.get_revision(_BACKFILL_REV).down_revision == _REKEY_REV
+    assert script.get_revision(_BUCKETS_REV).down_revision == _BACKFILL_REV
 
 
 async def test_rekey_backfills_entry_id_and_round_trips(
