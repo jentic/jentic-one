@@ -12,8 +12,10 @@
 
 Listings are always full (no delta listing); spec fetches are conditional on the
 last ``ETag``. The source's credentials go only to origins its configuration
-names (the index URL's, or each configured spec URL's): a spec URL an index
-lists on another host is fetched without them.
+names (the index URL's, or each configured spec URL's, plus ``auth.origins``): a
+spec URL an index lists on any other host is fetched without them. An index
+listing more than ``MAX_HTTP_INDEX_ENTRIES`` entries fails the sync run, so the
+stored entries stay as they were.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 from urllib.parse import urljoin
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps
@@ -30,6 +33,7 @@ from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
     EntryChange,
     JsonScalar,
+    ListingTooLargeError,
     ListStream,
     SourceCapabilities,
     SourceEntry,
@@ -42,6 +46,8 @@ from jentic_one.registry.services.catalog.sources.protocol import (
 from jentic_one.registry.services.catalog.sources.registry import register_catalog_source_kind
 from jentic_one.registry.services.catalog.sources.streams import FullListStream
 from jentic_one.shared.config import CatalogSourceConfig
+
+logger = structlog.get_logger(__name__)
 
 #: ``properties[].type`` values (lower-cased) that name a spec document.
 _SPEC_PROPERTY_TYPES = frozenset({"openapi", "swagger", "x-openapi", "x-openapi-spec", "x-swagger"})
@@ -112,6 +118,13 @@ def index_changes(doc: Mapping[str, Any], *, index_url: str) -> list[EntryChange
         if external_id is None or external_id in seen:
             continue
         seen.add(external_id)
+        if len(seen) > MAX_HTTP_INDEX_ENTRIES:
+            # A full listing that silently dropped the tail would remove those
+            # entries on every sync; fail the run instead so the rows stay.
+            logger.warning(
+                "catalog_http_index_too_large", index_url=index_url, limit=MAX_HTTP_INDEX_ENTRIES
+            )
+            raise ListingTooLargeError(f"index lists more than {MAX_HTTP_INDEX_ENTRIES} entries")
         spec_url = _spec_url(item, index_url)
         tags = item.get("tags")
         changes.append(
@@ -129,8 +142,6 @@ def index_changes(doc: Mapping[str, Any], *, index_url: str) -> list[EntryChange
                 )
             )
         )
-        if len(changes) >= MAX_HTTP_INDEX_ENTRIES:
-            break
     return changes
 
 
@@ -175,10 +186,6 @@ class HttpIndexSource:
         self._settings = settings
         self._deps = deps
         self._index_url = str(settings.index_url) if settings.index_url is not None else None
-        trusted = (
-            [self._index_url] if self._index_url else [str(s.spec_url) for s in settings.specs]
-        )
-        self._auth_origins = frozenset(o for o in map(url_origin, trusted) if o is not None)
 
     @classmethod
     def credential_urls(cls, settings: BaseModel) -> list[str]:
@@ -191,10 +198,6 @@ class HttpIndexSource:
     @classmethod
     def build(cls, cfg: CatalogSourceConfig, *, deps: SourceDeps) -> HttpIndexSource:
         return cls(HttpIndexSettings.model_validate(cfg.settings), deps=deps)
-
-    def _trusted(self, url: str) -> bool:
-        origin = url_origin(url)
-        return origin is not None and origin in self._auth_origins
 
     def list_entries(self, *, since: str | None) -> ListStream:
         del since  # full listings only
@@ -214,9 +217,10 @@ class HttpIndexSource:
         url = ref.get("url")
         if not isinstance(url, str) or url_origin(url) is None:
             raise SpecGoneError("http-index spec_ref carries no http(s) url")
-        return await self._deps.http.get_bytes(
-            url, validator=validator, authenticate=self._trusted(url)
-        )
+        # The source HTTP client sends the credential only to the source's
+        # credential origins (``credential_urls`` plus ``auth.origins``), so the
+        # connector asks for it on every fetch and lets that one check decide.
+        return await self._deps.http.get_bytes(url, validator=validator)
 
     async def health(self) -> SourceHealth:
         if self._index_url is None:

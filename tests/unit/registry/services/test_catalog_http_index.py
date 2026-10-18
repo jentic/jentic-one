@@ -19,6 +19,7 @@ from jentic_one.registry.services.catalog.sources.auth import (
 )
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps, source_ingest_config
 from jentic_one.registry.services.catalog.sources.http_index import (
+    MAX_HTTP_INDEX_ENTRIES,
     HttpIndexSettings,
     HttpIndexSource,
     index_changes,
@@ -26,6 +27,7 @@ from jentic_one.registry.services.catalog.sources.http_index import (
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
     JsonScalar,
+    ListingTooLargeError,
     ListStream,
     SourceCapabilities,
     SourceHealth,
@@ -238,7 +240,12 @@ async def test_listing_is_always_full() -> None:
     assert (await again.summary()).watermark == watermark
 
 
-async def test_credentials_go_only_to_the_index_origin() -> None:
+async def test_connector_leaves_the_credential_decision_to_the_source_client() -> None:
+    """The connector asks for credentials on every fetch; ``SourceDeps.http`` filters by origin.
+
+    Which origins actually get them (``credential_urls`` plus ``auth.origins``) is
+    pinned end to end in ``test_catalog_source_deps.py``.
+    """
     http = FakeSourceHttp()
     http.json_responses[_INDEX] = _index_doc()
     http.bytes_responses[_STRIPE] = b"{}"
@@ -247,21 +254,33 @@ async def test_credentials_go_only_to_the_index_origin() -> None:
     await source.fetch_spec({"url": _STRIPE})
     await source.fetch_spec({"url": _OTHER_HOST})
     [change async for change in source.list_entries(since=None)]
-    assert http.authenticated == [_STRIPE, _INDEX]
-    assert _OTHER_HOST in http.requests
+    assert http.authenticated == [_STRIPE, _OTHER_HOST, _INDEX]
 
 
-async def test_static_specs_trust_their_own_origins() -> None:
+def test_credential_urls_name_the_index_or_the_static_specs() -> None:
+    index = HttpIndexSettings.model_validate({"index_url": _INDEX})
+    assert HttpIndexSource.credential_urls(index) == [_INDEX]
+    static = HttpIndexSettings.model_validate(_static_cfg().settings)
+    assert HttpIndexSource.credential_urls(static) == [_STRIPE, _OTHER_HOST]
+
+
+async def test_static_specs_fetch_and_report_healthy() -> None:
     http = FakeSourceHttp()
     http.bytes_responses[_STRIPE] = b"{}"
     http.bytes_responses[_OTHER_HOST] = b"{}"
-    http.bytes_responses["https://elsewhere.example/x.json"] = b"{}"
     source = HttpIndexSource.build(_static_cfg(), deps=fake_source_deps("s", http))
-    for url in (_STRIPE, _OTHER_HOST, "https://elsewhere.example/x.json"):
+    for url in (_STRIPE, _OTHER_HOST):
         await source.fetch_spec({"url": url})
-    assert http.authenticated == [_STRIPE, _OTHER_HOST]
     assert (await source.health()).ok
-    assert http.requests == [_STRIPE, _OTHER_HOST, "https://elsewhere.example/x.json"]
+    assert http.requests == [_STRIPE, _OTHER_HOST]
+
+
+def test_index_past_the_entry_cap_fails_instead_of_truncating() -> None:
+    """A truncated full listing would remove the tail; the run must apply nothing."""
+    items = [{"aid": f"api-{i}"} for i in range(MAX_HTTP_INDEX_ENTRIES + 1)]
+    with pytest.raises(ListingTooLargeError):
+        index_changes({"apis": items}, index_url=_INDEX)
+    assert len(index_changes({"apis": items[:-1]}, index_url=_INDEX)) == MAX_HTTP_INDEX_ENTRIES
 
 
 async def test_fetch_spec_without_url_is_gone() -> None:

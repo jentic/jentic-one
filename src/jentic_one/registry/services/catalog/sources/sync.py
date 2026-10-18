@@ -79,6 +79,7 @@ from jentic_one.registry.services.catalog.sources.deps import (
 )
 from jentic_one.registry.services.catalog.sources.protocol import (
     CatalogSource,
+    ListingTooLargeError,
     ListStream,
     Removed,
     SourceUnavailableError,
@@ -244,6 +245,8 @@ def _error_code(exc: BaseException) -> str:
         return "source_unavailable"
     if isinstance(exc, SpecGoneError):
         return "source_gone"
+    if isinstance(exc, ListingTooLargeError):
+        return "listing_too_large"
     return "listing_error"
 
 

@@ -31,6 +31,7 @@ from jentic_one.registry.services.catalog.sources.deps import (
     build_source_deps,
     spec_fetch_lane,
 )
+from jentic_one.registry.services.catalog.sources.http_index import HttpIndexSource
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
@@ -352,6 +353,29 @@ async def test_http_index_credential_never_reaches_an_index_listed_foreign_host(
     assert seen[1].headers["authorization"] == "Bearer source-token"
     assert str(seen[2].url) == "https://foreign.example.net/x"
     assert "authorization" not in seen[2].headers  # stripped across the redirect
+
+
+@pytest.mark.asyncio
+async def test_http_index_specs_on_an_auth_origin_get_the_credential(
+    answering_transport: list[httpx.Request],
+) -> None:
+    """``auth.origins`` widens credentials to index-listed specs on that origin only."""
+    cfg = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "http-index",
+            "settings": {"index_url": "https://index.example.com/apis.json"},
+            "auth": _auth(origins=["https://cdn.example.com"]),
+        }
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    source = HttpIndexSource.build(cfg, deps=deps)
+    await source.fetch_spec({"url": "https://cdn.example.com/stripe.json"})
+    await source.fetch_spec({"url": "https://other.example.org/acme.json"})
+    assert _authorized(answering_transport) == {
+        "https://cdn.example.com/stripe.json": "Bearer source-token",
+        "https://other.example.org/acme.json": None,
+    }
 
 
 @pytest.mark.asyncio
