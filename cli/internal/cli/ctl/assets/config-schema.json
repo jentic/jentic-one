@@ -426,7 +426,7 @@
         },
         "trust": {
           "default": "untrusted",
-          "description": "curated sources own the catalog_api_ids they list.",
+          "description": "curated sources own the catalog_api_ids they list. A curated source must be public (startup fails otherwise).",
           "enum": [
             "curated",
             "internal",

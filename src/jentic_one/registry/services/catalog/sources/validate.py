@@ -78,6 +78,16 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
                 "(domain[/sub], at most 255 characters, no whitespace or '~')"
             )
 
+    for source in sources:
+        if source.trust == "curated" and source.visibility != "public":
+            # Curated ownership applies to every caller's view (an untrusted
+            # entry it owns is served as ``{slug}~{id}``), so a hidden curated
+            # source would reveal what it lists to callers who can't read it.
+            errors.append(
+                f"catalog.sources[slug={source.slug}].trust: a curated source must be "
+                f"public (visibility is {source.visibility!r}); use 'internal' instead"
+            )
+
     curated = [s for s in sources if s.trust == "curated" and s.enabled]
     if curated:
         floor = min(s.precedence for s in curated)

@@ -510,7 +510,8 @@ type CatalogSourceConfig struct {
 	// Cross-process sync lease, renewed every third of it.
 	SyncLeaseSeconds int `json:"sync_lease_seconds,omitempty,omitzero" yaml:"sync_lease_seconds,omitempty" mapstructure:"sync_lease_seconds,omitempty"`
 
-	// curated sources own the catalog_api_ids they list.
+	// curated sources own the catalog_api_ids they list. A curated source must be
+	// public (startup fails otherwise).
 	Trust CatalogSourceConfigTrust `json:"trust,omitempty,omitzero" yaml:"trust,omitempty" mapstructure:"trust,omitempty"`
 
 	// Visibility corresponds to the JSON schema field "visibility".

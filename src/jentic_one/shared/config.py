@@ -2192,7 +2192,10 @@ class CatalogSourceConfig(BaseModel):
     visibility: CatalogVisibility = "public"
     trust: CatalogTrust = Field(
         default="untrusted",
-        description="curated sources own the catalog_api_ids they list.",
+        description=(
+            "curated sources own the catalog_api_ids they list. A curated source "
+            "must be public (startup fails otherwise)."
+        ),
     )
     precedence: int = Field(
         default=0,

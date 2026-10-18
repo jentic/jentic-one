@@ -118,6 +118,13 @@ def test_untrusted_source_ranked_above_a_curated_one_fails_validation() -> None:
     assert "catalog.sources[slug=x].precedence: an untrusted source (6)" in msg
 
 
+@pytest.mark.parametrize("visibility", ["org", "restricted"])
+def test_curated_source_that_is_not_public_fails_validation(visibility: str) -> None:
+    sources = [_git("public", "curated", 10), _git("corp", "curated", 5, visibility=visibility)]
+    msg = _errors(_cfg(sources=sources))
+    assert "catalog.sources[slug=corp].trust: a curated source must be public" in msg
+
+
 def test_untrusted_and_internal_precedence_within_bounds_are_accepted() -> None:
     sources = [
         _git("public", "curated", 10),
