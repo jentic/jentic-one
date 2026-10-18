@@ -141,7 +141,9 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   tool answers an unknown or hidden `entry_id` with a JSON-RPC
   `invalid_params` error on both surfaces, its message carrying the hint
   (`did you mean 'public/stripe.com'?`). Saved list cursors stop working:
-  search the catalog again.
+  search the catalog again. When several sources carry the API,
+  `did_you_mean` names the one entry the catalog collapses them to; neither
+  surface follows it on its own, and `jentic catalog search` lists the others.
 - **`jentic catalog show|import <entry_id>`.** Both take the `entry_id` from
   `jentic catalog search`; a malformed id (an empty, `.` or `..` segment, a
   character below U+0020 or U+007F, more than 320 characters) is refused
@@ -155,9 +157,17 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
   (the first server's URL variables) and `required_schemes`; an `oauth2`
   scheme in `security_schemes` carries its flows' URLs and scopes in
   `flow_details`.
-- **APIs no longer carry `catalog_entry_id`.** The dashboard's re-import and
-  mute actions resolve the entry from the catalog: the registered entry for
-  the API's `catalog_api_id`, else the 404's `did_you_mean`.
+- **APIs carry `catalog_entry_id`** (`GET /apis`, `GET /apis/{…}`): the
+  catalog entry the API was imported from. It is `null` for manual imports
+  and when the caller can't read the entry's source. The dashboard's
+  re-import and mute actions act on it directly, and are disabled when it is
+  `null`; only against a server that doesn't send the field do they look the
+  entry up by the API's `catalog_api_id`.
+- **`POST /catalog:refresh`** needs `catalog:sync` (implied by `org:admin`)
+  and syncs only the sources the caller can read. Its response adds
+  `sources` (each source's outcome) and `status: "partial"` when one of
+  them failed or was skipped; `catalog.refresh_deadline_seconds` (default 45)
+  bounds the whole refresh.
 - **MCP `import_api` takes `entry_id`.** `api_id`, `id` and `api` stay
   accepted as aliases, so existing tool calls keep working once they send an
   `entry_id` value. Both MCP surfaces (the `/mcp` mount and `jentic mcp`)
