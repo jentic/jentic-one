@@ -75,19 +75,21 @@ def record_namespaced(source: str) -> None:
     ).add(1, {"source": source})
 
 
-def record_mapping_unmatched(source: str) -> None:
-    """A ``catalog_api_id_mappings`` row matched no curated id and was ignored."""
-    _counter(
-        "catalog_mapping_unmatched_total",
-        "catalog_api_id mapping rows that match no curated id.",
-    ).add(1, {"source": source})
+def record_mapping_unmatched(source: str, count: int) -> None:
+    """How many ``catalog_api_id_mappings`` rows of ``source`` match no curated id."""
+    _gauge(
+        "catalog_mapping_unmatched_rows",
+        "catalog_api_id mapping rows that match no curated id (ignored).",
+    ).set(count, {"source": source})
 
 
 def record_ownership_conflicts(source: str, count: int) -> None:
-    """Imported APIs whose catalog_api_id a curated source now owns."""
-    if count <= 0:
-        return
-    _counter(
-        "catalog_ownership_conflict_total",
+    """How many imported APIs of ``source`` hold a catalog_api_id a curated source owns.
+
+    A gauge set on every apply and re-resolve of ``source``, so re-counting the
+    same APIs never inflates it and resolved conflicts drop back to zero.
+    """
+    _gauge(
+        "catalog_ownership_conflicts",
         "Imported APIs whose catalog_api_id is now owned by a curated source.",
-    ).add(count, {"source": source})
+    ).set(count, {"source": source})

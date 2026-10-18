@@ -27,6 +27,7 @@ stale stored id is never served under a name it no longer owns.
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -190,9 +191,12 @@ class CatalogApiIdResolver:
         self.unmatched_mappings = matched.unmatched
 
     def report_unmatched(self) -> None:
-        """Count and log every mapping row that matches no curated id (ignored rows)."""
+        """Log every mapping row that matches no curated id (ignored rows) and set
+        each configured source's unmatched-rows gauge, zero included."""
+        counts = Counter(row.source for row in self.unmatched_mappings)
+        for slug in sorted(set(self._sources) | set(counts)):
+            record_mapping_unmatched(slug, counts.get(slug, 0))
         for row in self.unmatched_mappings:
-            record_mapping_unmatched(row.source)
             logger.warning(
                 "catalog_mapping_unmatched",
                 source=row.source,
