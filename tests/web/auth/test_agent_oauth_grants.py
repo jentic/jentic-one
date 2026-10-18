@@ -210,3 +210,23 @@ async def test_revoke_grant_visible_but_not_consented_is_403(
     resp = owner_client.post(f"/oauth-grants/{grant_id}:revoke")
     assert resp.status_code == 403, resp.text
     assert resp.json()["type"] == "oauth_grant_access_denied"
+
+
+async def test_revoke_grant_by_the_bound_agent_is_403(
+    web_context: Context,
+    owner_user_id: str,
+    test_agent_id: str,
+    oauth_client_id: str,
+) -> None:
+    """The agent a grant is bound to can see it but did not consent, so it may not revoke it."""
+    grant_id = await _create_grant(
+        web_context, client_id=oauth_client_id, user_id=owner_user_id, agent_id=test_agent_id
+    )
+    token = _make_agent_token(web_context, test_agent_id, owner_user_id, [])
+    with TestClient(
+        _build_app(web_context), headers={"Authorization": f"Bearer {token}"}
+    ) as agent_client:
+        resp = agent_client.post(f"/oauth-grants/{grant_id}:revoke")
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["type"] == "oauth_grant_access_denied"
+    assert resp.json()["status"] == 403
