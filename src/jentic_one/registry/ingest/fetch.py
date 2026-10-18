@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import urljoin, urlparse
 
 import httpx
+import structlog
 import yaml
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,8 @@ from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
 from jentic_one.shared.url_validation import validate_upstream_url_async
+
+logger = structlog.get_logger(__name__)
 
 
 class InlineSource(BaseModel):
@@ -385,6 +388,11 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
 _DEFAULT_INGEST_CONFIG = IngestConfig()
 
 
+def spec_digest(content: bytes) -> str:
+    """The SHA-256 hex digest a revision records for spec bytes."""
+    return hashlib.sha256(content).hexdigest()
+
+
 def _decode_spec(content: bytes) -> str:
     try:
         return content.decode("utf-8-sig")
@@ -415,7 +423,16 @@ async def load_specification(
             raise IngestStageError(f"response exceeds {size_limit_label} size limit")
         filename = "openapi.json" if fetched.media_type == "application/json" else "openapi.yaml"
         content = parse_spec_content(_decode_spec(fetched.content), filename=filename)
-        sha = fetched.digest
+        # The revision digest is always ours, over the bytes we got: the sweep
+        # compares it with the upstream digest it computes the same way, so a
+        # connector's own digest (another algorithm, a bug) can't skew it.
+        sha = spec_digest(fetched.content)
+        if fetched.digest != sha:
+            logger.warning(
+                "catalog_spec_digest_mismatch",
+                catalog_entry_id=source.catalog_entry_id,
+                source_digest=fetched.digest,
+            )
         source_type = ApiRevisionSourceType.CATALOG
         source_url = fetched.source_url
         source_filename: str | None = None

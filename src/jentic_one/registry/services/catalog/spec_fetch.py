@@ -10,10 +10,14 @@ auth and fetch limits apply) and call ``fetch_spec`` with the entry's
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
-from jentic_one.registry.ingest.exc import IngestStageError
-from jentic_one.registry.ingest.fetch import CatalogRefSource, CatalogSpec
+from jentic_one.registry.ingest.exc import (
+    CatalogSourceBusyIngestError,
+    CatalogSpecUnavailableIngestError,
+)
+from jentic_one.registry.ingest.fetch import CatalogRefSource, CatalogSpec, spec_digest
 from jentic_one.registry.repos.catalog_entry_repo import CatalogEntryRepository
 from jentic_one.registry.services.catalog.snapshot import spec_url_of
 from jentic_one.registry.services.catalog.sources.protocol import (
@@ -63,6 +67,9 @@ class CatalogSpecFetcher:
         """``fetch_spec`` for ``row``; the source's own errors propagate.
 
         A row without a ``spec_ref`` (a card-only entry) raises ``SpecGoneError``.
+        A body's ``digest`` is recomputed over its bytes (the revision digest the
+        import records), so the sweep and the import always compare like with
+        like whatever digest the connector reported.
         """
         source = self._source(row.source_slug)
         if source is None:
@@ -70,7 +77,12 @@ class CatalogSpecFetcher:
         ref = row.spec_ref
         if not isinstance(ref, Mapping):
             raise SpecGoneError(f"catalog entry {row.entry_id!r} lists no spec")
-        return await source.fetch_spec(ref, validator=validator)
+        result = await source.fetch_spec(ref, validator=validator)
+        if isinstance(result, SpecBody):
+            digest = spec_digest(result.content)
+            if digest != result.digest:
+                result = replace(result, digest=digest)
+        return result
 
     async def fetch_body(self, entry_id: str) -> tuple[CatalogEntryRow, SpecBody]:
         """The spec body of a live entry, with service errors for every failure.
@@ -105,13 +117,13 @@ class CatalogRefResolver:
         try:
             row, body = await self._fetcher.fetch_body(entry_id)
         except CatalogEntryNotFoundError as exc:
-            raise IngestStageError(
+            raise CatalogSpecUnavailableIngestError(
                 f"catalog entry {entry_id!r} is no longer listed by an enabled source"
             ) from exc
         except CatalogSpecGoneError as exc:
-            raise IngestStageError(str(exc)) from exc
+            raise CatalogSpecUnavailableIngestError(str(exc)) from exc
         except CatalogSourceUnavailableError as exc:
-            raise IngestStageError(str(exc)) from exc
+            raise CatalogSourceBusyIngestError(str(exc), retry_after_s=exc.retry_after_s) from exc
         return CatalogSpec(
             content=body.content,
             digest=body.digest,

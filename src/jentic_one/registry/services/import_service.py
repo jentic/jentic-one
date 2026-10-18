@@ -14,7 +14,15 @@ import structlog
 from pydantic import TypeAdapter, ValidationError
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from jentic_one.registry.ingest.exc import BaseIngestError, DuplicateRevisionError, IngestJobError
+from jentic_one.registry.ingest.exc import (
+    BaseIngestError,
+    CatalogSourceBusyIngestError,
+    CatalogSpecUnavailableIngestError,
+    DuplicateRevisionError,
+    IngestJobError,
+    RetryLaterIngestJobError,
+    TerminalIngestJobError,
+)
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
@@ -58,6 +66,23 @@ _UNEXPECTED_SOURCE_ERROR = "import failed unexpectedly"
 # the duplicate fragment past the truncation point in production.
 SOURCE_FAILURE_PREFIX_TEMPLATE = "source[{index}]: "
 ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
+
+
+def _all_sources_failed(message: str, errors: list[Exception]) -> IngestJobError:
+    """The job error for an import whose every source failed.
+
+    A catalog source that is only busy makes the whole job wait for it (the
+    longest wait any source asked for). When every failure is a catalog spec
+    that can't come back by retrying, the job fails at once. Anything else is
+    an ordinary failure, retried with the worker's backoff.
+    """
+    busy = [e for e in errors if isinstance(e, CatalogSourceBusyIngestError)]
+    if busy:
+        waits = [e.retry_after_s for e in busy if e.retry_after_s is not None]
+        return RetryLaterIngestJobError(message, retry_after_s=max(waits) if waits else None)
+    if errors and all(isinstance(e, CatalogSpecUnavailableIngestError) for e in errors):
+        return TerminalIngestJobError(message)
+    return IngestJobError(message)
 
 
 def _readable_source_error(exc: Exception) -> str:
@@ -109,6 +134,7 @@ class ImportHandler:
             resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
+            failure_errors: list[Exception] = []
             recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
@@ -162,6 +188,7 @@ class ImportHandler:
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
+                    failure_errors.append(exc)
                     failures.append(
                         SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
                         + _readable_source_error(exc)
@@ -267,9 +294,10 @@ class ImportHandler:
                 and not recovered_overlay_link
                 and not recovered_supersede
             ):
-                raise IngestJobError(
+                raise _all_sources_failed(
                     ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
-                    + "; ".join(failures)
+                    + "; ".join(failures),
+                    failure_errors,
                 )
 
             return JobResultPayload(
