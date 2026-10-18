@@ -151,9 +151,11 @@ Each request yields one inbound server span (no per-message ASGI
 recorded by the SQLAlchemy instrumentation with the statement and
 connection-pool context, plus a `connect` span per connection checkout.
 Transaction control (COMMIT/ROLLBACK) and pool pre-ping round trips are not
-traced; pre-ping time sits inside the `connect` span. To count those round
-trips, use `make perf-dbcost` (per-call statements and transactions per DB
-plane).
+traced; pre-ping time sits inside the `connect` span. Postgres's
+`pg_stat_statements` extension counts COMMIT/ROLLBACK (with its default
+`track_utility = on`), grouped by database role, which is per DB plane when
+each plane connects as its own role. It does not count pre-pings: the asyncpg
+ping is an empty statement.
 
 Exported spans never carry request material. Inbound and outbound HTTP
 spans mask query-string values in the recorded URL and query attributes
