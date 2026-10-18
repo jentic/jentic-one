@@ -1013,7 +1013,7 @@ async def _file_import(env: CallEnv, entry_id: str) -> str:
             CODE_TRANSPORT_ERROR,
             f"{exc} Retry in {exc.retry_after_s} seconds.",
             actionable=f"Wait {exc.retry_after_s} seconds, then call import_api again with "
-            "the same api_id.",
+            "the same entry_id.",
             extra={"retryable": True, "retry_after_s": exc.retry_after_s},
         ) from None
     except CatalogUnavailableError as exc:

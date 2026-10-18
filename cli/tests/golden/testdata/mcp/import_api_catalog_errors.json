@@ -15,6 +15,21 @@
     }
   },
   {
+    "name": "card_only",
+    "api_id": "corp/stripe.com",
+    "status": 409,
+    "type": "catalog_entry_has_no_spec",
+    "detail": "Catalog entry 'corp/stripe.com' has no spec to preview or import.",
+    "retry_after": null,
+    "payload": {
+      "error_code": "RESOLVE_FAILED",
+      "error": "Catalog entry 'corp/stripe.com' has no spec to preview or import.",
+      "actionable_step": "Pick another search_catalog hit for this API; this entry has no importable spec.",
+      "next_tool": "search_catalog",
+      "retryable": false
+    }
+  },
+  {
     "name": "source_unavailable",
     "api_id": "corp/stripe.com",
     "status": 503,
@@ -24,7 +39,7 @@
     "payload": {
       "error_code": "TRANSPORT_ERROR",
       "error": "The catalog source of 'corp/stripe.com' is unavailable; retry later. Retry in 13 seconds.",
-      "actionable_step": "Wait 13 seconds, then call import_api again with the same api_id.",
+      "actionable_step": "Wait 13 seconds, then call import_api again with the same entry_id.",
       "retryable": true,
       "retry_after_s": 13
     }

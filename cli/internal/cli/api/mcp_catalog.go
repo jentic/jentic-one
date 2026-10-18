@@ -360,6 +360,16 @@ func importAPINotFound(entryID string, err error) error {
 				Actionable: "Pick another search_catalog hit for this API; this entry has no " +
 					"importable spec.",
 			}, "search_catalog", map[string]any{"retryable": false})
+		case http.StatusConflict:
+			// A card-only entry: listed, but its source gives no spec to import.
+			if catalogProblemType(he) == "catalog_entry_has_no_spec" {
+				return s.softErrorExtra(ctx, &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("Catalog entry '%s' has no spec to preview or import.", apiID)),
+					Actionable: "Pick another search_catalog hit for this API; this entry has no " +
+						"importable spec.",
+				}, "search_catalog", map[string]any{"retryable": false})
+			}
 		case http.StatusServiceUnavailable:
 			if catalogProblemType(he) == "catalog_source_unavailable" {
 				wait := retryAfterSeconds(he.RetryAfter)
@@ -368,7 +378,7 @@ func importAPINotFound(entryID string, err error) error {
 					Code: ux.CodeTransportError,
 					Msg:  fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
 					Actionable: fmt.Sprintf("Wait %d seconds, then call import_api again with "+
-						"the same api_id.", wait),
+						"the same entry_id.", wait),
 				}, "", map[string]any{"retryable": true, "retry_after_s": wait})
 			}
 		case http.StatusForbidden:

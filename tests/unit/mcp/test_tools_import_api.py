@@ -28,6 +28,7 @@ from jentic_one.admin.services.schemas.jobs import JobResultView, JobView
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call, validate_entry_id
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.services.errors import (
+    CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
     CatalogSourceUnavailableError,
     CatalogSpecGoneError,
@@ -821,13 +822,15 @@ _CATALOG_ERRORS = (
 async def test_catalog_source_errors_match_the_shared_fixture(
     services: None, case: dict[str, Any]
 ) -> None:
-    """The HTTP mount answers exactly what the Go stdio server answers for the same 410/503.
+    """The HTTP mount answers what the Go stdio server answers for the same 409/410/503.
 
     ``mcp_catalog_test.go`` replays the same fixture against the stdio server, so
     the two surfaces cannot drift.
     """
     if case["status"] == 410:
         _FakeCatalogService.import_error = CatalogSpecGoneError(case["api_id"])
+    elif case["status"] == 409:
+        _FakeCatalogService.import_error = CatalogEntryHasNoSpecError(case["api_id"])
     else:
         _FakeCatalogService.import_error = CatalogSourceUnavailableError(
             case["api_id"], retry_after_s=case["retry_after"]
