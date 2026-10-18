@@ -39,7 +39,7 @@ class CatalogFetchError(Exception):
 #: can attribute traffic and hosts can apply sane rate limits (unidentified bots
 #: are throttled first). See the raw.githubusercontent poll path in the catalog
 #: update-notify sweep.
-_USER_AGENT = "jentic-one-catalog/1 (+https://github.com/jentic/jentic-one)"
+CATALOG_USER_AGENT = "jentic-one-catalog/1 (+https://github.com/jentic/jentic-one)"
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
             follow_redirects=False,
             transport=build_pinned_transport(config.egress),
         ) as client:
-            resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
+            resp = await client.get(validated_url, headers={"user-agent": CATALOG_USER_AGENT})
             for _ in range(config.max_redirects):
                 if resp.status_code < 300 or resp.status_code >= 400:
                     break
@@ -91,7 +91,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
                     )
                 except ValueError as exc:
                     raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-                resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
+                resp = await client.get(validated_url, headers={"user-agent": CATALOG_USER_AGENT})
             else:
                 if 300 <= resp.status_code < 400:
                     raise CatalogFetchError("too many redirects")
@@ -143,7 +143,7 @@ async def fetch_bytes_conditional(
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
-    headers = {"user-agent": _USER_AGENT}
+    headers = {"user-agent": CATALOG_USER_AGENT}
     if etag:
         headers["If-None-Match"] = etag
     max_bytes = config.max_spec_bytes

@@ -67,6 +67,13 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
                 f"{where}.auth.type: unknown auth type {source.auth.type!r} "
                 f"(registered: {', '.join(sorted(auth_types))})"
             )
+        elif source.auth.type != "none":
+            # Source requests carry no auth headers, so a credentialed source
+            # would quietly fetch unauthenticated.
+            errors.append(
+                f"{where}.auth.type: {source.auth.type!r} is not supported: catalog "
+                "source requests carry no credentials, so only 'none' is accepted"
+            )
         errors.extend(_reader_errors(where, source.visibility, source.readers))
 
     known = set(slugs)

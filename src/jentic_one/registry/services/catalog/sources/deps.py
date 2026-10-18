@@ -4,7 +4,9 @@ A connector gets one ``SourceDeps`` when it is built and makes every outbound
 call through ``deps.http``. The default client is a thin wrapper over the
 catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``): it shares their
 redirect, size and egress guards and classifies failures into the seam's two
-error types. ``limits`` is the per-source concurrency gate; the default never
+error types. Every request carries ``CATALOG_USER_AGENT`` (the fetch helpers
+set it) and no auth headers: startup refuses a source whose ``auth.type`` is not
+``none``. ``limits`` is the per-source concurrency gate; the default never
 blocks.
 """
 
@@ -19,6 +21,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from jentic_one.registry.services.catalog.fetch import (
+    CATALOG_USER_AGENT,
     CatalogFetchError,
     fetch_bytes_conditional,
     fetch_json,
@@ -33,9 +36,6 @@ from jentic_one.registry.services.catalog.sources.protocol import (
 )
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.db.utils import utcnow
-
-#: The ``User-Agent`` catalog source requests announce themselves with.
-CATALOG_USER_AGENT = "jentic-one-catalog/1 (+https://github.com/jentic/jentic-one)"
 
 #: Upstream statuses that mean "this spec is permanently gone".
 _GONE_STATUSES = frozenset({404, 410})
