@@ -21,7 +21,7 @@ claim (jentic-one#864). ``actor_type`` must be ``agent``
 DB-backed credential form (opaque tokens) and cannot be asserted by a bare
 signed claim (jentic-one#868), and ``service_account`` is refused since
 theme-8 Phase 1 — the JWT path builds Identity from claim-supplied scopes
-with no DB read, so it would sail past the SA→agent grant migration and
+without reading grants, so it would sail past the SA→agent grant migration and
 token revocation; assert the successor agent instead.
 
 The issuer vouches for who the agent is and what it may do (its scopes), not
