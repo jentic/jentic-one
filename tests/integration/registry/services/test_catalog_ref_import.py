@@ -33,7 +33,7 @@ from jentic_one.registry.services.catalog.sources.protocol import (
     SpecGoneError,
 )
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
-from jentic_one.registry.services.errors import CatalogSpecGoneError
+from jentic_one.registry.services.errors import CatalogEntryHasNoSpecError
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -138,15 +138,15 @@ async def test_import_job_fails_readably_when_the_entry_is_gone(
             )
 
 
-async def test_card_only_entry_is_spec_gone(catalog_ctx: CtxFactory) -> None:
-    """An entry listing no spec cannot be previewed or imported: 410, not a job."""
+async def test_card_only_entry_has_no_spec(catalog_ctx: CtxFactory) -> None:
+    """An entry listing no spec cannot be previewed or imported: 409, not a job."""
     register_static_source_kind()
     async with catalog_ctx(sources=_sources(spec=None)) as ctx:
         await _sync(ctx)
         svc = CatalogService(ctx)
-        with pytest.raises(CatalogSpecGoneError):
+        with pytest.raises(CatalogEntryHasNoSpecError):
             await svc.preview("corp/sync-test.io", permissions=frozenset({"org:admin"}))
-        with pytest.raises(CatalogSpecGoneError):
+        with pytest.raises(CatalogEntryHasNoSpecError):
             await svc.import_entry("corp/sync-test.io", _ADMIN)
 
 
