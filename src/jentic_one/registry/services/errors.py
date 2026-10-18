@@ -321,6 +321,18 @@ class SourceSwitchForbiddenError(RegistryServiceError):
         )
 
 
+class CatalogEntryHasNoSpecError(RegistryServiceError):
+    """Raised when a listed catalog entry carries no spec (a card-only entry).
+
+    That is the entry's state, not an upstream outage, so retrying will not
+    help until its source lists a spec for it. Maps to 409.
+    """
+
+    def __init__(self, entry_id: str) -> None:
+        super().__init__(f"Catalog entry '{entry_id}' has no spec to preview or import.")
+        self.entry_id = entry_id
+
+
 class CatalogUnavailableError(RegistryServiceError):
     """Raised when the upstream catalog manifest/spec cannot be fetched or parsed."""
 

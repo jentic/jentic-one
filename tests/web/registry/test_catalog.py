@@ -27,7 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp import types as mcp_types
 from mcp.shared.exceptions import MCPError
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 
 import jentic_one.mcp.envelopes as mcp_envelopes
 import jentic_one.mcp.tools as tools_mod
@@ -778,6 +778,28 @@ def test_traversal_shaped_ids_are_missing(admin_client: TestClient, path: str) -
 
 
 # ── preview ──────────────────────────────────────────────────────────────────
+
+
+async def test_card_only_entry_answers_409_on_preview_and_import(
+    web_config: AppConfig,
+) -> None:
+    """An entry its source lists without a spec is a permanent state, not a 502."""
+    async with _deployment(web_config, [_public_source()]) as ctx:
+        async with ctx.registry_db.transaction() as session:
+            await session.execute(
+                update(CatalogEntryRow)
+                .where(CatalogEntryRow.entry_id == "public/slack.com")
+                .values(spec_ref=None)
+            )
+        clear_snapshots()
+        with _client(ctx, ["org:admin"]) as tc:
+            assert tc.get("/catalog/public/slack.com").json()["has_spec"] is False
+            for r in (
+                tc.get("/catalog/public/slack.com/operations"),
+                tc.post("/catalog/public/slack.com:import"),
+            ):
+                assert r.status_code == 409
+                assert r.json()["type"].endswith("catalog_entry_has_no_spec")
 
 
 def test_preview_operations(admin_client: TestClient) -> None:

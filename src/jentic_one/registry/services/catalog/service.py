@@ -74,6 +74,7 @@ from jentic_one.registry.services.catalog.snapshot import (
 from jentic_one.registry.services.catalog.sources import digests
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
 from jentic_one.registry.services.errors import (
+    CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     NothingToSnoozeError,
@@ -993,7 +994,7 @@ class CatalogService:
     def _spec_url(state: _ReadState, entry: CatalogEntry) -> str:
         url = state.snapshot.spec_urls.get(entry.entry_id)
         if url is None:
-            raise CatalogUnavailableError(f"catalog entry '{entry.entry_id}' has no spec url")
+            raise CatalogEntryHasNoSpecError(entry.entry_id)
         return url
 
     async def preview(

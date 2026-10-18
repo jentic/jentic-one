@@ -95,6 +95,7 @@ from jentic_one.mcp.envelopes import (
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
+    CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     InvalidApiFilterError,
@@ -953,6 +954,10 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
             actionable="Relay this to your human operator: superseding a confirmed "
             "overlay is an operator decision (overlays:confirm), not a permission an agent "
             "should request for itself.",
+        ) from None
+    except CatalogEntryHasNoSpecError:
+        raise invalid_params(
+            f"catalog entry {api_id!r} has no spec to import; pick another search_catalog hit"
         ) from None
     except CatalogUnavailableError as exc:
         raise ToolError(CODE_INTERNAL_ERROR, f"catalog not available: {exc}") from None

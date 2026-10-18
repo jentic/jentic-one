@@ -12,6 +12,7 @@ from jentic_one.registry.services.errors import (
     ApiDeleteBlockedError,
     ApiNotFoundError,
     ArchivedRevisionPinError,
+    CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
     ForcedSyncForbiddenError,
@@ -80,6 +81,8 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # Snooze requested for an entry with no outstanding notified update — a precondition
     # failure (nothing to accept), same 409 family as the other lifecycle conflicts.
     NothingToSnoozeError: (409, "nothing_to_snooze"),
+    # A card-only entry: listed, but its source gives no spec. Permanent, not 502.
+    CatalogEntryHasNoSpecError: (409, "catalog_entry_has_no_spec"),
     # Rollback asked for a prior revision that was never recorded or is no longer
     # restorable — a precondition the operator must resolve (e.g. re-import upstream),
     # not a transient conflict. 409 keeps it in the same family as the other overlay
