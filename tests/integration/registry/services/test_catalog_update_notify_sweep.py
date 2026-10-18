@@ -26,7 +26,7 @@ from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.services.catalog.service import CatalogService
-from jentic_one.registry.services.catalog.sources.protocol import SpecBody
+from jentic_one.registry.services.catalog.sources.protocol import NotModified, SpecBody
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.events import EventType
@@ -533,18 +533,40 @@ async def test_outdated_api_ids_does_not_collide_across_apis_sharing_an_entry(
 # ── #941: emit-then-mark durability ──────────────────────────────────────────
 
 
+@pytest.mark.parametrize("second_probe", ["same_hint", "not_modified"])
 async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
-    integration_context: Context, registered_api: Api
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    clean_state: None,
+    second_probe: str,
 ) -> None:
     """#941: a *failed emit* must NOT advance the notify marker (no permanent suppression).
 
     The change path uses the raising ``emit_event`` (not the swallowing best-effort
     wrapper) exactly so a transient admin-DB emit failure propagates to the sweep's per-API
-    guard and the marker is left unadvanced. Patching ``emit_event`` here reproduces the
-    real production seam (a raising emit), unlike patching the best-effort wrapper — which
-    in production swallows and would let the marker advance. On the next healthy sweep the
-    change re-emits rather than being deduped against a notification that never landed.
+    guard and the marker is left unadvanced.
+
+    The first probe records the new digest, validator and listing hint before the emit
+    fails. So the next sweep sees nothing new upstream: the entry still lists the same
+    ``content_hint`` (no fetch at all), or the source answers not-modified to the stored
+    validator. Either way it must re-decide the recorded, never-notified change and emit.
     """
+    await _list_entry(registry_db, content_hint="hint-1")
+    api = Api(vendor="notify-test.com", name="widgets", version="v1", catalog_entry_id=_ENTRY_ID)
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        session.add(
+            ApiRevision(
+                api_id=api.id,
+                state="published",
+                spec_digest="sha256:registered",
+                source_type="url",
+                source_url=_SPEC_URL,
+                origin="catalog",
+            )
+        )
+        await session.commit()
     integration_context.config.catalog.update_check_interval_seconds = 1
     changed = _changed("sha256:upstream-new")
     svc = CatalogService(integration_context)
@@ -563,28 +585,55 @@ async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
 
     assert await _events(integration_context) == []  # nothing emitted
     async with integration_context.registry_db.session() as session:
-        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check is not None
-    # Observation persisted (we did fetch), but the notify marker was NOT advanced —
-    # so the change is still outstanding and will re-emit.
+    # Observation persisted (we did fetch), but the notify marker was NOT advanced.
     assert check.last_seen_digest == "sha256:upstream-new"
+    assert check.last_seen_content_hint == "hint-1"
+    assert check.last_seen_validator == '"v2"'
     assert check.last_notified_digest is None
     assert check.last_notified_event_class is None
 
-    # Second sweep with a healthy emit: it re-emits (the bug would have suppressed it).
     async with integration_context.registry_db.transaction() as session:
-        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
         assert check is not None
         check.last_checked_at = None  # reopen the per-API interval gate
-    with patch(_FETCH_ROW, new_callable=AsyncMock, return_value=changed):
+    if second_probe == "same_hint":
+        # The entry still lists the hint the first probe recorded: no fetch at all.
+        fetch = AsyncMock(side_effect=AssertionError("an unchanged hint must not fetch"))
+    else:
+        # The source stops publishing hints and answers 304 to the stored validator.
+        async with registry_db.transaction() as session:
+            row = (
+                await session.execute(
+                    select(CatalogEntryRow).where(CatalogEntryRow.entry_id == _ENTRY_ID)
+                )
+            ).scalar_one()
+            row.content_hint = None
+        fetch = AsyncMock(return_value=NotModified(validator='"v2"'))
+    with patch(_FETCH_ROW, fetch):
         await svc._run_update_notify_sweep()
 
+    if second_probe == "not_modified":
+        assert fetch.await_args is not None
+        assert fetch.await_args.kwargs["validator"] == '"v2"'
     events = await _events(integration_context)
     assert len(events) == 1  # re-emitted, not permanently suppressed
+    assert events[0].data["upstream_digest"] == "sha256:upstream-new"
     async with integration_context.registry_db.session() as session:
-        check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        check_after = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check_after is not None
     assert check_after.last_notified_digest == "sha256:upstream-new"
+    assert check_after.last_seen_digest == "sha256:upstream-new"
+
+    # A third sweep with nothing new is a no-op again (no duplicate event).
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check is not None
+        check.last_checked_at = None
+    with patch(_FETCH_ROW, AsyncMock(return_value=NotModified(validator='"v2"'))):
+        await svc._run_update_notify_sweep()
+    assert len(await _events(integration_context)) == 1
 
 
 async def test_sweep_crash_after_emit_before_mark_re_emits_at_most_once(

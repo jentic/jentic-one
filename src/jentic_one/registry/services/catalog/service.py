@@ -664,6 +664,16 @@ class CatalogService:
             )
         return f"Upstream spec updated for {who}"
 
+    def _unnotified(self, spec: RegisteredSpec, check: Any) -> bool:
+        """True if ``check`` recorded an upstream change that was never notified."""
+        seen = check.last_seen_digest
+        if seen is None or seen == spec.spec_digest:
+            return False
+        return (seen, self._classify_update(spec, seen)) != (
+            check.last_notified_digest,
+            check.last_notified_event_class,
+        )
+
     async def _record_unchanged(
         self, spec: RegisteredSpec, *, now: datetime, validator: str | None, hint: str | None
     ) -> None:
@@ -692,7 +702,8 @@ class CatalogService:
 
         Unchanged without a fetch when the entry still lists the (non-null)
         ``content_hint`` last probed; otherwise fetched through the entry's source,
-        conditionally on the validator last seen for the same entry.
+        conditionally on the validator last seen for the same entry. Either way, a
+        change an earlier probe recorded but never notified is re-decided.
         """
         async with self._ctx.registry_db.session() as session:
             check = await CatalogUpdateCheckRepository.get(session, spec.api_id)
@@ -704,22 +715,41 @@ class CatalogService:
 
         same_entry = check is not None and check.catalog_entry_id == spec.catalog_entry_id
         hint = entry.content_hint
+        # A change seen by an earlier probe whose notification never went out
+        # (the emit failed after the probe was recorded). An unchanged hint or a
+        # not-modified answer must still re-run the notify decision for it,
+        # otherwise the update would never be announced.
+        pending = (
+            check.last_seen_digest
+            if same_entry and check is not None and self._unnotified(spec, check)
+            else None
+        )
+        validator: str | None
         if (
             same_entry
             and hint is not None
             and check is not None
             and check.last_seen_content_hint == hint
         ):
-            await self._record_unchanged(spec, now=now, validator=None, hint=hint)
-            return
-        prior_validator = check.last_seen_validator if same_entry and check is not None else None
-        result = await fetcher.fetch_row(entry, validator=prior_validator)
+            if pending is None:
+                await self._record_unchanged(spec, now=now, validator=None, hint=hint)
+                return
+            upstream_digest, validator = pending, check.last_seen_validator
+        else:
+            prior_validator = (
+                check.last_seen_validator if same_entry and check is not None else None
+            )
+            result = await fetcher.fetch_row(entry, validator=prior_validator)
+            if isinstance(result, NotModified):
+                if pending is None:
+                    await self._record_unchanged(
+                        spec, now=now, validator=result.validator, hint=hint
+                    )
+                    return
+                upstream_digest, validator = pending, result.validator
+            else:
+                upstream_digest, validator = result.digest, result.validator
 
-        if isinstance(result, NotModified):
-            await self._record_unchanged(spec, now=now, validator=result.validator, hint=hint)
-            return
-
-        upstream_digest = result.digest
         last_notified = check.last_notified_digest if check is not None else None
         last_notified_class = check.last_notified_event_class if check is not None else None
         # A change worth notifying: the upstream bytes differ from what backs the
@@ -741,7 +771,7 @@ class CatalogService:
                 session,
                 local_api_id=spec.api_id,
                 catalog_entry_id=spec.catalog_entry_id,
-                validator=result.validator,
+                validator=validator,
                 digest=upstream_digest,
                 checked_at=now,
                 content_hint=hint,
