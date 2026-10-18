@@ -164,6 +164,21 @@ class ConfigError(Exception):
     """Raised when configuration is invalid or incomplete."""
 
 
+def _describe_validation_error(exc: ValidationError) -> str:
+    """``exc`` as text built from each error's location and message only.
+
+    Pydantic's own rendering repeats every offending input (``input_value=``),
+    which can be a secret (a password in a URL, say); a boot error must not
+    print it.
+    """
+    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+    lines = [f"{len(errors)} validation error{'s' if len(errors) != 1 else ''} for {exc.title}"]
+    for error in errors:
+        lines.append(".".join(str(part) for part in error["loc"]) or "(root)")
+        lines.append(f"  {error['msg']} [type={error['type']}]")
+    return "\n".join(lines)
+
+
 def _normalize_optional_base_url(value: str | None) -> str | None:
     """Validator for optional public base-URL fields.
 
@@ -3226,7 +3241,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             try:
                 extensions[name] = model.model_validate(raw)
             except ValidationError as e:
-                raise ConfigError(f"Invalid config for extension {name!r}: {e}") from e
+                raise ConfigError(
+                    f"Invalid config for extension {name!r}: {_describe_validation_error(e)}"
+                ) from e
     if extensions:
         merged["extensions"] = extensions
 
@@ -3237,6 +3254,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     token = _ENABLED_APPS.set(_apps_for_secret_guard(merged.get("apps")))
     try:
         return AppConfig.model_validate(merged)
+    except ValidationError as e:
+        detail = _describe_validation_error(e)
+        raise ConfigError(f"Configuration validation failed: {detail}") from e
     except Exception as e:
         raise ConfigError(f"Configuration validation failed: {e}") from e
     finally:

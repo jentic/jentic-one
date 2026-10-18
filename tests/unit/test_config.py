@@ -105,6 +105,42 @@ def test_missing_required_field_raises(tmp_path: Path):
         load_config(path)
 
 
+def test_validation_error_names_the_field_but_never_echoes_its_input(tmp_path: Path):
+    """A boot error names where and why, never the input: it can carry a secret."""
+    origin = "https://u:hunter2@cdn.example.com"  # pragma: allowlist secret
+    data = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "catalog": {
+            "sources": [
+                {
+                    "slug": "corp",
+                    "kind": "http-index",
+                    "settings": {"index_url": "https://index.example.com/apis.json"},
+                    "auth": {
+                        "type": "bearer_from_env",
+                        "env": "CORP_TOKEN",
+                        "origins": [origin],
+                    },
+                }
+            ]
+        },
+    }
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.dump(data))
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    message = str(exc.value)
+    assert "Configuration validation failed" in message
+    assert "catalog.sources.0.auth.origins" in message
+    assert "must not carry credentials" in message
+    assert "hunter2" not in message
+    assert "input_value" not in message
+
+
 def test_env_overrides_file_values(config_file: Path):
     env = {"JENTIC__DATABASES__REGISTRY__HOST": "override-host"}
     with patch.dict(os.environ, env, clear=False):
