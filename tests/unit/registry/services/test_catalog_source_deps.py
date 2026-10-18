@@ -427,9 +427,34 @@ def test_url_origin_canonicalises_trailing_dots_and_idn(a: str, b: str) -> None:
     assert url_origin(a) == url_origin(b)
 
 
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # IDNA 2008 keeps these deviation characters: the client connects to a
+        # different, separately registrable name for each spelling.
+        ("https://straße.de/x", "https://strasse.de/x"),
+        ("https://\u03c2.example/x", "https://\u03c3.example/x"),
+        ("https://\u03c2.example/x", "https://xn--4xa.example/x"),
+    ],
+)
+def test_url_origin_keeps_idna_deviation_spellings_apart(a: str, b: str) -> None:
+    assert url_origin(a) is not None
+    assert url_origin(b) is not None
+    assert url_origin(a) != url_origin(b)
+
+
+def test_url_origin_is_the_host_the_client_connects_to() -> None:
+    for url in ("https://straße.de/x", "https://\u03c2.example/x", "https://bücher.example./x"):
+        origin = url_origin(url)
+        assert origin is not None
+        assert origin[1] == httpx.URL(url).raw_host.decode("ascii").rstrip(".")
+
+
 def test_url_origin_rejects_hosts_it_cannot_encode() -> None:
     assert url_origin("https://./x") is None
     assert url_origin("https://a..bücher.example/x") is None  # an empty IDN label
+    assert url_origin("https://\uff45xample.com/x") is None  # the client refuses it too
+    assert url_origin("https://example.com:99999/x") is None
 
 
 @pytest.mark.asyncio
@@ -445,6 +470,27 @@ async def test_credential_reaches_trailing_dot_and_idn_forms_of_its_origin(
         "Bearer source-token",
         "Bearer source-token",
         None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_credential_never_reaches_an_idna_deviation_spelling_of_its_origin(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = _source(
+        slug="corp4", auth=_auth(origins=["https://strasse.de", "https://xn--4xa.example"])
+    )
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://straße.de/a.json")
+    await deps.http.get_bytes("https://\u03c2.example/b.json")
+    await deps.http.get_bytes("https://strasse.de/c.json")
+    await deps.http.get_bytes("https://\u03c3.example/d.json")
+    sent = [(r.url.raw_host, r.headers.get("authorization")) for r in answering_transport[-4:]]
+    assert sent == [
+        (b"xn--strae-oqa.de", None),
+        (b"xn--3xa.example", None),
+        (b"strasse.de", "Bearer source-token"),
+        (b"xn--4xa.example", "Bearer source-token"),
     ]
 
 
