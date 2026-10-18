@@ -59,8 +59,8 @@ export interface WorkspaceApi {
 	source?: string;
 	registered?: boolean;
 	/**
-	 * Provenance of the current revision (Flow-3): `catalog` (imported from the
-	 * public catalog), `overlay` (materialized from a confirmed overlay), or null
+	 * Provenance of the current revision (Flow-3): `catalog` (imported from a
+	 * catalog source), `overlay` (materialized from a confirmed overlay), or null
 	 * (manual import). Optional — only present once the Flow-3 backend fields land;
 	 * gates the one-click Re-import (safe only for `catalog` origin).
 	 */
@@ -93,7 +93,7 @@ export type RevisionState = 'draft' | 'imported' | 'published' | 'archived' | (s
 
 /**
  * Provenance of a revision (wire `RevisionOrigin`): `overlay` (materialized
- * from a confirmed overlay), `catalog` (imported from the public catalog),
+ * from a confirmed overlay), `catalog` (imported from a catalog source),
  * `uploaded` (user-supplied spec), or null (plain import).
  */
 export type RevisionOrigin = 'overlay' | 'catalog' | 'uploaded' | (string & {});

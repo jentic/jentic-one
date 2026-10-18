@@ -267,6 +267,82 @@ describe('OverviewStrip — update-available re-import', () => {
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
+	it('refuses to guess when two registered entries share the catalog_api_id', async () => {
+		const user = userEvent.setup();
+		const posted: string[] = [];
+		const registered = (entryId: string, slug: string) => ({
+			entry_id: entryId,
+			source_slug: slug,
+			catalog_api_id: 'stripe.com',
+			vendor: 'stripe.com',
+			registered: true,
+			_links: {},
+		});
+		worker.use(
+			http.get('/catalog', () =>
+				HttpResponse.json({
+					data: [
+						registered('public/stripe.com', 'public'),
+						registered('corp/stripe.com', 'corp'),
+					],
+					catalog_total: 2,
+					registered_count: 2,
+					has_more: false,
+				}),
+			),
+			http.post('/catalog/*', ({ request }) => {
+				posted.push(new URL(request.url).pathname);
+				return HttpResponse.json({ job_id: 'job_x', status: 'queued' }, { status: 202 });
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+		await user.click(screen.getByTestId('workspace-reimport'));
+		expect(await screen.findByText('Re-import failed')).toBeInTheDocument();
+		expect(posted).toEqual([]);
+	});
+
+	it('surfaces a failed registered-entry lookup instead of guessing', async () => {
+		const user = userEvent.setup();
+		const posted: string[] = [];
+		worker.use(
+			http.get('/catalog', () =>
+				HttpResponse.json({ title: 'Forbidden', status: 403 }, { status: 403 }),
+			),
+			http.post('/catalog/*', ({ request }) => {
+				posted.push(new URL(request.url).pathname);
+				return HttpResponse.json({ job_id: 'job_x', status: 'queued' }, { status: 202 });
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'stripe.com',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+		await user.click(screen.getByTestId('workspace-reimport'));
+		expect(await screen.findByText('Re-import failed')).toBeInTheDocument();
+		expect(posted).toEqual([]);
+	});
+
 	it('follows the catalog did_you_mean hint to the entry_id on re-import', async () => {
 		const user = userEvent.setup();
 		const imported: string[] = [];
