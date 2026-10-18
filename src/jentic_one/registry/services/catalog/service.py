@@ -73,6 +73,9 @@ from jentic_one.registry.services.catalog.snapshot import (
 )
 from jentic_one.registry.services.catalog.sources import digests
 from jentic_one.registry.services.catalog.sources.sync import (
+    OUTCOME_BUSY,
+    OUTCOME_DISABLED,
+    OUTCOME_SKIPPED,
     CatalogSourceSync,
     SyncOutcome,
     is_due,
@@ -217,7 +220,8 @@ class CatalogRefreshResult:
     """Outcome of a refresh, over the sources the caller may read.
 
     ``count`` is their live entries after it; ``partial`` is set when any of
-    them failed or was skipped; ``sources`` is each one's run outcome.
+    them failed, was held by another run (busy) or was skipped; ``sources`` is
+    each one's run outcome.
     """
 
     count: int
@@ -239,6 +243,11 @@ class _ReadState:
 
 def _entry_key(entry: CatalogEntry) -> str:
     return entry.entry_id
+
+
+def _outcome_codes(outcomes: list[SyncOutcome]) -> str:
+    """``slug: code`` for each outcome, for a refresh's error detail."""
+    return ", ".join(f"{o.slug}: {o.error_code or o.status}" for o in outcomes)
 
 
 def _effective(identity: Identity) -> frozenset[str]:
@@ -278,9 +287,11 @@ class CatalogService:
         listing timeout here leaves the source's scheduled backoff alone.
 
         Raises ``CatalogUnavailableError`` when no source applied and at least
-        one failed; otherwise the result is ``partial`` and the last good rows
-        stay. A run held by the mass-removal guard is not a failure: the source
-        was reachable and keeps serving its last applied rows.
+        one failed; its detail lists the failed sources, then any that were not
+        refreshed (busy or skipped). Otherwise the result is ``partial`` when a
+        source failed, was held by another run (busy) or was skipped, and the
+        last good rows stay. A run held by the mass-removal guard is not a
+        failure: the source was reachable and keeps serving its last applied rows.
         """
         allowed = (
             frozenset(s.slug for s in self._enabled())
@@ -298,13 +309,19 @@ class CatalogService:
         )
         applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
         held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
-        failed = [o for o in outcomes if o.status not in (*held, "disabled", "busy")]
+        pending = (OUTCOME_BUSY, OUTCOME_SKIPPED)
+        failed = [o for o in outcomes if o.status not in (*held, *pending, OUTCOME_DISABLED)]
+        not_run = [o for o in outcomes if o.status in pending]
         if failed and not applied:
-            codes = ", ".join(f"{o.slug}: {o.error_code or o.status}" for o in failed)
-            raise CatalogUnavailableError(f"catalog sources unavailable ({codes})")
+            detail = f"catalog sources unavailable ({_outcome_codes(failed)})"
+            if not_run:
+                detail += f"; not refreshed ({_outcome_codes(not_run)})"
+            raise CatalogUnavailableError(detail)
         snapshot = await self._snapshot()
         count = sum(1 for e in snapshot.entries if e.source_slug in allowed)
-        return CatalogRefreshResult(count=count, partial=bool(failed), sources=tuple(outcomes))
+        return CatalogRefreshResult(
+            count=count, partial=bool(failed or not_run), sources=tuple(outcomes)
+        )
 
     # ── snapshot ─────────────────────────────────────────────────────────────
 

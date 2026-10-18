@@ -353,6 +353,38 @@ async def test_catalog_sync_refresh_covers_only_the_sources_the_caller_can_read(
             ]
 
 
+async def test_refresh_of_a_source_held_by_another_run_is_partial(
+    web_config: AppConfig,
+) -> None:
+    """``busy`` applied nothing for that source, so the refresh is ``partial``, and
+    a 502 lists a busy source as not refreshed rather than unavailable."""
+    _LISTINGS[_CORP_URL] = ["corp-a.example"]
+    sources = [_public_source(), _corp_source(visibility="public")]
+    async with Context(_config(web_config, sources)) as ctx:
+        await _truncate(ctx)
+        await CatalogSourceSync(ctx).register_sources()
+        async with ctx.registry_db.transaction() as session:
+            assert await CatalogSourceRepository.claim_lease(
+                session, slug="corp", owner="other-run", lease_seconds=600
+            )
+        with _client(ctx, ["catalog:sync"]) as tc:
+            r = tc.post("/catalog:refresh")
+            assert r.status_code == 200
+            assert r.json()["status"] == "partial"
+            assert [(s["slug"], s["status"]) for s in r.json()["sources"]] == [
+                ("public", "applied"),
+                ("corp", "busy"),
+            ]
+
+            del _LISTINGS[_MANIFEST_URL]
+            failed = tc.post("/catalog:refresh")
+            assert failed.status_code == 502
+            detail = failed.json()["detail"]
+            assert detail.startswith("catalog sources unavailable (public: ")
+            assert detail.endswith("; not refreshed (corp: busy)")
+        await _truncate(ctx)
+
+
 def test_refresh_invalid_token_401(unauthed_client: TestClient) -> None:
     resp = unauthed_client.post(
         "/catalog:refresh", headers={"Authorization": "Bearer not-a-real-token"}
