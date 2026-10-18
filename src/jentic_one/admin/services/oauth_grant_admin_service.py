@@ -31,6 +31,16 @@ from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 GRANT_REVOKE_ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
 
 
+def is_grant_revoke_admin(identity: Identity) -> bool:
+    """Whether ``identity`` may revoke any grant (holds a revoke-admin permission).
+
+    Shared by :func:`viewer_can_revoke` and the unscoped ``:revoke`` lookup in
+    ``OAuthGrantService.revoke_grant``, so who may see a grant to revoke it and
+    who may revoke it read the same set.
+    """
+    return bool(GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions))
+
+
 def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
     """The ``:revoke`` predicate: the grant's consenting user, or a write-set admin.
 
@@ -46,9 +56,7 @@ def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
     invariant holds by construction, not by timing. It persists only on
     revoked history rows, where ``can_revoke`` keeps the UI honest.
     """
-    return grant_user_id == identity.sub or bool(
-        GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions)
-    )
+    return grant_user_id == identity.sub or is_grant_revoke_admin(identity)
 
 
 class OAuthGrantAdminService:

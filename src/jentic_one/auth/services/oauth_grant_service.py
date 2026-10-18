@@ -18,8 +18,8 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.oauth_grant_admin_service import (
-    GRANT_REVOKE_ADMIN_PERMISSIONS,
     OAuthGrantAdminService,
+    is_grant_revoke_admin,
     viewer_can_revoke,
 )
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
@@ -238,9 +238,10 @@ class OAuthGrantService:
         agent's owner on a grant someone else consented to) gets
         ``OAuthGrantAccessDeniedError``.
         """
-        is_revoke_admin = bool(GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions))
         access_filters = (
-            None if is_revoke_admin else build_access_filters(identity, OAuthClientGrant)
+            None
+            if is_grant_revoke_admin(identity)
+            else build_access_filters(identity, OAuthClientGrant)
         )
 
         async def _write(session: AsyncSession) -> bool:
