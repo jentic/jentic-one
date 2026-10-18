@@ -372,7 +372,7 @@ async def oauth_callback(
         # cookie lives on the host the browser started on, so hop there.
         return RedirectResponse(alias, status_code=303)
 
-    binding = read_browser_binding_cookie(request, peeked)
+    binding = read_browser_binding_cookie(request, ctx, peeked)
     response = await _complete_oauth_callback(
         raw_state=state,
         session_id=peeked.session_id if peeked is not None else None,
@@ -465,9 +465,14 @@ async def _complete_oauth_callback(
     try:
         credential_id = await svc.complete(raw_state, callback, browser_binding=binding)
     except ConnectFlowError as exc:
+        # ``error_type`` names the underlying cause (e.g.
+        # ``StateBrowserMismatchError`` for a callback from another browser),
+        # as the session branch logs it, so refusals alert the same way.
+        cause = exc.__cause__ if exc.__cause__ is not None else exc
         _logger.warning(
             "oauth_callback.connect_flow_error",
             error=str(exc),
+            error_type=type(cause).__name__,
             callback_error=error,
         )
         return _oauth_callback_error()

@@ -184,6 +184,33 @@ is denied with `403 action_denied` (`reason: ambiguous_path`): different
 upstream servers resolve such a path differently, so no rule check on it is
 sound.
 
+## OAuth connects finish only in the browser that started them
+
+An OAuth connect (the UI's **Connect** / **Reconnect**, or approving an
+agent's request) completes only when the vendor's redirect lands in the
+browser that started it: the start sets a short-lived cookie on the API host,
+and `GET /credentials/oauth/callback` requires it. A callback without it ends
+on the generic error page and changes nothing. Check two setups before
+upgrading:
+
+- **Callback on another host.** If
+  `credentials.providers.direct_oauth2.redirect_uri` names a different host
+  from `server.public_base_url` (a dedicated callback domain, or an old
+  hostname kept for the vendor app registration), the browser never sends
+  the cookie to the callback and **every** OAuth connect fails. Serve the
+  callback on the public host (or unset `redirect_uri` so it derives from
+  `public_base_url`) and update the redirect URI registered with each vendor
+  OAuth app. Startup logs an `oauth_callback_host_mismatch` WARNING for this
+  case. `localhost` and `127.0.0.1` count as one host.
+- **Connect started outside the browser.** A flow started with `curl`, a
+  script or an API key and then opened in a browser cannot finish. Start it
+  from the browser that opens `authorize_url`.
+
+A refused callback logs `oauth_callback.connect_flow_error` (credential
+connect) or `oauth_callback.connect_session.state_invalid` (agent request)
+with `error_type: StateBrowserMismatchError`; alert on that to catch either
+case.
+
 ## Where the commands live, per install
 
 | Install | Upgrade steps |

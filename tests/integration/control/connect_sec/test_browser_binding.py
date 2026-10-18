@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+import structlog
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
@@ -42,7 +43,11 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
-from jentic_one.control.web.connect_binding import MAX_BINDING_COOKIES
+from jentic_one.control.web.connect_binding import (
+    MAX_BINDING_COOKIES,
+    SECURE_COOKIE_PREFIX,
+    warn_if_callback_on_another_host,
+)
 from jentic_one.control.web.routers import credentials as credentials_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
@@ -91,12 +96,17 @@ def _state_of(authorize_url: str) -> str:
     return parse_qs(urlsplit(authorize_url).query)["state"][-1]
 
 
+def _is_binding_cookie(header: str) -> bool:
+    return header.removeprefix(SECURE_COOKIE_PREFIX).startswith(BROWSER_BINDING_COOKIE_PREFIX)
+
+
+def _secure_name() -> str:
+    """A fresh (other flow's) binding cookie name as an https deployment sets it."""
+    return f"{SECURE_COOKIE_PREFIX}{new_browser_binding().cookie_name}"
+
+
 def _binding_set_cookie(response: httpx.Response) -> str:
-    headers = [
-        h
-        for h in response.headers.get_list("set-cookie")
-        if h.startswith(BROWSER_BINDING_COOKIE_PREFIX)
-    ]
+    headers = [h for h in response.headers.get_list("set-cookie") if _is_binding_cookie(h)]
     assert len(headers) == 1, response.headers.get_list("set-cookie")
     return headers[0]
 
@@ -194,7 +204,10 @@ async def test_begin_sets_a_scoped_httponly_cookie_bound_into_the_state(
         env.config.credentials.connect.state_secret.get_secret_value(), started.json()["state"]
     )
     assert state.browser_binding_hash is not None
-    assert name == f"{BROWSER_BINDING_COOKIE_PREFIX}{state.browser_binding_hash[:16]}"
+    # Secure, so ``__Secure-``-prefixed: only an https response can set it.
+    assert name == (
+        f"{SECURE_COOKIE_PREFIX}{BROWSER_BINDING_COOKIE_PREFIX}{state.browser_binding_hash[:16]}"
+    )
     assert value not in started.json()["state"]
     assert value not in started.json()["authorize_url"]
 
@@ -210,8 +223,10 @@ async def test_plain_http_origin_omits_secure(
     credential_id = await existing_credential(env, oauth_scope="read")
     async with _browser(env, base="http://127.0.0.1:8020") as browser:
         started = await browser.post(f"/credentials/{credential_id}/connect", json={})
-        attrs = {a.strip().lower() for a in _binding_set_cookie(started).split(";")[1:]}
+        set_cookie = _binding_set_cookie(started)
+        attrs = {a.strip().lower() for a in set_cookie.split(";")[1:]}
         assert "secure" not in attrs
+        assert set_cookie.startswith(BROWSER_BINDING_COOKIE_PREFIX)  # no prefix without Secure
         completed = await _callback(browser, started.json()["state"])
     assert _status(completed) == "ok"
 
@@ -235,8 +250,12 @@ async def test_callback_without_the_starting_browsers_cookie_changes_nothing(
     async with _browser(env) as initiator, _browser(env) as other:
         state, cookie_name = await _begin(initiator, credential_id)
         sent = {} if cookie == "missing" else {cookie_name: new_browser_binding().value}
-        refused = await _callback(other, state, cookies=sent)
+        with structlog.testing.capture_logs() as logs:
+            refused = await _callback(other, state, cookies=sent)
         assert _status(refused) == "error"
+        # The refusal names its cause, so operators can alert on it.
+        refusals = [e for e in logs if e["event"] == "oauth_callback.connect_flow_error"]
+        assert [e["error_type"] for e in refusals] == ["StateBrowserMismatchError"]
         _assert_cookie_cleared(refused, cookie_name)
         # Nothing exchanged, nothing written.
         assert vendor == []
@@ -246,6 +265,23 @@ async def test_callback_without_the_starting_browsers_cookie_changes_nothing(
         completed = await _callback(initiator, state)
     assert _status(completed) == "ok"
     assert await _granted(env, credential_id) == "read write"
+
+
+async def test_an_unprefixed_cookie_does_not_complete_a_secure_flow(
+    env: Context, vendor: list[str]
+) -> None:
+    """On https only the ``__Secure-`` name counts, even with the right value."""
+    credential_id = await existing_credential(env, oauth_scope="read")
+    async with _browser(env) as browser:
+        state, cookie_name = await _begin(browser, credential_id)
+        value = browser.cookies.get(cookie_name)
+        assert value is not None
+        unprefixed = cookie_name.removeprefix(SECURE_COOKIE_PREFIX)
+        refused = await _callback(browser, state, cookies={unprefixed: value})
+        assert _status(refused) == "error"
+        assert vendor == []
+        completed = await _callback(browser, state, cookies={cookie_name: value})
+    assert _status(completed) == "ok"
 
 
 async def test_another_flows_cookie_does_not_complete_this_flow(
@@ -422,11 +458,7 @@ async def test_secret_confirm_sets_no_binding_cookie(env: Context) -> None:
             {"kind": "api_key", "key": "vault-key-" + "K" * 20},  # pragma: allowlist secret
         )
     assert confirmed.status_code == 200, confirmed.text
-    assert not [
-        h
-        for h in confirmed.headers.get_list("set-cookie")
-        if h.startswith(BROWSER_BINDING_COOKIE_PREFIX)
-    ]
+    assert not [h for h in confirmed.headers.get_list("set-cookie") if _is_binding_cookie(h)]
 
 
 async def test_device_flow_confirm_sets_no_binding_cookie(env: Context) -> None:
@@ -456,11 +488,7 @@ async def test_device_flow_confirm_sets_no_binding_cookie(env: Context) -> None:
             )
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["user_code"] == "ABCD-EFGH"
-    assert not [
-        h
-        for h in confirmed.headers.get_list("set-cookie")
-        if h.startswith(BROWSER_BINDING_COOKIE_PREFIX)
-    ]
+    assert not [h for h in confirmed.headers.get_list("set-cookie") if _is_binding_cookie(h)]
 
 
 async def test_agent_session_callback_follows_the_approvers_loopback_alias(env: Context) -> None:
@@ -584,7 +612,7 @@ async def test_callback_expires_a_pile_of_abandoned_binding_cookies(
     env: Context, vendor: list[str]
 ) -> None:
     credential_id = await existing_credential(env, oauth_scope="read")
-    abandoned = {new_browser_binding().cookie_name: "x" for _ in range(MAX_BINDING_COOKIES)}
+    abandoned = {_secure_name(): "x" for _ in range(MAX_BINDING_COOKIES)}
     async with _browser(env) as browser:
         state, cookie_name = await _begin(browser, credential_id)
         binding = browser.cookies.get(cookie_name)
@@ -599,7 +627,7 @@ async def test_a_refused_callback_prunes_nothing_but_its_own_cookie(
     env: Context, vendor: list[str]
 ) -> None:
     credential_id = await existing_credential(env, oauth_scope="read")
-    others = {new_browser_binding().cookie_name: "x" for _ in range(MAX_BINDING_COOKIES)}
+    others = {_secure_name(): "x" for _ in range(MAX_BINDING_COOKIES)}
     async with _browser(env) as initiator, _browser(env) as other:
         state, cookie_name = await _begin(initiator, credential_id)
         refused = await _callback(
@@ -748,3 +776,40 @@ async def test_a_session_callback_that_does_not_connect_redirects_to_error(
             landed = await _callback(approver, state)
     assert _status(landed) == "error"
     assert await session_row(env, session_id) is None
+
+
+# --- startup warning: a callback on another host never sees the cookie -------
+
+
+@pytest.mark.parametrize(
+    ("public", "callback", "warned"),
+    [
+        ("https://t", "https://callbacks.example.com/credentials/oauth/callback", True),
+        ("https://t", "https://t/credentials/oauth/callback", False),
+        ("http://localhost:8020", "http://127.0.0.1:8020/credentials/oauth/callback", False),
+        (None, "https://callbacks.example.com/credentials/oauth/callback", False),
+        ("https://t", None, False),
+    ],
+    ids=["other-host", "same-host", "loopback-aliases", "no-public-base", "derived-callback"],
+)
+def test_startup_warns_when_the_callback_is_on_another_host(
+    env: Context,
+    monkeypatch: pytest.MonkeyPatch,
+    public: str | None,
+    callback: str | None,
+    warned: bool,
+) -> None:
+    monkeypatch.setattr(env.config.server, "public_base_url", public)
+    monkeypatch.setattr(env.config.credentials.providers["direct_oauth2"], "redirect_uri", callback)
+    with structlog.testing.capture_logs() as logs:
+        warn_if_callback_on_another_host(env)
+    events = [e for e in logs if e["event"] == "oauth_callback_host_mismatch"]
+    if not warned:
+        assert events == []
+        return
+    assert len(events) == 1
+    assert events[0]["log_level"] == "warning"
+    assert (events[0]["callback_host"], events[0]["public_host"]) == (
+        "callbacks.example.com",
+        "t",
+    )
