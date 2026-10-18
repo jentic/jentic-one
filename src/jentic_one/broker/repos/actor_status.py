@@ -15,6 +15,14 @@ same questions directly from the actor rows, with the same semantics:
   ``service_account`` identities (theme 8 Phase 4 dropped the
   service-account tables; a job queued under one can never run).
 
+The verdict is terminal for the work being checked. A queued job or approved
+hold that comes up while its agent's owner is disabled is refused, not
+deferred: re-enabling the owner restores new requests, and refused work must
+be submitted again.
+
+The broker's self-contained JWT path asks the same question (behind a
+short-TTL cache) once a signed agent token's claims check out.
+
 Raw SQL against the admin schema — the broker may not import the ``admin`` ORM.
 """
 
