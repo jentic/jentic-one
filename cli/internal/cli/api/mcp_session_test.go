@@ -158,7 +158,7 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 		t.Errorf("import_api must not carry readOnlyHint")
 	}
 	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
-		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
+		t.Errorf("import_api must carry idempotentHint (re-import of the same entry_id converges)")
 	}
 	if len(names) != 10 {
 		t.Errorf("the stdio server serves exactly 10 tools, got %v", keys(names))
