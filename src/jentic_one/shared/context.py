@@ -314,8 +314,9 @@ class Context:
         """The process's one shared-state backend, built from ``config.state``.
 
         Every surface this process serves (the auth limiters and single-use
-        markers, the broker's rate limiter, circuit breaker and idempotency
-        store, the control connect limiters) shares this instance, so the
+        markers, the broker's rate limiter, circuit breaker, idempotency
+        store and auth-failure counters, the control connect limiters, and
+        the MCP session-event dedupe) shares this instance, so the
         memory backend's budgets cap the whole process. Built on first access,
         when the app is assembled, so an unknown or misconfigured backend
         fails before the process serves; the app lifespan closes it once,
