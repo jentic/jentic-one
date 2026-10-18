@@ -50,7 +50,7 @@ class RateLimiter:
         self._rate_per_s = default_rpm / 60.0
         self._burst = burst
         # Limiters sharing one store AND one namespace share buckets. The
-        # default keeps the historical `rl:caller:` keyspace; a limiter whose
+        # default namespace is `caller` (keys `rl:caller:<key>`); a limiter whose
         # keys could collide with another limiter's (e.g. two limiters keyed
         # on the bare client network with different rate params) must pass its
         # own namespace so each route drains only its own quota.

@@ -11,7 +11,7 @@ A pre-auth limiter keys on what the caller cannot choose freely: its network
 address. Any request parameter (``client_id``, a signed blob, a token) is
 caller-chosen before it has been verified, so adding it to the key would hand
 a caller a fresh bucket per value. The token endpoint is the one exception: it
-still prefixes the body ``client_id`` to the network, so one host running many
+prefixes the body ``client_id`` to the network, so one host running many
 machine clients does not squeeze them all into one bucket.
 """
 
