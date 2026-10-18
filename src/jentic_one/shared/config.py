@@ -2197,18 +2197,21 @@ class SourceAuthConfig(BaseModel):
     @field_validator("origins")
     @classmethod
     def _http_origins(cls, value: list[str]) -> list[str]:
-        for origin in value:
+        # Never echo an entry: its userinfo or query string can carry a secret.
+        for index, origin in enumerate(value):
             parts = urlsplit(origin)
             if parts.username is not None or parts.password is not None:
-                # Never echo the entry: it carries a secret.
                 raise ValueError(
                     f"auth.origins entry for host {parts.hostname!r} must not carry "
                     "credentials (user:pass@); the source's auth supplies them"
                 )
             if parts.scheme not in ("http", "https") or not parts.hostname:
-                raise ValueError(f"auth.origins entry {origin!r} is not an http(s) origin")
+                raise ValueError(f"auth.origins[{index}] is not an http(s) origin")
             if parts.path not in ("", "/") or parts.query or parts.fragment:
-                raise ValueError(f"auth.origins entry {origin!r} must be an origin, not a URL")
+                raise ValueError(
+                    f"auth.origins entry for host {parts.hostname!r} must be an origin "
+                    "(scheme://host[:port]), not a URL"
+                )
         return value
 
 
@@ -2805,8 +2808,9 @@ class AppConfig(BaseModel):
     # Reject unknown top-level keys that are neither a known field nor a
     # registered extension — surfaces misconfig loudly instead of dropping it.
     # Registered extension sections are extracted by load_config() before
-    # validation, so they never reach this model as unknown keys.
-    model_config = ConfigDict(extra="forbid")
+    # validation, so they never reach this model as unknown keys. A validation
+    # error never repeats its input: a config value can be a secret.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     databases: DatabasesConfig
     services: ServicesConfig = Field(default_factory=ServicesConfig)
@@ -3234,7 +3238,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is not None:
         if not config_path.exists():
             raise ConfigError(f"Config file not found: {config_path}")
-        loaded = yaml.safe_load(_read_config_text(config_path))
+        loaded = _parse_config_yaml(_read_config_text(config_path), config_path)
         if isinstance(loaded, dict):
             file_data = loaded
 
@@ -3246,16 +3250,20 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     # Extract registered extension sections before validating the core model, so
     # extra="forbid" accepts them and each is validated by its own model.
+    # Every ConfigError below is raised outside its ``except`` block and carries
+    # no cause or context: the pydantic error repeats the input, which can be a
+    # secret, and a chained exception would print it in the boot traceback.
     extensions: dict[str, BaseModel] = {}
     for name, model in _CONFIG_EXTENSIONS.items():
         if name in merged:
             raw = merged.pop(name)
+            failure: str | None = None
             try:
                 extensions[name] = model.model_validate(raw)
             except ValidationError as e:
-                raise ConfigError(
-                    f"Invalid config for extension {name!r}: {_describe_validation_error(e)}"
-                ) from e
+                failure = _describe_validation_error(e)
+            if failure is not None:
+                raise ConfigError(f"Invalid config for extension {name!r}: {failure}")
     if extensions:
         merged["extensions"] = extensions
 
@@ -3268,11 +3276,27 @@ def load_config(path: Path | None = None) -> AppConfig:
         return AppConfig.model_validate(merged)
     except ValidationError as e:
         detail = _describe_validation_error(e)
-        raise ConfigError(f"Configuration validation failed: {detail}") from e
     except Exception as e:
-        raise ConfigError(f"Configuration validation failed: {e}") from e
+        detail = str(e)
     finally:
         _ENABLED_APPS.reset(token)
+    raise ConfigError(f"Configuration validation failed: {detail}")
+
+
+def _parse_config_yaml(text: str, path: Path) -> Any:
+    """``text`` parsed as YAML; a syntax error names its position, never the line.
+
+    PyYAML's own message quotes the offending line, which can hold a secret.
+    """
+    failure: str | None = None
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        problem = getattr(e, "problem", None) or type(e).__name__
+        failure = f"Config file {path} is not valid YAML{where}: {problem}"
+    raise ConfigError(failure)
 
 
 def _apps_for_secret_guard(raw: Any) -> frozenset[str] | None:

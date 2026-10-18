@@ -15,6 +15,7 @@ never leaks a registration into another test.
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -129,12 +130,16 @@ def test_load_config_invalid_extension_section_raises(tmp_path: Path) -> None:
     data = _minimal_config()
     # ``label`` is a str; a nested mapping is the wrong type and fails validation
     # inside the extension model (surfaced as a ConfigError, not a raw pydantic one).
-    data["my_ext"] = {"label": {"nested": "wrong-type"}}
+    data["my_ext"] = {"label": {"nested": "hunter2"}}
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.dump(data))
 
-    with pytest.raises(ConfigError, match="Invalid config for extension 'my_ext'"):
+    with pytest.raises(ConfigError, match="Invalid config for extension 'my_ext'") as exc:
         load_config(path)
+    # The extension model's own error repeats its input; none of it is chained.
+    assert exc.value.__cause__ is None
+    assert exc.value.__context__ is None
+    assert "hunter2" not in "".join(traceback.format_exception(exc.value))
 
 
 def test_load_config_rejects_unregistered_top_level_key(tmp_path: Path) -> None:

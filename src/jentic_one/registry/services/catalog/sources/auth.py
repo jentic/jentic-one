@@ -86,7 +86,11 @@ def _env_name(cfg: SourceAuthConfig) -> str:
     if not cfg.env:
         raise ValueError(f"auth type {cfg.type!r} needs env (the variable holding the secret)")
     if not _ENV_NAME_RE.match(cfg.env):
-        raise ValueError(f"auth.env {cfg.env!r} is not an environment variable name")
+        # Never echo the value: a misconfigured env is often the secret itself.
+        raise ValueError(
+            "auth.env is not an environment variable name "
+            "(it names the variable holding the secret, not the secret)"
+        )
     return cfg.env
 
 

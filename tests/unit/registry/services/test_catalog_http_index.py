@@ -427,6 +427,14 @@ def test_bad_auth_config_is_rejected(cfg: SourceAuthConfig) -> None:
         build_source_auth(cfg)
 
 
+def test_auth_env_that_is_not_a_name_is_never_echoed() -> None:
+    """An ``env`` holding the token itself (a common slip) is refused without repeating it."""
+    with pytest.raises(ValueError) as excinfo:
+        build_source_auth(SourceAuthConfig(type="bearer_from_env", env=f"ghp-{_SECRET}"))
+    assert "auth.env is not an environment variable name" in str(excinfo.value)
+    assert _SECRET not in str(excinfo.value)
+
+
 def test_auth_registry_refuses_shadowing() -> None:
     register_source_auth_type("bearer_from_env", BearerFromEnv)  # identical: idempotent
     with pytest.raises(ValueError, match="already registered"):
