@@ -100,11 +100,13 @@ class ActorService:
           (``build_access_filters(identity, Agent)``), the same set
           ``GET /agents/{id}`` answers for.
         - Users (``build_lookup_user_filters``): the caller itself; the owner,
-          registrant, approver or denier of an agent it can see (with
-          ``agents:read``); the actor of an event it can see (with
-          ``events:read``); the decider of a held execution it can see; and,
-          with ``oauth-clients:read``, the consenting user of an OAuth grant it
-          can see and the creator of any OAuth client.
+          registrant, approver or denier of an agent it can see, and the API
+          key creator and key rotation/revocation actor of an agent it owns
+          (with ``agents:read``); the actor of an event it can see (with
+          ``events:read``); the decider of a held execution it can see; the
+          consenting user of an OAuth grant bound to an agent it owns; and,
+          with ``oauth-clients:read``, the consenting user of a grant bound
+          to the caller itself and the creator of any OAuth client.
         - Users still unresolved after that: the creator of a credential the
           caller can read (with ``credentials:read`` or
           ``owner:credentials:read``), shared credentials included through the

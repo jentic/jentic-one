@@ -13,7 +13,9 @@ from __future__ import annotations
 from sqlalchemy import exists, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
@@ -27,6 +29,10 @@ from jentic_one.shared.auth.permission_catalog import (
     OAUTH_CLIENTS_READ,
     compute_effective,
 )
+from jentic_one.shared.models import AuditReason, AuditTargetType
+
+#: Audit reasons ``GET /agents/{id}/api-key/history`` returns.
+_API_KEY_AUDIT_REASONS = (AuditReason.API_KEY_ROTATED, AuditReason.API_KEY_REVOKED)
 
 
 def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
@@ -39,14 +45,21 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
     - itself, always;
     - with ``agents:read`` (``GET /agents``): the owner, registrant, approver
       or denier of an agent it can see (the ``Agent`` filter);
+    - with ``agents:read``, for an agent the caller owns
+      (``GET /agents/{id}/api-key`` and ``.../api-key/history``, owner or
+      ``org:admin``): the ``created_by`` of its API key, and the actor of an
+      audit entry that rotated or revoked that key. The history route shows
+      the agent's 50 most recent audit entries; the relation is not capped,
+      so it also labels the actor of an older key event on the same agent;
     - with ``events:read`` (``GET /events``): the actor of an event it can see;
     - the decider of a held execution it can see (``GET /executions/holds``,
       which takes no permission; the ``HeldExecution`` filter);
+    - the consenting user of an OAuth grant bound to an agent the caller owns
+      (``GET /agents/{id}/oauth-grants``, owner or ``org:admin``, which takes
+      no permission);
     - with ``oauth-clients:read`` (``GET /admin/oauth-grants``): the consenting
-      user of an OAuth grant it can see (the ``OAuthClientGrant`` filter). This
-      is narrower by design than the agent-detail "Consented by" panel
-      (``GET /agents/{id}/oauth-grants``, no permission): an agent's owner
-      without ``oauth-clients:read`` sees that consenter as a raw user id;
+      user of an OAuth grant bound to the caller itself (an agent caller; the
+      ``OAuthClientGrant`` filter);
     - with ``oauth-clients:read`` (``GET /admin/oauth-clients``, which lists
       every client): the creator of any OAuth client.
 
@@ -65,9 +78,12 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
     The grant relation likewise: of the ``OAuthClientGrant`` filter's
     branches, only a grant bound to the caller (an agent caller) or to one of
     its agents can name another consenting user, and each half probes
-    ``ix_oauth_client_grants_agent_id``.
-    Audit entries add nothing: a non-admin sees only those whose actor is
-    itself or one of its agents, so no other user. Credential creators are
+    ``ix_oauth_client_grants_agent_id``. The API key relations probe the
+    caller's own agents (``agents.owner_id``), then ``ix_audit_actor`` and
+    ``ix_agent_credentials_agent_id``.
+    ``GET /audit`` adds nothing: a non-admin sees only entries whose actor is
+    itself or one of its agents, so no other user. Only the API key history
+    route shows another user's audit entries. Credential creators are
     resolved by the control surface (see ``ActorService.lookup``).
 
     Each arm is a correlated ``EXISTS`` probed per looked-up user, so the cost
@@ -92,6 +108,20 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
                 *build_access_filters(identity, Agent),
             )
         )
+        conditions.append(
+            exists().where(
+                AgentCredential.agent_id.in_(owned_agent_ids),
+                AgentCredential.created_by == User.id,
+            )
+        )
+        conditions.append(
+            exists().where(
+                AuditEntry.actor_id == User.id,
+                AuditEntry.target_type == AuditTargetType.AGENT,
+                AuditEntry.target_id.in_(owned_agent_ids),
+                AuditEntry.reason.in_(_API_KEY_AUDIT_REASONS),
+            )
+        )
     if EVENTS_READ in perms:
         conditions.append(
             exists().where(Event.created_by == identity.sub, Event.actor_id == User.id)
@@ -107,16 +137,16 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
             HeldExecution.agent_id.in_(owned_agent_ids), HeldExecution.decided_by == User.id
         )
     )
+    conditions.append(
+        exists().where(
+            OAuthClientGrant.agent_id.in_(owned_agent_ids),
+            OAuthClientGrant.user_id == User.id,
+        )
+    )
     if OAUTH_CLIENTS_READ in perms:
         conditions.append(
             exists().where(
                 OAuthClientGrant.agent_id == identity.sub, OAuthClientGrant.user_id == User.id
-            )
-        )
-        conditions.append(
-            exists().where(
-                OAuthClientGrant.agent_id.in_(owned_agent_ids),
-                OAuthClientGrant.user_id == User.id,
             )
         )
         conditions.append(exists().where(OAuthClient.created_by == User.id))

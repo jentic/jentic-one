@@ -5,10 +5,13 @@ that names them, through the read permission of the route that shows it:
 
 - agent ``registered_by`` / ``denied_by`` (with ``owner_id`` and
   ``approved_by``): an agent the caller can see, with ``agents:read``;
+- agent API key ``created_by`` and the actor of a key rotation/revocation
+  audit entry: an agent the caller owns, with ``agents:read`` (the
+  ``/agents/{id}/api-key`` routes);
 - held execution ``decided_by``: a held execution the caller can see (the
   holds routes take no permission);
-- OAuth grant ``user_id``: a grant the caller can see, with
-  ``oauth-clients:read``;
+- OAuth grant ``user_id``: a grant bound to an agent the caller owns (the
+  per-agent grant listing takes no permission);
 - OAuth client ``created_by``: any client, with ``oauth-clients:read``.
 
 For each: the related user resolves; the same relation on an object the
@@ -27,19 +30,35 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos import AgentRepository, EventRepository, UserRepository
+from jentic_one.admin.repos import (
+    AgentCredentialRepository,
+    AgentRepository,
+    AuditRepository,
+    EventRepository,
+    UserRepository,
+)
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus, InviteState, JobKind, JobStatus
+from jentic_one.shared.models import (
+    ActorStatus,
+    AuditAction,
+    AuditReason,
+    AuditTargetType,
+    InviteState,
+    JobKind,
+    JobStatus,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -57,7 +76,17 @@ class _World:
     users: dict[str, tuple[str, str]]
 
 
-_RELATIONS = ("registered_by", "denied_by", "decided_by", "consented_by", "client_creator")
+_RELATIONS = (
+    "registered_by",
+    "denied_by",
+    "key_creator",
+    "key_history_actor",
+    "decided_by",
+    "consented_by",
+    "client_creator",
+)
+#: Relations on per-owner objects (each has a visible and a hidden twin).
+_OWNED_RELATIONS = tuple(r for r in _RELATIONS if r != "client_creator")
 
 
 async def _user(ctx: Context, key: str) -> str:
@@ -80,8 +109,9 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
 
     The member owns ``mine`` (registered by one user) and ``mine_denied``
     (denied by another); ``theirs`` and ``theirs_denied`` belong to another
-    owner. Each pair of agents carries a held execution decided by a different
-    user and an OAuth grant consented by a different user. The OAuth client
+    owner. Each registered agent has an API key created by one user and
+    rotated by another, a held execution decided by a different user and an
+    OAuth grant consented by a different user. The OAuth client
     created by ``client_creator`` is visible to any ``oauth-clients:read``
     holder, so its hidden twin is "no such client" (the user created nothing).
     """
@@ -118,6 +148,21 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
             denied.denied_by = users["denied_by"][seen]
             agent_ids += [registered.id, denied.id]
             filers.append(registered.id)
+            await AgentCredentialRepository.create(
+                session,
+                agent_id=registered.id,
+                api_key_hash=f"lookup-rel-hash-{registered.id}",  # pragma: allowlist secret
+                created_by=users["key_creator"][seen],
+            )
+            await AuditRepository.record(
+                session,
+                action=AuditAction.ROTATE,
+                target_type=AuditTargetType.AGENT,
+                target_id=registered.id,
+                actor_type="user",
+                actor_id=users["key_history_actor"][seen],
+                reason=AuditReason.API_KEY_ROTATED,
+            )
 
             job = Job(
                 kind=JobKind.EXECUTION,
@@ -180,6 +225,10 @@ async def world(web_context: Context) -> AsyncGenerator[_World, None]:
         await session.execute(delete(OAuthClientGrant).where(OAuthClientGrant.id.in_(grant_ids)))
         await session.execute(delete(HeldExecution).where(HeldExecution.job_id.in_(job_ids)))
         await session.execute(delete(Job).where(Job.id.in_(job_ids)))
+        await session.execute(
+            delete(AgentCredential).where(AgentCredential.agent_id.in_(agent_ids))
+        )
+        await session.execute(delete(AuditEntry).where(AuditEntry.target_id.in_(agent_ids)))
         await session.execute(delete(Agent).where(Agent.id.in_(agent_ids)))
         await session.execute(delete(User).where(User.id.in_(all_users)))
         await session.commit()
@@ -217,8 +266,10 @@ def _lookup(client: TestClient, headers: dict[str, str], user_id: str) -> bytes:
 _GATE: dict[str, str | None] = {
     "registered_by": "agents:read",
     "denied_by": "agents:read",
+    "key_creator": "agents:read",
+    "key_history_actor": "agents:read",
     "decided_by": None,
-    "consented_by": "oauth-clients:read",
+    "consented_by": None,
     "client_creator": "oauth-clients:read",
 }
 
@@ -260,12 +311,14 @@ def test_relation_without_its_route_permission_answers_like_an_unknown_id(
     )
 
 
-def test_held_execution_decider_is_visible_without_any_permission(
-    unauthed_client: TestClient, web_context: Context, world: _World
+@pytest.mark.parametrize("relation", [r for r, gate in _GATE.items() if gate is None])
+def test_ungated_relation_is_visible_without_any_permission(
+    unauthed_client: TestClient, web_context: Context, world: _World, relation: str
 ) -> None:
-    """The holds routes take no permission, so neither does the decider relation."""
+    """The holds routes and the per-agent grant listing take no permission, so
+    neither do the decider and consenter relations."""
     headers = _headers(web_context, world.member_id, ())
-    seen, hidden = world.users["decided_by"]
+    seen, hidden = world.users[relation]
     assert b'"id":"' + seen.encode() + b'"' in _lookup(unauthed_client, headers, seen)
     assert _lookup(unauthed_client, headers, hidden) == _lookup(
         unauthed_client, headers, _UNKNOWN_USER
@@ -277,16 +330,10 @@ def test_other_owner_resolves_its_own_relations_only(
 ) -> None:
     """The hidden twins are visible to their own owner, and the member's are not."""
     headers = _headers(web_context, world.other_owner_id, _MEMBER_PERMISSIONS)
-    ids = [
-        u
-        for rel in ("registered_by", "denied_by", "decided_by", "consented_by")
-        for u in world.users[rel]
-    ]
+    ids = [u for rel in _OWNED_RELATIONS for u in world.users[rel]]
     resp = unauthed_client.get("/actors/lookup", params=[("id", i) for i in ids], headers=headers)
     assert resp.status_code == 200, resp.text
-    expected = {
-        world.users[rel][1] for rel in ("registered_by", "denied_by", "decided_by", "consented_by")
-    }
+    expected = {world.users[rel][1] for rel in _OWNED_RELATIONS}
     assert {e["id"] for e in resp.json()["data"]} == expected
 
 
@@ -413,3 +460,31 @@ def test_event_actor_on_another_owners_agent_answers_like_an_unknown_id(
     assert _lookup(unauthed_client, headers, event_actors.on_other_agent) == _lookup(
         unauthed_client, headers, _UNKNOWN_USER
     )
+
+
+async def test_agent_audit_actor_outside_api_key_history_answers_like_an_unknown_id(
+    unauthed_client: TestClient, web_context: Context, world: _World
+) -> None:
+    """Only key rotation/revocation entries are a relation: they are what the
+    key history route shows. Another audit entry on the same owned agent is not."""
+    other_actor = await _user(web_context, "audit-non-key")
+    async with web_context.admin_db.session() as session:
+        await AuditRepository.record(
+            session,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.AGENT,
+            target_id=world.member_agent_id,
+            actor_type="user",
+            actor_id=other_actor,
+        )
+        await session.commit()
+    try:
+        headers = _headers(web_context, world.member_id, _MEMBER_PERMISSIONS)
+        assert _lookup(unauthed_client, headers, other_actor) == _lookup(
+            unauthed_client, headers, _UNKNOWN_USER
+        )
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(delete(AuditEntry).where(AuditEntry.actor_id == other_actor))
+            await session.execute(delete(User).where(User.id == other_actor))
+            await session.commit()
