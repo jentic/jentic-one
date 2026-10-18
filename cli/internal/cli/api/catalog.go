@@ -269,6 +269,9 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 		limit = 200
 	}
 	preview, perr := client.Preview(ctx, apiID, 0, limit, o.tag)
+	if perr != nil {
+		perr = catalogEntryErr(perr, apiID)
+	}
 
 	if o.json {
 		out := map[string]any{"schema_version": apiEnvelopeSchemaVersion, "entry": entry}
@@ -464,11 +467,36 @@ func catalogListErr(err error) error {
 	return err
 }
 
-// catalogEntryErr maps a 404 to a clear "entry not found" message.
+// catalogEntryErr maps a 404 to a clear "entry not found" message, and a
+// catalog source's 410 / 503 to the coded errors the MCP import_api tool uses
+// (not retryable / retryable after the source's Retry-After).
 func catalogEntryErr(err error, apiID string) error {
 	var he *HTTPError
-	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
+	if !errors.As(err, &he) {
+		return err
+	}
+	switch he.StatusCode {
+	case http.StatusNotFound:
 		return fmt.Errorf("catalog entry %q not found", apiID)
+	case http.StatusGone:
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", apiID)),
+			Actionable: "Pick another catalog entry for this API; this one has no importable spec.",
+			Cause:      err,
+		}
+	case http.StatusServiceUnavailable:
+		if catalogProblemType(he) == "catalog_source_unavailable" {
+			wait := retryAfterSeconds(he.RetryAfter)
+			msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", apiID))
+			return &ux.CodedError{
+				Code:       ux.CodeTransportError,
+				Msg:        fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
+				Actionable: fmt.Sprintf("Wait %d seconds, then retry.", wait),
+				Details:    map[string]any{"retryable": true, "retry_after_s": wait},
+				Cause:      err,
+			}
+		}
 	}
 	return err
 }

@@ -170,6 +170,9 @@ func (d *Denial) Err() *ux.CodedError {
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	// RetryAfter is the response's raw Retry-After header, when the caller
+	// recorded it (catalog routes answering 503 catalog_source_unavailable).
+	RetryAfter string
 }
 
 func (e *HTTPError) Error() string {

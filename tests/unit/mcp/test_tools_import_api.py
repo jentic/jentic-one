@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock
 
@@ -733,3 +734,43 @@ async def test_result_fetch_failure_points_at_the_job_poll(services: None) -> No
     assert payload["error_code"] == "INTERNAL_ERROR"
     assert payload["job_id"] == "job_9"
     assert payload["next_tool"] == "get_execution_result"
+
+
+# ── parity with the stdio server (shared fixture) ────────────────────────────
+
+_CATALOG_ERRORS = (
+    Path(__file__).resolve().parents[3]
+    / "cli"
+    / "tests"
+    / "golden"
+    / "testdata"
+    / "mcp"
+    / "import_api_catalog_errors.json"
+)
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(_CATALOG_ERRORS.read_text()), ids=lambda case: case["name"]
+)
+async def test_catalog_source_errors_match_the_shared_fixture(
+    services: None, case: dict[str, Any]
+) -> None:
+    """The HTTP mount answers exactly what the Go stdio server answers for the same 410/503.
+
+    ``mcp_catalog_test.go`` replays the same fixture against the stdio server, so
+    the two surfaces cannot drift.
+    """
+    if case["status"] == 410:
+        _FakeCatalogService.import_error = CatalogSpecGoneError(case["api_id"])
+    else:
+        _FakeCatalogService.import_error = CatalogSourceUnavailableError(
+            case["api_id"], retry_after_s=case["retry_after"]
+        )
+    env = _env(["catalog:import", "jobs:read"])
+    result = await dispatch_tool_call(env, "import_api", {"api_id": case["api_id"]})
+    assert result.is_error
+    payload = _payload(result)
+    assert str(_FakeCatalogService.import_error) == case["detail"]
+    payload.pop("schema_version", None)
+    payload.pop("instance", None)
+    assert payload == case["payload"]
