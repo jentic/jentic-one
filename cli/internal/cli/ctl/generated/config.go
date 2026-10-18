@@ -528,6 +528,10 @@ type CatalogSourceConfig struct {
 	// The removal ratio only trips above this many removals.
 	MinRemovalCount int `json:"min_removal_count,omitempty,omitzero" yaml:"min_removal_count,omitempty" mapstructure:"min_removal_count,omitempty"`
 
+	// A :sync within this many seconds of the source's last started sync is due when
+	// the interval ends (a forced :sync is not held back).
+	MinSyncIntervalSeconds int `json:"min_sync_interval_seconds,omitempty,omitzero" yaml:"min_sync_interval_seconds,omitempty" mapstructure:"min_sync_interval_seconds,omitempty"`
+
 	// Rank when two sources list the same catalog_api_id (higher wins). An untrusted
 	// source may not rank above any enabled curated source (startup fails).
 	Precedence int `json:"precedence,omitempty,omitzero" yaml:"precedence,omitempty" mapstructure:"precedence,omitempty"`
@@ -727,6 +731,12 @@ func (j *CatalogSourceConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 0 > plain.MinRemovalCount {
 		return fmt.Errorf("field %s: must be >= %v", "min_removal_count", 0)
+	}
+	if v, ok := raw["min_sync_interval_seconds"]; !ok || v == nil {
+		plain.MinSyncIntervalSeconds = 10
+	}
+	if 0 > plain.MinSyncIntervalSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "min_sync_interval_seconds", 0)
 	}
 	if v, ok := raw["precedence"]; !ok || v == nil {
 		plain.Precedence = 0
@@ -2962,8 +2972,13 @@ type SourceAuthConfig struct {
 	// Header name the secret is sent in (header_from_env only).
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
-	// Auth resolver type; it must be registered. Only none is built in; startup fails
-	// on an unknown type.
+	// Extra origins (scheme://host[:port]) that may receive the credential. By
+	// default it goes only to the origins the source's settings name (a
+	// git-manifest's url, an http-index index_url or static spec_urls), never to a
+	// host a listing points at.
+	Origins []string `json:"origins,omitempty,omitzero" yaml:"origins,omitempty" mapstructure:"origins,omitempty"`
+
+	// Type corresponds to the JSON schema field "type".
 	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
 }
 
@@ -2994,14 +3009,25 @@ func (j *SourceAuthConfig) UnmarshalJSON(value []byte) error {
 // Added to “ingest.egress“ for this source's requests only; no other source
 // and no other outbound client gets it. A range or domain that would reach a
 // cloud-metadata endpoint is refused at load.
+//
+// The widening covers every URL the source fetches, including spec URLs its
+// upstream index lists (an internal index usually lists specs on sibling
+// internal hosts). Whoever controls the index can therefore point it anywhere
+// in these ranges, so keep the CIDRs narrow and name the hosts with
+// “allowed_internal_domains“: an IP-literal URL needs only the CIDR. The
+// source's credentials stay on its configured origins regardless.
 type SourceEgressConfig struct {
-	// Domain suffixes whose private addresses this source may reach. A cloud-metadata
-	// host, or a suffix covering one, is refused.
+	// Domain suffixes whose private addresses this source may reach (recommended
+	// alongside allowed_private_subnets, to name the hosts an index may list). A
+	// cloud-metadata host, or a suffix covering one, is refused.
 	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
 
 	// Private CIDRs this source may reach (a resolved name must also match
-	// allowed_internal_domains). A range containing a cloud-metadata address (e.g.
-	// 169.254.169.254) is refused.
+	// allowed_internal_domains; an IP-literal URL needs only the CIDR). It applies to
+	// every URL the source fetches, spec URLs its index lists included, so keep it
+	// narrow. A range containing a cloud-metadata address (e.g. 169.254.169.254, or
+	// ::ffff:169.254.169.254) is refused; an IPv4-mapped IPv6 range
+	// (::ffff:10.0.0.0/104) is read as its IPv4 range.
 	AllowedPrivateSubnets []interface{} `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 }
 
