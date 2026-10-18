@@ -133,9 +133,11 @@ def _check(
     etag: str | None,
     notified: str | None,
     notified_class: str | None = EventType.CATALOG_UPDATE_AVAILABLE,
+    last_seen: str | None = None,
 ) -> MagicMock:
     row = MagicMock()
     row.last_checked_at = last_checked_at
+    row.last_seen_digest = last_seen
     row.catalog_entry_id = _ENTRY_ID
     row.last_seen_validator = etag
     row.last_seen_content_hint = None
@@ -935,6 +937,78 @@ async def test_probe_unchanged_content_hint_skips_fetch() -> None:
     emit.assert_not_called()
     assert upsert.await_args is not None
     assert upsert.await_args.kwargs["content_hint"] == "sha:abc"
+
+
+@pytest.mark.asyncio
+async def test_probe_unchanged_hint_still_emits_an_unnotified_change() -> None:
+    """A change recorded by an earlier probe whose emit failed is emitted on an unchanged hint."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"v1"', notified=None, last_seen="sha256:new")
+    check.last_seen_content_hint = "sha:abc"
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=check,
+        ),
+        patch(_FETCH_ROW, new_callable=AsyncMock) as fetch,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
+    ):
+        await _probe(
+            svc,
+            _spec(),
+            now=datetime.now(UTC),
+            interval=86400,
+            entry=_entry_row(content_hint="sha:abc"),
+        )
+    fetch.assert_not_called()
+    emit.assert_awaited_once()
+    assert emit.await_args is not None
+    assert emit.await_args.kwargs["data"]["upstream_digest"] == "sha256:new"
+
+
+@pytest.mark.asyncio
+async def test_probe_not_modified_still_emits_an_unnotified_change() -> None:
+    """A 304 for a change recorded but never notified re-decides it from the stored digest."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"v1"', notified=None, last_seen="sha256:new")
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=check,
+        ),
+        patch(_FETCH_ROW, new_callable=AsyncMock, return_value=NotModified(validator='"v1"')),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
+    ):
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
+    emit.assert_awaited_once()
+    assert upsert.await_args is not None
+    assert upsert.await_args.kwargs["digest"] == "sha256:new"
+    assert upsert.await_args.kwargs["validator"] == '"v1"'
+
+
+@pytest.mark.asyncio
+async def test_probe_not_modified_after_notify_is_a_no_op() -> None:
+    """Once the recorded change was notified, a 304 emits nothing."""
+    svc = CatalogService(_make_ctx())
+    check = _check(last_checked_at=None, etag='"v1"', notified="sha256:new", last_seen="sha256:new")
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=check,
+        ),
+        patch(_FETCH_ROW, new_callable=AsyncMock, return_value=NotModified(validator='"v1"')),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
+    ):
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
+    emit.assert_not_called()
 
 
 @pytest.mark.asyncio
