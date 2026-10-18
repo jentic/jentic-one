@@ -13,6 +13,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import secrets
 import sys
 import uuid
@@ -1664,6 +1665,9 @@ async def _seed_parity_agent(ctx: Context, grants: Sequence[str]) -> tuple[str, 
     return api_key, access_token
 
 
+_SYNC_AGE = re.compile(rb'"(oldest_source_sync_age_seconds)":\d+')
+
+
 @pytest.mark.parametrize(
     ("grants", "expected"),
     [
@@ -1689,7 +1693,9 @@ async def test_api_key_and_access_token_see_the_same_catalog(
                 for name, credential in (("key", api_key), ("token", access_token)):
                     headers = {"Authorization": f"Bearer {credential}"}
                     answers[name] = [
-                        (r.status_code, r.content)
+                        # The sync age is wall-clock seconds, so it can tick between
+                        # the two credentials' reads; every other byte must match.
+                        (r.status_code, _SYNC_AGE.sub(b'"\\1":0', r.content))
                         for r in (
                             tc.get(path, headers=headers)
                             for path in (
