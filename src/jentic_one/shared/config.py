@@ -12,6 +12,7 @@ import re
 import secrets
 import stat
 import threading
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -3276,11 +3277,26 @@ def load_config(path: Path | None = None) -> AppConfig:
         return AppConfig.model_validate(merged)
     except ValidationError as e:
         detail = _describe_validation_error(e)
-    except Exception as e:
+    except ConfigError as e:
+        # Raised on purpose by a validator (e.g. the production secret guard),
+        # with a message that names the setting, never its value.
         detail = str(e)
+    except Exception as e:
+        detail = _describe_unexpected_error(e)
     finally:
         _ENABLED_APPS.reset(token)
     raise ConfigError(f"Configuration validation failed: {detail}")
+
+
+def _describe_unexpected_error(e: BaseException) -> str:
+    """A non-pydantic error raised while validating config (a validator bug), by
+    type and the ``file:line`` it was raised at.
+
+    Its message is left out: it can repeat config input, which can be a secret.
+    """
+    frames = traceback.extract_tb(e.__traceback__)
+    where = f" at {frames[-1].filename}:{frames[-1].lineno}" if frames else ""
+    return f"unexpected {type(e).__name__}{where} (message withheld: it may repeat config input)"
 
 
 def _parse_config_yaml(text: str, path: Path) -> Any:

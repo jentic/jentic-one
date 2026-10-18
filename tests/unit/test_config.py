@@ -196,6 +196,38 @@ def test_auth_origins_error_never_echoes_the_entry(
     _assert_never_echoed(exc.value, "hunter2")
 
 
+def test_unexpected_validator_error_names_type_and_location_but_never_its_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bug in a validator is locatable from the boot error, which still holds no input."""
+
+    def _buggy(cls: type[AppConfig], data: Any) -> AppConfig:
+        raise KeyError(f"hunter2 {data!r}")
+
+    raised_at = _buggy.__code__.co_firstlineno + 1
+    monkeypatch.setattr(AppConfig, "model_validate", classmethod(_buggy))
+    path = tmp_path / "ok.yaml"
+    path.write_text(yaml.dump(_catalog_source_with_origins([])))
+    with pytest.raises(ConfigError) as exc:
+        load_config(path)
+    message = str(exc.value)
+    assert f"unexpected KeyError at {__file__}:{raised_at}" in message
+    _assert_never_echoed(exc.value, "hunter2")
+
+
+def test_config_error_from_a_validator_keeps_its_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _guard(cls: type[AppConfig], data: Any) -> AppConfig:
+        raise ConfigError("auth.secret must be explicitly configured in production")
+
+    monkeypatch.setattr(AppConfig, "model_validate", classmethod(_guard))
+    path = tmp_path / "ok.yaml"
+    path.write_text(yaml.dump(_catalog_source_with_origins([])))
+    with pytest.raises(ConfigError, match=r"auth\.secret must be explicitly configured"):
+        load_config(path)
+
+
 def test_yaml_syntax_error_names_the_position_but_never_the_line(tmp_path: Path) -> None:
     """PyYAML quotes the offending line; the boot error gives only where it is."""
     path = tmp_path / "bad.yaml"
