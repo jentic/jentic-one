@@ -1368,11 +1368,11 @@ async def _serve(ctx: Context, api_id: uuid.UUID) -> None:
         api.current_revision_id = revision.id
 
 
-async def test_only_a_legacy_entry_adopts_an_unrecorded_api_by_spec_url(
+async def test_no_entry_adopts_an_api_that_records_none(
     web_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An API with no recorded entry serves the legacy spec URL; a non-legacy
-    entry listing that same URL can't snooze it, the legacy entry can."""
+    """An API that records no entry is never resolved by spec URL: neither the
+    legacy entry nor another source's entry listing the same URL can snooze it."""
     listing = _manifest
 
     def _corp_lists_the_public_spec(url: str) -> dict[str, Any] | None:
@@ -1393,10 +1393,10 @@ async def test_only_a_legacy_entry_adopts_an_unrecorded_api_by_spec_url(
             catalog_api_id="stripe.com",
         )
         await _serve(ctx, api_id)
-        await _outdate(ctx, api_id, spec_url)
+        await _outdate(ctx, api_id, "public/stripe.com")
         with _client(ctx, ["org:admin", "events:write"]) as tc:
             assert tc.post("/catalog/corp/stripe.com:snooze").status_code == 404
-            assert tc.post("/catalog/public/stripe.com:snooze").status_code == 204
+            assert tc.post("/catalog/public/stripe.com:snooze").status_code == 404
 
 
 async def test_update_and_mute_act_on_the_apis_own_entry(web_config: AppConfig) -> None:
