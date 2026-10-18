@@ -14,10 +14,12 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from structlog.testing import capture_logs
 
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
@@ -95,6 +97,15 @@ def _sources() -> list[dict[str, Any]]:
     ]
 
 
+async def _drop_imported(ctx: Context) -> None:
+    """Remove the APIs this module imports, so other modules' vendor lookups stay unique."""
+    async with ctx.registry_db.transaction() as session:
+        ids = select(Api.id).where(Api.catalog_entry_id.like("wide/%"))
+        await session.execute(update(Api).where(Api.id.in_(ids)).values(current_revision_id=None))
+        await session.execute(delete(ApiRevision).where(ApiRevision.api_id.in_(ids)))
+        await session.execute(delete(Api).where(Api.catalog_entry_id.like("wide/%")))
+
+
 async def _db_text(ctx: Context) -> str:
     """Every catalog row and every job row, rendered, to search for a leaked secret."""
     parts: list[str] = []
@@ -131,24 +142,31 @@ async def test_secret_reaches_the_upstream_and_nothing_else(
     catalog_ctx: CtxFactory, upstream: list[httpx.Request]
 ) -> None:
     async with catalog_ctx(sources=_sources()) as ctx:
-        with capture_logs() as logs:
-            sync = CatalogSourceSync(ctx)
-            await sync.register_sources()
-            assert (await sync.sync_source("wide")).status == "applied"
-            job_id = await CatalogService(ctx).import_entry("wide/sync-test.io", _ADMIN)
-            async with ctx.admin_db.session() as session:
-                job = await session.get(Job, job_id)
-            assert job is not None and job.payload is not None
-            await ImportHandler(ctx).execute(
-                job_id=str(uuid.uuid4()),
-                session=None,
-                payload=dict(job.payload),
-                created_by="usr_admin",
-            )
+        try:
+            await _check_secret_confined(ctx, upstream)
+        finally:
+            await _drop_imported(ctx)
 
-        urls = {str(r.url): r.headers.get("authorization") for r in upstream}
-        assert urls[_PRIVATE_INDEX] == f"Bearer {_SECRET}"
-        assert urls[_PRIVATE_SPEC] == f"Bearer {_SECRET}"
-        assert _SECRET not in repr(logs)
-        assert _SECRET not in await _db_text(ctx)
-        assert _SECRET not in json.dumps(job.payload)
+
+async def _check_secret_confined(ctx: Context, upstream: list[httpx.Request]) -> None:
+    with capture_logs() as logs:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        assert (await sync.sync_source("wide")).status == "applied"
+        job_id = await CatalogService(ctx).import_entry("wide/sync-test.io", _ADMIN)
+        async with ctx.admin_db.session() as session:
+            job = await session.get(Job, job_id)
+        assert job is not None and job.payload is not None
+        await ImportHandler(ctx).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload=dict(job.payload),
+            created_by="usr_admin",
+        )
+
+    urls = {str(r.url): r.headers.get("authorization") for r in upstream}
+    assert urls[_PRIVATE_INDEX] == f"Bearer {_SECRET}"
+    assert urls[_PRIVATE_SPEC] == f"Bearer {_SECRET}"
+    assert _SECRET not in repr(logs)
+    assert _SECRET not in await _db_text(ctx)
+    assert _SECRET not in json.dumps(job.payload)
