@@ -305,6 +305,28 @@ def test_agent_resolves_the_decider_of_a_hold_it_filed(
     )
 
 
+def test_agent_resolves_the_consenter_of_a_grant_bound_to_it(
+    unauthed_client: TestClient, web_context: Context, world: _World
+) -> None:
+    """With ``oauth-clients:read``, an agent labels who consented to a grant bound to it.
+
+    A grant bound to another owner's agent, or the same grant without the
+    permission, answers byte-for-byte like an unknown id.
+    """
+    seen, hidden = world.users["consented_by"]
+    headers = _headers(
+        web_context, world.member_agent_id, ("oauth-clients:read",), agent_of=world.member_id
+    )
+    resp = unauthed_client.get("/actors/lookup", params={"id": seen}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert [e["id"] for e in resp.json()["data"]] == [seen]
+    unknown = _lookup(unauthed_client, headers, _UNKNOWN_USER)
+    assert _lookup(unauthed_client, headers, hidden) == unknown
+
+    withheld = _headers(web_context, world.member_agent_id, (), agent_of=world.member_id)
+    assert _lookup(unauthed_client, withheld, seen) == unknown
+
+
 @dataclass(frozen=True)
 class _EventActors:
     on_member: str
