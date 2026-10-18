@@ -441,27 +441,28 @@ func withRetryAfter(err error, resp interface{ StatusCode() int }) error {
 	if err == nil || !errors.As(err, &he) {
 		return err
 	}
-	if r := httpResponseOf(resp); r != nil {
-		he.RetryAfter = r.Header.Get("Retry-After")
-	}
+	he.RetryAfter = retryAfterHeader(resp)
 	return err
 }
 
-// httpResponseOf returns the raw *http.Response of a generated SDK response.
-func httpResponseOf(resp any) *http.Response {
+// retryAfterHeader reads the Retry-After header of a generated SDK response.
+// The SDK has already read and closed the body (it is in the response's Body
+// field); only the header is read here.
+func retryAfterHeader(resp any) string {
+	var header http.Header
 	switch r := resp.(type) {
 	case *control.GetCatalogEntryHTTPResp:
-		if r != nil {
-			return r.HTTPResponse
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
 		}
 	case *control.PreviewCatalogOperationsHTTPResp:
-		if r != nil {
-			return r.HTTPResponse
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
 		}
 	case *control.ImportCatalogEntryHTTPResp:
-		if r != nil {
-			return r.HTTPResponse
+		if r != nil && r.HTTPResponse != nil {
+			header = r.HTTPResponse.Header
 		}
 	}
-	return nil
+	return header.Get("Retry-After")
 }

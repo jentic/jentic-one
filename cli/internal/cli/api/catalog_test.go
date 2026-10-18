@@ -659,7 +659,7 @@ func TestCatalogEntryErr_MapsSourceErrors(t *testing.T) {
 		t.Fatalf("503 = %#v, want TRANSPORT_ERROR with retry_after_s 7", busy)
 	}
 	other := &HTTPError{StatusCode: http.StatusServiceUnavailable, Body: `{"type":"governed_hosts_unavailable"}`}
-	if got := catalogEntryErr(other, "corp/x"); got != error(other) {
+	if got := catalogEntryErr(other, "corp/x"); !errors.Is(got, other) {
 		t.Fatalf("an unrelated 503 must pass through, got %#v", got)
 	}
 }
