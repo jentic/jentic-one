@@ -301,9 +301,17 @@ def test_list_catalog_requires_auth(unauthed_client: TestClient) -> None:
 
 
 def test_refresh_rejects_non_admin_token(web_context: Context) -> None:
-    """A valid identity without org:admin is rejected with 403 (not just presence)."""
+    """A valid identity without catalog:sync is rejected with 403 (not just presence)."""
     with _client(web_context, []) as tc:
         assert tc.post("/catalog:refresh").status_code == 403
+
+
+def test_catalog_sync_refreshes_but_only_org_admin_forces(web_context: Context) -> None:
+    with _client(web_context, ["catalog:sync"]) as tc:
+        assert tc.post("/catalog:refresh").status_code == 200
+        forced = tc.post("/catalog:refresh", params={"force": "true"})
+        assert forced.status_code == 403
+        assert forced.json()["type"].endswith("forced_sync_forbidden")
 
 
 def test_refresh_invalid_token_401(unauthed_client: TestClient) -> None:

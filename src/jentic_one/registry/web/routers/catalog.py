@@ -27,7 +27,10 @@ from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
-from jentic_one.registry.services.errors import CatalogEntryNotFoundError
+from jentic_one.registry.services.errors import (
+    CatalogEntryNotFoundError,
+    ForcedSyncForbiddenError,
+)
 from jentic_one.registry.web.deps import get_catalog_service
 from jentic_one.registry.web.schemas.apis import ApiImportLinksResponse, ApiImportResponse
 from jentic_one.registry.web.schemas.catalog import (
@@ -42,6 +45,7 @@ from jentic_one.registry.web.schemas.catalog import (
     PreviewParameterResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import effective_permissions, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
@@ -332,21 +336,25 @@ async def get_catalog_entry(
 
 @router.post("/catalog:refresh", status_code=200, response_model=CatalogRefreshResponse)
 async def refresh_catalog(
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["catalog:sync"]),
+    permissions: frozenset[str] = Depends(effective_permissions),
     svc: CatalogService = Depends(get_catalog_service),
     force: bool = Query(
         default=False,
         description=(
             "Apply each source's sync even when it would remove more entries than "
-            "the source's mass-removal guard allows."
+            "the source's mass-removal guard allows (`org:admin`)."
         ),
         openapi_examples=ex.example(False),
     ),
 ) -> JSONResponse:
-    """Sync every enabled catalog source now (org:admin).
+    """Sync every enabled catalog source now (catalog:sync).
 
-    ``force=true`` overrides the mass-removal guard for this run.
+    Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
+    ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
     """
+    if force and ORG_ADMIN not in permissions:
+        raise ForcedSyncForbiddenError()
     result = await svc.refresh(force=force)
     # An explicit operator "refresh now" is the strongest "check upstream" signal,
     # so trigger the update-notify sweep too. Fire-and-forget: never block the

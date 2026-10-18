@@ -296,6 +296,17 @@ class CatalogEntryNotFoundError(RegistryServiceError):
         self.did_you_mean = did_you_mean
 
 
+class ForcedSyncForbiddenError(RegistryServiceError):
+    """Raised when ``force=true`` is sent by a caller without ``org:admin``.
+
+    A forced sync skips the mass-removal guard, so it may delete every entry
+    of the source; it is an operator action. Maps to 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("A forced catalog source sync requires the 'org:admin' permission.")
+
+
 class SourceSwitchForbiddenError(RegistryServiceError):
     """Raised when ``switch_source=true`` is sent by a caller without ``credentials:write``.
 

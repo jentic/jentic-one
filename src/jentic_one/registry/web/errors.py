@@ -14,6 +14,7 @@ from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
+    ForcedSyncForbiddenError,
     GovernedHostsUnavailableError,
     HostChangeRequiresOperatorError,
     HostOwnedByOtherVendorError,
@@ -69,6 +70,8 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # Re-pointing an API (and its credentials) at another catalog source is an
     # operator action (credentials:write).
     SourceSwitchForbiddenError: (403, "source_switch_forbidden"),
+    # A forced source sync skips the mass-removal guard (org:admin).
+    ForcedSyncForbiddenError: (403, "forced_sync_forbidden"),
     # Snooze/mute: quieting a real upstream-drift notification is an operator
     # event-management action (events:write). A caller without it gets 403.
     SnoozeForbiddenError: (403, "snooze_forbidden"),

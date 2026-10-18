@@ -323,9 +323,20 @@ class CatalogSourceSync:
 
     # ── sync ───────────────────────────────────────────────────────────────────
 
-    async def sync_all(self, *, forced: bool = False) -> list[SyncOutcome]:
-        """Sync every enabled source once (an operator refresh)."""
-        return [await self.sync_source(slug, forced=forced) for slug in list(self._sources)]
+    async def sync_all(
+        self, *, forced: bool = False, listing_timeout_s: float | None = None
+    ) -> list[SyncOutcome]:
+        """Sync every enabled source once (an operator refresh).
+
+        One after another, in configured order, so a curated source applies
+        before the sources it owns ids for resolve against it.
+        ``listing_timeout_s`` bounds each source's listing, so a slow source
+        fails its own run instead of stalling the rest.
+        """
+        return [
+            await self.sync_source(slug, forced=forced, listing_timeout_s=listing_timeout_s)
+            for slug in list(self._sources)
+        ]
 
     async def sync_source(
         self,

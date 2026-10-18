@@ -251,6 +251,10 @@ class CatalogService:
     async def refresh(self, *, force: bool = False) -> CatalogRefreshResult:
         """Sync every enabled source now; ``force`` overrides the mass-removal guard.
 
+        Each source's listing is bounded by ``ingest.fetch_timeout_s``, so a slow
+        source fails its own run (recorded, with backoff) instead of holding the
+        request open indefinitely.
+
         Raises ``CatalogUnavailableError`` when no source applied and at least
         one failed; otherwise failures are logged and the last good rows stay.
         A run held by the mass-removal guard is not a failure: the source was
@@ -258,7 +262,9 @@ class CatalogService:
         """
         sync = CatalogSourceSync(self._ctx)
         await sync.register_sources()
-        outcomes = await sync.sync_all(forced=force)
+        outcomes = await sync.sync_all(
+            forced=force, listing_timeout_s=self._ingest_cfg.fetch_timeout_s
+        )
         applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
         held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
         failed = [o for o in outcomes if o.status not in (*held, "disabled", "busy")]
