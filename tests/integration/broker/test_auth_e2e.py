@@ -2,7 +2,8 @@
 
 Seeds an opaque ``access_tokens`` row and asserts the ``DualTokenValidator``:
   - resolves the opaque token via the in-process admin-DB resolver, and
-  - validates a short-TTL self-contained signed JWT **without** any DB lookup.
+  - validates a short-TTL self-contained signed JWT by signature and claims,
+    then checks the agent's (and its owner's) status in the admin DB.
 
 This exercises the §03 wiring (``install_broker_auth`` builds the same dispatcher)
 end-to-end through the real ``InProcessTokenResolver``.
@@ -30,7 +31,8 @@ from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
-from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.broker.core.token_validation import CachedActorStatus, CachedTokenValidator
+from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.broker.services.auth import (
     CompositeTokenValidator,
@@ -66,12 +68,29 @@ async def clean_access_tokens(admin_db: DatabaseSession) -> AsyncGenerator[None,
     await _truncate()
 
 
+def _jwt_validator(admin_db: DatabaseSession, *, ttl: float = 30) -> JwtTokenValidator:
+    """The JWT arm as ``install_broker_auth`` wires it: signature, claims, then status."""
+    return JwtTokenValidator(
+        verifier=JwtVerifier(secret=_JWT_SECRET),
+        actor_status=CachedActorStatus(
+            resolver=ActorStatusResolver(admin_db), cache_ttl_seconds=ttl
+        ),
+    )
+
+
 def _dual(admin_db: DatabaseSession, *, with_jwt: bool = True) -> DualTokenValidator:
     opaque = CachedTokenValidator(resolver=InProcessTokenResolver(admin_db))
-    jwt_validator = (
-        JwtTokenValidator(verifier=JwtVerifier(secret=_JWT_SECRET)) if with_jwt else None
-    )
+    jwt_validator = _jwt_validator(admin_db) if with_jwt else None
     return DualTokenValidator(opaque=opaque, jwt=jwt_validator)
+
+
+def _agent_jwt(sub: str) -> str:
+    exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
+    return jwt.encode(
+        {"sub": sub, "exp": exp, "actor_type": "agent", "scopes": [BROKER_EXECUTE_PERMISSION]},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
 
 
 async def _seed_agent(admin_db: DatabaseSession, agent_id: str, *, status: str = "active") -> None:
@@ -147,10 +166,11 @@ async def test_opaque_token_resolves_via_db(
     assert BROKER_EXECUTE_PERMISSION in resolved.permissions
 
 
-async def test_signed_jwt_validates_without_db_lookup(
+async def test_signed_jwt_validates_by_signature_and_agent_status(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    # No row seeded — a JWT must validate purely by signature.
+    # Identity and scopes come from the signed claims; the row only says "active".
+    await _seed_agent(admin_db, "agnt_jwt")
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     token = jwt.encode(
         {
@@ -636,3 +656,60 @@ async def test_ownerless_agent_token_ignores_user_status(
     resolved = await InProcessTokenResolver(admin_db).resolve_access_token("at_ownerless")
 
     assert resolved is not None and resolved.active is True
+
+
+@pytest.mark.parametrize("status", ["suspended", "archived"])
+async def test_signed_jwt_for_an_inactive_agent_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None, status: str
+) -> None:
+    await _seed_agent(admin_db, "agnt_jwt_inactive", status=status)
+    with pytest.raises(TokenValidationError, match="jwt_actor_inactive"):
+        await _jwt_validator(admin_db).validate(_agent_jwt("agnt_jwt_inactive"))
+
+
+async def test_signed_jwt_for_an_unknown_agent_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A validly signed agent JWT naming no agent row fails closed."""
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError, match="jwt_actor_inactive"),
+    ):
+        await _jwt_validator(admin_db).validate(_agent_jwt("agnt_jwt_missing"))
+    refused = [log for log in logs if log["event"] == "jwt_refused"]
+    assert [(log["reason"], log["sub"]) for log in refused] == [
+        ("jwt_actor_inactive", "agnt_jwt_missing")
+    ]
+
+
+@pytest.mark.parametrize(
+    "owner_off",
+    [{"active": False}, {"active": False, "email": f"deleted-{_OWNER}@local"}],
+    ids=["owner-disabled", "owner-deleted"],
+)
+async def test_signed_jwt_for_an_owned_agent_follows_owner_status(
+    admin_db: DatabaseSession, clean_access_tokens: None, owner_off: dict[str, object]
+) -> None:
+    await _seed_owned_agent_with_key(
+        admin_db,
+        api_key="jak_broker_owned_jwt",  # pragma: allowlist secret
+    )
+    validator = _jwt_validator(admin_db, ttl=_VERDICT_TTL)
+    token = _agent_jwt(_OWNED_AGENT)
+    assert (await validator.validate(token)).sub == _OWNED_AGENT
+
+    await _set_user_row(admin_db, _OWNER, **owner_off)
+    # A cached verdict may pass until the TTL lapses; then the JWT is refused.
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError, match="jwt_actor_inactive"),
+    ):
+        await validator.validate(token)
+    assert [log["agent_id"] for log in logs if log["event"] == "agent_owner_inactive"] == [
+        _OWNED_AGENT
+    ]
+
+    await _set_user_row(admin_db, _OWNER, active=True)
+    await asyncio.sleep(_VERDICT_TTL + 0.01)
+    assert (await validator.validate(token)).sub == _OWNED_AGENT

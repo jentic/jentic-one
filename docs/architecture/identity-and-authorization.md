@@ -120,7 +120,12 @@ long-lived alternative,
 dispatched by prefix and matched by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
-HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
+HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)). A
+signed agent JWT presented to the broker is also checked against the agent's
+row once its signature and claims pass: an agent that is not `active`, is
+unknown, or whose owner is disabled or deleted is refused with the same 401.
+The verdict is cached for `broker.resolve_cache_ttl_seconds`, as on the
+opaque-token path.
 
 ## Permissions
 

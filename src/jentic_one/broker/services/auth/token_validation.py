@@ -2,9 +2,9 @@
 
 Auth **service** layer: the web ``deps.py`` dependency calls a
 single ``DualTokenValidator`` stored on ``app.state.broker_token_validator``; the
-dispatcher routes self-contained JWTs (verified by signature, no DB lookup) to
-``JwtTokenValidator`` and opaque tokens to the existing
-``CachedTokenValidator`` (DB-backed, short-TTL cached).
+dispatcher routes self-contained JWTs (verified by signature, then the agent's
+status checked behind a short-TTL cache) to ``JwtTokenValidator`` and opaque
+tokens to the existing ``CachedTokenValidator`` (DB-backed, short-TTL cached).
 
 The JWT path routes self-contained JWTs to the configured ``TokenVerifier``: the
 dev HS256 :class:`JwtVerifier` (shared-secret) or the hardened asymmetric
@@ -22,7 +22,16 @@ DB-backed credential form (opaque tokens) and cannot be asserted by a bare
 signed claim (jentic-one#868), and ``service_account`` is refused since
 theme-8 Phase 1 — the JWT path builds Identity from claim-supplied scopes
 with no DB read, so it would sail past the SA→agent grant migration and
-token revocation; assert the successor agent instead. Every **JWT-path**
+token revocation; assert the successor agent instead.
+
+The issuer vouches for who the agent is and what it may do (its scopes), not
+whether it may act right now: that is the platform's record. Once the
+signature and claims check out, the validator asks ``actor_status`` (wired to
+``ActorStatusResolver`` behind ``CachedActorStatus``) whether the agent row is
+``active`` and, for an owned agent, whether its owner is active, and refuses
+the token (``jwt_actor_inactive``) when it is not, or when no such agent
+exists. A verdict is cached for ``broker.resolve_cache_ttl_seconds``, the same
+bound the opaque path has. Every **JWT-path**
 refusal is logged
 server-side at WARNING under one event name (``jwt_refused``) with a ``reason``
 field, while the wire response stays uniform (jentic-one#874). The opaque
@@ -41,7 +50,7 @@ from typing import NoReturn, Protocol
 import jwt
 import structlog
 
-from jentic_one.broker.core.token_validation import CachedTokenValidator
+from jentic_one.broker.core.token_validation import ActorStatusProtocol, CachedTokenValidator
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
@@ -132,9 +141,14 @@ class JwtVerifier:
 
 @dataclass(frozen=True, slots=True)
 class JwtTokenValidator:
-    """Validates a self-contained signed JWT into an ``Identity`` (no DB lookup)."""
+    """Validates a self-contained signed JWT into an ``Identity``.
+
+    ``actor_status`` is the agent liveness check run after the signature and
+    claims pass. ``None`` skips it (claims only); the broker always wires it.
+    """
 
     verifier: TokenVerifier
+    actor_status: ActorStatusProtocol | None = None
 
     def _refuse(self, reason: str, **fields: object) -> NoReturn:
         """Log a refusal cause server-side under one event name, then raise.
@@ -201,6 +215,13 @@ class JwtTokenValidator:
             expires_at = datetime.fromtimestamp(float(exp), tz=UTC)
         except (OverflowError, ValueError, OSError):
             self._refuse("jwt_exp_invalid", iss=iss, sub=sub)
+
+        # After every claim check, so a malformed token never costs a lookup.
+        # Agent missing, not active, or owned by an inactive user -> refused.
+        if self.actor_status is not None and not await self.actor_status.is_active(
+            actor_id=sub, actor_type=actor_type.value
+        ):
+            self._refuse("jwt_actor_inactive", iss=iss, sub=sub)
 
         scopes_raw = claims.get(Claim.SCOPES, [])
         permissions = [str(s) for s in scopes_raw] if isinstance(scopes_raw, list) else []
