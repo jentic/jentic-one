@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import structlog
 
 from jentic_one.registry.core.schema.catalog_sources import (
+    SOURCE_STATUS_FAILED,
     SOURCE_STATUS_NEVER_SYNCED,
     CatalogSourceRow,
 )
@@ -52,8 +53,8 @@ SYNC_REQUEST_COALESCED = "coalesced"
 class CatalogSourceView:
     """One configured source as ``GET /catalog/sources`` shows it.
 
-    The operator fields (``enabled`` to ``warnings``) are set only for an
-    ``org:admin`` caller.
+    The operator fields (``enabled`` to ``last_error_code``) are set only for
+    an ``org:admin`` caller.
     """
 
     slug: str
@@ -69,6 +70,8 @@ class CatalogSourceView:
     precedence: int | None = None
     readers: SourceReadersConfig | None = None
     warnings: tuple[SourceWarning, ...] | None = field(default=None)
+    #: Why the last run failed (e.g. ``listing_too_large``), while the source is failed.
+    last_error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,8 +117,26 @@ class CatalogSourceOps:
         shown = [cfg for cfg in self._sources.values() if admin or cfg.slug in visible]
         rows = await self._rows()
         warnings = await CatalogSourceSync(self._ctx).source_warnings() if admin else {}
+        error_codes: dict[str, str | None] = {}
+        if admin:
+            failed = [
+                cfg.slug
+                for cfg in shown
+                if (row := rows.get(cfg.slug)) is not None
+                and row.last_status == SOURCE_STATUS_FAILED
+            ]
+            async with self._ctx.registry_db.session() as session:
+                for slug in failed:
+                    error_codes[slug] = await CatalogSyncRunRepository.last_error_code(
+                        session, slug
+                    )
         return [
-            _source_view(cfg, rows.get(cfg.slug), warnings.get(cfg.slug, []) if admin else None)
+            _source_view(
+                cfg,
+                rows.get(cfg.slug),
+                warnings.get(cfg.slug, []) if admin else None,
+                last_error_code=error_codes.get(cfg.slug),
+            )
             for cfg in sorted(shown, key=lambda c: c.slug)
         ]
 
@@ -234,6 +255,8 @@ def _source_view(
     cfg: CatalogSourceConfig,
     row: CatalogSourceRow | None,
     warnings: Sequence[SourceWarning] | None,
+    *,
+    last_error_code: str | None = None,
 ) -> CatalogSourceView:
     admin = warnings is not None
     return CatalogSourceView(
@@ -251,4 +274,5 @@ def _source_view(
         precedence=cfg.precedence if admin else None,
         readers=cfg.readers if admin else None,
         warnings=tuple(warnings) if warnings is not None else None,
+        last_error_code=last_error_code if admin else None,
     )

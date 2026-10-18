@@ -2685,8 +2685,8 @@ type CatalogSourceReadersResponse struct {
 
 // CatalogSourceResponse One configured catalog source and its sync state.
 //
-// The operator fields (“enabled“ to “warnings“) are present only for an
-// “org:admin“ caller.
+// The operator fields (“enabled“ to “last_error_code“) are present only
+// for an “org:admin“ caller.
 //
 // Examples: {"consecutive_failures":0,"kind":"jentic-public-apis","last_sync_at":"2026-01-15T10:30:00Z","live_entries":5231,"slug":"public","status":"ok","sync_pending":false,"visibility":"public"}
 type CatalogSourceResponse struct {
@@ -2704,6 +2704,11 @@ type CatalogSourceResponse struct {
 	//
 	// Examples: jentic-public-apis
 	Kind string `json:"kind"`
+
+	// LastErrorCode While `status` is `failed`, why the last sync run failed (operator only), e.g. `listing_too_large`, `listing_timeout` or `source_unavailable`.
+	//
+	// Examples: listing_too_large
+	LastErrorCode *string `json:"last_error_code,omitempty"`
 
 	// LastSyncAt When the last successful sync finished.
 	//
@@ -10826,8 +10831,9 @@ type ClientInterface interface {
 	// List the catalog sources the caller can see, with their sync state.
 	//
 	// An ``org:admin`` caller sees every configured source, plus its readers,
-	// trust, precedence and a ``warnings`` list (mapping rows that match no entry,
-	// entries claiming an API another source owns).
+	// trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+	// entries claiming an API another source owns) and, while a source is
+	// ``failed``, its last run's ``last_error_code``.
 	//
 	// Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
 	ListCatalogSources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14486,8 +14492,9 @@ func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, req
 // List the catalog sources the caller can see, with their sync state.
 //
 // An “org:admin“ caller sees every configured source, plus its readers,
-// trust, precedence and a “warnings“ list (mapping rows that match no entry,
-// entries claiming an API another source owns).
+// trust, precedence, a “warnings“ list (mapping rows that match no entry,
+// entries claiming an API another source owns) and, while a source is
+// “failed“, its last run's “last_error_code“.
 //
 // Corresponds with GET /catalog/sources (the `ListCatalogSources` operationId).
 func (c *Client) ListCatalogSources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27541,8 +27548,9 @@ type ClientWithResponsesInterface interface {
 	// List the catalog sources the caller can see, with their sync state.
 	//
 	// An ``org:admin`` caller sees every configured source, plus its readers,
-	// trust, precedence and a ``warnings`` list (mapping rows that match no entry,
-	// entries claiming an API another source owns).
+	// trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+	// entries claiming an API another source owns) and, while a source is
+	// ``failed``, its last run's ``last_error_code``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -46065,8 +46073,9 @@ func (c *ClientWithResponses) ListCatalogWithResponse(ctx context.Context, param
 // List the catalog sources the caller can see, with their sync state.
 //
 // An “org:admin“ caller sees every configured source, plus its readers,
-// trust, precedence and a “warnings“ list (mapping rows that match no entry,
-// entries claiming an API another source owns).
+// trust, precedence, a “warnings“ list (mapping rows that match no entry,
+// entries claiming an API another source owns) and, while a source is
+// “failed“, its last run's “last_error_code“.
 //
 // Returns a wrapper object for the known response body format(s).
 //

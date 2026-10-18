@@ -233,7 +233,7 @@ def _record_detached_apply(
     logger.info(
         "catalog_source_detached_apply_done", source=slug, run_id=run_id, status=outcome.status
     )
-    metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
+    metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start, outcome.error_code)
 
 
 def _error_code(exc: BaseException) -> str:
@@ -428,7 +428,7 @@ class CatalogSourceSync:
                 outcome = await self._fail(
                     slug, run_id, status=RUN_STATUS_FAILED, error_code="build_error"
                 )
-                metrics.record_sync(slug, outcome.status, 0.0)
+                metrics.record_sync(slug, outcome.status, 0.0, outcome.error_code)
                 return outcome
         if listing_timeout_s is not None:
             stream = _BoundedStream(stream, listing_timeout_s)
@@ -507,7 +507,9 @@ class CatalogSourceSync:
                 outcome = await self._fail(
                     slug, run_id, status=RUN_STATUS_FAILED, error_code="apply_error", staged=staged
                 )
-        metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
+        metrics.record_sync(
+            slug, outcome.status, time.monotonic() - clock_start, outcome.error_code
+        )
         return outcome
 
     async def _heartbeat(

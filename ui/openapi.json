@@ -4423,7 +4423,7 @@
         "type": "object"
       },
       "CatalogSourceResponse": {
-        "description": "One configured catalog source and its sync state.\n\nThe operator fields (``enabled`` to ``warnings``) are present only for an\n``org:admin`` caller.",
+        "description": "One configured catalog source and its sync state.\n\nThe operator fields (``enabled`` to ``last_error_code``) are present only\nfor an ``org:admin`` caller.",
         "examples": [
           {
             "consecutive_failures": 0,
@@ -4467,6 +4467,21 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "While `status` is `failed`, why the last sync run failed (operator only), e.g. `listing_too_large`, `listing_timeout` or `source_unavailable`.",
+            "examples": [
+              "listing_too_large"
+            ],
+            "title": "Last Error Code"
           },
           "last_sync_at": {
             "anyOf": [
@@ -33403,7 +33418,7 @@
     "/catalog/sources": {
       "description": "`GET`: List Catalog Sources.",
       "get": {
-        "description": "List the catalog sources the caller can see, with their sync state.\n\nAn ``org:admin`` caller sees every configured source, plus its readers,\ntrust, precedence and a ``warnings`` list (mapping rows that match no entry,\nentries claiming an API another source owns).",
+        "description": "List the catalog sources the caller can see, with their sync state.\n\nAn ``org:admin`` caller sees every configured source, plus its readers,\ntrust, precedence, a ``warnings`` list (mapping rows that match no entry,\nentries claiming an API another source owns) and, while a source is\n``failed``, its last run's ``last_error_code``.",
         "operationId": "listCatalogSources",
         "responses": {
           "200": {

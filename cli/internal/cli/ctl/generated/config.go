@@ -529,7 +529,13 @@ type CatalogSourceConfig struct {
 	// limits concurrency only, with no bucket and no database round trip.
 	RequestsPerSecond interface{} `json:"requests_per_second,omitempty,omitzero" yaml:"requests_per_second,omitempty" mapstructure:"requests_per_second,omitempty"`
 
-	// Kind-specific settings.
+	// Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
+	// one of index_url (an APIs.json-style index) or specs (a static list of
+	// {external_id, spec_url, catalog_api_id?, title?, tags?}), plus max_entries
+	// (default 10000, at most 100000): an index listing more fails the sync run with
+	// listing_too_large (GET /catalog/sources shows it as last_error_code) and the
+	// stored entries stay. index_url and spec_url must not carry user:pass@;
+	// index-listed spec URLs that do are ignored.
 	Settings CatalogSourceConfigSettings `json:"settings,omitempty,omitzero" yaml:"settings,omitempty" mapstructure:"settings,omitempty"`
 
 	// Source identifier and entry_id prefix; matches ^[a-z][a-z0-9-]{0,31}$.
@@ -580,7 +586,13 @@ func (j *CatalogSourceConfigReaders) UnmarshalJSON(value []byte) error {
 
 type CatalogSourceConfigRequestsPerSecond_0 *float64
 
-// Kind-specific settings.
+// Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
+// one of index_url (an APIs.json-style index) or specs (a static list of
+// {external_id, spec_url, catalog_api_id?, title?, tags?}), plus max_entries
+// (default 10000, at most 100000): an index listing more fails the sync run with
+// listing_too_large (GET /catalog/sources shows it as last_error_code) and the
+// stored entries stay. index_url and spec_url must not carry user:pass@;
+// index-listed spec URLs that do are ignored.
 type CatalogSourceConfigSettings map[string]interface{}
 
 type CatalogSourceConfigTrust string

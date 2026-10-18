@@ -2173,6 +2173,12 @@ class SourceAuthConfig(BaseModel):
     def _http_origins(cls, value: list[str]) -> list[str]:
         for origin in value:
             parts = urlsplit(origin)
+            if parts.username is not None or parts.password is not None:
+                # Never echo the entry: it carries a secret.
+                raise ValueError(
+                    f"auth.origins entry for host {parts.hostname!r} must not carry "
+                    "credentials (user:pass@); the source's auth supplies them"
+                )
             if parts.scheme not in ("http", "https") or not parts.hostname:
                 raise ValueError(f"auth.origins entry {origin!r} is not an http(s) origin")
             if parts.path not in ("", "/") or parts.query or parts.fragment:
@@ -2396,7 +2402,18 @@ class CatalogSourceConfig(BaseModel):
     readers: SourceReadersConfig | None = Field(
         default=None, description="Reader ACL; required for restricted sources only."
     )
-    settings: dict[str, Any] = Field(default_factory=dict, description="Kind-specific settings.")
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Kind-specific settings. git-manifest: url (its apis.json). http-index: "
+            "exactly one of index_url (an APIs.json-style index) or specs (a static "
+            "list of {external_id, spec_url, catalog_api_id?, title?, tags?}), plus "
+            "max_entries (default 10000, at most 100000): an index listing more fails "
+            "the sync run with listing_too_large (GET /catalog/sources shows it as "
+            "last_error_code) and the stored entries stay. index_url and spec_url "
+            "must not carry user:pass@; index-listed spec URLs that do are ignored."
+        ),
+    )
 
     @field_validator("slug")
     @classmethod

@@ -98,8 +98,9 @@ export class CatalogService {
      * List the catalog sources the caller can see, with their sync state.
      *
      * An ``org:admin`` caller sees every configured source, plus its readers,
-     * trust, precedence and a ``warnings`` list (mapping rows that match no entry,
-     * entries claiming an API another source owns).
+     * trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+     * entries claiming an API another source owns) and, while a source is
+     * ``failed``, its last run's ``last_error_code``.
      * @returns CatalogSourceListResponse Successful Response
      * @throws ApiError
      */

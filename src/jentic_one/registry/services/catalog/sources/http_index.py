@@ -13,9 +13,12 @@
 Listings are always full (no delta listing); spec fetches are conditional on the
 last ``ETag``. The source's credentials go only to origins its configuration
 names (the index URL's, or each configured spec URL's, plus ``auth.origins``): a
-spec URL an index lists on any other host is fetched without them. An index
-listing more than ``MAX_HTTP_INDEX_ENTRIES`` entries fails the sync run, so the
-stored entries stay as they were.
+spec URL an index lists on any other host is fetched without them. A spec URL
+carrying userinfo (``user:pass@``) is never listed or fetched: the HTTP client
+would turn it into its own ``Authorization`` header, letting the index choose
+it. An index listing more than ``max_entries`` entries (default
+``DEFAULT_HTTP_INDEX_ENTRIES``, at most ``MAX_HTTP_INDEX_ENTRIES``) fails the sync
+run with ``listing_too_large``, so the stored entries stay as they were.
 """
 
 from __future__ import annotations
@@ -23,10 +26,10 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps
 from jentic_one.registry.services.catalog.sources.origins import url_origin
@@ -52,14 +55,30 @@ logger = structlog.get_logger(__name__)
 #: ``properties[].type`` values (lower-cased) that name a spec document.
 _SPEC_PROPERTY_TYPES = frozenset({"openapi", "swagger", "x-openapi", "x-openapi-spec", "x-swagger"})
 
-#: Most entries one source may list.
-MAX_HTTP_INDEX_ENTRIES = 10_000
+#: Most entries one source lists unless its ``max_entries`` says otherwise.
+DEFAULT_HTTP_INDEX_ENTRIES = 10_000
+#: The highest ``max_entries`` a source may set.
+MAX_HTTP_INDEX_ENTRIES = 100_000
+
+
+def has_userinfo(url: str) -> bool:
+    """Whether ``url`` carries a ``user[:password]@`` part."""
+    parts = urlsplit(url)
+    return parts.username is not None or parts.password is not None
+
+
+def _no_userinfo(url: HttpUrl | None, field: str) -> HttpUrl | None:
+    if url is not None and has_userinfo(str(url)):
+        # Never echo the URL: it carries a secret.
+        raise ValueError(f"{field} must not carry credentials (user:pass@); use auth instead")
+    return url
 
 
 class HttpIndexSpec(BaseModel):
     """One statically configured spec of an ``http-index`` source."""
 
-    model_config = ConfigDict(extra="forbid")
+    # A URL with userinfo would carry a secret: keep inputs out of errors.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     external_id: str = Field(min_length=1, max_length=287)
     spec_url: HttpUrl
@@ -69,14 +88,34 @@ class HttpIndexSpec(BaseModel):
     title: str | None = None
     tags: list[str] = Field(default_factory=list)
 
+    @field_validator("spec_url")
+    @classmethod
+    def _spec_url_no_userinfo(cls, value: HttpUrl) -> HttpUrl:
+        _no_userinfo(value, "spec_url")
+        return value
+
 
 class HttpIndexSettings(BaseModel):
     """``settings`` of an ``http-index`` source: ``index_url`` or ``specs``, not both."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     index_url: HttpUrl | None = None
     specs: list[HttpIndexSpec] = Field(default_factory=list, max_length=MAX_HTTP_INDEX_ENTRIES)
+    max_entries: int = Field(
+        default=DEFAULT_HTTP_INDEX_ENTRIES,
+        ge=1,
+        le=MAX_HTTP_INDEX_ENTRIES,
+        description=(
+            "Most entries the index may list; a longer index fails the sync run "
+            "(listing_too_large) and the stored entries stay."
+        ),
+    )
+
+    @field_validator("index_url")
+    @classmethod
+    def _index_url_no_userinfo(cls, value: HttpUrl | None) -> HttpUrl | None:
+        return _no_userinfo(value, "index_url")
 
     @model_validator(mode="after")
     def _exactly_one(self) -> HttpIndexSettings:
@@ -101,13 +140,18 @@ def _spec_url(item: Mapping[str, Any], base: str) -> str | None:
         url = prop.get("url")
         if isinstance(kind, str) and kind.lower() in _SPEC_PROPERTY_TYPES and isinstance(url, str):
             absolute = urljoin(base, url.strip())
-            if url_origin(absolute) is not None:
+            if url_origin(absolute) is not None and not has_userinfo(absolute):
                 return absolute
     return None
 
 
-def index_changes(doc: Mapping[str, Any], *, index_url: str) -> list[EntryChange]:
-    """The entries of an APIs.json-style index document, as listing changes."""
+def index_changes(
+    doc: Mapping[str, Any], *, index_url: str, max_entries: int = DEFAULT_HTTP_INDEX_ENTRIES
+) -> list[EntryChange]:
+    """The entries of an APIs.json-style index document, as listing changes.
+
+    A spec URL that is not http(s) or carries userinfo leaves its entry card-only.
+    """
     changes: list[EntryChange] = []
     seen: set[str] = set()
     apis = doc.get("apis")
@@ -118,13 +162,11 @@ def index_changes(doc: Mapping[str, Any], *, index_url: str) -> list[EntryChange
         if external_id is None or external_id in seen:
             continue
         seen.add(external_id)
-        if len(seen) > MAX_HTTP_INDEX_ENTRIES:
+        if len(seen) > max_entries:
             # A full listing that silently dropped the tail would remove those
             # entries on every sync; fail the run instead so the rows stay.
-            logger.warning(
-                "catalog_http_index_too_large", index_url=index_url, limit=MAX_HTTP_INDEX_ENTRIES
-            )
-            raise ListingTooLargeError(f"index lists more than {MAX_HTTP_INDEX_ENTRIES} entries")
+            logger.warning("catalog_http_index_too_large", index_url=index_url, limit=max_entries)
+            raise ListingTooLargeError(f"index lists more than {max_entries} entries")
         spec_url = _spec_url(item, index_url)
         tags = item.get("tags")
         changes.append(
@@ -207,7 +249,7 @@ class HttpIndexSource:
             if index_url is None:
                 return static_changes(self._settings.specs)
             doc = await self._deps.http.get_json(index_url)
-            return index_changes(doc, index_url=index_url)
+            return index_changes(doc, index_url=index_url, max_entries=self._settings.max_entries)
 
         return FullListStream(_load, watermark=_watermark)
 
@@ -217,6 +259,9 @@ class HttpIndexSource:
         url = ref.get("url")
         if not isinstance(url, str) or url_origin(url) is None:
             raise SpecGoneError("http-index spec_ref carries no http(s) url")
+        if has_userinfo(url):
+            # Stored before userinfo URLs were skipped at listing time.
+            raise SpecGoneError("http-index spec url carries credentials (user:pass@)")
         # The source HTTP client sends the credential only to the source's
         # credential origins (``credential_urls`` plus ``auth.origins``), so the
         # connector asks for it on every fetch and lets that one check decide.

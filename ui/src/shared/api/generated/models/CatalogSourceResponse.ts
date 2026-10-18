@@ -7,8 +7,8 @@ import type { CatalogSourceWarningResponse } from './CatalogSourceWarningRespons
 /**
  * One configured catalog source and its sync state.
  *
- * The operator fields (``enabled`` to ``warnings``) are present only for an
- * ``org:admin`` caller.
+ * The operator fields (``enabled`` to ``last_error_code``) are present only
+ * for an ``org:admin`` caller.
  */
 export type CatalogSourceResponse = {
     /**
@@ -23,6 +23,10 @@ export type CatalogSourceResponse = {
      * Source kind.
      */
     kind: string;
+    /**
+     * While `status` is `failed`, why the last sync run failed (operator only), e.g. `listing_too_large`, `listing_timeout` or `source_unavailable`.
+     */
+    last_error_code?: (string | null);
     /**
      * When the last successful sync finished.
      */

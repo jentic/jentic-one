@@ -2,7 +2,8 @@
 
 Instruments go through the ``shared/metrics.py`` facade and are created lazily on
 first use, so importing this module has no side effects. ``source`` is always a
-configured slug, so label cardinality is bounded by configuration.
+configured slug, so label cardinality is bounded by configuration; ``error_code``
+is one of the sync's fixed failure codes.
 """
 
 from __future__ import annotations
@@ -37,11 +38,14 @@ def _gauge(name: str, description: str) -> Any:
     return gauge
 
 
-def record_sync(source: str, status: str, duration_seconds: float) -> None:
-    """One sync run finished with ``status``."""
-    _counter("catalog_source_sync_total", "Catalog source sync runs by outcome.").add(
-        1, {"source": source, "status": status}
-    )
+def record_sync(
+    source: str, status: str, duration_seconds: float, error_code: str | None = None
+) -> None:
+    """One sync run finished with ``status`` (and, when it failed, ``error_code``)."""
+    attributes = {"source": source, "status": status}
+    if error_code is not None:
+        attributes["error_code"] = error_code
+    _counter("catalog_source_sync_total", "Catalog source sync runs by outcome.").add(1, attributes)
     histogram = _histograms.get("duration")
     if histogram is None:
         histogram = get_meter(_METER_NAME).create_histogram(

@@ -19,6 +19,7 @@ from jentic_one.registry.services.catalog.sources.auth import (
 )
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps, source_ingest_config
 from jentic_one.registry.services.catalog.sources.http_index import (
+    DEFAULT_HTTP_INDEX_ENTRIES,
     MAX_HTTP_INDEX_ENTRIES,
     HttpIndexSettings,
     HttpIndexSource,
@@ -277,10 +278,81 @@ async def test_static_specs_fetch_and_report_healthy() -> None:
 
 def test_index_past_the_entry_cap_fails_instead_of_truncating() -> None:
     """A truncated full listing would remove the tail; the run must apply nothing."""
-    items = [{"aid": f"api-{i}"} for i in range(MAX_HTTP_INDEX_ENTRIES + 1)]
+    items = [{"aid": f"api-{i}"} for i in range(DEFAULT_HTTP_INDEX_ENTRIES + 1)]
     with pytest.raises(ListingTooLargeError):
         index_changes({"apis": items}, index_url=_INDEX)
-    assert len(index_changes({"apis": items[:-1]}, index_url=_INDEX)) == MAX_HTTP_INDEX_ENTRIES
+    assert len(index_changes({"apis": items[:-1]}, index_url=_INDEX)) == DEFAULT_HTTP_INDEX_ENTRIES
+
+
+async def test_max_entries_sets_the_cap_up_to_its_hard_bound() -> None:
+    items = [{"aid": f"api-{i}"} for i in range(4)]
+    with pytest.raises(ListingTooLargeError):
+        index_changes({"apis": items}, index_url=_INDEX, max_entries=3)
+    http = FakeSourceHttp()
+    http.json_responses[_INDEX] = {"apis": items}
+    small = CatalogSourceConfig.model_validate(
+        {"slug": "s", "kind": "http-index", "settings": {"index_url": _INDEX, "max_entries": 3}}
+    )
+    with pytest.raises(ListingTooLargeError):
+        [
+            c
+            async for c in HttpIndexSource.build(
+                small, deps=fake_source_deps("s", http)
+            ).list_entries(since=None)
+        ]
+    assert (
+        HttpIndexSettings.model_validate(
+            {"index_url": _INDEX, "max_entries": MAX_HTTP_INDEX_ENTRIES}
+        ).max_entries
+        == MAX_HTTP_INDEX_ENTRIES
+    )
+    for bad in (0, MAX_HTTP_INDEX_ENTRIES + 1):
+        with pytest.raises(ValidationError):
+            HttpIndexSettings.model_validate({"index_url": _INDEX, "max_entries": bad})
+
+
+def test_index_listed_spec_urls_with_userinfo_are_dropped() -> None:
+    """The HTTP client would turn ``user:pass@`` into its own Authorization header,
+    letting the index pick it: such an entry is listed card-only."""
+    doc = {
+        "apis": [
+            {
+                "aid": "a",
+                "properties": [{"type": "OpenAPI", "url": "https://u:p@cdn.example/a.json"}],
+            },
+            {
+                "aid": "b",
+                "properties": [{"type": "OpenAPI", "url": "https://u@cdn.example/b.json"}],
+            },
+            {"aid": "c", "properties": [{"type": "OpenAPI", "url": "//x:y@cdn.example/c.json"}]},
+        ]
+    }
+    changes = index_changes(doc, index_url=_INDEX)
+    assert [c.entry.spec_ref for c in changes if isinstance(c, Upserted)] == [None, None, None]
+
+
+async def test_fetch_spec_refuses_a_stored_url_with_userinfo() -> None:
+    http = FakeSourceHttp()
+    source = _index_source(fake_source_deps("s", http))
+    with pytest.raises(SpecGoneError):
+        await source.fetch_spec({"url": "https://u:p@cdn.example/a.json"})
+    assert http.requests == []
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"index_url": "https://u:secret@index.example/apis.json"},
+        {"specs": [{"external_id": "a", "spec_url": "https://u:secret@cdn.example/a.json"}]},
+    ],
+)
+def test_configured_urls_with_userinfo_are_rejected_without_echoing_them(
+    settings: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError) as exc:
+        HttpIndexSettings.model_validate(settings)
+    assert "secret" not in str(exc.value)
+    assert "must not carry credentials" in str(exc.value)
 
 
 async def test_fetch_spec_without_url_is_gone() -> None:

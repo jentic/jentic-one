@@ -175,6 +175,18 @@ class CatalogSyncRunRepository:
         return value
 
     @staticmethod
+    async def last_error_code(session: AsyncSession, slug: str) -> str | None:
+        """The ``error_code`` of the source's most recently started finished run."""
+        result = await session.execute(
+            select(CatalogSyncRun.error_code)
+            .where(CatalogSyncRun.source_slug == slug, CatalogSyncRun.finished_at.is_not(None))
+            .order_by(CatalogSyncRun.started_at.desc())
+            .limit(1)
+        )
+        code: str | None = result.scalar_one_or_none()
+        return code
+
+    @staticmethod
     async def finish(session: AsyncSession, run_id: str, **values: Any) -> None:
         await session.execute(
             update(CatalogSyncRun)

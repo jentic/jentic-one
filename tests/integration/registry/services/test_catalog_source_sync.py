@@ -201,7 +201,7 @@ async def test_apply_outlives_a_cancelled_caller_and_logs_its_outcome(
         monkeypatch.setattr(
             metrics,
             "record_sync",
-            lambda slug, status, _seconds: recorded.append((slug, status)),
+            lambda slug, status, _seconds, _code=None: recorded.append((slug, status)),
         )
         task = asyncio.create_task(sync.sync_source("public", stream=full("a.io")))
         await entered.wait()

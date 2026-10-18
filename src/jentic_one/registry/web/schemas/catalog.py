@@ -277,8 +277,8 @@ class CatalogSourceWarningResponse(BaseModel):
 class CatalogSourceResponse(BaseModel):
     """One configured catalog source and its sync state.
 
-    The operator fields (``enabled`` to ``warnings``) are present only for an
-    ``org:admin`` caller.
+    The operator fields (``enabled`` to ``last_error_code``) are present only
+    for an ``org:admin`` caller.
     """
 
     model_config = ConfigDict(
@@ -332,6 +332,14 @@ class CatalogSourceResponse(BaseModel):
     )
     warnings: list[CatalogSourceWarningResponse] | None = Field(
         default=None, description="Mapping and ownership problems (operator only)."
+    )
+    last_error_code: str | None = Field(
+        default=None,
+        description=(
+            "While `status` is `failed`, why the last sync run failed (operator only), "
+            "e.g. `listing_too_large`, `listing_timeout` or `source_unavailable`."
+        ),
+        examples=["listing_too_large"],
     )
 
 

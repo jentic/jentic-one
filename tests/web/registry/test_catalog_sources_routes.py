@@ -19,12 +19,16 @@ from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
 from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.services.catalog.snapshot import clear_snapshots
-from jentic_one.registry.services.catalog.sources.protocol import SourceCapabilities
+from jentic_one.registry.services.catalog.sources.protocol import (
+    ListingTooLargeError,
+    SourceCapabilities,
+)
 from jentic_one.registry.services.catalog.sources.registry import (
     register_catalog_source_kind,
     registered_catalog_source_kinds,
 )
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
+from jentic_one.registry.services.catalog.sources.streams import FullListStream
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig, CatalogConfig
@@ -162,7 +166,14 @@ def test_list_sources_shows_only_visible_ones(ctx: Context) -> None:
     assert public["kind"] == "static"
     assert public["status"] == "never_synced"
     assert public["live_entries"] == 0
-    for operator_field in ("enabled", "trust", "precedence", "readers", "warnings"):
+    for operator_field in (
+        "enabled",
+        "trust",
+        "precedence",
+        "readers",
+        "warnings",
+        "last_error_code",
+    ):
         assert public[operator_field] is None
 
 
@@ -197,6 +208,34 @@ def test_admin_sees_every_source_with_operator_fields_and_warnings(ctx: Context)
         }
     ]
     assert by_slug["public"]["warnings"] == []
+
+
+async def test_admin_sees_why_a_failed_source_failed(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed source carries its last run's error code, for an operator only."""
+
+    def _too_large(self: StaticSource, *, since: str | None) -> Any:
+        async def _load() -> list[Any]:
+            raise ListingTooLargeError("index lists more than 3 entries")
+
+        return FullListStream(_load, watermark=lambda _changes: "w")
+
+    with _client(ctx, ["org:admin"]) as tc:
+        monkeypatch.setattr(StaticSource, "list_entries", _too_large)
+        assert tc.post("/catalog/sources/public:sync").status_code == 202
+        _tick(tc, ctx)
+        public = {s["slug"]: s for s in tc.get("/catalog/sources").json()["data"]}["public"]
+        assert (public["status"], public["last_error_code"]) == ("failed", "listing_too_large")
+
+        with _client(ctx, ["capabilities:read"]) as reader:
+            shown = {s["slug"]: s for s in reader.get("/catalog/sources").json()["data"]}
+        assert shown["public"]["status"] == "failed"
+        assert shown["public"]["last_error_code"] is None
+
+        # A source whose last run did not fail carries no code.
+        hooks = {s["slug"]: s for s in tc.get("/catalog/sources").json()["data"]}["hooks"]
+        assert hooks["last_error_code"] is None
 
 
 # ── :sync ─────────────────────────────────────────────────────────────────────

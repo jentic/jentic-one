@@ -387,6 +387,7 @@ def _source_response(view: CatalogSourceView) -> CatalogSourceResponse:
             if view.warnings is not None
             else None
         ),
+        last_error_code=view.last_error_code,
     )
 
 
@@ -406,8 +407,9 @@ async def list_catalog_sources(
     """List the catalog sources the caller can see, with their sync state.
 
     An ``org:admin`` caller sees every configured source, plus its readers,
-    trust, precedence and a ``warnings`` list (mapping rows that match no entry,
-    entries claiming an API another source owns).
+    trust, precedence, a ``warnings`` list (mapping rows that match no entry,
+    entries claiming an API another source owns) and, while a source is
+    ``failed``, its last run's ``last_error_code``.
     """
     views = await ops.list_sources(permissions=permissions, actor_id=identity.sub or None)
     resp = CatalogSourceListResponse(data=[_source_response(v) for v in views])

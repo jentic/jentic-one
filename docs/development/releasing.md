@@ -209,8 +209,14 @@ multi-source storage and the read cutover); it ships with them, never on its own
   listing points at. With `JENTIC_ENV=production`, startup refuses a
   credentialed source whose credential origins include a plain `http://` one
   (outside production it is logged as a warning). An `http-index` index listing
-  more than 10,000 entries fails the sync run (`listing_too_large`) and keeps
-  the stored entries.
+  more than its `settings.max_entries` (default 10,000, at most 100,000) fails
+  the sync run (`listing_too_large`, shown to operators as the source's
+  `last_error_code` in `GET /catalog/sources` and as the `error_code` label of
+  `catalog_source_sync_total`) and keeps the stored entries. URLs carrying
+  `user:pass@` are refused in `index_url`, `spec_url` and `auth.origins`, and an
+  index-listed spec URL carrying one is ignored (the entry is listed without a
+  spec). Credential origins match hosts case-insensitively, without a trailing
+  dot and in their punycode form.
 
 
 ## Upgrading to the multi-source catalog release (0.44.0): update tracking

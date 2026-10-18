@@ -15,8 +15,29 @@ from urllib.parse import urlsplit
 from jentic_one.registry.services.catalog.sources.registry import resolve_catalog_source_kind
 from jentic_one.shared.config import CatalogSourceConfig
 
-#: ``(scheme, host, port)``, with the scheme's default port filled in.
+#: ``(scheme, host, port)``, with the scheme's default port filled in and the
+#: host in its canonical form (see :func:`canonical_host`).
 Origin = tuple[str, str, int]
+
+
+def canonical_host(host: str) -> str | None:
+    """``host`` lower-cased, without one trailing dot, internationalised names in
+    their ASCII (punycode) form; ``None`` when it can't be encoded.
+
+    ``b.example.`` and ``b.example`` name the same host, and so do ``bücher.example``
+    and ``xn--bcher-kva.example``: both forms must match the same origin.
+    """
+    host = host.lower()
+    if host.endswith("."):
+        host = host[:-1]
+    if not host:
+        return None
+    if not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    return host
 
 
 def url_origin(url: str) -> Origin | None:
@@ -29,7 +50,10 @@ def url_origin(url: str) -> Origin | None:
         port = parts.port
     except ValueError:
         return None
-    return scheme, parts.hostname.lower(), port or (443 if scheme == "https" else 80)
+    host = canonical_host(parts.hostname)
+    if host is None:
+        return None
+    return scheme, host, port or (443 if scheme == "https" else 80)
 
 
 def credential_origins(cfg: CatalogSourceConfig) -> frozenset[Origin]:

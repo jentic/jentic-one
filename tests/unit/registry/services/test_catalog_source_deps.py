@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from jentic_one.registry.services.catalog.fetch import (
     CATALOG_USER_AGENT,
@@ -33,6 +34,7 @@ from jentic_one.registry.services.catalog.sources.deps import (
 )
 from jentic_one.registry.services.catalog.sources.http_index import HttpIndexSource
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
+from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
     SourceUnavailableError,
@@ -401,6 +403,49 @@ async def test_kind_naming_no_urls_sends_credentials_only_to_explicit_origins(
 def test_auth_origins_must_be_http_origins(origin: str) -> None:
     with pytest.raises(ValueError):
         _source(auth=_auth(origins=[origin]))
+
+
+def test_auth_origins_with_userinfo_are_rejected_without_echoing_them() -> None:
+    with pytest.raises(ValidationError) as exc:
+        _source(auth=_auth(origins=["https://u:hunter2@specs.example.com"]))
+    [error] = exc.value.errors()
+    assert "must not carry credentials" in error["msg"]
+    assert "hunter2" not in error["msg"]
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("https://b.example./x", "https://b.example/y"),
+        ("https://B.Example:443/x", "https://b.example"),
+        ("https://bücher.example/x", "https://xn--bcher-kva.example/y"),
+        ("https://BÜCHER.example./x", "https://xn--bcher-kva.example"),
+    ],
+)
+def test_url_origin_canonicalises_trailing_dots_and_idn(a: str, b: str) -> None:
+    assert url_origin(a) is not None
+    assert url_origin(a) == url_origin(b)
+
+
+def test_url_origin_rejects_hosts_it_cannot_encode() -> None:
+    assert url_origin("https://./x") is None
+    assert url_origin("https://a..bücher.example/x") is None  # an empty IDN label
+
+
+@pytest.mark.asyncio
+async def test_credential_reaches_trailing_dot_and_idn_forms_of_its_origin(
+    answering_transport: list[httpx.Request],
+) -> None:
+    cfg = _source(slug="corp3", auth=_auth(origins=["https://bücher.example"]))
+    deps = build_source_deps(_Ctx(), cfg)  # type: ignore[arg-type]
+    await deps.http.get_bytes("https://xn--bcher-kva.example/a.json")
+    await deps.http.get_bytes("https://xn--bcher-kva.example./b.json")
+    await deps.http.get_bytes("https://other.example/c.json")
+    assert [r.headers.get("authorization") for r in answering_transport[-3:]] == [
+        "Bearer source-token",
+        "Bearer source-token",
+        None,
+    ]
 
 
 class _LaneRecorder(ProcessSourceLimits):
