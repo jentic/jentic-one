@@ -232,7 +232,9 @@ class _CatalogEntryRef:
     An API with a ``catalog_api_id`` but no recorded entry was imported from the
     legacy source, so its entry is ``{legacy_source_slug}/{catalog_api_id}``. An
     entry whose source the caller can't read is withheld, exactly as the catalog
-    routes answer 404 for it: the response never names a hidden source.
+    routes answer 404 for it, so this field never names a hidden source. (An
+    API's own name can still carry a source slug when its import picked a
+    distinct name; that is the name, shown to every ``apis:read`` caller.)
     """
 
     def __init__(self, ctx: Context, identity: Identity) -> None:

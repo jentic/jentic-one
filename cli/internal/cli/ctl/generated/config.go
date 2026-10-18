@@ -413,6 +413,11 @@ type CatalogConfig struct {
 	// against.
 	LegacySourceSlug string `json:"legacy_source_slug,omitempty,omitzero" yaml:"legacy_source_slug,omitempty" mapstructure:"legacy_source_slug,omitempty"`
 
+	// Bound on the source listings of one POST /catalog:refresh, taken together (each
+	// one is also capped by ingest.fetch_timeout_s). A source reached after it is
+	// skipped (status partial) and left to the scanner.
+	RefreshDeadlineSeconds float64 `json:"refresh_deadline_seconds,omitempty,omitzero" yaml:"refresh_deadline_seconds,omitempty" mapstructure:"refresh_deadline_seconds,omitempty"`
+
 	// Catalog sources. The default is the curated public-apis manifest.
 	Sources []CatalogSourceConfig `json:"sources,omitempty,omitzero" yaml:"sources,omitempty" mapstructure:"sources,omitempty"`
 
@@ -446,6 +451,15 @@ func (j *CatalogConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["legacy_source_slug"]; !ok || v == nil {
 		plain.LegacySourceSlug = "public"
+	}
+	if v, ok := raw["refresh_deadline_seconds"]; !ok || v == nil {
+		plain.RefreshDeadlineSeconds = 45.0
+	}
+	if 600 < plain.RefreshDeadlineSeconds {
+		return fmt.Errorf("field %s: must be <= %v", "refresh_deadline_seconds", 600)
+	}
+	if 0 >= plain.RefreshDeadlineSeconds {
+		return fmt.Errorf("field %s: must be > %v", "refresh_deadline_seconds", 0)
 	}
 	if v, ok := raw["update_check_interval_seconds"]; !ok || v == nil {
 		plain.UpdateCheckIntervalSeconds = 86400

@@ -178,6 +178,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `The catalog entry has no spec (card-only).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -216,6 +217,7 @@ export class CatalogService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `The catalog entry has no spec (card-only).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -298,10 +300,14 @@ export class CatalogService {
     }
     /**
      * Refresh Catalog
-     * Sync every enabled catalog source now (catalog:sync).
+     * Sync now every enabled catalog source the caller may read (catalog:sync).
      *
-     * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
-     * ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
+     * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
+     * of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
+     * ``partial`` when a refreshed source failed or was skipped; ``sources``
+     * gives each one's outcome. Sources the caller cannot read are not synced or
+     * reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
+     * for this run.
      * @returns CatalogRefreshResponse Successful Response
      * @throws ApiError
      */

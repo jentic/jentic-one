@@ -72,7 +72,11 @@ from jentic_one.registry.services.catalog.snapshot import (
     store_snapshot,
 )
 from jentic_one.registry.services.catalog.sources import digests
-from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync, is_due
+from jentic_one.registry.services.catalog.sources.sync import (
+    CatalogSourceSync,
+    SyncOutcome,
+    is_due,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryHasNoSpecError,
     CatalogEntryNotFoundError,
@@ -210,9 +214,15 @@ class CatalogPreviewView:
 
 @dataclass(frozen=True)
 class CatalogRefreshResult:
-    """Outcome of a refresh: the live entries of the enabled sources after it."""
+    """Outcome of a refresh, over the sources the caller may read.
+
+    ``count`` is their live entries after it; ``partial`` is set when any of
+    them failed or was skipped; ``sources`` is each one's run outcome.
+    """
 
     count: int
+    partial: bool = False
+    sources: tuple[SyncOutcome, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -249,22 +259,42 @@ class CatalogService:
 
     # ── refresh ──────────────────────────────────────────────────────────────
 
-    async def refresh(self, *, force: bool = False) -> CatalogRefreshResult:
-        """Sync every enabled source now; ``force`` overrides the mass-removal guard.
+    async def refresh(
+        self,
+        *,
+        permissions: frozenset[str] | None = None,
+        actor_id: str | None = None,
+        force: bool = False,
+    ) -> CatalogRefreshResult:
+        """Sync now every enabled source the caller may read; ``force`` overrides
+        the mass-removal guard.
 
-        Each source's listing is bounded by ``ingest.fetch_timeout_s``, so a slow
-        source fails its own run (recorded, with backoff) instead of holding the
-        request open indefinitely.
+        Sources the caller cannot read are left to the scanner, so the result
+        (counts, outcomes and error detail) never covers a hidden source.
+        ``permissions=None`` (internal callers only) refreshes every source. Each
+        source's listing is bounded by ``ingest.fetch_timeout_s`` and all the
+        listings together by ``catalog.refresh_deadline_seconds``; a source
+        reached after that deadline is skipped and flagged for the scanner. A
+        listing timeout here leaves the source's scheduled backoff alone.
 
         Raises ``CatalogUnavailableError`` when no source applied and at least
-        one failed; otherwise failures are logged and the last good rows stay.
-        A run held by the mass-removal guard is not a failure: the source was
-        reachable and keeps serving its last applied rows.
+        one failed; otherwise the result is ``partial`` and the last good rows
+        stay. A run held by the mass-removal guard is not a failure: the source
+        was reachable and keeps serving its last applied rows.
         """
+        allowed = (
+            frozenset(s.slug for s in self._enabled())
+            if permissions is None
+            else allowed_sources(self._sources.values(), permissions=permissions, actor_id=actor_id)
+        )
         sync = CatalogSourceSync(self._ctx)
         await sync.register_sources()
         outcomes = await sync.sync_all(
-            forced=force, listing_timeout_s=self._ingest_cfg.fetch_timeout_s
+            forced=force,
+            listing_timeout_s=self._ingest_cfg.fetch_timeout_s,
+            deadline_s=self._cfg.refresh_deadline_seconds,
+            slugs=allowed,
+            count_timeouts=False,
         )
         applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
         held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
@@ -273,7 +303,8 @@ class CatalogService:
             codes = ", ".join(f"{o.slug}: {o.error_code or o.status}" for o in failed)
             raise CatalogUnavailableError(f"catalog sources unavailable ({codes})")
         snapshot = await self._snapshot()
-        return CatalogRefreshResult(count=len(snapshot.entries))
+        count = sum(1 for e in snapshot.entries if e.source_slug in allowed)
+        return CatalogRefreshResult(count=count, partial=bool(failed), sources=tuple(outcomes))
 
     # ── snapshot ─────────────────────────────────────────────────────────────
 
@@ -1335,16 +1366,17 @@ class CatalogService:
         if not has_effective_permission(identity.permissions, "events:write"):
             raise SnoozeForbiddenError()
 
-    @staticmethod
     async def _resolve_local_api(
-        session: Any, state: _ReadState, entry: CatalogEntry
+        self, session: Any, state: _ReadState, entry: CatalogEntry
     ) -> tuple[uuid.UUID, Any] | None:
         """Resolve an entry to its local ``(api_id, check_row)``.
 
         The API recorded as imported from this entry wins, so two entries that
         share a ``catalog_api_id`` or a spec URL never act on each other's API.
-        An API with no recorded entry is found via its served spec URL. ``None``
-        when neither matches — the caller maps that to a 404.
+        An API with no recorded entry (imported from the legacy source before
+        entry ids were recorded) is found via its served spec URL, for a
+        legacy-source entry only, as import adopts it. ``None`` when neither
+        matches — the caller maps that to a 404.
         """
         local_api_id = await ApiRepository.live_api_id_for_catalog_entry_id(session, entry.entry_id)
         if local_api_id is None:
@@ -1356,8 +1388,13 @@ class CatalogService:
                 return None
             local_api_id, _revision_id = current
             api = await ApiRepository.get_by_id(session, local_api_id)
-            if api is None or api.catalog_entry_id not in (None, entry.entry_id):
-                # That spec URL is served by an API imported from another entry.
+            unrecorded_ok = entry.source_slug == self._cfg.legacy_source_slug
+            if api is None or (
+                api.catalog_entry_id != entry.entry_id
+                and not (api.catalog_entry_id is None and unrecorded_ok)
+            ):
+                # That spec URL is served by an API imported from another entry,
+                # or by an unrecorded one this (non-legacy) entry can't adopt.
                 return None
         check = await CatalogUpdateCheckRepository.get(session, local_api_id)
         return local_api_id, check

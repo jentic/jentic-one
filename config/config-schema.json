@@ -314,6 +314,14 @@
           "title": "Legacy Source Slug",
           "type": "string"
         },
+        "refresh_deadline_seconds": {
+          "default": 45.0,
+          "description": "Bound on the source listings of one POST /catalog:refresh, taken together (each one is also capped by ingest.fetch_timeout_s). A source reached after it is skipped (status partial) and left to the scanner.",
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "title": "Refresh Deadline Seconds",
+          "type": "number"
+        },
         "sources": {
           "description": "Catalog sources. The default is the curated public-apis manifest.",
           "items": {

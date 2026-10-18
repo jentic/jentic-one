@@ -2,17 +2,31 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CatalogRefreshSourceResponse } from './CatalogRefreshSourceResponse';
 /**
- * Acknowledgement of a catalog refresh.
+ * Outcome of a catalog refresh, over the sources the caller may read.
  */
 export type CatalogRefreshResponse = {
     /**
-     * Live entries of the enabled sources after the sync.
+     * Live entries of the refreshed sources after the sync.
      */
     count: number;
     /**
-     * Refresh outcome marker.
+     * Each refreshed source's outcome, in sync order.
      */
-    status?: string;
+    sources?: Array<CatalogRefreshSourceResponse>;
+    /**
+     * refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+     */
+    status?: CatalogRefreshResponse.status;
 };
+export namespace CatalogRefreshResponse {
+    /**
+     * refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+     */
+    export enum status {
+        REFRESHED = 'refreshed',
+        PARTIAL = 'partial',
+    }
+}
 

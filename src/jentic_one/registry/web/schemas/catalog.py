@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -241,18 +242,60 @@ class CatalogListResponse(BaseModel):
     )
 
 
-class CatalogRefreshResponse(BaseModel):
-    """Acknowledgement of a catalog refresh."""
+class CatalogRefreshSourceResponse(BaseModel):
+    """One refreshed source's run outcome."""
 
     model_config = ConfigDict(
-        json_schema_extra={"examples": [{"count": 5231, "status": "refreshed"}]}
+        json_schema_extra={
+            "examples": [{"slug": "public", "status": "applied", "error_code": None}]
+        }
+    )
+
+    slug: str = Field(description="The source's slug.", examples=["public"])
+    status: str = Field(
+        description=(
+            "Run outcome: applied, suspect_empty (held by the mass-removal guard), "
+            "superseded, busy (another run holds the source), failed, or skipped "
+            "(the refresh deadline passed before it started; the scanner syncs it)."
+        ),
+        examples=["applied"],
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Why a failed or skipped run did not apply, e.g. listing_timeout.",
+        examples=["listing_timeout"],
+    )
+
+
+class CatalogRefreshResponse(BaseModel):
+    """Outcome of a catalog refresh, over the sources the caller may read."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "count": 5231,
+                    "status": "refreshed",
+                    "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+                }
+            ]
+        }
     )
 
     count: int = Field(
-        description="Live entries of the enabled sources after the sync.", examples=[5231]
+        description="Live entries of the refreshed sources after the sync.", examples=[5231]
     )
-    status: str = Field(
-        default="refreshed", description="Refresh outcome marker.", examples=["refreshed"]
+    status: Literal["refreshed", "partial"] = Field(
+        default="refreshed",
+        description=(
+            "refreshed when no refreshed source failed or was skipped; partial "
+            "otherwise (the failed ones keep serving their last applied entries)."
+        ),
+        examples=["refreshed"],
+    )
+    sources: list[CatalogRefreshSourceResponse] = Field(
+        default_factory=list,
+        description="Each refreshed source's outcome, in sync order.",
     )
 
 

@@ -304,7 +304,7 @@ class ForcedSyncForbiddenError(RegistryServiceError):
     """
 
     def __init__(self) -> None:
-        super().__init__("A forced catalog source sync requires the 'org:admin' permission.")
+        super().__init__("A forced catalog source sync requires the 'org:admin' permission")
 
 
 class SourceSwitchForbiddenError(RegistryServiceError):
@@ -316,8 +316,7 @@ class SourceSwitchForbiddenError(RegistryServiceError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Switching an API to another catalog source requires the "
-            "'credentials:write' permission."
+            "Switching an API to another catalog source requires the 'credentials:write' permission"
         )
 
 
@@ -329,7 +328,7 @@ class CatalogEntryHasNoSpecError(RegistryServiceError):
     """
 
     def __init__(self, entry_id: str) -> None:
-        super().__init__(f"Catalog entry '{entry_id}' has no spec to preview or import.")
+        super().__init__(f"Catalog entry '{entry_id}' has no spec to preview or import")
         self.entry_id = entry_id
 
 

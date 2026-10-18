@@ -315,6 +315,44 @@ def test_catalog_sync_refreshes_but_only_org_admin_forces(web_context: Context) 
         assert forced.json()["type"].endswith("forced_sync_forbidden")
 
 
+async def test_catalog_sync_refresh_covers_only_the_sources_the_caller_can_read(
+    web_config: AppConfig,
+) -> None:
+    """A ``catalog:sync`` caller without ``catalog:org:read`` neither syncs nor
+    learns anything about an ``org`` source: not its entries, outcome or slug."""
+    _LISTINGS[_CORP_URL] = ["corp-a.example", "corp-b.example", "corp-c.example"]
+    async with Context(_config(web_config, [_public_source(), _corp_source()])) as ctx:
+        with _client(ctx, ["catalog:sync"]) as tc:
+            r = tc.post("/catalog:refresh")
+            assert r.status_code == 200
+            assert r.json() == {
+                "count": 2,
+                "status": "refreshed",
+                "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+            }
+            async with ctx.registry_db.session() as session:
+                corp = await CatalogSourceRepository.get(session, "corp")
+            assert corp is not None and corp.last_applied_run_id is None
+
+            # Every source failing: the 502 names only the visible one.
+            del _LISTINGS[_MANIFEST_URL]
+            del _LISTINGS[_CORP_URL]
+            failed = tc.post("/catalog:refresh")
+            assert failed.status_code == 502
+            assert "public" in failed.json()["detail"]
+            assert b"corp" not in failed.content
+
+        with _client(ctx, ["catalog:sync", "catalog:org:read"]) as tc:
+            _LISTINGS[_MANIFEST_URL] = ["stripe.com", "slack.com"]
+            r = tc.post("/catalog:refresh")
+            assert r.status_code == 200
+            assert r.json()["status"] == "partial"
+            assert [(s["slug"], s["status"]) for s in r.json()["sources"]] == [
+                ("public", "applied"),
+                ("corp", "failed"),
+            ]
+
+
 def test_refresh_invalid_token_401(unauthed_client: TestClient) -> None:
     resp = unauthed_client.post(
         "/catalog:refresh", headers={"Authorization": "Bearer not-a-real-token"}
@@ -332,7 +370,11 @@ def test_refresh_without_auth_401(unauthed_client: TestClient) -> None:
 def test_refresh_then_list(admin_client: TestClient) -> None:
     r = admin_client.post("/catalog:refresh")
     assert r.status_code == 200
-    assert r.json() == {"count": 2, "status": "refreshed"}
+    assert r.json() == {
+        "count": 2,
+        "status": "refreshed",
+        "sources": [{"slug": "public", "status": "applied", "error_code": None}],
+    }
 
     listing = admin_client.get("/catalog")
     assert listing.status_code == 200
@@ -367,7 +409,8 @@ async def test_refresh_syncs_into_catalog_entries(
     assert sorted(rows) == [("public/slack.com", "slack.com"), ("public/stripe.com", "stripe.com")]
     forced = admin_client.post("/catalog:refresh", params={"force": "true"})
     assert forced.status_code == 200
-    assert forced.json() == {"count": 2, "status": "refreshed"}
+    assert forced.json()["count"] == 2
+    assert forced.json()["status"] == "refreshed"
 
 
 async def test_reads_ignore_the_legacy_snapshot_table(
@@ -1217,6 +1260,37 @@ async def _serve(ctx: Context, api_id: uuid.UUID) -> None:
         api = await session.get(Api, api_id)
         assert api is not None
         api.current_revision_id = revision.id
+
+
+async def test_only_a_legacy_entry_adopts_an_unrecorded_api_by_spec_url(
+    web_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An API with no recorded entry serves the legacy spec URL; a non-legacy
+    entry listing that same URL can't snooze it, the legacy entry can."""
+    listing = _manifest
+
+    def _corp_lists_the_public_spec(url: str) -> dict[str, Any] | None:
+        if url == _CORP_URL:
+            return {"include": [{"url": _include_url(_MANIFEST_BASE, "stripe.com")}]}
+        return listing(url)
+
+    monkeypatch.setattr(sys.modules[__name__], "_manifest", _corp_lists_the_public_spec)
+    _LISTINGS[_CORP_URL] = []
+    async with _deployment(web_config, [_public_source(), _corp_source()]) as ctx:
+        spec_url = _spec_url(_MANIFEST_BASE, "stripe.com")
+        api_id = await _register(
+            ctx,
+            None,
+            vendor="stripe-com",
+            name="stripe",
+            spec_url=spec_url,
+            catalog_api_id="stripe.com",
+        )
+        await _serve(ctx, api_id)
+        await _outdate(ctx, api_id, spec_url)
+        with _client(ctx, ["org:admin", "events:write"]) as tc:
+            assert tc.post("/catalog/corp/stripe.com:snooze").status_code == 404
+            assert tc.post("/catalog/public/stripe.com:snooze").status_code == 204
 
 
 async def test_update_and_mute_act_on_the_apis_own_entry(web_config: AppConfig) -> None:

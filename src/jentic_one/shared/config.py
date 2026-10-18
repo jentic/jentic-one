@@ -2295,6 +2295,16 @@ class CatalogConfig(BaseModel):
             "The git-manifest source that pre-existing catalog imports are reconciled against."
         ),
     )
+    refresh_deadline_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        le=600,
+        description=(
+            "Bound on the source listings of one POST /catalog:refresh, taken "
+            "together (each one is also capped by ingest.fetch_timeout_s). A source "
+            "reached after it is skipped (status partial) and left to the scanner."
+        ),
+    )
     # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
     # app_factory when both the registry + admin DBs are present) runs one sweep per
     # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs

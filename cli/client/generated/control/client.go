@@ -324,6 +324,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for CatalogRefreshResponseStatus.
+const (
+	Partial   CatalogRefreshResponseStatus = "partial"
+	Refreshed CatalogRefreshResponseStatus = "refreshed"
+)
+
+// Valid indicates whether the value is a known member of the CatalogRefreshResponseStatus enum.
+func (e CatalogRefreshResponseStatus) Valid() bool {
+	switch e {
+	case Partial:
+		return true
+	case Refreshed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSessionSummaryResponseState.
 const (
 	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
@@ -2634,19 +2652,49 @@ type CatalogListResponse struct {
 	RegisteredCount int `json:"registered_count"`
 }
 
-// CatalogRefreshResponse Acknowledgement of a catalog refresh.
+// CatalogRefreshResponse Outcome of a catalog refresh, over the sources the caller may read.
 //
-// Examples: {"count":5231,"status":"refreshed"}
+// Examples: {"count":5231,"sources":[{"slug":"public","status":"applied"}],"status":"refreshed"}
 type CatalogRefreshResponse struct {
-	// Count Live entries of the enabled sources after the sync.
+	// Count Live entries of the refreshed sources after the sync.
 	//
 	// Examples: 5231
 	Count int `json:"count"`
 
-	// Status Refresh outcome marker.
+	// Sources Each refreshed source's outcome, in sync order.
+	//
+	// Examples: [{"slug":"public","status":"applied"}]
+	Sources *[]CatalogRefreshSourceResponse `json:"sources,omitempty"`
+
+	// Status refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
 	//
 	// Examples: refreshed
-	Status *string `json:"status,omitempty"`
+	Status *CatalogRefreshResponseStatus `json:"status,omitempty"`
+}
+
+// CatalogRefreshResponseStatus refreshed when no refreshed source failed or was skipped; partial otherwise (the failed ones keep serving their last applied entries).
+//
+// Examples: refreshed
+type CatalogRefreshResponseStatus string
+
+// CatalogRefreshSourceResponse One refreshed source's run outcome.
+//
+// Examples: {"slug":"public","status":"applied"}
+type CatalogRefreshSourceResponse struct {
+	// ErrorCode Why a failed or skipped run did not apply, e.g. listing_timeout.
+	//
+	// Examples: listing_timeout
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Slug The source's slug.
+	//
+	// Examples: public
+	Slug string `json:"slug"`
+
+	// Status Run outcome: applied, suspect_empty (held by the mass-removal guard), superseded, busy (another run holds the source), failed, or skipped (the refresh deadline passed before it started; the scanner syncs it).
+	//
+	// Examples: applied
+	Status string `json:"status"`
 }
 
 // CatalogSnoozeRequest Body for “POST /catalog/{entry_id}:snooze“.
@@ -10739,10 +10787,14 @@ type ClientInterface interface {
 
 	// RefreshCatalog Refresh Catalog
 	//
-	// Sync every enabled catalog source now (catalog:sync).
+	// Sync now every enabled catalog source the caller may read (catalog:sync).
 	//
-	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
-	// ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
+	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
+	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
+	// ``partial`` when a refreshed source failed or was skipped; ``sources``
+	// gives each one's outcome. Sources the caller cannot read are not synced or
+	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
+	// for this run.
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14419,10 +14471,14 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEd
 
 // RefreshCatalog Refresh Catalog
 //
-// Sync every enabled catalog source now (catalog:sync).
+// Sync now every enabled catalog source the caller may read (catalog:sync).
 //
-// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“.
-// “force=true“ (“org:admin“) overrides the mass-removal guard for this run.
+// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
+// of them together by “catalog.refresh_deadline_seconds“. “status“ is
+// “partial“ when a refreshed source failed or was skipped; “sources“
+// gives each one's outcome. Sources the caller cannot read are not synced or
+// reported. “force=true“ (“org:admin“) overrides the mass-removal guard
+// for this run.
 //
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27271,10 +27327,14 @@ type ClientWithResponsesInterface interface {
 
 	// RefreshCatalogWithResponse Refresh Catalog
 	//
-	// Sync every enabled catalog source now (catalog:sync).
+	// Sync now every enabled catalog source the caller may read (catalog:sync).
 	//
-	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
-	// ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
+	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
+	// of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
+	// ``partial`` when a refreshed source failed or was skipped; ``sources``
+	// gives each one's outcome. Sources the caller cannot read are not synced or
+	// reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
+	// for this run.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -35066,6 +35126,8 @@ type PreviewCatalogOperationsHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35094,6 +35156,11 @@ func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON401() *Proble
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r PreviewCatalogOperationsHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35156,6 +35223,8 @@ type ImportCatalogEntryHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35184,6 +35253,11 @@ func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON401() *ProblemDetai
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ImportCatalogEntryHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -45567,10 +45641,14 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 
 // RefreshCatalogWithResponse Refresh Catalog
 //
-// Sync every enabled catalog source now (catalog:sync).
+// Sync now every enabled catalog source the caller may read (catalog:sync).
 //
-// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“.
-// “force=true“ (“org:admin“) overrides the mass-removal guard for this run.
+// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“ and all
+// of them together by “catalog.refresh_deadline_seconds“. “status“ is
+// “partial“ when a refreshed source failed or was skipped; “sources“
+// gives each one's outcome. Sources the caller cannot read are not synced or
+// reported. “force=true“ (“org:admin“) overrides the mass-removal guard
+// for this run.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -53194,6 +53272,13 @@ func ParsePreviewCatalogOperationsHTTPResp(rsp *http.Response) (*PreviewCatalogO
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -53268,6 +53353,13 @@ func ParseImportCatalogEntryHTTPResp(rsp *http.Response) (*ImportCatalogEntryHTT
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

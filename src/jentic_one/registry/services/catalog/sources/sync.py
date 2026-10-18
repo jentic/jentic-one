@@ -35,7 +35,7 @@ import contextlib
 import re
 import time
 import weakref
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -101,10 +101,13 @@ DepsFactory = Callable[[CatalogSourceConfig], SourceDeps]
 #: Outcome statuses besides the ``catalog_sync_runs`` ones.
 OUTCOME_BUSY = "busy"
 OUTCOME_DISABLED = "disabled"
+#: A source an operator refresh never started because its deadline had passed.
+OUTCOME_SKIPPED = "skipped"
 
 ERROR_LEASE_LOST = "lease_lost"
 ERROR_LISTING_TIMEOUT = "listing_timeout"
 ERROR_CANCELLED = "cancelled"
+ERROR_DEADLINE = "deadline"
 
 _END = object()
 
@@ -344,19 +347,52 @@ class CatalogSourceSync:
     # ── sync ───────────────────────────────────────────────────────────────────
 
     async def sync_all(
-        self, *, forced: bool = False, listing_timeout_s: float | None = None
+        self,
+        *,
+        forced: bool = False,
+        listing_timeout_s: float | None = None,
+        deadline_s: float | None = None,
+        slugs: Collection[str] | None = None,
+        count_timeouts: bool = True,
     ) -> list[SyncOutcome]:
-        """Sync every enabled source once (an operator refresh).
+        """Sync every enabled source (or those in ``slugs``) once (an operator refresh).
 
         One after another, in configured order, so a curated source applies
         before the sources it owns ids for resolve against it.
         ``listing_timeout_s`` bounds each source's listing, so a slow source
-        fails its own run instead of stalling the rest.
+        fails its own run instead of stalling the rest. ``deadline_s`` bounds the
+        listings of the whole pass: each listing gets at most what is left of it,
+        and a source reached after it has passed is ``skipped`` and flagged
+        ``sync_wanted`` for the scanner. Staging writes and the apply of a source
+        already listed are not cut short. ``count_timeouts`` is passed to
+        :meth:`sync_source`.
         """
-        return [
-            await self.sync_source(slug, forced=forced, listing_timeout_s=listing_timeout_s)
-            for slug in list(self._sources)
-        ]
+        loop = asyncio.get_running_loop()
+        deadline = None if deadline_s is None else loop.time() + deadline_s
+        outcomes: list[SyncOutcome] = []
+        skipped: list[str] = []
+        for slug, cfg in list(self._sources.items()):
+            if slugs is not None and slug not in slugs:
+                continue
+            budget = listing_timeout_s
+            if deadline is not None and cfg.enabled:
+                left = deadline - loop.time()
+                if left <= 0:
+                    outcomes.append(
+                        SyncOutcome(slug=slug, status=OUTCOME_SKIPPED, error_code=ERROR_DEADLINE)
+                    )
+                    skipped.append(slug)
+                    continue
+                budget = left if budget is None else min(budget, left)
+            outcomes.append(
+                await self.sync_source(
+                    slug, forced=forced, listing_timeout_s=budget, count_timeouts=count_timeouts
+                )
+            )
+        if skipped:
+            async with self._ctx.registry_db.transaction() as session:
+                await CatalogSourceRepository.mark_sync_wanted(session, skipped)
+        return outcomes
 
     async def sync_source(
         self,
@@ -365,12 +401,17 @@ class CatalogSourceSync:
         forced: bool = False,
         stream: ListStream | None = None,
         listing_timeout_s: float | None = None,
+        count_timeouts: bool = True,
     ) -> SyncOutcome:
         """Claim the lease and sync one source; ``busy`` when another run holds it.
 
         ``stream`` replaces the source's own listing (a caller that already holds
         the listing document, such as the snapshot refresh, passes it here).
-        ``listing_timeout_s`` caps the time spent awaiting the listing.
+        ``listing_timeout_s`` caps the time spent awaiting the listing. With
+        ``count_timeouts=False`` a run that hits that cap is recorded as failed
+        but leaves the source's failure count (the scanner's backoff) alone and
+        flags the source ``sync_wanted``, so the scanner's own, unbounded listing
+        retries it on its next tick.
         """
         cfg = self._sources[slug]
         if not cfg.enabled:
@@ -396,10 +437,18 @@ class CatalogSourceSync:
                 return outcome
         if listing_timeout_s is not None:
             stream = _BoundedStream(stream, listing_timeout_s)
-        return await self.run_claimed(cfg, stream, run_id=run_id, forced=forced)
+        return await self.run_claimed(
+            cfg, stream, run_id=run_id, forced=forced, count_timeouts=count_timeouts
+        )
 
     async def run_claimed(
-        self, cfg: CatalogSourceConfig, stream: ListStream, *, run_id: str, forced: bool = False
+        self,
+        cfg: CatalogSourceConfig,
+        stream: ListStream,
+        *,
+        run_id: str,
+        forced: bool = False,
+        count_timeouts: bool = True,
     ) -> SyncOutcome:
         """Stage and apply ``stream`` for a source whose lease ``run_id`` already holds."""
         slug = cfg.slug
@@ -443,7 +492,13 @@ class CatalogSourceSync:
                 error_code=code,
                 error_type=type(exc).__name__,
             )
-            outcome = await self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=code)
+            outcome = await self._fail(
+                slug,
+                run_id,
+                status=RUN_STATUS_FAILED,
+                error_code=code,
+                count_failure=count_timeouts or code != ERROR_LISTING_TIMEOUT,
+            )
         else:
             staged, is_full, watermark = staging.result()
             apply = asyncio.ensure_future(
@@ -532,13 +587,21 @@ class CatalogSourceSync:
         return staged, is_full, summary.watermark
 
     async def _fail(
-        self, slug: str, run_id: str, *, status: str, error_code: str | None, staged: int = 0
+        self,
+        slug: str,
+        run_id: str,
+        *,
+        status: str,
+        error_code: str | None,
+        staged: int = 0,
+        count_failure: bool = True,
     ) -> SyncOutcome:
         """End a run that applied nothing, in a fresh transaction.
 
         The source's failure count (and so the scanner's backoff) only moves when
         this run still held the lease; a run that lost it leaves the source to
-        the run that holds it now.
+        the run that holds it now. With ``count_failure=False`` the source is
+        flagged ``sync_wanted`` instead.
         """
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSyncRunRepository.delete_staged(session, run_id)
@@ -550,7 +613,10 @@ class CatalogSourceSync:
                 staged=staged,
                 finished_at=utcnow(),
             )
-            if await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id):
+            released = await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
+            if released and not count_failure:
+                await CatalogSourceRepository.mark_sync_wanted(session, [slug])
+            elif released:
                 source_status = (
                     SOURCE_STATUS_SUSPECT_EMPTY
                     if status == RUN_STATUS_SUSPECT_EMPTY

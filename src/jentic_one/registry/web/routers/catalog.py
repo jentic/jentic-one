@@ -38,6 +38,7 @@ from jentic_one.registry.web.schemas.catalog import (
     CatalogEntryResponse,
     CatalogListResponse,
     CatalogRefreshResponse,
+    CatalogRefreshSourceResponse,
     CatalogSnoozeRequest,
     OperationPreviewListResponse,
     PreviewInfoResponse,
@@ -226,6 +227,7 @@ async def list_catalog(
     "/catalog/{entry_id:path}/operations",
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
+    responses=conflict("The catalog entry has no spec (card-only)."),
 )
 async def preview_catalog_operations(
     entry_id: EntryIdPath,
@@ -348,19 +350,30 @@ async def refresh_catalog(
         openapi_examples=ex.example(False),
     ),
 ) -> JSONResponse:
-    """Sync every enabled catalog source now (catalog:sync).
+    """Sync now every enabled catalog source the caller may read (catalog:sync).
 
-    Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
-    ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
+    Each source's listing fetch is bounded by ``ingest.fetch_timeout_s`` and all
+    of them together by ``catalog.refresh_deadline_seconds``. ``status`` is
+    ``partial`` when a refreshed source failed or was skipped; ``sources``
+    gives each one's outcome. Sources the caller cannot read are not synced or
+    reported. ``force=true`` (``org:admin``) overrides the mass-removal guard
+    for this run.
     """
     if force and ORG_ADMIN not in permissions:
         raise ForcedSyncForbiddenError()
-    result = await svc.refresh(force=force)
+    result = await svc.refresh(permissions=permissions, actor_id=identity.sub or None, force=force)
     # An explicit operator "refresh now" is the strongest "check upstream" signal,
     # so trigger the update-notify sweep too. Fire-and-forget: never block the
     # refresh response on it.
     svc.trigger_update_notify_sweep()
-    resp = CatalogRefreshResponse(count=result.count)
+    resp = CatalogRefreshResponse(
+        count=result.count,
+        status="partial" if result.partial else "refreshed",
+        sources=[
+            CatalogRefreshSourceResponse(slug=o.slug, status=o.status, error_code=o.error_code)
+            for o in result.sources
+        ],
+    )
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
@@ -369,6 +382,7 @@ async def refresh_catalog(
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
+    responses=conflict("The catalog entry has no spec (card-only)."),
 )
 async def import_catalog_entry(
     request: Request,
