@@ -502,6 +502,23 @@ async def test_delete_runs_user_deleted_hooks_after_commit(
     assert deleted_hook_calls == [(target_id, caller, False)]
 
 
+async def test_deleting_an_already_deleted_user_runs_the_hooks_again(
+    integration_context: Context,
+    make_user: MakeUser,
+    deleted_hook_calls: list[tuple[str, Identity, bool]],
+) -> None:
+    """Pins the idempotency contract hook authors rely on: a repeat delete re-runs hooks."""
+    ctx = integration_context
+    admin_id = await make_user("guard-org-admin-rehook@test.local", {"org:admin"})
+    target_id = await make_user("guard-rehook-target@test.local", {"users:read"})
+    caller = _admin(admin_id)
+
+    await UserService(ctx).delete(target_id, identity=caller)
+    await UserService(ctx).delete(target_id, identity=caller)
+
+    assert deleted_hook_calls == [(target_id, caller, False), (target_id, caller, False)]
+
+
 async def test_delete_succeeds_when_a_user_deleted_hook_fails(
     integration_context: Context, make_user: MakeUser, monkeypatch: pytest.MonkeyPatch
 ) -> None:
