@@ -117,7 +117,11 @@ and 1c); it ships with them, never on its own.
   `min_sync_interval_seconds` / `min_notify_interval_seconds`. A source's
   credentials are sent only to origins its configuration names (the
   manifest or index URL, static spec URLs, `auth.origins`), never to a host a
-  listing points at.
+  listing points at. With `JENTIC_ENV=production`, startup refuses a
+  credentialed source whose credential origins include a plain `http://` one
+  (outside production it is logged as a warning). An `http-index` index listing
+  more than 10,000 entries fails the sync run (`listing_too_large`) and keeps
+  the stored entries.
 
 
 ## Upgrading to the multi-source catalog release (0.44.0): update tracking

@@ -185,6 +185,53 @@ def test_env_auth_is_accepted_without_reading_the_variable(
     )
 
 
+def _plain_http_source(**auth: Any) -> dict[str, Any]:
+    return {
+        "slug": "lab",
+        "kind": "http-index",
+        "trust": "untrusted",
+        "settings": {"index_url": "http://index.lab.example/apis.json"},
+        "auth": {"type": "bearer_from_env", "env": "CATALOG_TOKEN", **auth},
+    }
+
+
+def test_plain_http_credential_origin_fails_validation_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    errors = _errors(_cfg(sources=[_plain_http_source()]))
+    assert "sources[slug=lab].auth: credentials would be sent over plain http" in errors
+    assert "http://index.lab.example:80" in errors
+
+
+def test_plain_http_auth_origin_fails_validation_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    src = {
+        **_plain_http_source(origins=["http://cdn.lab.example"]),
+        "settings": {"index_url": "https://index.lab.example/apis.json"},
+    }
+    errors = _errors(_cfg(sources=[src]))
+    assert "http://cdn.lab.example:80" in errors
+    assert "index.lab.example" not in errors
+
+
+def test_plain_http_credential_origin_is_allowed_outside_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("JENTIC_ENV", raising=False)
+    check_catalog_config(_cfg(sources=[_plain_http_source()]))
+
+
+def test_plain_http_origin_without_credentials_is_fine_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENTIC_ENV", "production")
+    src = {**_plain_http_source(), "auth": {"type": "none"}}
+    check_catalog_config(_cfg(sources=[src]))
+
+
 def test_source_egress_rejects_cloud_metadata_at_load() -> None:
     src = {
         **_with_auth({"type": "none"}),

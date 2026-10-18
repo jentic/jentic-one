@@ -8,20 +8,31 @@ never contacts a source.
 
 from __future__ import annotations
 
+import os
+
+import structlog
 from pydantic import ValidationError
 
 from jentic_one.registry.services.catalog.sources.auth import (
     build_source_auth,
     registered_source_auth_types,
 )
+from jentic_one.registry.services.catalog.sources.origins import credential_origins
 from jentic_one.registry.services.catalog.sources.registry import (
     registered_catalog_source_kinds,
     resolve_catalog_source_kind,
 )
 from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS
 from jentic_one.shared.catalog.api_id import normalise_catalog_api_id
-from jentic_one.shared.config import CatalogConfig, ConfigError, SourceReadersConfig
+from jentic_one.shared.config import (
+    CatalogConfig,
+    CatalogSourceConfig,
+    ConfigError,
+    SourceReadersConfig,
+)
 from jentic_one.shared.context import Context
+
+logger = structlog.get_logger(__name__)
 
 _ACTOR_ID_PREFIXES = ("usr_", "agnt_")
 
@@ -66,6 +77,8 @@ def check_catalog_config(catalog: CatalogConfig) -> None:
                 build_source_auth(source.auth)
             except ValueError as exc:
                 errors.append(f"{where}.auth: {exc}")
+            else:
+                errors.extend(_cleartext_credential_errors(where, source))
         errors.extend(_reader_errors(where, source.visibility, source.readers))
 
     known = set(slugs)
@@ -130,3 +143,29 @@ def _reader_errors(where: str, visibility: str, readers: SourceReadersConfig | N
         if not a.startswith(_ACTOR_ID_PREFIXES)
     )
     return errors
+
+
+def _cleartext_credential_errors(where: str, source: CatalogSourceConfig) -> list[str]:
+    """Refuse (in production) or warn about a credential bound for an ``http://`` origin.
+
+    A plain-http credential origin would carry the secret in cleartext. Outside
+    production (``JENTIC_ENV``, unset is development) it is allowed with a warning,
+    for a local or lab index.
+    """
+    if source.auth.type == "none":
+        return []
+    try:
+        origins = credential_origins(source)
+    except (LookupError, ValueError):
+        return []  # an unknown kind or bad settings is reported on its own
+    plain = sorted(f"http://{host}:{port}" for scheme, host, port in origins if scheme == "http")
+    if not plain:
+        return []
+    if os.environ.get("JENTIC_ENV", "development") == "production":
+        return [
+            f"{where}.auth: credentials would be sent over plain http to {', '.join(plain)} "
+            "(use https:// origins, or auth type 'none'); http is allowed only outside "
+            "production"
+        ]
+    logger.warning("catalog_source_credentials_over_plain_http", source=source.slug, origins=plain)
+    return []
