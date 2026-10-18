@@ -9,9 +9,11 @@ stubbed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -19,8 +21,17 @@ from sqlalchemy import select
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.ingest.exc import (
+    IngestJobError,
+    RetryLaterIngestJobError,
+    TerminalIngestJobError,
+)
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.sources.protocol import (
+    SourceUnavailableError,
+    SpecBody,
+    SpecGoneError,
+)
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.registry.services.errors import CatalogSpecGoneError
 from jentic_one.registry.services.import_service import ImportHandler
@@ -28,6 +39,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.testing.catalog_source import (
     StaticEntry,
+    StaticSource,
     register_static_source_kind,
     static_source_config,
 )
@@ -119,7 +131,8 @@ async def test_import_job_fails_readably_when_the_entry_is_gone(
                 }
             ]
         }
-        with pytest.raises(IngestJobError, match="no longer listed"):
+        # Terminal: the worker fails the job instead of retrying a missing entry.
+        with pytest.raises(TerminalIngestJobError, match="no longer listed"):
             await ImportHandler(ctx).execute(
                 job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
             )
@@ -135,3 +148,61 @@ async def test_card_only_entry_is_spec_gone(catalog_ctx: CtxFactory) -> None:
             await svc.preview("corp/sync-test.io", permissions=frozenset({"org:admin"}))
         with pytest.raises(CatalogSpecGoneError):
             await svc.import_entry("corp/sync-test.io", _ADMIN)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected", "retry_after_s"),
+    [
+        (SpecGoneError("gone upstream"), TerminalIngestJobError, None),
+        (SourceUnavailableError("throttled", retry_after_s=42.0), RetryLaterIngestJobError, 42),
+    ],
+    ids=["spec_gone_is_terminal", "unavailable_retries_after_its_wait"],
+)
+async def test_import_job_source_failures_steer_the_retry(
+    catalog_ctx: CtxFactory,
+    failure: Exception,
+    expected: type[IngestJobError],
+    retry_after_s: int | None,
+) -> None:
+    """In the job, a gone spec fails for good and a busy source retries after its wait."""
+    register_static_source_kind()
+    async with catalog_ctx(sources=_sources()) as ctx:
+        await _sync(ctx)
+        job_id = await CatalogService(ctx).import_entry("corp/sync-test.io", _ADMIN)
+        payload = await _job_payload(ctx, job_id)
+        with (
+            patch.object(StaticSource, "fetch_spec", side_effect=failure),
+            pytest.raises(expected) as raised,
+        ):
+            await ImportHandler(ctx).execute(
+                job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+            )
+        if retry_after_s is not None:
+            assert isinstance(raised.value, RetryLaterIngestJobError)
+            assert raised.value.retry_after_s == retry_after_s
+
+
+async def test_revision_digest_is_computed_over_the_bytes(catalog_ctx: CtxFactory) -> None:
+    """A connector's reported digest is never trusted for the revision."""
+    register_static_source_kind()
+    async with catalog_ctx(sources=_sources()) as ctx:
+        await _sync(ctx)
+        job_id = await CatalogService(ctx).import_entry("corp/sync-test.io", _ADMIN)
+        payload = await _job_payload(ctx, job_id)
+        # Distinct bytes, so this never collides with another test's revision.
+        content = _SPEC.replace("Sync Test", "Digest Test").encode()
+        body = SpecBody(
+            content=content,
+            media_type="application/json",
+            validator="v1",
+            digest="not-a-sha256",
+        )
+        with patch.object(StaticSource, "fetch_spec", return_value=body):
+            result = await ImportHandler(ctx).execute(
+                job_id=str(uuid.uuid4()), session=None, payload=payload, created_by="usr_admin"
+            )
+        [revision] = result.body["revisions"]
+        async with ctx.registry_db.session() as session:
+            rev = await session.get(ApiRevision, uuid.UUID(revision["revision_id"]))
+        assert rev is not None
+        assert rev.spec_digest == hashlib.sha256(content).hexdigest()

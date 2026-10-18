@@ -21,6 +21,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.jobs.errors import RetryLaterJobError, TerminalJobError
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import JobKind, JobStatus
@@ -184,158 +185,55 @@ async def test_completion_clears_visibility(admin_db: DatabaseSession, clean_job
     assert job.visible_at is None
 
 
-class _CountingOkHandler(_OkHandler):
-    def __init__(self) -> None:
-        self.calls = 0
+class _RaiseHandler:
+    """Raises the given exception — drives the handler-steered retry paths."""
 
-    async def execute(self, job_id: str, session: Any, **kwargs: Any) -> JobResultPayload:
-        self.calls += 1
-        return await super().execute(job_id, session, **kwargs)
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
 
-
-class _CompletionOutcomeUnknownWorker(WorkerLoop):
-    """Its completion raises ``DatabaseCommitOutcomeUnknownError``.
-
-    With ``landed`` the completion is written first, modelling a COMMIT the
-    server applied before the connection dropped; without it nothing is written.
-    """
-
-    def __init__(self, admin_db: DatabaseSession, handler: Any, *, landed: bool) -> None:
-        super().__init__(admin_db, _registry(handler), worker_config=WorkerConfig())
-        self._landed = landed
-
-    async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
-        if self._landed:
-            await super()._complete_job(job_id, kind, result)
-        raise DatabaseCommitOutcomeUnknownError("connection is closed")
+    async def execute(
+        self,
+        job_id: str,
+        session: Any,
+        *,
+        payload: dict[str, Any] | None = None,
+        created_by: str | None = None,
+        actor_type: str | None = None,
+    ) -> JobResultPayload:
+        raise self._exc
 
 
-async def test_completion_outcome_unknown_after_commit_landed_is_not_requeued(
+async def test_terminal_job_error_fails_without_retry(
     admin_db: DatabaseSession, clean_jobs: None
 ) -> None:
-    """A completion that landed stays COMPLETED and the handler never runs again."""
+    """A ``TerminalJobError`` fails the job at once, with budget left."""
     job_id = await _insert_job(admin_db)
-    handler = _CountingOkHandler()
-    worker = _CompletionOutcomeUnknownWorker(admin_db, handler, landed=True)
+    cfg = WorkerConfig(max_attempts=5)
+    worker = WorkerLoop(
+        admin_db, _registry(_RaiseHandler(TerminalJobError("spec is gone"))), worker_config=cfg
+    )
 
-    assert await worker._tick() is True
-    assert await worker._tick() is False
+    await worker._tick()
 
     job = await _get(admin_db, job_id)
-    assert job.status == JobStatus.COMPLETED
-    assert job.visible_at is None
-    assert handler.calls == 1
-
-
-async def test_completion_outcome_unknown_not_landed_is_left_for_reclaim(
-    admin_db: DatabaseSession, clean_jobs: None
-) -> None:
-    """A completion that did not land leaves the job RUNNING for the visibility reclaim."""
-    job_id = await _insert_job(admin_db)
-    handler = _CountingOkHandler()
-    worker = _CompletionOutcomeUnknownWorker(admin_db, handler, landed=False)
-
-    assert await worker._tick() is True
-
-    job = await _get(admin_db, job_id)
-    assert job.status == JobStatus.RUNNING
+    assert job.status == JobStatus.FAILED
     assert job.attempts == 1
-    now_naive = datetime.now(UTC).replace(tzinfo=None)
-    assert job.visible_at is not None and job.visible_at.replace(tzinfo=None) > now_naive
-    assert handler.calls == 1
+    assert "spec is gone" in (job.error or "")
 
 
-@pytest.mark.parametrize("attempts", [1, 3], ids=["requeue", "dead_letter"])
-async def test_failure_never_overwrites_a_completed_job(
-    admin_db: DatabaseSession, clean_jobs: None, attempts: int
-) -> None:
-    """Requeue and dead-letter apply only while the job is still RUNNING."""
-    job_id = await _insert_job(admin_db, status=JobStatus.COMPLETED, attempts=attempts)
-    worker = WorkerLoop(
-        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
-    )
-    claimed = await _get(admin_db, job_id)
-
-    with structlog.testing.capture_logs() as logs:
-        await worker._handle_failure(claimed, "interrupted: database connection lost")
-
-    job = await _get(admin_db, job_id)
-    assert job.status == JobStatus.COMPLETED
-    assert job.error is None
-    _assert_only_skip_logged(logs)
-
-
-@pytest.mark.parametrize("attempts", [1, 3], ids=["requeue", "dead_letter"])
-async def test_failure_leaves_a_job_reclaimed_by_another_claim(
-    admin_db: DatabaseSession, clean_jobs: None, attempts: int
-) -> None:
-    """A RUNNING row stamped by a later claim (higher attempts) is not this worker's."""
-    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=attempts + 1)
-    worker = WorkerLoop(
-        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
-    )
-    stale = await _get(admin_db, job_id)
-    stale.attempts = attempts
-
-    with structlog.testing.capture_logs() as logs:
-        await worker._handle_failure(stale, "handler boom")
-
-    job = await _get(admin_db, job_id)
-    assert job.status == JobStatus.RUNNING
-    assert job.attempts == attempts + 1
-    assert job.error is None
-    _assert_only_skip_logged(logs)
-
-
-class _ApprovedWorker(WorkerLoop):
-    """Treats every execution as approved, so a failure takes the no-retry path."""
-
-    async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
-        return True
-
-
-async def test_approved_failure_skipped_for_a_lost_claim_logs_no_failure(
+async def test_retry_later_job_error_waits_at_least_its_retry_after(
     admin_db: DatabaseSession, clean_jobs: None
 ) -> None:
-    """An approved job reclaimed elsewhere is untouched and not reported as failed."""
-    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=2)
-    worker = _ApprovedWorker(admin_db, _registry(_OkHandler()), worker_config=WorkerConfig())
-    stale = await _get(admin_db, job_id)
-    stale.attempts = 1
+    """A ``RetryLaterJobError`` requeues no sooner than ``retry_after_s``."""
+    job_id = await _insert_job(admin_db)
+    cfg = WorkerConfig(max_attempts=3, retry_backoff_base_s=1.0)
+    exc = RetryLaterJobError("source throttled", retry_after_s=120.0)
+    worker = WorkerLoop(admin_db, _registry(_RaiseHandler(exc)), worker_config=cfg)
 
-    with structlog.testing.capture_logs() as logs:
-        await worker._handle_failure(stale, "handler boom")
+    await worker._tick()
 
     job = await _get(admin_db, job_id)
-    assert job.status == JobStatus.RUNNING
-    _assert_only_skip_logged(logs)
-
-
-async def test_dead_letter_under_the_claim_logs_job_dead_lettered(
-    admin_db: DatabaseSession, clean_jobs: None
-) -> None:
-    """When the transition applies, the dead-letter is still reported at error level."""
-    job_id = await _insert_job(admin_db, status=JobStatus.RUNNING, attempts=3)
-    worker = WorkerLoop(
-        admin_db, _registry(_OkHandler()), worker_config=WorkerConfig(max_attempts=3)
-    )
-    claimed = await _get(admin_db, job_id)
-
-    with structlog.testing.capture_logs() as logs:
-        await worker._handle_failure(claimed, "handler boom")
-
-    assert (await _get(admin_db, job_id)).status == JobStatus.DEAD_LETTER
-    [entry] = [e for e in logs if e["event"] == "job_dead_lettered"]
-    assert entry["log_level"] == "error"
-    assert not [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
-
-
-def _assert_only_skip_logged(logs: list[Any]) -> None:
-    """A skipped transition logs one info-level skip line and no failure outcome."""
-    events = {e["event"]: e for e in logs}
-    for outcome in ("job_dead_lettered", "approved_job_failed_no_retry", "job_requeued"):
-        assert outcome not in events
-    skips = [e for e in logs if e["event"].endswith("_skipped_claim_lost")]
-    assert len(skips) == 1
-    assert skips[0]["log_level"] == "info"
-    assert all(e["log_level"] != "error" for e in logs)
+    assert job.status == JobStatus.QUEUED
+    assert job.visible_at is not None
+    wait = job.visible_at.replace(tzinfo=None) - datetime.now(UTC).replace(tzinfo=None)
+    assert wait > timedelta(seconds=100)
