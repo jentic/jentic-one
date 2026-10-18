@@ -406,13 +406,22 @@ async def _stop_catalog_update_scanner(
 
 
 def _validate_catalog_sources(ctx: Context, enabled_apps: set[str]) -> None:
-    """Fail startup on an invalid ``catalog.sources`` block (registry surface only).
-
-    Runs before any background task starts, so a ``ConfigError`` leaves nothing
-    running that the lifespan would have to stop.
-    """
+    """Fail startup on an invalid ``catalog.sources`` block (registry surface only)."""
     if "registry" in enabled_apps and ctx.has_db("registry"):
         validate_catalog_sources(ctx)
+
+
+async def _validate_catalog_sources_or_shutdown(ctx: Context, enabled_apps: set[str]) -> None:
+    """Validate ``catalog.sources`` straight after ``ctx.startup()``.
+
+    Runs before telemetry and every background task start, so a ``ConfigError``
+    leaves nothing running; the context is shut down before the error propagates.
+    """
+    try:
+        _validate_catalog_sources(ctx, enabled_apps)
+    except BaseException:
+        await ctx.shutdown()
+        raise
 
 
 def _start_catalog_source_scanner(
@@ -675,6 +684,7 @@ def create_surface_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
+        await _validate_catalog_sources_or_shutdown(ctx, enabled_apps)
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
         # Container-injected lifespans enter after the surface's own
@@ -690,7 +700,6 @@ def create_surface_app(
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
             # extra_lifespan).
-            _validate_catalog_sources(ctx, enabled_apps)
             worker_task = _start_worker(
                 ctx,
                 enabled_apps,
@@ -982,6 +991,7 @@ def create_combined_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await ctx.startup()
+        await _validate_catalog_sources_or_shutdown(ctx, set(apps))
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
         # Container-injected lifespans (default empty) — entered after
@@ -989,7 +999,6 @@ def create_combined_app(
         async with contextlib.AsyncExitStack() as lifespan_stack:
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
-            _validate_catalog_sources(ctx, set(apps))
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))

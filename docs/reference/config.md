@@ -333,9 +333,9 @@ Public API catalog settings (sources, staleness, update notify).
 | `catalog.sources.<n>.max_removal_ratio` | number (>= 0.0, <= 1.0) | `0.2` | `JENTIC__CATALOG__SOURCES__<N>__MAX_REMOVAL_RATIO` | Mass-removal guard: a sync removing more than this share is held. |
 | `catalog.sources.<n>.min_removal_count` | integer (>= 0) | `5` | `JENTIC__CATALOG__SOURCES__<N>__MIN_REMOVAL_COUNT` | The removal ratio only trips above this many removals. |
 | `catalog.sources.<n>.sync_lease_seconds` | integer (>= 3) | `60` | `JENTIC__CATALOG__SOURCES__<N>__SYNC_LEASE_SECONDS` | Cross-process sync lease, renewed every third of it. |
-| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` |  |
-| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` |  |
-| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` |  |
+| `catalog.sources.<n>.auth.type` | string | `"none"` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__TYPE` | Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet. |
+| `catalog.sources.<n>.auth.env` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__ENV` | Reserved for credentialed source auth; not used yet. |
+| `catalog.sources.<n>.auth.header` | string \| null | `null` | `JENTIC__CATALOG__SOURCES__<N>__AUTH__HEADER` | Reserved for credentialed source auth; not used yet. |
 | `catalog.sources.<n>.readers.permissions` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__PERMISSIONS` |  |
 | `catalog.sources.<n>.readers.actor_ids` | list of string | — | `JENTIC__CATALOG__SOURCES__<N>__READERS__ACTOR_IDS` |  |
 | `catalog.sources.<n>.settings` | object | — | `JENTIC__CATALOG__SOURCES__<N>__SETTINGS` | Kind-specific settings. |

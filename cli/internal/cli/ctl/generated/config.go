@@ -2896,13 +2896,14 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 // Only “none“ is built in; other resolver types are registered by extensions.
 // The secret itself never appears here: “env“ names the variable holding it.
 type SourceAuthConfig struct {
-	// Env corresponds to the JSON schema field "env".
+	// Reserved for credentialed source auth; not used yet.
 	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
 
-	// Header corresponds to the JSON schema field "header".
+	// Reserved for credentialed source auth; not used yet.
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
-	// Type corresponds to the JSON schema field "type".
+	// Only none is accepted (startup fails on any other type); credentialed source
+	// auth is not supported yet.
 	Type string `json:"type,omitempty,omitzero" yaml:"type,omitempty" mapstructure:"type,omitempty"`
 }
 

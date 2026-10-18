@@ -1867,6 +1867,7 @@
             }
           ],
           "default": null,
+          "description": "Reserved for credentialed source auth; not used yet.",
           "title": "Env"
         },
         "header": {
@@ -1879,10 +1880,12 @@
             }
           ],
           "default": null,
+          "description": "Reserved for credentialed source auth; not used yet.",
           "title": "Header"
         },
         "type": {
           "default": "none",
+          "description": "Only none is accepted (startup fails on any other type); credentialed source auth is not supported yet.",
           "title": "Type",
           "type": "string"
         }

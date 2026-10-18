@@ -2142,9 +2142,19 @@ class SourceAuthConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str = "none"
-    env: str | None = None
-    header: str | None = None
+    type: str = Field(
+        default="none",
+        description=(
+            "Only none is accepted (startup fails on any other type); credentialed "
+            "source auth is not supported yet."
+        ),
+    )
+    env: str | None = Field(
+        default=None, description="Reserved for credentialed source auth; not used yet."
+    )
+    header: str | None = Field(
+        default=None, description="Reserved for credentialed source auth; not used yet."
+    )
 
 
 class SourceReadersConfig(BaseModel):
