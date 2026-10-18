@@ -31,6 +31,7 @@ from jentic_one.registry.services.catalog.entries import (
     curated_vendors_of,
     exclude_unowned,
 )
+from jentic_one.registry.services.catalog.sources import metrics
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
@@ -173,6 +174,44 @@ async def test_listing_timeout_counts_only_time_spent_awaiting_the_listing(
             "public", stream=full("a.io", "b.io", "c.io"), listing_timeout_s=0.3
         )
         assert (outcome.status, outcome.upserted) == ("applied", 3)
+
+
+async def test_apply_outlives_a_cancelled_caller_and_logs_its_outcome(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        entered, release = asyncio.Event(), asyncio.Event()
+        real_apply = CatalogSourceSync._apply
+
+        async def _gated_apply(self: CatalogSourceSync, *args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await real_apply(self, *args, **kwargs)
+
+        monkeypatch.setattr(CatalogSourceSync, "_apply", _gated_apply)
+        recorded: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            metrics,
+            "record_sync",
+            lambda slug, status, _seconds: recorded.append((slug, status)),
+        )
+        task = asyncio.create_task(sync.sync_source("public", stream=full("a.io")))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with capture_logs() as logs:
+            release.set()
+            for _ in range(50):
+                if recorded:
+                    break
+                await asyncio.sleep(0.02)
+        assert recorded == [("public", "applied")]
+        assert any(e["event"] == "catalog_source_detached_apply_done" for e in logs)
+        source = await _source(ctx, "public")
+        assert (source.last_status, source.sync_lease_owner) == ("ok", None)
 
 
 async def test_run_cancelled_while_listing_fails_and_releases_the_lease(

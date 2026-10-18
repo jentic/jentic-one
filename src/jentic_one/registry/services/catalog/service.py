@@ -436,16 +436,16 @@ class CatalogService:
         return max(0, int((utcnow() - min(synced)).total_seconds()))
 
     def trigger_update_notify_sweep(self) -> None:
-        """Fire-and-forget the update-notify sweep off the triggering read path.
+        """Fire-and-forget the update-notify sweep after an operator refresh.
 
-        Public entry point for both the lazy refresh-on-read (``_safe_refresh``) and
-        the explicit operator ``POST /catalog:refresh`` — an intentional "check
-        upstream now" should sweep too.
+        Called by ``POST /catalog:refresh``: an intentional "check upstream now"
+        should sweep too. Catalog reads never trigger it; the periodic sweep is
+        ``CatalogUpdateScanner``'s (:meth:`run_update_sweep`).
 
-        The sweep issues up to N conditional GETs, so awaiting it inline would make
-        an unlucky user's (max-age-gated) catalog read block on the whole batch. We
-        detach it into a background task instead; failures are logged, never raised
-        back to the reader. The task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
+        The sweep issues up to N conditional GETs, so awaiting it inline would hold
+        the refresh response on the whole batch. We detach it into a background
+        task instead; failures are logged, never raised back to the caller. The
+        task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
         before it finishes (this service instance is per-request and short-lived).
 
         No-ops when the sweep is disabled (kill switch) so a disabled install never
@@ -475,14 +475,14 @@ class CatalogService:
 
         Public entry point for the standalone ``CatalogUpdateScanner``, which owns the
         periodic cadence and awaits each sweep — unlike ``trigger_update_notify_sweep``,
-        the fire-and-forget read-path piggyback. Honors the same kill switch.
+        the fire-and-forget ``:refresh`` piggyback. Honors the same kill switch.
         """
         await self._run_update_notify_sweep()
 
     async def _run_update_notify_sweep(self) -> None:
         """Probe registered specs for upstream changes; emit an event on change.
 
-        Piggybacks on the (rare, max-age-gated) manifest refresh. For each
+        Run by the scanner on its cadence and after an operator refresh. For each
         registered API with a spec URL, sends a conditional ``GET``
         (``If-None-Match`` with the last-seen ETag) at most once per
         ``update_check_interval_seconds``; a ``304`` or an unchanged digest is a
@@ -492,7 +492,7 @@ class CatalogService:
         interval disables the sweep entirely (air-gapped kill switch).
 
         Single-flight: sweeps are serialized **within a process** by
-        ``Context.update_sweep_lock`` (scanner + read-path trigger can't overlap) and
+        ``Context.update_sweep_lock`` (scanner + ``:refresh`` trigger can't overlap) and
         **across processes** by a non-blocking registry-DB advisory lock
         (:data:`UPDATE_SWEEP_LOCK_KEY`, a no-op on single-process SQLite). A sweep that
         loses either race skips quietly — another sweep is already doing the work — so

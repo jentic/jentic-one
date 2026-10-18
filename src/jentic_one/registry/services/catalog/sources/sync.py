@@ -184,6 +184,26 @@ def _valid_external_id(value: str) -> bool:
     return not any(ord(ch) < 0x20 or ord(ch) == 0x7F or 0xD800 <= ord(ch) <= 0xDFFF for ch in value)
 
 
+def _record_detached_apply(
+    task: asyncio.Future[SyncOutcome], slug: str, run_id: str, clock_start: float
+) -> None:
+    """Log and meter an apply that finished after its caller was cancelled."""
+    if task.cancelled():
+        logger.warning("catalog_source_detached_apply_cancelled", source=slug, run_id=run_id)
+        return
+    if (exc := task.exception()) is not None:
+        # The run stays ``running`` until the sweep closes it as abandoned.
+        logger.warning(
+            "catalog_source_detached_apply_failed", source=slug, run_id=run_id, exc_info=exc
+        )
+        return
+    outcome = task.result()
+    logger.info(
+        "catalog_source_detached_apply_done", source=slug, run_id=run_id, status=outcome.status
+    )
+    metrics.record_sync(slug, outcome.status, time.monotonic() - clock_start)
+
+
 def _error_code(exc: BaseException) -> str:
     if isinstance(exc, _ListingError):
         return exc.code
@@ -426,20 +446,26 @@ class CatalogSourceSync:
             outcome = await self._fail(slug, run_id, status=RUN_STATUS_FAILED, error_code=code)
         else:
             staged, is_full, watermark = staging.result()
+            apply = asyncio.ensure_future(
+                self._apply(
+                    cfg,
+                    run_id=run_id,
+                    started_at=started_at,
+                    is_full=is_full,
+                    watermark=watermark,
+                    forced=forced,
+                    staged=staged,
+                )
+            )
             try:
                 # One short transaction: a cancelled caller lets it finish
                 # rather than leave the lease held until it lapses.
-                outcome = await asyncio.shield(
-                    self._apply(
-                        cfg,
-                        run_id=run_id,
-                        started_at=started_at,
-                        is_full=is_full,
-                        watermark=watermark,
-                        forced=forced,
-                        staged=staged,
-                    )
+                outcome = await asyncio.shield(apply)
+            except asyncio.CancelledError:
+                apply.add_done_callback(
+                    lambda task: _record_detached_apply(task, slug, run_id, clock_start)
                 )
+                raise
             except Exception:
                 logger.exception("catalog_source_apply_failed", source=slug, run_id=run_id)
                 outcome = await self._fail(

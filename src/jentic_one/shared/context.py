@@ -218,8 +218,8 @@ class Context:
     def update_sweep_lock(self) -> asyncio.Lock:
         """Process-wide guard so the catalog update-notify sweep never runs concurrently.
 
-        The scanner (owned cadence) and the read-path ``trigger_update_notify_sweep``
-        (``POST /catalog:refresh`` piggyback) can both fire a sweep in one process; without a
+        The scanner (owned cadence) and ``trigger_update_notify_sweep`` (the
+        ``POST /catalog:refresh`` piggyback) can both fire a sweep in one process; without a
         guard, two in-flight sweeps can each read ``last_notified_digest=None`` for a
         first-time change and both emit a duplicate (now *actionable*)
         ``catalog.update_available`` event. Serializing on this lock collapses the in-process
