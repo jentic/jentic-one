@@ -52,6 +52,18 @@ def background_slots(concurrency: int, interactive_share: float) -> int:
     return max(1, concurrency - reserved)
 
 
+def background_reserve(burst: int, interactive_share: float) -> float:
+    """How many of ``burst`` tokens the background lane must leave for interactive use.
+
+    Capped at ``burst - 1`` (nothing for a one-token bucket), the same way
+    :func:`background_slots` always leaves the background lane one slot: a full
+    bucket must still grant a background request, or listings would never run.
+    """
+    if burst <= 1:
+        return 0.0
+    return min(burst * interactive_share, float(burst - 1))
+
+
 @dataclass(frozen=True, slots=True)
 class TakeResult:
     """One attempt to take a token: granted, or how long until one could be."""
@@ -106,7 +118,7 @@ class MemoryRateBucket:
     ) -> None:
         self._rate = rate
         self._burst = burst
-        self._reserve = burst * interactive_share
+        self._reserve = background_reserve(burst, interactive_share)
         self._clock = clock
         self._tokens = float(burst)
         self._refilled = clock()
@@ -149,21 +161,28 @@ class LaneSemaphore:
             return False
         return lane == "interactive" or self._background < self._background_limit
 
-    @asynccontextmanager
-    async def hold(self, lane: FetchLane) -> AsyncIterator[None]:
+    async def acquire(self, lane: FetchLane) -> None:
+        """Wait for a free slot on ``lane`` and take it (cancellable)."""
         async with self._changed:
             await self._changed.wait_for(lambda: self._free(lane))
             self._in_flight += 1
             if lane == "background":
                 self._background += 1
+
+    async def release(self, lane: FetchLane) -> None:
+        async with self._changed:
+            self._in_flight -= 1
+            if lane == "background":
+                self._background -= 1
+            self._changed.notify_all()
+
+    @asynccontextmanager
+    async def hold(self, lane: FetchLane) -> AsyncIterator[None]:
+        await self.acquire(lane)
         try:
             yield
         finally:
-            async with self._changed:
-                self._in_flight -= 1
-                if lane == "background":
-                    self._background -= 1
-                self._changed.notify_all()
+            await self.release(lane)
 
 
 class ProcessSourceLimits:
@@ -180,7 +199,10 @@ class ProcessSourceLimits:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._slug = slug
+        self._concurrency = concurrency
+        self._interactive_share = interactive_share
         self._semaphore = LaneSemaphore(concurrency, interactive_share)
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._bucket = bucket
         self._max_wait_s = max_wait_s
         self._clock = clock
@@ -191,20 +213,37 @@ class ProcessSourceLimits:
         """Requests to this source in flight in this process."""
         return self._semaphore.in_flight
 
-    async def _token(self, lane: FetchLane) -> None:
+    def _gate(self) -> LaneSemaphore:
+        """The concurrency gate for the running loop.
+
+        Its ``asyncio.Condition`` binds to the first loop that waits on it, so a
+        new loop (tests, a CLI command) gets a fresh gate, as it gets a fresh
+        pooled client.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore_loop is not loop:
+            if self._semaphore_loop is not None:
+                self._semaphore = LaneSemaphore(self._concurrency, self._interactive_share)
+            self._semaphore_loop = loop
+        return self._semaphore
+
+    def _check_blocked(self) -> None:
+        """Fail fast while this process knows the source is blocked by a ``429``."""
+        remaining = self._blocked_until - self._clock()
+        if remaining > 0:
+            raise SourceUnavailableError(
+                f"catalog source {self._slug!r} is throttled", retry_after_s=remaining
+            )
+
+    async def _token(self, lane: FetchLane, *, budget_s: float) -> None:
         if self._bucket is None:
-            remaining = self._blocked_until - self._clock()
-            if remaining > 0:
-                raise SourceUnavailableError(
-                    f"catalog source {self._slug!r} is throttled", retry_after_s=remaining
-                )
             return
         waited = 0.0
         while True:
             result = await self._bucket.take(lane)
             if result.granted:
                 return
-            if result.blocked or waited + result.wait_s > self._max_wait_s:
+            if result.blocked or waited + result.wait_s > budget_s:
                 raise SourceUnavailableError(
                     f"catalog source {self._slug!r} is throttled",
                     retry_after_s=result.wait_s,
@@ -216,17 +255,33 @@ class ProcessSourceLimits:
     @asynccontextmanager
     async def slot(self, lane: FetchLane) -> AsyncIterator[None]:
         """Hold one request's worth of capacity on ``lane``."""
+        self._check_blocked()
         started = self._clock()
-        async with self._semaphore.hold(lane):
-            await self._token(lane)
+        gate = self._gate()
+        try:
+            async with asyncio.timeout(self._max_wait_s):
+                await gate.acquire(lane)
+        except TimeoutError:
+            raise SourceUnavailableError(
+                f"catalog source {self._slug!r} is at its concurrency limit",
+                retry_after_s=self._max_wait_s,
+            ) from None
+        try:
+            # A 429 may have landed while this request queued for its slot.
+            self._check_blocked()
+            budget = max(self._max_wait_s - (self._clock() - started), 0.0)
+            await self._token(lane, budget_s=budget)
             metrics.record_bucket_wait(self._slug, lane, self._clock() - started)
             yield
+        finally:
+            await gate.release(lane)
 
     async def block(self, seconds: float | None) -> float:
         """Block both lanes for ``seconds`` (a default when ``None``); returns the block."""
         span = DEFAULT_THROTTLE_SECONDS if seconds is None else max(seconds, 0.0)
+        # Always remembered in process (so queued requests fail fast without a
+        # bucket round trip); shared with other processes through the bucket.
+        self._blocked_until = max(self._blocked_until, self._clock() + span)
         if self._bucket is not None:
             await self._bucket.block(span)
-        else:
-            self._blocked_until = max(self._blocked_until, self._clock() + span)
         return span

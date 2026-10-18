@@ -11,9 +11,10 @@ to ``NotModified`` / ``SpecBody``.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -23,7 +24,11 @@ from jentic_one.registry.services.catalog.fetch import (
     MAX_RETRY_AFTER_SECONDS,
     parse_retry_after,
 )
-from jentic_one.registry.services.catalog.sources.deps import GuardedSourceHttpClient
+from jentic_one.registry.services.catalog.sources import deps as deps_module
+from jentic_one.registry.services.catalog.sources.deps import (
+    GuardedSourceHttpClient,
+    build_source_deps,
+)
 from jentic_one.registry.services.catalog.sources.limits import ProcessSourceLimits
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
@@ -31,7 +36,7 @@ from jentic_one.registry.services.catalog.sources.protocol import (
     SpecBody,
     SpecGoneError,
 )
-from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.config import CatalogSourceConfig, IngestConfig
 
 _URL = "https://specs.example.com/openapi.json"
 
@@ -175,3 +180,89 @@ async def test_transport_error_maps_to_source_unavailable() -> None:
 
     with pytest.raises(SourceUnavailableError):
         await _http(handler).get_json(_URL)
+
+
+# ── build_source_deps: one pooled runtime per source ─────────────────────────
+
+
+class _Backend:
+    dialect_name = "sqlite"
+
+
+class _Db:
+    backend = _Backend()
+
+
+class _Ctx:
+    """The slice of ``Context`` that ``build_source_deps`` uses."""
+
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(ingest=IngestConfig())
+        self.registry_db = _Db()
+        self._resources: dict[str, object] = {}
+        self.shutdown: list[Callable[[], Awaitable[None]]] = []
+
+    def resource(self, key: str, factory: Callable[[], object]) -> object:
+        if key not in self._resources:
+            self._resources[key] = factory()
+        return self._resources[key]
+
+    def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self.shutdown.append(callback)
+
+
+def _source(**kw: object) -> CatalogSourceConfig:
+    return CatalogSourceConfig.model_validate(
+        {"slug": "corp", "kind": "static", "settings": {}, **kw}
+    )
+
+
+@pytest.fixture()
+def mock_transport(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
+    """Route the pooled client through a mock transport; returns the requests seen."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(429, headers={"retry-after": "20"})
+
+    monkeypatch.setattr(
+        deps_module, "build_pinned_transport", lambda _egress: httpx.MockTransport(handler)
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_same_source_shares_one_pooled_client_and_limits(
+    mock_transport: list[httpx.Request],
+) -> None:
+    ctx = _Ctx()
+    first = build_source_deps(ctx, _source())  # type: ignore[arg-type]
+    second = build_source_deps(ctx, _source())  # type: ignore[arg-type]
+    assert first.limits is second.limits
+    runtime = deps_module._runtimes(ctx).by_slug["corp"][1]  # type: ignore[arg-type]
+    assert runtime.client() is runtime.client()
+    # A change to the source's limits replaces its runtime (and its client).
+    third = build_source_deps(ctx, _source(fetch_concurrency=2))  # type: ignore[arg-type]
+    assert third.limits is not first.limits
+    for callback in ctx.shutdown:
+        await callback()
+
+
+@pytest.mark.asyncio
+async def test_429_through_source_deps_blocks_both_lanes(
+    mock_transport: list[httpx.Request],
+) -> None:
+    """With a rate bucket, a 429 on a background listing blocks interactive spec fetches."""
+    ctx = _Ctx()
+    deps = build_source_deps(ctx, _source(requests_per_second=50.0, burst=4))  # type: ignore[arg-type]
+    with pytest.raises(SourceUnavailableError) as raised:
+        await deps.http.get_json(_URL)
+    assert raised.value.retry_after_s == 20.0
+    with pytest.raises(SourceUnavailableError) as again:
+        await deps.http.get_bytes(_URL)
+    assert len(mock_transport) == 1  # the interactive fetch never reached the source
+    assert again.value.retry_after_s is not None
+    assert 0 < again.value.retry_after_s <= 20.0
+    for callback in ctx.shutdown:
+        await callback()

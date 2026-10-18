@@ -20,6 +20,7 @@ from jentic_one.registry.repos.catalog_source_bucket_repo import (
 from jentic_one.registry.services.catalog.sources.limits import (
     FetchLane,
     TakeResult,
+    background_reserve,
     refill_and_take,
 )
 from jentic_one.shared.context import Context
@@ -43,7 +44,7 @@ class DbRateBucket:
         self._slug = slug
         self._rate = rate
         self._burst = burst
-        self._reserve = burst * interactive_share
+        self._reserve = background_reserve(burst, interactive_share)
         self._clock = clock
 
     async def ensure(self) -> None:

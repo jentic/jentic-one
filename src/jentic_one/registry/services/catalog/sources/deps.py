@@ -237,7 +237,9 @@ class _SourceRuntime:
         loop = asyncio.get_running_loop()
         if self._client is None or self._loop is not loop or self._client.is_closed:
             # A client is bound to the loop it first ran on; a new loop (tests,
-            # a CLI command) gets its own. The old one is dropped, not awaited.
+            # a CLI command) gets its own, and the old one is closed on its own
+            # loop when that loop is still running.
+            self._discard_client()
             self._client = httpx.AsyncClient(
                 timeout=self._ingest.fetch_timeout_s,
                 follow_redirects=False,
@@ -250,10 +252,38 @@ class _SourceRuntime:
             self._loop = loop
         return self._client
 
+    def _discard_client(self) -> None:
+        """Close the current client best effort, without awaiting it here."""
+        client, loop = self._client, self._loop
+        self._client = None
+        self._loop = None
+        if client is None or client.is_closed or loop is None or loop.is_closed():
+            return
+        if loop is _running_loop():
+            task = loop.create_task(client.aclose())
+            _PENDING_CLOSES.add(task)
+            task.add_done_callback(_PENDING_CLOSES.discard)
+        elif loop.is_running():
+            asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+
     async def close(self) -> None:
         if self._client is not None and self._loop is asyncio.get_running_loop():
             await self._client.aclose()
-        self._client = None
+            self._client = None
+            self._loop = None
+        else:
+            self._discard_client()
+
+
+#: Closes scheduled by ``_discard_client``, kept referenced until they finish.
+_PENDING_CLOSES: set[asyncio.Task[None]] = set()
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _rate_bucket(ctx: Context, cfg: CatalogSourceConfig) -> RateBucket | None:
@@ -274,14 +304,30 @@ def _rate_bucket(ctx: Context, cfg: CatalogSourceConfig) -> RateBucket | None:
     )
 
 
+_RuntimeKey = tuple[int, float | None, int, float, float]
+
+
+def _runtime_key(cfg: CatalogSourceConfig, ingest_timeout_s: float) -> _RuntimeKey:
+    """The settings a source's runtime is built from; a change rebuilds it."""
+    return (
+        cfg.fetch_concurrency,
+        cfg.requests_per_second,
+        cfg.burst,
+        cfg.interactive_share,
+        ingest_timeout_s,
+    )
+
+
 class _SourceRuntimes:
+    """One runtime per source slug, replaced when the source's limits change."""
+
     def __init__(self) -> None:
-        self.by_key: dict[tuple[str, int, float | None, int, float], _SourceRuntime] = {}
+        self.by_slug: dict[str, tuple[_RuntimeKey, _SourceRuntime]] = {}
 
     async def close(self) -> None:
-        for runtime in self.by_key.values():
+        for _key, runtime in self.by_slug.values():
             await runtime.close()
-        self.by_key.clear()
+        self.by_slug.clear()
 
 
 def _runtimes(ctx: Context) -> _SourceRuntimes:
@@ -294,18 +340,15 @@ def _runtimes(ctx: Context) -> _SourceRuntimes:
 
 
 def _runtime(ctx: Context, cfg: CatalogSourceConfig) -> _SourceRuntime:
-    key = (
-        cfg.slug,
-        cfg.fetch_concurrency,
-        cfg.requests_per_second,
-        cfg.burst,
-        cfg.interactive_share,
-    )
+    key = _runtime_key(cfg, ctx.config.ingest.fetch_timeout_s)
     runtimes = _runtimes(ctx)
-    runtime = runtimes.by_key.get(key)
-    if runtime is None:
-        runtime = _SourceRuntime(ctx, cfg)
-        runtimes.by_key[key] = runtime
+    current = runtimes.by_slug.get(cfg.slug)
+    if current is not None and current[0] == key:
+        return current[1]
+    if current is not None:
+        current[1]._discard_client()
+    runtime = _SourceRuntime(ctx, cfg)
+    runtimes.by_slug[cfg.slug] = (key, runtime)
     return runtime
 
 
