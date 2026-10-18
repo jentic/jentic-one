@@ -302,34 +302,51 @@ describe('OverviewStrip — update-available re-import', () => {
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
-	it("sends nothing when the backend withholds the API's catalog entry", async () => {
-		const user = userEvent.setup();
-		const calls: string[] = [];
-		worker.use(
-			http.post('/catalog/*', ({ request }) => {
-				calls.push(new URL(request.url).pathname);
-				return HttpResponse.json({ job_id: 'job_x', status: 'queued' }, { status: 202 });
-			}),
-		);
+	it.each([
+		[
+			'a hidden or removed source',
+			'stripe.com',
+			"This API's catalog source isn't available to you, so it can't be updated or muted from here.",
+		],
+		[
+			'a manual import',
+			null,
+			"This API wasn't imported from the catalog, so it can't be updated or muted from here.",
+		],
+	])(
+		'disables Update and Mute with the reason when the entry is withheld (%s)',
+		async (_case, catalogApiId, reason) => {
+			const calls: string[] = [];
+			worker.use(
+				http.post('/catalog/*', ({ request }) => {
+					calls.push(new URL(request.url).pathname);
+					return HttpResponse.json(
+						{ job_id: 'job_x', status: 'queued' },
+						{ status: 202 },
+					);
+				}),
+			);
 
-		renderWithProviders(
-			<>
+			renderWithProviders(
 				<OverviewStrip
 					api={makeApi({
 						updateAvailable: true,
 						origin: 'catalog',
-						catalogApiId: 'stripe.com',
+						catalogApiId,
 						catalogEntryId: null,
 					})}
-				/>
-				<Toaster />
-			</>,
-		);
+				/>,
+			);
 
-		await user.click(screen.getByTestId('workspace-reimport'));
-		expect(await screen.findByText('Re-import failed')).toBeInTheDocument();
-		expect(calls).toEqual([]);
-	});
+			expect(screen.getByTestId('workspace-update-unavailable')).toHaveTextContent(reason);
+			for (const id of ['workspace-reimport', 'workspace-snooze']) {
+				const button = screen.getByTestId(id);
+				expect(button).toBeDisabled();
+				expect(button).toHaveAccessibleDescription(reason);
+			}
+			expect(calls).toEqual([]);
+		},
+	);
 
 	it("never follows did_you_mean away from the API's own catalog entry", async () => {
 		const user = userEvent.setup();

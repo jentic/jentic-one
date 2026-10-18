@@ -80,6 +80,16 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 		entryId: api.catalogEntryId,
 		catalogApiId: api.catalogApiId ?? api.api.vendor,
 	};
+	// With no entry to act on, Update and Mute could only fail, so they are
+	// disabled with the reason: a manual import tracked upstream by its spec URL
+	// has no catalog id at all; otherwise the entry's source is hidden from the
+	// caller, disabled, or no longer configured.
+	const noEntryReason =
+		api.catalogEntryId !== null
+			? null
+			: api.catalogApiId === null
+				? "This API wasn't imported from the catalog, so it can't be updated or muted from here."
+				: "This API's catalog source isn't available to you, so it can't be updated or muted from here.";
 
 	const handleReimportClick = () => {
 		if (isOverlayOrigin) {
@@ -104,11 +114,24 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 							The upstream spec has changed since this API was imported.
 						</span>
 					</div>
+					{noEntryReason ? (
+						<p
+							id="workspace-update-unavailable"
+							className="text-muted-foreground text-xs"
+							data-testid="workspace-update-unavailable"
+						>
+							{noEntryReason}
+						</p>
+					) : null}
 					<div className="flex shrink-0 items-center gap-2">
 						<Button
 							variant="ghost"
 							size="sm"
 							loading={isSnoozing}
+							disabled={noEntryReason !== null}
+							aria-describedby={
+								noEntryReason ? 'workspace-update-unavailable' : undefined
+							}
 							onClick={() => snooze(target)}
 							data-testid="workspace-snooze"
 						>
@@ -119,6 +142,10 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 							variant="outline"
 							size="sm"
 							loading={isReimporting}
+							disabled={noEntryReason !== null}
+							aria-describedby={
+								noEntryReason ? 'workspace-update-unavailable' : undefined
+							}
 							onClick={handleReimportClick}
 							data-testid="workspace-reimport"
 						>
