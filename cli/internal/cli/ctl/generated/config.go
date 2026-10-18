@@ -531,10 +531,11 @@ type CatalogSourceConfig struct {
 
 	// Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
 	// one of index_url (an APIs.json-style index) or specs (a static list of
-	// {external_id, spec_url, catalog_api_id?, title?, tags?}), plus max_entries
-	// (default 10000, at most 100000): an index listing more fails the sync run with
-	// listing_too_large (GET /catalog/sources shows it as last_error_code) and the
-	// stored entries stay. index_url and spec_url must not carry user:pass@;
+	// {external_id, spec_url, catalog_api_id?, title?, tags?}, at most 100000 items).
+	// With index_url, max_entries (default 10000, at most 100000) caps the listing:
+	// an index listing more fails the sync run with listing_too_large (GET
+	// /catalog/sources shows it as last_error_code) and the stored entries stay; it
+	// does not apply to specs. index_url and spec_url must not carry user:pass@;
 	// index-listed spec URLs that do are ignored.
 	Settings CatalogSourceConfigSettings `json:"settings,omitempty,omitzero" yaml:"settings,omitempty" mapstructure:"settings,omitempty"`
 
@@ -588,10 +589,11 @@ type CatalogSourceConfigRequestsPerSecond_0 *float64
 
 // Kind-specific settings. git-manifest: url (its apis.json). http-index: exactly
 // one of index_url (an APIs.json-style index) or specs (a static list of
-// {external_id, spec_url, catalog_api_id?, title?, tags?}), plus max_entries
-// (default 10000, at most 100000): an index listing more fails the sync run with
-// listing_too_large (GET /catalog/sources shows it as last_error_code) and the
-// stored entries stay. index_url and spec_url must not carry user:pass@;
+// {external_id, spec_url, catalog_api_id?, title?, tags?}, at most 100000 items).
+// With index_url, max_entries (default 10000, at most 100000) caps the listing: an
+// index listing more fails the sync run with listing_too_large (GET
+// /catalog/sources shows it as last_error_code) and the stored entries stay; it
+// does not apply to specs. index_url and spec_url must not carry user:pass@;
 // index-listed spec URLs that do are ignored.
 type CatalogSourceConfigSettings map[string]interface{}
 
