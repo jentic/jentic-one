@@ -16,10 +16,11 @@ names (the index URL's, or each configured spec URL's, plus ``auth.origins``): a
 spec URL an index lists on any other host is fetched without them. A spec URL
 carrying userinfo (``user:pass@``) is never listed or fetched, and a redirect
 to one is refused: the HTTP client would turn it into its own ``Authorization``
-header, letting the index or the redirecting host choose it. An index listing
-more than ``max_entries`` entries (default ``DEFAULT_HTTP_INDEX_ENTRIES``, at most
+header, letting the index or the redirecting host choose it. An ``index_url``
+listing more than ``max_entries`` entries (default ``DEFAULT_HTTP_INDEX_ENTRIES``, at most
 ``MAX_HTTP_INDEX_ENTRIES``) fails the sync run with ``listing_too_large``, so the
-stored entries stay as they were.
+stored entries stay as they were; ``max_entries`` does not apply to a static
+``specs`` list, which holds at most ``MAX_HTTP_INDEX_ENTRIES`` items.
 """
 
 from __future__ import annotations
@@ -103,8 +104,9 @@ class HttpIndexSettings(BaseModel):
         ge=1,
         le=MAX_HTTP_INDEX_ENTRIES,
         description=(
-            "Most entries the index may list; a longer index fails the sync run "
-            "(listing_too_large) and the stored entries stay."
+            "Most entries index_url may list; a longer index fails the sync run "
+            "(listing_too_large) and the stored entries stay. A static specs list "
+            "is not capped by it (at most MAX_HTTP_INDEX_ENTRIES items)."
         ),
     )
 

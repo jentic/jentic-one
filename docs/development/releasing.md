@@ -208,15 +208,19 @@ multi-source storage and the read cutover); it ships with them, never on its own
   manifest or index URL, static spec URLs, `auth.origins`), never to a host a
   listing points at. With `JENTIC_ENV=production`, startup refuses a
   credentialed source whose credential origins include a plain `http://` one
-  (outside production it is logged as a warning). An `http-index` index listing
-  more than its `settings.max_entries` (default 10,000, at most 100,000) fails
-  the sync run (`listing_too_large`, shown to operators as the source's
-  `last_error_code` in `GET /catalog/sources` and as the `error_code` label of
-  `catalog_source_sync_total`) and keeps the stored entries. URLs carrying
-  `user:pass@` are refused in `index_url`, `spec_url` and `auth.origins`, and an
-  index-listed spec URL carrying one is ignored (the entry is listed without a
-  spec). Credential origins match hosts case-insensitively, without a trailing
-  dot and in their punycode form.
+  (outside production it is logged as a warning). An `http-index` `index_url`
+  listing more than its `settings.max_entries` (default 10,000, at most
+  100,000) fails the sync run (`listing_too_large`, shown to operators as the
+  source's `last_error_code` in `GET /catalog/sources` and as the `error_code`
+  label of `catalog_source_sync_total`) and keeps the stored entries;
+  `max_entries` does not apply to a static `specs` list (at most 100,000 items). URLs carrying `user:pass@` are refused
+  in `index_url`, `spec_url` and `auth.origins`, an index-listed spec URL
+  carrying one is ignored (the entry is listed without a spec), and a redirect
+  to one fails the fetch. Credential origins are compared on the host the HTTP
+  client connects to (its IDNA 2008 encoding, case-insensitive, without a
+  trailing dot), so two spellings sent to different hosts never share an
+  origin. Config validation errors at startup name the field and the problem
+  but no longer repeat the offending value.
 
 
 ## Upgrading to the multi-source catalog release (0.44.0): update tracking

@@ -165,9 +165,8 @@ class CatalogSourceSyncScanner:
                 await sync.reresolve_source(row.slug)
         await sync.sweep_abandoned_staging(run_retention=_SYNC_RUN_RETENTION)
         # A requested sync is an explicit "check upstream now", so it also starts
-        # the update-notify sweep (fire-and-forget), as the removed
-        # ``POST /catalog:refresh`` did. Whatever the run's outcome: a spec can
-        # change upstream while its listing does not.
+        # the update-notify sweep (fire-and-forget), whatever the run's outcome:
+        # a spec can change upstream while its listing does not.
         if any(o.slug in requested for o in outcomes):
             CatalogService(self._ctx).trigger_update_notify_sweep()
         return outcomes
