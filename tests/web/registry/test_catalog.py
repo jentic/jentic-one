@@ -313,10 +313,17 @@ def _sync_now(tc: TestClient) -> None:
     _run_scanner(tc)
 
 
+async def _sync_all(ctx: Context) -> None:
+    """Register and sync every configured source once, in configured order."""
+    sync = CatalogSourceSync(ctx)
+    await sync.register_sources()
+    await sync.sync_all()
+
+
 async def _seed(ctx: Context, api_ids: list[str]) -> None:
     """Serve ``api_ids`` from the public manifest and sync it."""
     _LISTINGS[_MANIFEST_URL] = list(api_ids)
-    await CatalogService(ctx).refresh()
+    await _sync_all(ctx)
 
 
 # ── auth ─────────────────────────────────────────────────────────────────────
@@ -1005,7 +1012,7 @@ async def _deployment(
 ) -> AsyncIterator[Context]:
     """A context over ``sources``, synced once."""
     async with Context(_config(web_config, sources, **catalog)) as ctx:
-        await CatalogService(ctx).refresh()
+        await _sync_all(ctx)
         yield ctx
 
 
@@ -1212,7 +1219,7 @@ async def test_hidden_cursor_walk_survives_a_hidden_source_sync(web_config: AppC
         with _client(ctx, ["capabilities:read"]) as tc:
             first = tc.get("/catalog", params={"limit": 2}).json()
             _LISTINGS[_CORP_URL] = ["corp-a.example", "corp-b.example"]
-            await CatalogService(ctx).refresh()
+            await _sync_all(ctx)
             nxt = tc.get("/catalog", params={"limit": 2, "cursor": first["next_cursor"]})
             assert nxt.status_code == 200
             assert _ids(nxt.json()) == ["public/api-02.com", "public/api-03.com"]

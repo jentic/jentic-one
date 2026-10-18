@@ -37,11 +37,6 @@ from jentic_one.registry.core.schema.catalog_sources import (
     SOURCE_STATUS_NEVER_SYNCED,
     CatalogSourceRow,
 )
-from jentic_one.registry.core.schema.catalog_sync_runs import (
-    RUN_STATUS_APPLIED,
-    RUN_STATUS_SUPERSEDED,
-    RUN_STATUS_SUSPECT_EMPTY,
-)
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.fetch import CatalogRefSource, parse_spec_content
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
@@ -193,13 +188,6 @@ class CatalogPreviewView:
 
 
 @dataclass(frozen=True)
-class CatalogRefreshResult:
-    """Outcome of a refresh: the live entries of the enabled sources after it."""
-
-    count: int
-
-
-@dataclass(frozen=True)
 class _ReadState:
     """One request's view of the catalog: the snapshot plus the per-request sets."""
 
@@ -235,38 +223,6 @@ class CatalogService:
         self._mappings = [
             CatalogApiIdMapping.from_config(m) for m in self._cfg.catalog_api_id_mappings
         ]
-
-    # ── refresh ──────────────────────────────────────────────────────────────
-
-    async def refresh(self, *, force: bool = False) -> CatalogRefreshResult:
-        """Sync every enabled source now; ``force`` overrides the mass-removal guard.
-
-        Each source's listing is bounded by ``ingest.fetch_timeout_s``, so a slow
-        source fails its own run (recorded, with backoff) instead of holding the
-        request open indefinitely.
-
-        Raises ``CatalogUnavailableError`` when no source applied and at least
-        one failed; otherwise failures are logged and the last good rows stay.
-        A run held by the mass-removal guard is not a failure: the source was
-        reachable and keeps serving its last applied rows.
-        """
-        sync = CatalogSourceSync(self._ctx)
-        await sync.register_sources()
-        outcomes = await sync.sync_all(
-            forced=force, listing_timeout_s=self._ingest_cfg.fetch_timeout_s
-        )
-        applied = [o for o in outcomes if o.status == RUN_STATUS_APPLIED]
-        held = (RUN_STATUS_APPLIED, RUN_STATUS_SUSPECT_EMPTY, RUN_STATUS_SUPERSEDED)
-        pending = (OUTCOME_BUSY, OUTCOME_SKIPPED)
-        failed = [o for o in outcomes if o.status not in (*held, *pending, OUTCOME_DISABLED)]
-        not_run = [o for o in outcomes if o.status in pending]
-        if failed and not applied:
-            detail = f"catalog sources unavailable ({_outcome_codes(failed)})"
-            if not_run:
-                detail += f"; not refreshed ({_outcome_codes(not_run)})"
-            raise CatalogUnavailableError(detail)
-        snapshot = await self._snapshot()
-        return CatalogRefreshResult(count=len(snapshot.entries))
 
     # ── snapshot ─────────────────────────────────────────────────────────────
 
@@ -440,7 +396,7 @@ class CatalogService:
         before it finishes (this service instance is per-request and short-lived).
 
         No-ops when the sweep is disabled (kill switch) so a disabled install never
-        spawns a throwaway task per refresh.
+        spawns a throwaway task per requested sync.
         """
         if self._cfg.update_check_interval_seconds <= 0:
             return
@@ -448,7 +404,7 @@ class CatalogService:
             task = asyncio.create_task(self._run_update_notify_sweep())
         except RuntimeError:
             # No running event loop (only reachable from a sync caller, which the
-            # async refresh path never is). Skip rather than block; there is no
+            # async sync-scanner path never is). Skip rather than block; there is no
             # safe inline fallback without a loop.
             logger.debug("catalog_update_sweep_skipped_no_running_loop")
             return
@@ -466,7 +422,7 @@ class CatalogService:
 
         Public entry point for the standalone ``CatalogUpdateScanner``, which owns the
         periodic cadence and awaits each sweep — unlike ``trigger_update_notify_sweep``,
-        the fire-and-forget ``:refresh`` piggyback. Honors the same kill switch.
+        the fire-and-forget sweep a requested sync starts. Honors the same kill switch.
         """
         await self._run_update_notify_sweep()
 
@@ -480,11 +436,11 @@ class CatalogService:
         "not modified" answer or an unchanged digest is a no-op, a changed digest
         emits ``catalog.update_available`` once (deduped on
         ``last_notified_digest``). Upstream/DB failures are swallowed per API so a
-        flaky host never breaks the refresh or the rest of the batch. A ``0``
+        flaky host never breaks the sweep or the rest of the batch. A ``0``
         interval disables the sweep entirely (air-gapped kill switch).
 
         Single-flight: sweeps are serialized **within a process** by
-        ``Context.update_sweep_lock`` (scanner + ``:refresh`` trigger can't overlap) and
+        ``Context.update_sweep_lock`` (scanner + requested-sync trigger can't overlap) and
         **across processes** by a non-blocking registry-DB advisory lock
         (:data:`UPDATE_SWEEP_LOCK_KEY`, a no-op on single-process SQLite). A sweep that
         loses either race skips quietly — another sweep is already doing the work — so
@@ -493,7 +449,7 @@ class CatalogService:
         window described in :meth:`_probe_one`. Probes fan out with bounded
         concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
         a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
-        candidate set can't turn one refresh into an unbounded stall.
+        candidate set can't turn one sweep into an unbounded stall.
         """
         interval = self._cfg.update_check_interval_seconds
         if interval <= 0:

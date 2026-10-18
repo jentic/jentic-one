@@ -55,6 +55,7 @@ from jentic_one.registry.core.schema.catalog_staged_entries import CatalogStaged
 from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.snapshot import clear_snapshots
+from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
@@ -205,8 +206,10 @@ async def _run(args: argparse.Namespace, config: AppConfig) -> bool:
         svc = CatalogService(ctx)
         print(f"RSS      {_current_rss_mib():.0f} MiB before sync + GC")
         start = time.perf_counter()
-        result = await svc.refresh()
-        print(f"synced   {result.count} entries in {time.perf_counter() - start:.1f} s")
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        outcomes = await sync.sync_all()
+        print(f"synced   {len(outcomes)} sources in {time.perf_counter() - start:.1f} s")
         print(f"RSS      {_current_rss_mib():.0f} MiB after sync + GC")
 
         start = time.perf_counter()

@@ -379,7 +379,7 @@ class CatalogSourceSync:
     async def sync_all(
         self, *, forced: bool = False, listing_timeout_s: float | None = None
     ) -> list[SyncOutcome]:
-        """Sync every enabled source once (an operator refresh).
+        """Sync every enabled source once.
 
         One after another, in configured order, so a curated source applies
         before the sources it owns ids for resolve against it.
