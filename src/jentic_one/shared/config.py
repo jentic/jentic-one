@@ -2256,8 +2256,9 @@ class CatalogSourceConfig(BaseModel):
         ge=0.0,
         lt=1.0,
         description=(
-            "Share of the concurrency slots and of the burst kept for preview, import "
-            "and the update sweep, so background listings never take the last of them."
+            "Share of the concurrency slots and of the burst kept for interactive "
+            "preview and import, so background work (listings, the update sweep) "
+            "never takes the last of them."
         ),
     )
     auth: SourceAuthConfig = Field(default_factory=SourceAuthConfig)

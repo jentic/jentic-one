@@ -26,6 +26,7 @@ from jentic_one.registry.services.catalog.service import (
     _ReadState,
 )
 from jentic_one.registry.services.catalog.snapshot import build_snapshot
+from jentic_one.registry.services.catalog.sources.deps import spec_fetch_lane
 from jentic_one.registry.services.catalog.sources.protocol import NotModified, SpecBody
 from jentic_one.registry.services.catalog.spec_fetch import CatalogSpecFetcher
 from jentic_one.shared.config import CatalogConfig
@@ -1040,6 +1041,34 @@ async def test_probe_changed_content_hint_fetches_with_validator() -> None:
     assert fetch.await_args.kwargs["validator"] == '"v1"'
     assert upsert.await_args is not None
     assert upsert.await_args.kwargs["content_hint"] == "sha:new"
+
+
+@pytest.mark.asyncio
+async def test_probe_fetches_on_the_background_lane() -> None:
+    """The sweep's probe never takes the interactive lane a user's preview/import waits on.
+
+    The lane is read at fetch time (what ``LimitedSource.slot`` sees), and the
+    caller's lane is restored afterwards.
+    """
+    svc = CatalogService(_make_ctx())
+    seen: list[str] = []
+
+    async def _fetch(*_args: Any, **_kwargs: Any) -> NotModified:
+        seen.append(spec_fetch_lane.get())
+        return NotModified(validator='"v1"')
+
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=_check(last_checked_at=None, etag='"v1"', notified=None),
+        ),
+        patch(_FETCH_ROW, side_effect=_fetch),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+    ):
+        await _probe(svc, _spec(), now=datetime.now(UTC), interval=86400)
+    assert seen == ["background"]
+    assert spec_fetch_lane.get() == "interactive"
 
 
 @pytest.mark.asyncio

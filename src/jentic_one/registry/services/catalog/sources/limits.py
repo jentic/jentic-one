@@ -5,8 +5,8 @@ Every request a source makes (listing pages and spec fetches alike) holds one
 
 - **Concurrency.** At most ``fetch_concurrency`` requests per source are in
   flight in this process. ``interactive_share`` of the slots is kept for the
-  ``interactive`` lane (preview, import, the update sweep): ``background``
-  requests (listings, bulk consumers) never take those, while interactive
+  ``interactive`` lane (preview, import): ``background`` requests
+  (listings, the update sweep, bulk consumers) never take those, while interactive
   requests may also use background capacity. A source with one slot cannot
   reserve any, so both lanes share it.
 - **Rate (optional).** With ``requests_per_second`` set, each request also takes

@@ -502,8 +502,9 @@ type CatalogSourceConfig struct {
 	// together).
 	FetchConcurrency int `json:"fetch_concurrency,omitempty,omitzero" yaml:"fetch_concurrency,omitempty" mapstructure:"fetch_concurrency,omitempty"`
 
-	// Share of the concurrency slots and of the burst kept for preview, import and
-	// the update sweep, so background listings never take the last of them.
+	// Share of the concurrency slots and of the burst kept for interactive preview
+	// and import, so background work (listings, the update sweep) never takes the
+	// last of them.
 	InteractiveShare float64 `json:"interactive_share,omitempty,omitzero" yaml:"interactive_share,omitempty" mapstructure:"interactive_share,omitempty"`
 
 	// Registered source kind, e.g. git-manifest.

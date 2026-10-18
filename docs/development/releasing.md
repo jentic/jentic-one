@@ -183,8 +183,8 @@ the CLI's agent-mode machine contract — so read this before rolling it out.
 
 ## Upgrading to the multi-source catalog release (0.44.0): update tracking
 
-Part of the same breaking release as the `entry_id` catalog changes (Parts 1b
-and 1c); it ships with them, never on its own.
+Part of the same breaking release as the `entry_id` catalog changes above (the
+multi-source storage and the read cutover); it ships with them, never on its own.
 
 - **Rollback drops update-check state.** The update checks are re-keyed from
   spec URL to catalog entry. Downgrading below the backfill revision
