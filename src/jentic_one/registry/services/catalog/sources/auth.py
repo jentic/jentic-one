@@ -113,10 +113,13 @@ class HeaderFromEnv:
         header = (cfg.header or "").strip()
         if not header:
             raise ValueError("auth type 'header_from_env' needs header")
+        # Never echo the value: a pasted "Name: secret" would land in the error.
         if not _HEADER_NAME_RE.match(header):
-            raise ValueError(f"auth.header {header!r} is not a valid header name")
+            raise ValueError("auth.header is not a valid header name")
         if header.lower() in _RESERVED_HEADERS:
-            raise ValueError(f"auth.header {header!r} cannot carry a source credential")
+            raise ValueError(
+                "auth.header is a reserved header; it cannot carry a source credential"
+            )
         self._header = header
         self._secret = _EnvSecret(_env_name(cfg))
 

@@ -39,8 +39,11 @@ from jentic_one.registry.services.catalog.sources.protocol import (
 )
 from jentic_one.registry.services.catalog.sources.registry import resolve_catalog_source_kind
 from jentic_one.registry.services.catalog.sources.streams import FullListStream
+from jentic_one.registry.services.catalog.sources.validate import check_catalog_config
 from jentic_one.shared.config import (
+    CatalogConfig,
     CatalogSourceConfig,
+    ConfigError,
     EgressConfig,
     IngestConfig,
     SourceAuthConfig,
@@ -433,6 +436,35 @@ def test_auth_env_that_is_not_a_name_is_never_echoed() -> None:
         build_source_auth(SourceAuthConfig(type="bearer_from_env", env=f"ghp-{_SECRET}"))
     assert "auth.env is not an environment variable name" in str(excinfo.value)
     assert _SECRET not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("header", "message"),
+    [
+        (f"X-Api-Key: {_SECRET}", "auth.header is not a valid header name"),
+        (f"Bearer {_SECRET}", "auth.header is not a valid header name"),
+        ("Host", "auth.header is a reserved header"),
+    ],
+)
+def test_bad_auth_header_is_never_echoed(header: str, message: str) -> None:
+    """A header pasted together with its secret is refused without repeating it."""
+    cfg = SourceAuthConfig(type="header_from_env", env="CATALOG_TOKEN", header=header)
+    with pytest.raises(ValueError) as excinfo:
+        build_source_auth(cfg)
+    assert message in str(excinfo.value)
+    assert header not in str(excinfo.value)
+    source = CatalogSourceConfig.model_validate(
+        {
+            "slug": "corp",
+            "kind": "http-index",
+            "settings": {"index_url": "https://idx.example.com/apis.json"},
+            "auth": cfg.model_dump(),
+        }
+    )
+    with pytest.raises(ConfigError) as boot:
+        check_catalog_config(CatalogConfig(sources=[source]))
+    assert message in str(boot.value)
+    assert _SECRET not in str(boot.value)
 
 
 def test_auth_registry_refuses_shadowing() -> None:
