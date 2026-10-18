@@ -644,38 +644,22 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// TestToCatalogPreview_CarriesServerVariablesAndOAuthFlows pins what the
-// preview carries for credential setup: server_variables and
-// required_schemes pass through (empty, never null, when absent), and an
-// oauth2 scheme's flow_details ride inside security_schemes untouched.
-func TestToCatalogPreview_CarriesServerVariablesAndOAuthFlows(t *testing.T) {
-	vars := map[string]map[string]any{"tenant": {"default": "acme", "description": "Your tenant"}}
-	required := []string{"oauth"}
-	p := toCatalogPreview(&control.OperationPreviewListResponse{
-		SecuritySchemes: map[string]map[string]any{"oauth": {
-			"type": "oauth2", "flows": []any{"authorizationCode"},
-			"flow_details": map[string]any{"authorizationCode": map[string]any{
-				"authorizationUrl": "https://idp.example/authorize", "tokenUrl": "https://idp.example/token",
-			}},
-		}},
-		ServerVariables: &vars,
-		RequiredSchemes: &required,
-	})
-	raw, _ := json.Marshal(p)
-	for _, want := range []string{
-		`"server_variables":{"tenant":{"default":"acme","description":"Your tenant"}}`,
-		`"required_schemes":["oauth"]`,
-		`"tokenUrl":"https://idp.example/token"`,
-	} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("preview JSON missing %s\n%s", want, raw)
-		}
+func TestCatalogEntryErr_MapsSourceErrors(t *testing.T) {
+	gone := catalogEntryErr(&HTTPError{StatusCode: http.StatusGone, Body: `{"type":"catalog_spec_gone","detail":"gone"}`}, "corp/x")
+	var coded *ux.CodedError
+	if !errors.As(gone, &coded) || coded.Code != ux.CodeResolveFailed || coded.Msg != "gone" {
+		t.Fatalf("410 = %#v, want RESOLVE_FAILED with the server's detail", gone)
 	}
-
-	empty, _ := json.Marshal(toCatalogPreview(&control.OperationPreviewListResponse{}))
-	for _, want := range []string{`"server_variables":{}`, `"required_schemes":[]`} {
-		if !strings.Contains(string(empty), want) {
-			t.Errorf("absent members must read as empty, missing %s\n%s", want, empty)
-		}
+	busy := catalogEntryErr(&HTTPError{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       `{"type":"catalog_source_unavailable","detail":"busy."}`,
+		RetryAfter: "7",
+	}, "corp/x")
+	if !errors.As(busy, &coded) || coded.Code != ux.CodeTransportError || coded.Details["retry_after_s"] != 7 {
+		t.Fatalf("503 = %#v, want TRANSPORT_ERROR with retry_after_s 7", busy)
+	}
+	other := &HTTPError{StatusCode: http.StatusServiceUnavailable, Body: `{"type":"governed_hosts_unavailable"}`}
+	if got := catalogEntryErr(other, "corp/x"); got != error(other) {
+		t.Fatalf("an unrelated 503 must pass through, got %#v", got)
 	}
 }

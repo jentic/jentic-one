@@ -8,10 +8,13 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -542,81 +545,71 @@ func TestMCPSearchCatalog_TransportFailureIsRetryable(t *testing.T) {
 	}
 }
 
-// TestMCPImportAPI_AcceptsEveryAlias pins the entry_id parameter and its
-// aliases: each spelling files the same import on the {entry_id:path} route.
-func TestMCPImportAPI_AcceptsEveryAlias(t *testing.T) {
-	for _, spelling := range []string{"entry_id", "api_id", "id", "api"} {
-		t.Run(spelling, func(t *testing.T) {
-			plane := &importControlPlane{jobStatus: []string{"completed"}}
-			srv := httptest.NewServer(plane.handler(t))
+// TestMCPImportAPI_CatalogSourceErrorsMatchSharedFixture replays the shared
+// 410/503 fixture against the stdio server. tests/unit/mcp/test_tools_import_api.py
+// replays the same file against the HTTP mount, so the two cannot drift.
+func TestMCPImportAPI_CatalogSourceErrorsMatchSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "golden", "testdata", "mcp", "import_api_catalog_errors.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var cases []struct {
+		Name       string         `json:"name"`
+		APIID      string         `json:"api_id"`
+		Status     int            `json:"status"`
+		Type       string         `json:"type"`
+		Detail     string         `json:"detail"`
+		RetryAfter *int           `json:"retry_after"`
+		Payload    map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.RetryAfter != nil {
+					w.Header().Set("Retry-After", strconv.Itoa(*tc.RetryAfter))
+				}
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.Status)
+				body, _ := json.Marshal(map[string]any{
+					"type": tc.Type, "title": http.StatusText(tc.Status), "status": tc.Status,
+					"detail": tc.Detail,
+				})
+				_, _ = w.Write(body)
+			}))
 			defer srv.Close()
 
 			s := fastAccessServer(t)
-			args := fmt.Sprintf(`{%q:"public/googleapis.com/sheets"}`, spelling)
-			res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", args))
+			args, _ := json.Marshal(map[string]string{"api_id": tc.APIID})
+			res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", string(args)))
 			if err != nil {
 				t.Fatalf("handleImportAPI: %v", err)
 			}
-			if res.IsError {
-				t.Fatalf("unexpected soft error: %s", toolResultText(res))
+			if !res.IsError {
+				t.Fatalf("want IsError result")
 			}
-			if plane.importPath != "/catalog/public/googleapis.com/sheets:import" {
-				t.Errorf("import path = %q, want the entry_id route", plane.importPath)
+			payload := decodeToolJSON(t, res)
+			delete(payload, "schema_version")
+			delete(payload, "instance")
+			// JSON numbers decode as float64 on both sides; compare as decoded JSON.
+			want, _ := json.Marshal(tc.Payload)
+			got, _ := json.Marshal(payload)
+			var wantV, gotV any
+			_ = json.Unmarshal(want, &wantV)
+			_ = json.Unmarshal(got, &gotV)
+			if !reflect.DeepEqual(gotV, wantV) {
+				t.Errorf("payload mismatch\n got: %s\nwant: %s", got, want)
 			}
 		})
 	}
 }
 
-// TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry pins the old-style id
-// recovery: the server's 404 body names the caller's visible entry_id, and the
-// tool error repeats it verbatim (no CLI-built prefix) with a retry hint.
-func TestMCPImportAPI_404DidYouMeanNamesTheVisibleEntry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,` +
-			`"detail":"catalog entry not found","did_you_mean":"internal/stripe.com"}`))
-	}))
-	defer srv.Close()
-
-	s := fastAccessServer(t)
-	res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"api_id":"stripe.com"}`))
-	msg := requireImportInvalidParams(t, res, err)
-	want := "catalog entry 'stripe.com' not found — did you mean 'internal/stripe.com'?; call search_catalog " +
-		"with a keyword for the API you need and pass the entry_id of one of its hits verbatim"
-	if msg != want {
-		t.Errorf("message = %q, want %q", msg, want)
-	}
-}
-
-// TestMCPImportAPI_404DropsAMalformedDidYouMean: a suggestion that couldn't
-// name an entry is never relayed into a retry; the miss points at search.
-func TestMCPImportAPI_404DropsAMalformedDidYouMean(t *testing.T) {
-	for _, bad := range []string{"../access-requests", "public//x", "public/a\nb", "  "} {
-		body, _ := json.Marshal(map[string]any{"status": 404, "detail": "catalog entry not found", "did_you_mean": bad})
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write(body)
-		}))
-		s := fastAccessServer(t)
-		res, err := s.handleImportAPI(activeCtx(srv.URL), callToolRequest("import_api", `{"entry_id":"stripe.com"}`))
-		srv.Close()
-		if msg := requireImportInvalidParams(t, res, err); strings.Contains(msg, "did you mean") {
-			t.Errorf("%q: a malformed suggestion was relayed: %q", bad, msg)
-		}
-	}
-}
-
-func TestPyRepr(t *testing.T) {
-	for in, want := range map[string]string{
-		"public/stripe.com": "'public/stripe.com'",
-		"o'brien.com":       `"o'brien.com"`,
-		`a'b"c`:             `'a\'b"c'`,
-		`a\b`:               `'a\\b'`,
-	} {
-		if got := pyRepr(in); got != want {
-			t.Errorf("pyRepr(%q) = %q, want %q", in, got, want)
+func TestRetryAfterSeconds(t *testing.T) {
+	for raw, want := range map[string]int{"": 5, "x": 5, "-1": 5, "0": 1, "0.2": 1, "12": 12, "12.1": 13} {
+		if got := retryAfterSeconds(raw); got != want {
+			t.Errorf("retryAfterSeconds(%q) = %d, want %d", raw, got, want)
 		}
 	}
 }

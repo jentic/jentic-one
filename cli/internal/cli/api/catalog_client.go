@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -237,9 +238,9 @@ func (c *catalogClient) List(ctx context.Context, p catalogListParams) (*catalog
 	return toCatalogListResult(resp.JSON200), nil
 }
 
-func (c *catalogClient) Get(ctx context.Context, entryID string) (*catalogEntry, error) {
-	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, entryID, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+func (c *catalogClient) Get(ctx context.Context, apiID string) (*catalogEntry, error) {
+	resp, err := c.sdk.GetCatalogEntryWithResponse(ctx, apiID, rawPathEditor)
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -265,8 +266,8 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 	if tag != "" {
 		params.Tag = ptr(tag)
 	}
-	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, entryID, params, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+	resp, err := c.sdk.PreviewCatalogOperationsWithResponse(ctx, apiID, params, rawPathEditor)
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return nil, err
 	}
 	if resp.JSON200 == nil {
@@ -275,9 +276,9 @@ func (c *catalogClient) Preview(ctx context.Context, entryID string, offset, lim
 	return toCatalogPreview(resp.JSON200), nil
 }
 
-func (c *catalogClient) Import(ctx context.Context, entryID string) (string, error) {
-	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, entryID, nil, rawPathEditor)
-	if err := apiErrorFor(resp, err); err != nil {
+func (c *catalogClient) Import(ctx context.Context, apiID string) (string, error) {
+	resp, err := c.sdk.ImportCatalogEntryWithResponse(ctx, apiID, nil, rawPathEditor)
+	if err := withRetryAfter(apiErrorFor(resp, err), resp); err != nil {
 		return "", err
 	}
 	if resp.JSON202 == nil {
@@ -430,4 +431,37 @@ func toCatalogPreview(p *control.OperationPreviewListResponse) *catalogPreview {
 		})
 	}
 	return out
+}
+
+// withRetryAfter records a failed catalog response's Retry-After header on its
+// *HTTPError, so a 503 catalog_source_unavailable can tell the caller how long
+// to wait. Other errors pass through unchanged.
+func withRetryAfter(err error, resp interface{ StatusCode() int }) error {
+	var he *HTTPError
+	if err == nil || !errors.As(err, &he) {
+		return err
+	}
+	if r := httpResponseOf(resp); r != nil {
+		he.RetryAfter = r.Header.Get("Retry-After")
+	}
+	return err
+}
+
+// httpResponseOf returns the raw *http.Response of a generated SDK response.
+func httpResponseOf(resp any) *http.Response {
+	switch r := resp.(type) {
+	case *control.GetCatalogEntryHTTPResp:
+		if r != nil {
+			return r.HTTPResponse
+		}
+	case *control.PreviewCatalogOperationsHTTPResp:
+		if r != nil {
+			return r.HTTPResponse
+		}
+	case *control.ImportCatalogEntryHTTPResp:
+		if r != nil {
+			return r.HTTPResponse
+		}
+	}
+	return nil
 }

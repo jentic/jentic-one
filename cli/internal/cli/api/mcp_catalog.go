@@ -12,7 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -340,53 +342,74 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 // "stripe.com". Any other failure returns nil.
 func importAPINotFound(entryID string, err error) error {
 	var he *HTTPError
-	if !errors.As(err, &he) || he.StatusCode != http.StatusNotFound {
-		return nil
-	}
-	hint := ""
-	if suggestion := didYouMean(he); suggestion != "" {
-		hint = " — did you mean " + pyRepr(suggestion) + "?"
-	}
-	return invalidParams(fmt.Errorf("catalog entry %s not found%s; call search_catalog with a keyword "+
-		"for the API you need and pass the entry_id of one of its hits verbatim", pyRepr(entryID), hint))
-}
-
-// pyRepr quotes s the way the HTTP mount's Python repr() does for a printable
-// id: single quotes, unless s contains one and no double quote, with "\"
-// doubled. Keeps the two surfaces' invalid_params text identical for every
-// printable entry_id (repr also escapes non-printable characters such as C1
-// controls, which this doesn't reproduce).
-func pyRepr(s string) string {
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"`
-	}
-	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", `\'`) + "'"
-}
-
-// importAPIError maps the remaining import-specific failures (a 404 is
-// importAPINotFound's): a control-plane 403 on THIS route is a missing
-// catalog:import permission, and the recovery is asking the operator to grant
-// the permission (skill wording), not get_started.
-func (s *mcpServer) importAPIError(ctx context.Context, entryID string, err error) *mcp.CallToolResult {
-	s.logger.Warn("import_api failed", "entry_id", entryID, "error", redactedErr(err))
-	var he *HTTPError
-	if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
-		return s.softError(ctx, &ux.CodedError{
-			Code: ux.CodeBrokerDenied,
-			Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
-			Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
-				"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-				"so the next call mints a token carrying the permission, then retry import_api.",
-		})
+	if errors.As(err, &he) {
+		switch he.StatusCode {
+		case http.StatusNotFound:
+			return s.softErrorNext(ctx, &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  fmt.Sprintf("catalog entry %q not found", apiID),
+				Actionable: "Call search_catalog with a keyword for the API you need and use the " +
+					"api_id from one of its hits.",
+			}, "search_catalog")
+		case http.StatusGone:
+			// The entry is listed but its source has no spec for it: retrying
+			// the same entry cannot help (the HTTP mount's mapping, tools.py).
+			return s.softErrorExtra(ctx, &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The source of catalog entry '%s' no longer has its spec.", apiID)),
+				Actionable: "Pick another search_catalog hit for this API; this entry has no " +
+					"importable spec.",
+			}, "search_catalog", map[string]any{"retryable": false})
+		case http.StatusServiceUnavailable:
+			if catalogProblemType(he) == "catalog_source_unavailable" {
+				wait := retryAfterSeconds(he.RetryAfter)
+				msg := valueOr(problemDetail([]byte(he.Body)), fmt.Sprintf("The catalog source of '%s' is unavailable; retry later.", apiID))
+				return s.softErrorExtra(ctx, &ux.CodedError{
+					Code: ux.CodeTransportError,
+					Msg:  fmt.Sprintf("%s Retry in %d seconds.", msg, wait),
+					Actionable: fmt.Sprintf("Wait %d seconds, then call import_api again with "+
+						"the same api_id.", wait),
+				}, "", map[string]any{"retryable": true, "retry_after_s": wait})
+			}
+		case http.StatusForbidden:
+			return s.softError(ctx, &ux.CodedError{
+				Code: ux.CodeBrokerDenied,
+				Msg:  fmt.Sprintf("importing a cataloged API requires the catalog:import permission: %v", err),
+				Actionable: "Ask your human operator to grant this agent the catalog:import permission " +
+					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
+					"so the next call mints a token carrying the permission, then retry import_api.",
+			})
+		}
 	}
 	return s.transportSoftError(ctx, err, nil)
 }
 
-// maxEntryIDLength mirrors the server's entry_id width: a longer id can't name
-// an entry, so it is rejected before the wire like the other malformed shapes.
-const maxEntryIDLength = 320
+// defaultCatalogRetryAfter is the wait suggested when a 503
+// catalog_source_unavailable carries no usable Retry-After (the server's own
+// default).
+const defaultCatalogRetryAfter = 5
 
-// checkEntryID syntactically guards the {entry_id:path} route: the entry_id is
+// retryAfterSeconds parses a delta-seconds Retry-After into whole seconds
+// (at least 1), falling back to defaultCatalogRetryAfter.
+func retryAfterSeconds(raw string) int {
+	n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+		return defaultCatalogRetryAfter
+	}
+	return max(1, int(math.Ceil(n)))
+}
+
+// catalogProblemType is the registry error slug of a problem body: the last
+// path segment of its "type" member.
+func catalogProblemType(he *HTTPError) string {
+	v, _ := he.Fields()["type"].(string)
+	if i := strings.LastIndex(v, "/"); i >= 0 {
+		v = v[i+1:]
+	}
+	return v
+}
+
+// validateAPIID syntactically guards the {api_id:path} route: the api_id is
 // spliced into the request path VERBATIM (catalog_client.go's rawPathEditor —
 // deliberately unescaped so the "/" between source and id stays literal),
 // which means a traversal-shaped value ("../access-requests", a leading "/",
