@@ -298,9 +298,10 @@ export class CatalogService {
     }
     /**
      * Refresh Catalog
-     * Sync every enabled catalog source now (org:admin).
+     * Sync every enabled catalog source now (catalog:sync).
      *
-     * ``force=true`` overrides the mass-removal guard for this run.
+     * Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
+     * ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
      * @returns CatalogRefreshResponse Successful Response
      * @throws ApiError
      */
@@ -308,7 +309,7 @@ export class CatalogService {
         force = false,
     }: {
         /**
-         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+         * Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
          */
         force?: boolean,
     }): CancelablePromise<CatalogRefreshResponse> {

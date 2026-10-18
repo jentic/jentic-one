@@ -1081,6 +1081,7 @@ components:
             vendor: stripe.com
             version: '2024-04-10'
           catalog_api_id: stripe.com
+          catalog_entry_id: public/stripe.com
           created_at: '2026-01-10T08:00:00Z'
           current_revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
           description: 'Online payments platform: charges, customers, subscriptions and payouts.'
@@ -1178,6 +1179,7 @@ components:
         _links: *id017
         api: *id019
         catalog_api_id: stripe.com
+        catalog_entry_id: public/stripe.com
         created_at: '2026-01-10T08:00:00Z'
         current_revision_id: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         description: 'Online payments platform: charges, customers, subscriptions and payouts.'
@@ -1207,6 +1209,14 @@ components:
           examples:
           - stripe.com
           title: Catalog Api Id
+        catalog_entry_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Catalog entry (`{source_slug}/{external_id}`) the API was imported from: the `entry_id` to pass to the catalog''s `:import`, `:snooze` and `:unsnooze` routes to act on this API. Null for manual imports, and when the caller can''t read the entry''s source.'
+          examples:
+          - public/stripe.com
+          title: Catalog Entry Id
         created_at:
           description: When the API was created (RFC 3339).
           examples:
@@ -19920,12 +19930,13 @@ paths:
     description: '`POST`: Refresh Catalog.'
     post:
       description: |-
-        Sync every enabled catalog source now (org:admin).
+        Sync every enabled catalog source now (catalog:sync).
 
-        ``force=true`` overrides the mass-removal guard for this run.
+        Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
+        ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
       operationId: refreshCatalog
       parameters:
-      - description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+      - description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
         examples:
           example:
             summary: Example query value for `force`
@@ -19935,7 +19946,7 @@ paths:
         required: false
         schema:
           default: false
-          description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+          description: Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
           examples:
           - false
           title: Force

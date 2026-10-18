@@ -111,7 +111,7 @@ _Total endpoints: **170**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's OAuth flows and scopes |
 
-## Operator-facing (typically a human operator / admin) (45)
+## Operator-facing (typically a human operator / admin) (44)
 
 
 ### `actors`
@@ -171,12 +171,6 @@ _Total endpoints: **170**._
 | POST | `/catalog/{entry_id}:snooze` | `events:write` | operator | Snooze Catalog Entry |
 | POST | `/catalog/{entry_id}:unsnooze` | `events:write` | operator | Unsnooze Catalog Entry |
 
-### `catalog:refresh`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/catalog:refresh` | `org:admin` | operator | Refresh Catalog |
-
 ### `monitoring`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
@@ -209,7 +203,7 @@ _Total endpoints: **170**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (78)
+## Any authenticated actor (79)
 
 
 ### `actors`
@@ -257,6 +251,12 @@ _Total endpoints: **170**._
 | DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete an archived API revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive an API revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
+
+### `catalog:refresh`
+
+| Method | Path | Permission(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/catalog:refresh` | `catalog:sync` | any | Refresh Catalog |
 
 ### `connect-sessions`
 

@@ -1763,11 +1763,11 @@ type ApiLinksResponse struct {
 
 // ApiListResponse Cursor-paginated list of APIs.
 //
-// Examples: {"data":[{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type ApiListResponse struct {
 	// Data The page of APIs.
 	//
-	// Examples: [{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}]
+	// Examples: [{"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}]
 	Data []ApiResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -1812,7 +1812,7 @@ type ApiReferenceResponse struct {
 // this deployment. The public catalog of importable-but-not-yet-imported APIs
 // is a separate surface (“GET /catalog“); the two are not blended.
 //
-// Examples: {"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}
+// Examples: {"_links":{"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"},"api":{"host":"api.stripe.com","name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"catalog_api_id":"stripe.com","catalog_entry_id":"public/stripe.com","created_at":"2026-01-10T08:00:00Z","current_revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","description":"Online payments platform: charges, customers, subscriptions and payouts.","display_name":"Stripe","icon_url":"https://stripe.com/favicon.ico","operation_count":412,"origin":"catalog","revision_count":2,"security_schemes":["http"],"source_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-04-10/openapi.json","update_available":false,"updated_at":"2026-01-15T09:30:00Z"}
 type ApiResponse struct {
 	// UnderscoreLinks Hypermedia links for a (local) API resource.
 	//
@@ -1828,6 +1828,11 @@ type ApiResponse struct {
 	//
 	// Examples: stripe.com
 	CatalogApiId *string `json:"catalog_api_id"`
+
+	// CatalogEntryId Catalog entry (`{source_slug}/{external_id}`) the API was imported from: the `entry_id` to pass to the catalog's `:import`, `:snooze` and `:unsnooze` routes to act on this API. Null for manual imports, and when the caller can't read the entry's source.
+	//
+	// Examples: public/stripe.com
+	CatalogEntryId *string `json:"catalog_entry_id,omitempty"`
 
 	// CreatedAt When the API was created (RFC 3339).
 	//
@@ -7923,7 +7928,7 @@ type SnoozeCatalogEntryJSONBody = CatalogSnoozeRequest
 
 // RefreshCatalogParams defines parameters for RefreshCatalog.
 type RefreshCatalogParams struct {
-	// Force Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows.
+	// Force Apply each source's sync even when it would remove more entries than the source's mass-removal guard allows (`org:admin`).
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
@@ -10734,9 +10739,10 @@ type ClientInterface interface {
 
 	// RefreshCatalog Refresh Catalog
 	//
-	// Sync every enabled catalog source now (org:admin).
+	// Sync every enabled catalog source now (catalog:sync).
 	//
-	// ``force=true`` overrides the mass-removal guard for this run.
+	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
+	// ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
 	//
 	// Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 	RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14413,9 +14419,10 @@ func (c *Client) UnsnoozeCatalogEntry(ctx context.Context, entryId string, reqEd
 
 // RefreshCatalog Refresh Catalog
 //
-// Sync every enabled catalog source now (org:admin).
+// Sync every enabled catalog source now (catalog:sync).
 //
-// “force=true“ overrides the mass-removal guard for this run.
+// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“.
+// “force=true“ (“org:admin“) overrides the mass-removal guard for this run.
 //
 // Corresponds with POST /catalog:refresh (the `RefreshCatalog` operationId).
 func (c *Client) RefreshCatalog(ctx context.Context, params *RefreshCatalogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -27264,9 +27271,10 @@ type ClientWithResponsesInterface interface {
 
 	// RefreshCatalogWithResponse Refresh Catalog
 	//
-	// Sync every enabled catalog source now (org:admin).
+	// Sync every enabled catalog source now (catalog:sync).
 	//
-	// ``force=true`` overrides the mass-removal guard for this run.
+	// Each source's listing fetch is bounded by ``ingest.fetch_timeout_s``.
+	// ``force=true`` (``org:admin``) overrides the mass-removal guard for this run.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -45559,9 +45567,10 @@ func (c *ClientWithResponses) UnsnoozeCatalogEntryWithResponse(ctx context.Conte
 
 // RefreshCatalogWithResponse Refresh Catalog
 //
-// Sync every enabled catalog source now (org:admin).
+// Sync every enabled catalog source now (catalog:sync).
 //
-// “force=true“ overrides the mass-removal guard for this run.
+// Each source's listing fetch is bounded by “ingest.fetch_timeout_s“.
+// “force=true“ (“org:admin“) overrides the mass-removal guard for this run.
 //
 // Returns a wrapper object for the known response body format(s).
 //

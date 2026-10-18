@@ -1604,47 +1604,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
+      "group": "Any authenticated actor",
       "implied_permissions": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "catalog:org:read",
-          "catalog:restricted:read",
-          "catalog:sync",
-          "config:read",
-          "config:write",
-          "credentials:connect",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "oauth-clients:read",
-          "oauth-clients:write",
-          "overlays:confirm",
-          "users:read",
-          "users:write"
-        ]
+        "catalog:sync": []
       },
       "method": "POST",
       "operation_id": "refreshCatalog",
       "path": "/catalog:refresh",
       "public": false,
       "required_permissions": [
-        "org:admin"
+        "catalog:sync"
       ],
       "summary": "Refresh Catalog",
       "surface": "catalog:refresh",
-      "typical_caller": "operator"
+      "typical_caller": "any"
     },
     {
       "actor_types": [
