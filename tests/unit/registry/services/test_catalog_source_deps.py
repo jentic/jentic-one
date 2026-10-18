@@ -27,6 +27,7 @@ from jentic_one.registry.services.catalog.fetch import (
     parse_retry_after,
 )
 from jentic_one.registry.services.catalog.sources import deps as deps_module
+from jentic_one.registry.services.catalog.sources import metrics as source_metrics
 from jentic_one.registry.services.catalog.sources.deps import (
     GuardedSourceHttpClient,
     build_source_deps,
@@ -128,6 +129,135 @@ async def test_redirect_to_a_url_with_userinfo_is_refused(location: str) -> None
     assert "carries credentials" in str(exc.value)
     assert "chosen" not in str(exc.value)
     assert len(seen) == 1  # the hop with userinfo is never sent
+
+
+def _recorder() -> tuple[list[httpx.Request], Callable[[httpx.Request], httpx.Response]]:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/moved":
+            return httpx.Response(302, headers={"location": "HTTPS://specs.example.com/x.json"})
+        if request.url.path == "/away":
+            return httpx.Response(302, headers={"location": "HTTPS://cdn.example.org/x.json"})
+        return httpx.Response(200, content=b"{}")
+
+    return seen, handler
+
+
+@pytest.mark.parametrize(
+    ("url", "authorization"),
+    [
+        ("HTTPS://specs.example.com/openapi.json", "Bearer source-token"),
+        ("Https://specs.example.com/openapi.json", "Bearer source-token"),
+        # The credential origin is https; the same host over http gets nothing.
+        ("HTTP://specs.example.com/openapi.json", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_upper_case_scheme_goes_to_the_named_host(
+    url: str, authorization: str | None
+) -> None:
+    """``HTTPS://host`` is fetched from ``host``; the credential follows the URL sent."""
+    seen, handler = _recorder()
+    await _http(handler).get_bytes(url)
+    (request,) = seen
+    assert request.url.host == "specs.example.com"
+    assert request.headers.get("authorization") == authorization
+
+
+@pytest.mark.asyncio
+async def test_credential_is_decided_per_hop_on_the_url_sent() -> None:
+    """An upper-case-scheme redirect keeps the credential on its origin and off any other."""
+    seen, handler = _recorder()
+    http = _http(handler)
+    await http.get_bytes("https://specs.example.com/moved")
+    await http.get_bytes("https://specs.example.com/away")
+    sent = [(r.url.host, r.headers.get("authorization")) for r in seen]
+    assert sent == [
+        ("specs.example.com", "Bearer source-token"),
+        ("specs.example.com", "Bearer source-token"),
+        ("specs.example.com", "Bearer source-token"),
+        ("cdn.example.org", None),
+    ]
+    assert all(r.url.host not in ("https", "http") for r in seen)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "u:chosen@specs.example.com/openapi.json",  # pragma: allowlist secret
+        "chosen@specs.example.com/openapi.json",
+    ],
+)
+@pytest.mark.asyncio
+async def test_scheme_less_url_with_userinfo_is_refused(url: str) -> None:
+    """The guard adds ``https://``; the userinfo it then exposes is refused, not sent."""
+    seen, handler = _recorder()
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(url)
+    assert "carries credentials" in str(exc.value)
+    assert "chosen" not in str(exc.value)
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "u:chosen@cdn.example.org/x.json",  # pragma: allowlist secret
+        "HTTPS://u:chosen@cdn.example.org/x.json",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_to_userinfo_in_any_scheme_spelling_is_refused(location: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"location": location})
+
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(_URL)
+    assert "chosen" not in str(exc.value)
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    ("location", "fetched"),
+    [
+        ("http://[::1/x", False),  # httpx cannot build a URL from it
+        ("https://cdn.example.org:abc/x", False),
+        ("https://cdn.example.org:+443/x", True),  # httpx reads it as port 443
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_location_is_parsed_by_httpx(
+    location: str, fetched: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``Location`` httpx refuses is a recorded ``SourceUnavailableError``, never a bare
+    error; one it accepts goes where httpx sends it, without the credential."""
+    outcomes: list[str] = []
+    monkeypatch.setattr(
+        source_metrics, "record_fetch", lambda _slug, outcome: outcomes.append(outcome)
+    )
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "specs.example.com":
+            return httpx.Response(302, headers={"location": location})
+        return httpx.Response(200, content=b"{}")
+
+    if fetched:
+        await _http(handler).get_bytes(_URL)
+        assert outcomes == [source_metrics.FETCH_BODY]
+        assert (seen[-1].url.host, seen[-1].url.port) == ("cdn.example.org", None)
+        assert "authorization" not in seen[-1].headers
+    else:
+        with pytest.raises(SourceUnavailableError, match=r"(?i)invalid url"):
+            await _http(handler).get_bytes(_URL)
+        assert outcomes == [source_metrics.FETCH_TRANSIENT]
+        assert len(seen) == 1
 
 
 @pytest.mark.asyncio

@@ -8,11 +8,12 @@ wraps the catalog's SSRF-guarded fetch helpers (``catalog/fetch.py``) with:
   transport, closed when the context shuts down;
 - the source's egress widening (``catalog.sources[].egress``) on top of
   ``ingest.egress``, for this source's client only;
-- the source's auth headers, sent only when the request URL's origin is one the
-  source's configuration names (``origins.credential_origins``: the kind's own
-  configured URLs plus ``auth.origins``), never across a redirect to another
-  host, and only when the connector asks for them. A URL a listing returns
-  earns no credential, whatever the kind;
+- the source's auth headers, sent on a request (or redirect hop) only when the
+  origin of the URL actually sent is one the source's configuration names
+  (``origins.credential_origins``: the kind's own configured URLs plus
+  ``auth.origins``), and only when the connector asks for them. A redirect to
+  any other host carries none, and a URL a listing returns earns no
+  credential, whatever the kind;
 - ``CATALOG_USER_AGENT``;
 - the source's fetch limits (``limits.py``): every request holds a slot on its
   lane, and a ``429`` blocks the source for its ``Retry-After``.
@@ -38,6 +39,7 @@ import httpx
 from jentic_one.registry.services.catalog.fetch import (
     CATALOG_USER_AGENT,
     CatalogFetchError,
+    OriginCredentials,
     fetch_bytes_conditional,
     fetch_json,
 )
@@ -54,11 +56,7 @@ from jentic_one.registry.services.catalog.sources.limits import (
     ProcessSourceLimits,
     RateBucket,
 )
-from jentic_one.registry.services.catalog.sources.origins import (
-    Origin,
-    credential_origins,
-    url_origin,
-)
+from jentic_one.registry.services.catalog.sources.origins import Origin, credential_origins
 from jentic_one.registry.services.catalog.sources.protocol import (
     NotModified,
     SourceUnavailableError,
@@ -189,24 +187,27 @@ class GuardedSourceHttpClient:
             retry_after = await self._limits.block(retry_after)
         return SourceUnavailableError(str(exc), retry_after_s=retry_after)
 
-    async def _headers(self, url: str, authenticate: bool) -> dict[str, str]:
-        """The auth headers for ``url``: none unless its origin is a configured one."""
-        if not authenticate or url_origin(url) not in self._credential_origins:
-            return {}
-        return dict(await self._auth.headers())
+    def _credentials(self, authenticate: bool) -> OriginCredentials | None:
+        """The source's credentials, for the fetch helper to attach per hop.
+
+        The helper decides on each URL it actually sends (after the egress
+        guard has normalised it), so a header goes only to a configured origin.
+        """
+        if not authenticate or not self._credential_origins:
+            return None
+        return OriginCredentials(origins=self._credential_origins, headers=self._auth.headers)
 
     async def get_json(
         self, url: str, *, lane: FetchLane = "background", authenticate: bool = True
     ) -> dict[str, Any]:
         async with self._limits.slot(lane):
-            headers = await self._headers(url, authenticate)
             try:
                 doc = await fetch_json(
                     url,
                     config=self._ingest,
                     client=self._client(),
                     user_agent=self._user_agent,
-                    headers=headers,
+                    credentials=self._credentials(authenticate),
                 )
             except CatalogFetchError as exc:
                 raise await self._failed(exc) from exc
@@ -222,7 +223,6 @@ class GuardedSourceHttpClient:
         authenticate: bool = True,
     ) -> SpecFetch:
         async with self._limits.slot(lane or spec_fetch_lane.get()):
-            headers = await self._headers(url, authenticate)
             try:
                 result = await fetch_bytes_conditional(
                     url,
@@ -230,7 +230,7 @@ class GuardedSourceHttpClient:
                     etag=validator,
                     client=self._client(),
                     user_agent=self._user_agent,
-                    headers=headers,
+                    credentials=self._credentials(authenticate),
                 )
             except CatalogFetchError as exc:
                 raise await self._failed(exc) from exc
