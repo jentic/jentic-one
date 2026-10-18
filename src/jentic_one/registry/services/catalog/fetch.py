@@ -105,6 +105,21 @@ def parse_retry_after(value: str | None, *, now: datetime | None = None) -> floa
     return min(max(seconds, 0.0), MAX_RETRY_AFTER_SECONDS)
 
 
+def has_userinfo(url: str) -> bool:
+    """Whether ``url`` carries a ``user[:password]@`` part, by either URL parser.
+
+    httpx turns userinfo into its own ``Authorization: Basic`` header, so a URL
+    carrying it is never sent: whoever wrote the URL would choose that header.
+    """
+    parts = urlsplit(url)
+    if parts.username is not None or parts.password is not None:
+        return True
+    try:
+        return bool(httpx.URL(url).userinfo)
+    except httpx.InvalidURL:
+        return False
+
+
 def _origin(url: str) -> tuple[str, str, int | None]:
     parts = urlsplit(url)
     return parts.scheme.lower(), (parts.hostname or "").lower(), parts.port
@@ -137,6 +152,17 @@ async def _send_capped(
         await response.aclose()
 
 
+async def _validated(url: str, config: IngestConfig) -> str:
+    """``url`` once it passes the egress guard and carries no userinfo."""
+    try:
+        if has_userinfo(url):
+            # Never echo the URL: it carries a secret.
+            raise CatalogFetchError("unsafe URL rejected: URL carries credentials (user:pass@)")
+        return await validate_upstream_url_async(url, config.egress)
+    except ValueError as exc:
+        raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
+
+
 async def _get(
     url: str,
     *,
@@ -150,12 +176,10 @@ async def _get(
 
     ``conditional`` headers (``If-None-Match``) go on every hop; ``headers``
     (a source's credentials) only to the origin of ``url``, so a redirect to
-    another host never carries them.
+    another host never carries them. A hop whose URL carries userinfo is
+    refused (see :func:`has_userinfo`).
     """
-    try:
-        validated_url = await validate_upstream_url_async(url, config.egress)
-    except ValueError as exc:
-        raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
+    validated_url = await _validated(url, config)
     first_origin = _origin(validated_url)
 
     def _headers_for(target: str) -> dict[str, str]:
@@ -173,10 +197,7 @@ async def _get(
             location = resp.headers.get("location")
             if not location:
                 return resp, body
-            try:
-                target = await validate_upstream_url_async(urljoin(target, location), config.egress)
-            except ValueError as exc:
-                raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
+            target = await _validated(urljoin(target, location), config)
             resp, body = await _send_capped(
                 http, target, _headers_for(target), config.max_spec_bytes
             )

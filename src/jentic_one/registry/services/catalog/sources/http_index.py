@@ -14,11 +14,12 @@ Listings are always full (no delta listing); spec fetches are conditional on the
 last ``ETag``. The source's credentials go only to origins its configuration
 names (the index URL's, or each configured spec URL's, plus ``auth.origins``): a
 spec URL an index lists on any other host is fetched without them. A spec URL
-carrying userinfo (``user:pass@``) is never listed or fetched: the HTTP client
-would turn it into its own ``Authorization`` header, letting the index choose
-it. An index listing more than ``max_entries`` entries (default
-``DEFAULT_HTTP_INDEX_ENTRIES``, at most ``MAX_HTTP_INDEX_ENTRIES``) fails the sync
-run with ``listing_too_large``, so the stored entries stay as they were.
+carrying userinfo (``user:pass@``) is never listed or fetched, and a redirect
+to one is refused: the HTTP client would turn it into its own ``Authorization``
+header, letting the index or the redirecting host choose it. An index listing
+more than ``max_entries`` entries (default ``DEFAULT_HTTP_INDEX_ENTRIES``, at most
+``MAX_HTTP_INDEX_ENTRIES``) fails the sync run with ``listing_too_large``, so the
+stored entries stay as they were.
 """
 
 from __future__ import annotations
@@ -26,11 +27,12 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from jentic_one.registry.services.catalog.fetch import has_userinfo
 from jentic_one.registry.services.catalog.sources.deps import SourceDeps
 from jentic_one.registry.services.catalog.sources.origins import url_origin
 from jentic_one.registry.services.catalog.sources.protocol import (
@@ -59,12 +61,6 @@ _SPEC_PROPERTY_TYPES = frozenset({"openapi", "swagger", "x-openapi", "x-openapi-
 DEFAULT_HTTP_INDEX_ENTRIES = 10_000
 #: The highest ``max_entries`` a source may set.
 MAX_HTTP_INDEX_ENTRIES = 100_000
-
-
-def has_userinfo(url: str) -> bool:
-    """Whether ``url`` carries a ``user[:password]@`` part."""
-    parts = urlsplit(url)
-    return parts.username is not None or parts.password is not None
 
 
 def _no_userinfo(url: HttpUrl | None, field: str) -> HttpUrl | None:

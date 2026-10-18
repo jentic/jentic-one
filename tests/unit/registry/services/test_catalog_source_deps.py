@@ -106,6 +106,30 @@ async def test_sends_user_agent_and_auth_to_the_origin_only() -> None:
     assert "authorization" not in second.headers  # a redirect off-origin drops the credential
 
 
+@pytest.mark.parametrize(
+    "location",
+    [
+        # Same origin, another origin, scheme-relative.
+        "https://attacker:chosen@specs.example.com/x.json",  # pragma: allowlist secret
+        "https://attacker@cdn.example.org/x.json",
+        "//attacker:chosen@specs.example.com/x.json",  # pragma: allowlist secret
+    ],
+)
+@pytest.mark.asyncio
+async def test_redirect_to_a_url_with_userinfo_is_refused(location: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"location": location})
+
+    with pytest.raises(SourceUnavailableError) as exc:
+        await _http(handler).get_bytes(_URL)
+    assert "carries credentials" in str(exc.value)
+    assert "chosen" not in str(exc.value)
+    assert len(seen) == 1  # the hop with userinfo is never sent
+
+
 @pytest.mark.asyncio
 async def test_body_maps_to_spec_body_with_digest_and_validator() -> None:
     body = b'{"openapi": "3.1.0"}'
