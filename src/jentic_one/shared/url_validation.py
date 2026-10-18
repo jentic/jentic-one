@@ -93,9 +93,53 @@ _METADATA_IPS = frozenset(
 )
 
 
+_IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
+
+
+def unwrap_ipv4_mapped_network(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """``::ffff:a.b.c.d/N`` (N >= 96) as the IPv4 network it maps; anything else as is.
+
+    Connections are matched on the unwrapped IPv4, so a mapped subnet only means
+    what the operator wrote once it is unwrapped.
+    """
+    if isinstance(network, ipaddress.IPv6Network) and network.subnet_of(_IPV4_MAPPED):
+        base = ipaddress.IPv4Address(int(network.network_address) & 0xFFFFFFFF)
+        return ipaddress.IPv4Network(f"{base}/{network.prefixlen - 96}")
+    return network
+
+
+def _embedded_forms(ip: ipaddress.IPv4Address) -> list[ipaddress.IPv6Network]:
+    """The IPv6 networks whose addresses land on ``ip`` (see :func:`embedded_ipv4`)."""
+    low = int(ip)
+    return [
+        ipaddress.IPv6Network((int(_IPV4_MAPPED.network_address) | low, 128)),
+        *(
+            ipaddress.IPv6Network((int(n.network_address) | low, 128))
+            for n in _LOW32_EMBEDDING_NETWORKS
+        ),
+        ipaddress.IPv6Network(((0x2002 << 112) | (low << 80), 48)),  # 6to4
+    ]
+
+
 def network_covers_metadata(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
-    """Whether ``network`` contains a cloud-metadata or platform-credential address."""
-    return any(ip.version == network.version and ip in network for ip in _METADATA_IPS)
+    """Whether ``network`` contains a cloud-metadata or platform-credential address.
+
+    Also true for an IPv6 network holding an IPv4-mapped (or other embedded)
+    form of one, e.g. ``::ffff:169.254.169.254/128`` or ``::ffff:0:0/96``.
+    """
+    network = unwrap_ipv4_mapped_network(network)
+    for ip in _METADATA_IPS:
+        if ip.version == network.version and ip in network:
+            return True
+        if (
+            isinstance(ip, ipaddress.IPv4Address)
+            and isinstance(network, ipaddress.IPv6Network)
+            and any(network.overlaps(form) for form in _embedded_forms(ip))
+        ):
+            return True
+    return False
 
 
 def is_metadata_host(host: str) -> bool:

@@ -51,6 +51,7 @@ from jentic_one.shared.url_validation import (
     METADATA_HOSTNAMES,
     is_metadata_host,
     network_covers_metadata,
+    unwrap_ipv4_mapped_network,
 )
 
 _logger = structlog.get_logger(__name__)
@@ -2185,6 +2186,13 @@ class SourceEgressConfig(BaseModel):
     Added to ``ingest.egress`` for this source's requests only; no other source
     and no other outbound client gets it. A range or domain that would reach a
     cloud-metadata endpoint is refused at load.
+
+    The widening covers every URL the source fetches, including spec URLs its
+    upstream index lists (an internal index usually lists specs on sibling
+    internal hosts). Whoever controls the index can therefore point it anywhere
+    in these ranges, so keep the CIDRs narrow and name the hosts with
+    ``allowed_internal_domains``: an IP-literal URL needs only the CIDR. The
+    source's credentials stay on its configured origins regardless.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -2193,15 +2201,20 @@ class SourceEgressConfig(BaseModel):
         default_factory=list,
         description=(
             "Private CIDRs this source may reach (a resolved name must also match "
-            "allowed_internal_domains). A range containing a cloud-metadata address "
-            "(e.g. 169.254.169.254) is refused."
+            "allowed_internal_domains; an IP-literal URL needs only the CIDR). It "
+            "applies to every URL the source fetches, spec URLs its index lists "
+            "included, so keep it narrow. A range containing a cloud-metadata "
+            "address (e.g. 169.254.169.254, or ::ffff:169.254.169.254) is refused; "
+            "an IPv4-mapped IPv6 range (::ffff:10.0.0.0/104) is read as its IPv4 range."
         ),
     )
     allowed_internal_domains: list[str] = Field(
         default_factory=list,
         description=(
-            "Domain suffixes whose private addresses this source may reach. A "
-            "cloud-metadata host, or a suffix covering one, is refused."
+            "Domain suffixes whose private addresses this source may reach "
+            "(recommended alongside allowed_private_subnets, to name the hosts an "
+            "index may list). A cloud-metadata host, or a suffix covering one, is "
+            "refused."
         ),
     )
 
@@ -2209,7 +2222,10 @@ class SourceEgressConfig(BaseModel):
     @classmethod
     def _parse_subnets(cls, value: Any) -> Any:
         if isinstance(value, list):
-            return [ipaddress.ip_network(str(v), strict=False) for v in value]
+            return [
+                unwrap_ipv4_mapped_network(ipaddress.ip_network(str(v), strict=False))
+                for v in value
+            ]
         return value
 
     @field_validator("allowed_private_subnets")

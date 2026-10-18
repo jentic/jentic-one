@@ -194,6 +194,32 @@ def test_source_egress_rejects_cloud_metadata_at_load() -> None:
         _cfg(sources=[src])
 
 
+@pytest.mark.parametrize(
+    "subnet",
+    [
+        "::ffff:169.254.169.254/128",
+        "::ffff:0:0/96",
+        "::ffff:169.254.0.0/112",
+        "64:ff9b::a9fe:a9fe/128",  # NAT64 form of 169.254.169.254
+        "2002:a9fe:a9fe::/48",  # 6to4 form of 169.254.169.254
+        "::/0",
+    ],
+)
+def test_source_egress_rejects_embedded_ipv4_metadata(subnet: str) -> None:
+    src = {**_with_auth({"type": "none"}), "egress": {"allowed_private_subnets": [subnet]}}
+    with pytest.raises(ValidationError, match="cloud-metadata"):
+        _cfg(sources=[src])
+
+
+def test_source_egress_unwraps_ipv4_mapped_subnets() -> None:
+    src = {
+        **_with_auth({"type": "none"}),
+        "egress": {"allowed_private_subnets": ["::ffff:10.20.0.0/112", "fd00:1::/64"]},
+    }
+    egress = _cfg(sources=[src]).sources[0].egress
+    assert [str(n) for n in egress.allowed_private_subnets] == ["10.20.0.0/16", "fd00:1::/64"]
+
+
 def test_registered_credentialed_auth_type_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
