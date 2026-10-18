@@ -701,6 +701,43 @@ async def test_an_uncounted_listing_timeout_leaves_backoff_alone_and_flags_the_s
         assert (await _source(ctx, "public")).consecutive_failures == 1
 
 
+async def test_an_uncounted_timeout_never_flags_a_source_already_in_backoff(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refresh must not bypass the scanner's backoff for a failing source."""
+    sources = [git_source("public", trust="curated"), git_source("corp")]
+    async with catalog_ctx(sources=sources) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        streams = {
+            "public": ScriptedStream([Upserted(entry("a.io"))], gate=asyncio.Event()),
+            "corp": ScriptedStream([Upserted(entry("b.io"))], gate=asyncio.Event()),
+        }
+        monkeypatch.setattr(
+            CatalogSourceSync,
+            "build_source",
+            lambda self, cfg: _scripted_source(streams[cfg.slug])(self, cfg),
+        )
+        # Counted timeouts put both sources into backoff.
+        await sync.sync_all(listing_timeout_s=0.05)
+        for slug in ("public", "corp"):
+            assert (await _source(ctx, slug)).consecutive_failures == 1
+
+        # A refresh: one uncounted timeout, one deadline skip.
+        outcomes = await asyncio.wait_for(
+            sync.sync_all(listing_timeout_s=30, deadline_s=0.05, count_timeouts=False), timeout=5
+        )
+        assert [(o.slug, o.status, o.error_code) for o in outcomes] == [
+            ("public", "failed", "listing_timeout"),
+            ("corp", "skipped", "deadline"),
+        ]
+        for slug in ("public", "corp"):
+            row = await _source(ctx, slug)
+            assert row.consecutive_failures == 1
+            assert row.sync_wanted_at is None
+            assert row.sync_lease_owner is None
+
+
 async def test_sync_all_deadline_skips_the_sources_it_never_reached(
     catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

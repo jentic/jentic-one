@@ -363,7 +363,8 @@ class CatalogSourceSync:
         fails its own run instead of stalling the rest. ``deadline_s`` bounds the
         listings of the whole pass: each listing gets at most what is left of it,
         and a source reached after it has passed is ``skipped`` and flagged
-        ``sync_wanted`` for the scanner. Staging writes and the apply of a source
+        ``sync_wanted`` for the scanner (unless it already has failures, so its
+        backoff holds). Staging writes and the apply of a source
         already listed are not cut short. ``count_timeouts`` is passed to
         :meth:`sync_source`.
         """
@@ -391,7 +392,7 @@ class CatalogSourceSync:
             )
         if skipped:
             async with self._ctx.registry_db.transaction() as session:
-                await CatalogSourceRepository.mark_sync_wanted(session, skipped)
+                await CatalogSourceRepository.mark_sync_wanted(session, skipped, healthy_only=True)
         return outcomes
 
     async def sync_source(
@@ -601,7 +602,8 @@ class CatalogSourceSync:
         The source's failure count (and so the scanner's backoff) only moves when
         this run still held the lease; a run that lost it leaves the source to
         the run that holds it now. With ``count_failure=False`` the source is
-        flagged ``sync_wanted`` instead.
+        flagged ``sync_wanted`` instead, unless it already has failures: that
+        source stays on the scanner's backoff.
         """
         async with self._ctx.registry_db.transaction() as session:
             await CatalogSyncRunRepository.delete_staged(session, run_id)
@@ -615,7 +617,7 @@ class CatalogSourceSync:
             )
             released = await CatalogSourceRepository.release_lease(session, slug=slug, owner=run_id)
             if released and not count_failure:
-                await CatalogSourceRepository.mark_sync_wanted(session, [slug])
+                await CatalogSourceRepository.mark_sync_wanted(session, [slug], healthy_only=True)
             elif released:
                 source_status = (
                     SOURCE_STATUS_SUSPECT_EMPTY
