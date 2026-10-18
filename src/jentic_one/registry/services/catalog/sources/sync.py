@@ -643,7 +643,8 @@ class CatalogSourceSync:
         """Count imported APIs from ``slug`` that hold a curated-owned id they are not mapped to.
 
         Such an API keeps its ``catalog_api_id`` (re-keying it would orphan its
-        credentials), so each one is logged and counted, once per API row.
+        credentials), so each one is logged, and the source's conflict gauge is
+        set to the count.
         """
         prefix = f"{slug}/"
         conflicts = 0
@@ -665,8 +666,7 @@ class CatalogSourceSync:
                 api_name=name,
                 api_version=version,
             )
-        if conflicts:
-            metrics.record_ownership_conflicts(slug, conflicts)
+        metrics.record_ownership_conflicts(slug, conflicts)
         return conflicts
 
     async def reresolve_source(self, slug: str) -> int:
@@ -712,10 +712,34 @@ class CatalogSourceSync:
             logger.info("catalog_source_reresolved", source=slug, changed=changed)
         return changed
 
-    async def sweep_abandoned_staging(self, *, older_than: datetime) -> int:
-        """Delete staged rows left by runs that crashed before their apply."""
+    async def sweep_abandoned_staging(
+        self, *, older_than: datetime, runs_finished_before: datetime | None = None
+    ) -> int:
+        """Clean up after runs whose process died before finishing them.
+
+        Deletes their staged rows and marks their ``running`` rows ``failed``
+        (``abandoned``); a run still holding its source's lease is left alone
+        however old it is. With ``runs_finished_before`` it also prunes sync
+        history older than that. Returns the number of staged rows deleted.
+        """
         async with self._ctx.registry_db.transaction() as session:
-            return await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
+            swept = await CatalogSyncRunRepository.sweep_staged(session, older_than=older_than)
+            closed = await CatalogSyncRunRepository.close_abandoned(
+                session, older_than=older_than, now=utcnow()
+            )
+            pruned = 0
+            if runs_finished_before is not None:
+                pruned = await CatalogSyncRunRepository.prune_finished(
+                    session, finished_before=runs_finished_before
+                )
+        if swept or closed or pruned:
+            logger.info(
+                "catalog_source_runs_swept",
+                staged_deleted=swept,
+                runs_abandoned=closed,
+                runs_pruned=pruned,
+            )
+        return swept
 
 
 def is_due(cfg: CatalogSourceConfig, row: CatalogSourceRow, *, now: datetime) -> bool:

@@ -14,8 +14,16 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.catalog_entries import CatalogEntryRow
+from jentic_one.registry.core.schema.catalog_sources import CatalogSourceRow
 from jentic_one.registry.core.schema.catalog_staged_entries import CatalogStagedEntry
-from jentic_one.registry.core.schema.catalog_sync_runs import CatalogSyncRun
+from jentic_one.registry.core.schema.catalog_sync_runs import (
+    RUN_STATUS_FAILED,
+    RUN_STATUS_RUNNING,
+    CatalogSyncRun,
+)
+
+#: ``error_code`` of a run closed because its process died before finishing it.
+ERROR_ABANDONED = "abandoned"
 
 
 class CatalogEntryRepository:
@@ -146,8 +154,62 @@ class CatalogSyncRunRepository:
 
     @staticmethod
     async def sweep_staged(session: AsyncSession, *, older_than: datetime) -> int:
-        """Delete staged rows of runs that never applied (abandoned staging)."""
+        """Delete staged rows older than ``older_than`` whose run no longer holds a lease.
+
+        A run that still owns its source's lease (expired or not) can still apply,
+        and a full listing's apply treats every unstaged live row as removed, so
+        its staged rows are never touched however long it has been staging.
+        """
         result = await session.execute(
-            delete(CatalogStagedEntry).where(CatalogStagedEntry.created_at < older_than)
+            delete(CatalogStagedEntry).where(
+                CatalogStagedEntry.created_at < older_than,
+                CatalogStagedEntry.sync_run_id.not_in(_lease_owners()),
+            )
         )
         return int(getattr(result, "rowcount", 0) or 0)
+
+    @staticmethod
+    async def close_abandoned(session: AsyncSession, *, older_than: datetime, now: datetime) -> int:
+        """End ``running`` runs that started before ``older_than`` and hold no lease.
+
+        A live run owns its source's lease from before its row is created until
+        the transaction that finishes it, so a ``running`` row without the lease
+        belongs to a process that died mid-run.
+        """
+        result = await session.execute(
+            update(CatalogSyncRun)
+            .where(
+                CatalogSyncRun.status == RUN_STATUS_RUNNING,
+                CatalogSyncRun.started_at < older_than,
+                CatalogSyncRun.id.not_in(_lease_owners()),
+            )
+            .values(status=RUN_STATUS_FAILED, error_code=ERROR_ABANDONED, finished_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    @staticmethod
+    async def prune_finished(session: AsyncSession, *, finished_before: datetime) -> int:
+        """Delete finished runs older than ``finished_before``.
+
+        A source's last applied run is kept: the apply compares a new run's start
+        time against it to drop superseded runs.
+        """
+        last_applied = select(CatalogSourceRow.last_applied_run_id).where(
+            CatalogSourceRow.last_applied_run_id.is_not(None)
+        )
+        result = await session.execute(
+            delete(CatalogSyncRun).where(
+                CatalogSyncRun.finished_at.is_not(None),
+                CatalogSyncRun.finished_at < finished_before,
+                CatalogSyncRun.id.not_in(last_applied),
+            )
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+
+def _lease_owners() -> Any:
+    """The run ids currently holding a source's sync lease."""
+    return select(CatalogSourceRow.sync_lease_owner).where(
+        CatalogSourceRow.sync_lease_owner.is_not(None)
+    )

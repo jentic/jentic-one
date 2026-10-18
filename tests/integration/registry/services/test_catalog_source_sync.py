@@ -25,12 +25,14 @@ from jentic_one.registry.repos.catalog_entry_repo import (
     CatalogSyncRunRepository,
 )
 from jentic_one.registry.repos.catalog_source_repo import CatalogSourceRepository
+from jentic_one.registry.services.catalog import service as service_module
 from jentic_one.registry.services.catalog.entries import (
     CatalogApiIdMapping,
     build_catalog_entry,
     curated_vendors_of,
     exclude_unowned,
 )
+from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import CatalogSourceSyncScanner
@@ -561,6 +563,124 @@ async def test_max_age_zero_source_is_never_flagged(catalog_ctx: CtxFactory) -> 
         await sync.register_sources()
         assert await sync.mark_stale_wanted() == 0
         assert await CatalogSourceSyncScanner(ctx).tick() == []
+
+
+async def test_refresh_without_a_legacy_source_fetches_no_manifest(
+    catalog_ctx: CtxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping the legacy source stops the snapshot's manifest egress; an
+    operator refresh still syncs the remaining sources."""
+
+    async def _no_egress(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the snapshot refresh fetched a manifest")
+
+    monkeypatch.setattr(service_module, "fetch_json", _no_egress)
+    monkeypatch.setattr(CatalogSourceSync, "build_source", _scripted_source(full("a.io")))
+    async with catalog_ctx(sources=[git_source("corp")]) as ctx:
+        svc = CatalogService(ctx)
+        assert not svc._is_stale(None)
+        assert (await svc.refresh(sync_sources=True)).count == 0
+        assert set(await _rows(ctx, "corp")) == {"a.io"}
+
+
+# ── abandoned runs and sync history ───────────────────────────────────────────
+
+
+class _SweepOnSummary(ScriptedStream):
+    """Ages this run's staging past the sweep cutoff and sweeps, before the apply."""
+
+    def __init__(self, sync: CatalogSourceSync, changes: list[Any]) -> None:
+        super().__init__(changes)
+        self._sync = sync
+
+    async def summary(self) -> Any:
+        ctx = self._sync.ctx
+        long_ago = utcnow() - timedelta(hours=3)
+        async with ctx.registry_db.transaction() as session:
+            await session.execute(update(CatalogStagedEntry).values(created_at=long_ago))
+            await session.execute(
+                update(CatalogSyncRun)
+                .where(CatalogSyncRun.status == "running")
+                .values(started_at=long_ago)
+            )
+        await self._sync.sweep_abandoned_staging(older_than=utcnow() - timedelta(hours=1))
+        return await super().summary()
+
+
+async def test_sweep_spares_a_long_running_run_that_holds_its_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    """A run staging for longer than the cutoff keeps its rows, so its full apply
+    never tombstones entries the sweep took away."""
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        await sync.sync_source("public", stream=full("a.io", "b.io", "c.io"))
+        stream = _SweepOnSummary(sync, [Upserted(entry(e)) for e in ("a.io", "b.io", "c.io")])
+        outcome = await sync.sync_source("public", stream=stream)
+        assert (outcome.status, outcome.upserted, outcome.removed) == ("applied", 3, 0)
+        assert set(await _rows(ctx, "public")) == {"a.io", "b.io", "c.io"}
+        async with ctx.registry_db.session() as session:
+            run = await session.get(CatalogSyncRun, outcome.run_id)
+        assert run is not None and (run.status, run.error_code) == ("applied", None)
+
+
+async def test_sweep_closes_a_dead_run_and_drops_its_staging(catalog_ctx: CtxFactory) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        dead, recent = generate_ksuid("csyn"), generate_ksuid("csyn")
+        long_ago = utcnow() - timedelta(hours=3)
+        async with ctx.registry_db.transaction() as session:
+            # Neither run holds the lease: ``dead`` crashed long ago, ``recent``
+            # is still inside the cutoff.
+            for run_id, started in ((dead, long_ago), (recent, utcnow())):
+                await CatalogSyncRunRepository.create(
+                    session, run_id=run_id, slug="public", started_at=started, forced=False
+                )
+                session.add(
+                    CatalogStagedEntry(
+                        sync_run_id=run_id,
+                        op="upsert",
+                        external_id="a.io",
+                        tags=[],
+                        created_at=started,
+                    )
+                )
+        assert await sync.sweep_abandoned_staging(older_than=utcnow() - timedelta(hours=1)) == 1
+        async with ctx.registry_db.session() as session:
+            dead_row = await session.get(CatalogSyncRun, dead)
+            recent_row = await session.get(CatalogSyncRun, recent)
+            staged = (await session.execute(select(CatalogStagedEntry.sync_run_id))).scalars()
+            assert set(staged) == {recent}
+        assert dead_row is not None
+        assert (dead_row.status, dead_row.error_code) == ("failed", "abandoned")
+        assert dead_row.finished_at is not None
+        assert recent_row is not None and recent_row.status == "running"
+
+
+async def test_sweep_prunes_old_runs_but_keeps_the_last_applied_one(
+    catalog_ctx: CtxFactory,
+) -> None:
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        sync = CatalogSourceSync(ctx)
+        await sync.register_sources()
+        for _ in range(3):
+            await sync.sync_source("public", stream=full("a.io"))
+        async with ctx.registry_db.transaction() as session:
+            await session.execute(
+                update(CatalogSyncRun).values(finished_at=utcnow() - timedelta(days=40))
+            )
+        await sync.sweep_abandoned_staging(
+            older_than=utcnow() - timedelta(hours=1),
+            runs_finished_before=utcnow() - timedelta(days=30),
+        )
+        last_applied = (await _source(ctx, "public")).last_applied_run_id
+        async with ctx.registry_db.session() as session:
+            kept = (await session.execute(select(CatalogSyncRun.id))).scalars().all()
+        assert kept == [last_applied]
+        # A later run is still ordered against the kept one.
+        assert (await sync.sync_source("public", stream=full("a.io"))).status == "applied"
 
 
 # ── re-resolve ────────────────────────────────────────────────────────────────
