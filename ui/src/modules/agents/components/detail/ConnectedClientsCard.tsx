@@ -81,6 +81,9 @@ export function ConnectedClientsCard({
 	const [revokeTarget, setRevokeTarget] = useState<OAuthGrantEntity | null>(null);
 
 	const grants = query.data?.pages.flatMap((p) => p.entities);
+	// The card renders only for an agent whose detail has already loaded, so a
+	// 404 here means "visible but not listable" (not owner or admin), never
+	// "deleted". Do not reuse this check where a 404 can mean the agent is gone.
 	const notListable = error instanceof AgentsApiError && error.status === 404;
 
 	return (
