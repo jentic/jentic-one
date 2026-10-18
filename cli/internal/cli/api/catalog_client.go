@@ -320,25 +320,61 @@ func (c *catalogClient) Promote(ctx context.Context, vendor, name, version, revi
 	return apiErrorFor(resp, err)
 }
 
-// Refresh requests a background sync of every catalog source the caller can
-// see (GET /catalog/sources, then POST /catalog/sources/{slug}:sync each) and
-// returns how many it requested. The syncs run server-side after the call.
-func (c *catalogClient) Refresh(ctx context.Context) (int, error) {
+// catalogRefreshFailure is one source whose :sync request failed.
+type catalogRefreshFailure struct {
+	Slug string
+	Err  error
+}
+
+// catalogRefreshResult is what one refresh requested, skipped and failed.
+type catalogRefreshResult struct {
+	Requested int
+	Skipped   int // disabled sources (enabled: false), never asked to sync
+	Failed    []catalogRefreshFailure
+}
+
+// Refresh requests a background sync of every enabled catalog source the caller
+// can see (GET /catalog/sources, then POST /catalog/sources/{slug}:sync each).
+// The syncs run server-side after the call. A disabled source is skipped (the
+// backend 404s its :sync), and one failed request does not stop the rest: the
+// failures come back in the result. The error is set only when the listing
+// fails or every request failed (then it is the first failure, so a 403 still
+// reads as a missing catalog:sync).
+func (c *catalogClient) Refresh(ctx context.Context) (catalogRefreshResult, error) {
+	var out catalogRefreshResult
 	list, err := c.sdk.ListCatalogSourcesWithResponse(ctx)
 	if err := apiErrorFor(list, err); err != nil {
-		return 0, err
+		return out, err
 	}
 	if list.JSON200 == nil {
-		return 0, fmt.Errorf("unexpected backend response (status %d)", list.StatusCode())
+		return out, fmt.Errorf("unexpected backend response (status %d)", list.StatusCode())
 	}
 	for _, src := range list.JSON200.Data {
+		if src.Enabled != nil && !*src.Enabled {
+			out.Skipped++
+			continue
+		}
 		// nil params: the CLI refresh never sets force.
 		resp, err := c.sdk.SyncCatalogSourceWithResponse(ctx, src.Slug, nil)
 		if err := apiErrorFor(resp, err); err != nil {
-			return 0, err
+			out.Failed = append(out.Failed, catalogRefreshFailure{Slug: src.Slug, Err: err})
+			continue
 		}
+		out.Requested++
 	}
-	return len(list.JSON200.Data), nil
+	if out.Requested == 0 && len(out.Failed) > 0 {
+		return out, out.Failed[0].Err
+	}
+	return out, nil
+}
+
+// failedSlugs lists the sources whose sync request failed, for display.
+func (r catalogRefreshResult) failedSlugs() []string {
+	slugs := make([]string, 0, len(r.Failed))
+	for _, f := range r.Failed {
+		slugs = append(slugs, f.Slug)
+	}
+	return slugs
 }
 
 // ── projections (generated -> CLI view, preserving json shape) ────────────────

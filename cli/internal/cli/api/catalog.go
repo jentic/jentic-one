@@ -450,7 +450,7 @@ func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	count, err := client.Refresh(ctx)
+	res, err := client.Refresh(ctx)
 	if err != nil {
 		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
@@ -458,16 +458,29 @@ func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 		}
 		return catalogListErr(err)
 	}
+	failed := res.failedSlugs()
+	msg := fmt.Sprintf("Catalog sync requested: %d sources", res.Requested)
+	if len(failed) > 0 {
+		msg += fmt.Sprintf(" (failed: %s)", strings.Join(failed, ", "))
+	}
 	if asJSON {
 		return cmdcore.WriteJSON(a.Out, ux.Result{
 			SchemaVersion: apiEnvelopeSchemaVersion,
 			Status:        ux.StatusUpdated,
 			Resource:      "catalog",
-			Message:       fmt.Sprintf("Catalog sync requested: %d sources", count),
-			Fields:        map[string]any{"sources": count},
+			Message:       msg,
+			Fields: map[string]any{
+				"sources": res.Requested,
+				"skipped": res.Skipped,
+				"failed":  failed,
+			},
 		})
 	}
-	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog sync requested: %d sources", count))
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Successf("Catalog sync requested: %d sources", res.Requested))
+	for _, f := range res.Failed {
+		fmt.Fprintln(a.Err, st.Warnf("sync request for %s failed: %v", f.Slug, f.Err))
+	}
 	return nil
 }
 

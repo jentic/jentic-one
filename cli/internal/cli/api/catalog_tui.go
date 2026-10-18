@@ -128,8 +128,9 @@ type catImportMsg struct {
 }
 
 type catRefreshMsg struct {
-	count int
-	err   error
+	count  int
+	failed []string
+	err    error
 }
 
 // ── commands ─────────────────────────────────────────────────────────────────
@@ -154,8 +155,8 @@ func (m *catalogBrowser) loadPage(reset bool) tea.Cmd {
 func (m *catalogBrowser) refreshCache() tea.Cmd {
 	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		count, err := client.Refresh(ctx)
-		return catRefreshMsg{count: count, err: err}
+		res, err := client.Refresh(ctx)
+		return catRefreshMsg{count: res.Requested, failed: res.failedSlugs(), err: err}
 	}
 }
 
@@ -245,7 +246,13 @@ func (m *catalogBrowser) onRefresh(msg catRefreshMsg) (tea.Model, tea.Cmd) {
 		m.status = m.st.Warnf("refresh failed: %v", msg.err)
 		return m, nil
 	}
-	m.status = m.st.Successf("sync requested · %d sources", msg.count)
+	if len(msg.failed) > 0 {
+		m.status = m.st.Warnf(
+			"sync requested · %d sources · failed: %s", msg.count, strings.Join(msg.failed, ", "),
+		)
+	} else {
+		m.status = m.st.Successf("sync requested · %d sources", msg.count)
+	}
 	// Reload the list; the syncs land in the background.
 	m.loading = true
 	return m, m.loadPage(true)

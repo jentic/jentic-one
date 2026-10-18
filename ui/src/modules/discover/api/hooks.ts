@@ -700,12 +700,18 @@ export function useRefreshCatalog(): UseRefreshCatalogResult {
 
 	const mutation = useMutation({
 		mutationFn: () => refreshCatalog(),
-		onSuccess: (res) => {
-			toast({
-				title: 'Catalog sync requested',
-				description: `Re-syncing ${res.length.toLocaleString()} catalog ${res.length === 1 ? 'source' : 'sources'} in the background.`,
-				variant: 'success',
-			});
+		onSuccess: ({ requested, failed }) => {
+			const n = requested.length;
+			const syncing = `Re-syncing ${n.toLocaleString()} catalog ${n === 1 ? 'source' : 'sources'} in the background.`;
+			toast(
+				failed.length === 0
+					? { title: 'Catalog sync requested', description: syncing, variant: 'success' }
+					: {
+							title: 'Catalog sync partly requested',
+							description: `${syncing} Couldn't sync ${failed.map((f) => f.slug).join(', ')}.`,
+							variant: 'warning',
+						},
+			);
 			queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
 			setTimeout(() => {
 				queryClient.invalidateQueries({ queryKey: discoverKeys.catalogAll });
