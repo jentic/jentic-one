@@ -32,7 +32,7 @@ from jentic_one.registry.services.catalog.entries import (
     curated_vendors_of,
     exclude_unowned,
 )
-from jentic_one.registry.services.catalog.sources import metrics
+from jentic_one.registry.services.catalog.source_ops import CatalogSourceOps
 from jentic_one.registry.services.catalog.sources import sync as sync_module
 from jentic_one.registry.services.catalog.sources.protocol import Removed, Upserted
 from jentic_one.registry.services.catalog.sources.scanner import (
@@ -40,6 +40,7 @@ from jentic_one.registry.services.catalog.sources.scanner import (
     wake_source_sync_scanner,
 )
 from jentic_one.registry.services.catalog.sources.sync import CatalogSourceSync
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.utils import utcnow
@@ -1104,6 +1105,56 @@ async def test_a_later_request_never_postpones_an_earlier_one(catalog_ctx: CtxFa
         assert abs((due - soon).total_seconds()) < 1
         async with ctx.registry_db.session() as session:
             assert await CatalogSourceRepository.next_sync_due_at(session) == due
+
+
+async def test_a_request_blocked_by_a_held_lease_waits_for_the_lease(
+    catalog_ctx: CtxFactory,
+) -> None:
+    """A due request on a leased source counts from the lease's end, not 1 Hz polling."""
+    async with catalog_ctx(sources=[git_source("public", trust="curated")]) as ctx:
+        await CatalogSourceSync(ctx).register_sources()
+        async with ctx.registry_db.transaction() as session:
+            assert await CatalogSourceRepository.claim_lease(
+                session, slug="public", owner="other-run", lease_seconds=600
+            )
+            await CatalogSourceRepository.request_sync(
+                session, slug="public", due_at=utcnow(), forced=False
+            )
+        async with ctx.registry_db.session() as session:
+            start = await CatalogSourceRepository.next_sync_due_at(session)
+        assert start is not None
+        assert (start - utcnow()).total_seconds() > 590
+        scanner = CatalogSourceSyncScanner(ctx, tick_seconds=60)
+        assert await scanner._next_wait() == 60
+
+
+async def test_sync_requests_within_the_min_interval_wait_for_it(
+    catalog_ctx: CtxFactory,
+) -> None:
+    """A :sync right after a run waits out ``min_sync_interval_seconds``; force does not."""
+    source = git_source("public", trust="curated", min_sync_interval_seconds=30)
+    async with catalog_ctx(sources=[source]) as ctx:
+        await CatalogSourceSync(ctx).register_sources()
+        started = utcnow()
+        async with ctx.registry_db.transaction() as session:
+            await CatalogSyncRunRepository.create(
+                session,
+                run_id=generate_ksuid("csyn"),
+                slug="public",
+                started_at=started,
+                forced=False,
+            )
+        ops = CatalogSourceOps(ctx)
+        perms = frozenset({ORG_ADMIN})
+        held = await ops.request_sync("public", permissions=perms, actor_id="usr_admin")
+        assert held.due_at is not None
+        assert abs((held.due_at - (started + timedelta(seconds=30))).total_seconds()) < 1
+        again = await ops.request_sync("public", permissions=perms, actor_id="usr_admin")
+        assert again.status == "coalesced" and again.due_at == held.due_at
+        forced = await ops.request_sync(
+            "public", permissions=perms, actor_id="usr_admin", force=True
+        )
+        assert forced.due_at is not None and forced.due_at < held.due_at
 
 
 async def test_wake_source_sync_scanner_cuts_the_wait_short(catalog_ctx: CtxFactory) -> None:

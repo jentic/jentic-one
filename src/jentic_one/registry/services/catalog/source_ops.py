@@ -141,17 +141,27 @@ class CatalogSourceOps:
     ) -> SourceSyncRequestView:
         """Ask for a sync of ``slug`` now.
 
-        ``force`` (``org:admin`` only) makes the run skip the mass-removal guard once.
+        A request joins one already pending. Within ``min_sync_interval_seconds``
+        of the last run's start it is due when that interval ends, so repeated
+        calls cost one run per interval. ``force`` (``org:admin`` only) skips
+        that wait and makes the run skip the mass-removal guard once.
         """
         if force and ORG_ADMIN not in permissions:
             raise ForcedSyncForbiddenError()
-        self._visible_source(slug, permissions=permissions, actor_id=actor_id)
+        cfg = self._visible_source(slug, permissions=permissions, actor_id=actor_id)
         await self._rows()
         async with self._ctx.registry_db.transaction() as session:
             before = await CatalogSourceRepository.get(session, slug)
             joined = before is not None and before.sync_due_at is not None
+            due_at: datetime | None = None
+            if not force and cfg.min_sync_interval_seconds > 0:
+                now = await CatalogSourceRepository.run_clock(session)
+                last = await CatalogSyncRunRepository.last_started_at(session, slug)
+                if last is not None:
+                    window_end = last + timedelta(seconds=cfg.min_sync_interval_seconds)
+                    due_at = window_end if window_end > now else None
             await CatalogSourceRepository.request_sync(
-                session, slug=slug, due_at=None, forced=force
+                session, slug=slug, due_at=due_at, forced=force
             )
             due = await CatalogSourceRepository.sync_due_at(session, slug)
         logger.info("catalog_source_sync_requested", source=slug, forced=force, actor_id=actor_id)

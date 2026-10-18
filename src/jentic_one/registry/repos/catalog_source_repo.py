@@ -41,6 +41,10 @@ def _now_plus(session: AsyncSession, seconds: int) -> Any:
     return utcnow() + timedelta(seconds=seconds)
 
 
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 class CatalogSourceRepository:
     """Data access for catalog source state — flush-only, never commits."""
 
@@ -262,12 +266,24 @@ class CatalogSourceRepository:
 
     @staticmethod
     async def next_sync_due_at(session: AsyncSession) -> datetime | None:
-        """The earliest pending requested-sync time across sources."""
-        result = await session.execute(select(func.min(CatalogSourceRow.sync_due_at)))
-        value: datetime | None = result.scalar_one_or_none()
-        if value is not None and value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value
+        """The earliest time a pending requested sync can start across sources.
+
+        A request on a source whose lease a run still holds cannot start before
+        the lease ends, so it counts from the lease's expiry, not its own due
+        time (the scanner then sleeps instead of re-polling a held lease).
+        """
+        result = await session.execute(
+            select(CatalogSourceRow.sync_due_at, CatalogSourceRow.sync_lease_until).where(
+                CatalogSourceRow.sync_due_at.is_not(None)
+            )
+        )
+        earliest: datetime | None = None
+        for due, lease_until in result.all():
+            start = _aware(due)
+            if lease_until is not None:
+                start = max(start, _aware(lease_until))
+            earliest = start if earliest is None else min(earliest, start)
+        return earliest
 
     @staticmethod
     async def promote_due_syncs(session: AsyncSession) -> list[str]:

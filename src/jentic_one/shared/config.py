@@ -2361,6 +2361,14 @@ class CatalogSourceConfig(BaseModel):
         default_factory=SourceEgressConfig,
         description="Extra egress for this source's requests only (added to ingest.egress).",
     )
+    min_sync_interval_seconds: int = Field(
+        default=10,
+        ge=0,
+        description=(
+            "A :sync within this many seconds of the source's last started sync is "
+            "due when the interval ends (a forced :sync is not held back)."
+        ),
+    )
     min_notify_interval_seconds: int = Field(
         default=60,
         ge=0,

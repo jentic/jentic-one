@@ -58,6 +58,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig, CatalogConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import canonical_credential_scope, credential_covers
 from jentic_one.shared.pagination import encode_catalog_cursor
@@ -437,6 +438,11 @@ async def test_forced_sync_overrides_a_suspect_empty_listing(
     assert await _live() == ["public/slack.com", "public/stripe.com"]
 
     # Upstream now lists nothing: the guard holds the removal of every row.
+    # (Age the first run past min_sync_interval_seconds so the re-sync is due now.)
+    async with web_context.registry_db.transaction() as session:
+        await session.execute(
+            update(CatalogSyncRun).values(started_at=utcnow() - timedelta(minutes=5))
+        )
     _LISTINGS[_MANIFEST_URL] = []
     _sync_now(admin_client)
     assert await _live() == ["public/slack.com", "public/stripe.com"]
