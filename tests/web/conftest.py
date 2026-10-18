@@ -79,9 +79,12 @@ def _force_nullpool() -> Iterator[None]:
     ``jentic_one.shared.db.session`` so all engines built during web tests get
     ``poolclass=NullPool``. This is what keeps the sync ``TestClient`` portal
     loop and the pytest-asyncio loop from ever sharing a pooled asyncpg
-    connection (see module docstring). Package-scoped: it applies to the
-    ``tests/web`` package only and is reverted when that package finishes, not
-    at session end, so it never leaks into tests collected after it.
+    connection (see module docstring). Package-scoped: pytest binds it to the
+    package of this conftest, ``tests/web``, sub-packages included, so it is set
+    up once per contiguous run of ``tests/web`` tests. It is reverted when that
+    run ends, not at session end, so it never leaks into tests that run after
+    it. If the command line splits ``tests/web`` around other tests, it is
+    reverted before them and applied again afterwards.
     """
     original = create_async_engine
 
