@@ -3734,15 +3734,24 @@ class ConnectSessionService:
             # dispatches to the standalone-credential handler for those.
             raise NoOpForFlowError("callback state missing session id")
 
-        # The callback has arrived: mark the session active now, so the TTL
-        # sweep (which expires a ``polling`` auth-code session once its
-        # callback state lapses) does not end it during a slow exchange.
+        # The callback has arrived: bump ``updated_at`` on a live session so
+        # the TTL sweep (which expires a ``polling`` auth-code session once
+        # its callback state lapses) is unlikely to pick it up during a slow
+        # exchange. This only narrows the window — a sweep that listed the id
+        # before this touch can still expire it. The guarantee is the
+        # ``from_states`` CAS in ``_write_finalise``: a session that ended
+        # meanwhile is never marked connected and its grant is rolled back.
+        # A terminal session is left untouched.
         async with self._ctx.control_db.transaction() as touch_session:
-            row = await ConnectSessionRepository.update_fields(
-                touch_session, state.session_id, updated_at=datetime.now(UTC)
-            )
+            row = await ConnectSessionRepository.get_by_id(touch_session, state.session_id)
             if row is None:
                 raise SessionNotFoundError(state.session_id)
+            if row.state in LIVE_STATES:
+                row = await ConnectSessionRepository.update_fields(
+                    touch_session, state.session_id, updated_at=datetime.now(UTC)
+                )
+                if row is None:  # pragma: no cover - fetched in this transaction
+                    raise SessionNotFoundError(state.session_id)
 
         # Callback-only handler concretely by construction — the state JWT
         # that carries ``sid`` is signed by the auth-code path, so any
