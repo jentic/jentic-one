@@ -194,6 +194,21 @@ async def validate_upstream_url_async(raw_url: str, egress: EgressConfig | None 
     return url
 
 
+def with_default_scheme(raw_url: str) -> str:
+    """``raw_url`` stripped, with a lower-case ``http``/``https`` scheme.
+
+    Schemes are case-insensitive (RFC 3986 §3.1), so ``HTTPS://host/x`` becomes
+    ``https://host/x``: a URL for ``host``, never a scheme-less one for a host
+    named ``https``. Anything without an ``http(s)://`` prefix gets ``https://``.
+    This is the URL :func:`validate_upstream_url` checks and returns.
+    """
+    url = raw_url.strip()
+    scheme, sep, rest = url.partition("://")
+    if sep and scheme.lower() in ("http", "https"):
+        return f"{scheme.lower()}://{rest}"
+    return f"https://{url}"
+
+
 def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[str, str | None]:
     """Run every check that needs no resolver; return ``(url, hostname_to_resolve)``.
 
@@ -203,10 +218,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     if not raw_url or not raw_url.strip():
         raise ValueError("upstream URL is required")
 
-    url = raw_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-
+    url = with_default_scheme(raw_url)
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):

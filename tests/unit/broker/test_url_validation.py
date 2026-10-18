@@ -23,6 +23,24 @@ def test_adds_https_scheme() -> None:
     assert validate_upstream_url("api.example.com/v1") == "https://api.example.com/v1"
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("HTTPS://api.example.com/v1", "https://api.example.com/v1"),
+        ("HTTP://api.example.com/v1", "http://api.example.com/v1"),
+        ("Https://api.example.com/v1", "https://api.example.com/v1"),
+    ],
+)
+def test_scheme_is_case_insensitive(raw: str, expected: str) -> None:
+    """An upper-case scheme names the same host, never a host called ``https``."""
+    assert validate_upstream_url(raw) == expected
+
+
+def test_upper_case_scheme_still_hits_the_ip_literal_guard() -> None:
+    with pytest.raises(ValueError, match="blocked address range"):
+        validate_upstream_url("HTTP://169.254.169.254/latest/meta-data/")
+
+
 def test_rejects_empty_string() -> None:
     with pytest.raises(ValueError, match="upstream URL is required"):
         validate_upstream_url("")
