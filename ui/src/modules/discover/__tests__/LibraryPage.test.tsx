@@ -869,13 +869,16 @@ describe('LibraryPage', () => {
 		expect(screen.queryByTestId('catalog-status-pending')).not.toBeInTheDocument();
 	});
 
-	it('refreshes the catalog via POST /catalog:refresh', async () => {
+	it('refreshes the catalog by requesting a sync of each visible source', async () => {
 		const user = userEvent.setup();
-		let refreshHit = false;
+		const synced: string[] = [];
 		worker.use(
-			http.post('/catalog:refresh', () => {
-				refreshHit = true;
-				return HttpResponse.json({ count: 3, status: 'refreshed' });
+			http.post('/catalog/sources/:action', ({ params }) => {
+				synced.push(String(params.action));
+				return HttpResponse.json(
+					{ slug: 'public', status: 'queued', forced: false, due_at: null },
+					{ status: 202 },
+				);
 			}),
 		);
 
@@ -889,8 +892,8 @@ describe('LibraryPage', () => {
 
 		await user.click(screen.getByTestId('discover-refresh'));
 
-		await waitFor(() => expect(refreshHit).toBe(true));
-		expect(await screen.findByText('Catalog refreshed')).toBeInTheDocument();
+		await waitFor(() => expect(synced).toEqual(['public:sync']));
+		expect(await screen.findByText('Catalog sync requested')).toBeInTheDocument();
 	});
 
 	it('says which sources a partial refresh missed', async () => {

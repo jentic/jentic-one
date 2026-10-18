@@ -9,8 +9,8 @@ import { authHeaders } from './helpers';
  * a controllable fixture upstream (scripts/flow3_upstream_fixture.py) that the
  * ui-e2e-realbackend CI job launches on 127.0.0.1:8099 before the app.
  *
- *   refresh manifest → import the catalog API → assert not-outdated
- *     → bump the upstream spec → POST /catalog:refresh (fires the sweep)
+ *   sync the public source → import the catalog API → assert not-outdated
+ *     → bump the upstream spec → POST /catalog/sources/public:sync (fires the sweep)
  *     → assert GET /apis update_available:true, GET /catalog?outdated_only outdated_count:1,
  *       and an actionable catalog.update_available event
  *     → re-import (adopts the upstream) → assert update_available:false, outdated_count:0,
@@ -55,6 +55,40 @@ async function waitForJob(request: APIRequestContext, jobId: string): Promise<vo
 		.toMatch(/succeeded|completed|done/);
 }
 
+/**
+ * Request a sync of the `public` source and wait for it to finish. The sync
+ * runs in the background, so poll `GET /catalog/sources` until nothing is
+ * pending and `last_sync_at` moved past its value before the request.
+ */
+async function syncPublicSource(request: APIRequestContext): Promise<void> {
+	const before = await publicSource(request);
+	const res = await request.post('/catalog/sources/public:sync', { headers: authHeaders() });
+	expect(res.status(), `public:sync failed: ${await res.text()}`).toBe(202);
+	await expect
+		.poll(
+			async () => {
+				const now = await publicSource(request);
+				return !now.sync_pending && now.last_sync_at !== before.last_sync_at;
+			},
+			{
+				message: 'the requested public source sync never finished',
+				timeout: 60_000,
+				intervals: [250, 500, 1000, 2000],
+			},
+		)
+		.toBe(true);
+}
+
+/** The `public` source's row from GET /catalog/sources. */
+async function publicSource(request: APIRequestContext): Promise<Record<string, unknown>> {
+	const res = await request.get('/catalog/sources', { headers: authHeaders() });
+	expect(res.ok(), `GET /catalog/sources failed: ${res.status()}`).toBeTruthy();
+	const rows = (await res.json()).data as Array<Record<string, unknown>>;
+	const row = rows.find((r) => r.slug === 'public');
+	expect(row, 'no public catalog source').toBeTruthy();
+	return row as Record<string, unknown>;
+}
+
 /** The single registered API's row from GET /apis (the fixture seeds exactly one). */
 async function fixtureApi(request: APIRequestContext): Promise<Record<string, unknown>> {
 	const res = await request.get('/apis', { headers: authHeaders() });
@@ -77,11 +111,7 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	);
 
 	// 1. Load the fixture manifest so `flow3-e2e.test` becomes an importable catalog entry.
-	const refresh1 = await request.post('/catalog:refresh', { headers: authHeaders() });
-	expect(
-		refresh1.ok(),
-		`catalog:refresh failed: ${refresh1.status()} ${await refresh1.text()}`,
-	).toBeTruthy();
+	await syncPublicSource(request);
 
 	// 2. Import the catalog API (async job).
 	const imp1 = await request.post(IMPORT_PATH, { headers: authHeaders() });
@@ -98,9 +128,8 @@ test('flow-3 loop: import → upstream change → update_available → re-import
 	const bump = await request.post(`${UPSTREAM}/control/bump`);
 	expect(bump.ok(), 'fixture bump failed').toBeTruthy();
 
-	// 4. Trigger the update-notify sweep (also refreshes the manifest).
-	const refresh2 = await request.post('/catalog:refresh', { headers: authHeaders() });
-	expect(refresh2.ok(), `catalog:refresh (sweep) failed: ${await refresh2.text()}`).toBeTruthy();
+	// 4. Trigger the update-notify sweep (a requested sync fires it once it runs).
+	await syncPublicSource(request);
 
 	// 5. The sweep must now flag the API across the per-API and catalog surfaces.
 	await expect

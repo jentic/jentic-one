@@ -1055,7 +1055,7 @@
               "name": "refresh",
               "path": "jentic catalog refresh",
               "use": "refresh",
-              "short": "Refresh the catalog manifest from upstream (requires org:admin)",
+              "short": "Re-sync every visible catalog source from upstream (requires catalog:sync)",
               "flags": [
                 {
                   "name": "context",

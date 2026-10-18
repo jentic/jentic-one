@@ -26,8 +26,11 @@ func registryFakeServer(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(sampleReference))
 		case p == "/inspect":
 			_, _ = w.Write([]byte(`{"method":"GET","path":"/v1/charges","parameters":[]}`))
-		case p == "/catalog:refresh":
-			_, _ = w.Write([]byte(`{"count":3,"status":"ok"}`))
+		case p == "/catalog/sources":
+			_, _ = w.Write([]byte(`{"data":[{"slug":"public","kind":"git-manifest","visibility":"public","status":"ok","last_sync_at":null,"live_entries":3,"consecutive_failures":0,"sync_pending":false}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(p, ":sync"):
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"slug":"public","status":"queued","forced":false,"due_at":null}`))
 		case p == "/apis":
 			_, _ = w.Write([]byte(`{"data":[{"api":{"vendor":"stripe.com","name":"api","version":"v1"},"current_revision_id":"r1","operation_count":1}],"has_more":false,"next_cursor":""}`))
 		case r.Method == http.MethodDelete && strings.HasPrefix(p, "/apis/"):

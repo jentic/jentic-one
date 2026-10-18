@@ -370,6 +370,10 @@
           "title": "Burst",
           "type": "integer"
         },
+        "egress": {
+          "$ref": "#/$defs/SourceEgressConfig",
+          "description": "Extra egress for this source's requests only (added to ingest.egress)."
+        },
         "enabled": {
           "default": true,
           "description": "Disabled sources are never synced (kill switch for this source).",
@@ -399,7 +403,7 @@
         },
         "max_age_seconds": {
           "default": 86400,
-          "description": "Background sync interval. 0 disables automatic sync and background egress for this source; a manual refresh still syncs it.",
+          "description": "Background sync interval. 0 disables automatic sync and background egress for this source; a requested sync (POST /catalog/sources/{slug}:sync) still syncs it.",
           "minimum": 0,
           "title": "Max Age Seconds",
           "type": "integer"
@@ -411,6 +415,13 @@
           "minimum": 0.0,
           "title": "Max Removal Ratio",
           "type": "number"
+        },
+        "min_notify_interval_seconds": {
+          "default": 60,
+          "description": "A :notify within this many seconds of the source's last started sync joins it instead of asking for another.",
+          "minimum": 0,
+          "title": "Min Notify Interval Seconds",
+          "type": "integer"
         },
         "min_removal_count": {
           "default": 5,
@@ -1889,7 +1900,7 @@
     },
     "SourceAuthConfig": {
       "additionalProperties": false,
-      "description": "How a catalog source authenticates its requests.\n\nOnly ``none`` is built in; other resolver types are registered by extensions.\nThe secret itself never appears here: ``env`` names the variable holding it.",
+      "description": "How a catalog source authenticates its requests.\n\nBuilt in: ``none``, ``bearer_from_env`` (``Authorization: Bearer <value of env>``)\nand ``header_from_env`` (``<header>: <value of env>``); extensions register\nmore. The secret itself never appears here: ``env`` names the variable\nholding it, read on every request.",
       "properties": {
         "env": {
           "anyOf": [
@@ -1901,7 +1912,7 @@
             }
           ],
           "default": null,
-          "description": "Name of the environment variable holding the secret, for a credentialed resolver to read; ignored by none.",
+          "description": "Environment variable holding the secret (never the secret).",
           "title": "Env"
         },
         "header": {
@@ -1914,7 +1925,7 @@
             }
           ],
           "default": null,
-          "description": "Request header a credentialed resolver sends the secret in; ignored by none.",
+          "description": "Header name the secret is sent in (header_from_env only).",
           "title": "Header"
         },
         "type": {
@@ -1925,6 +1936,39 @@
         }
       },
       "title": "SourceAuthConfig",
+      "type": "object"
+    },
+    "SourceEgressConfig": {
+      "additionalProperties": false,
+      "description": "Extra egress one catalog source's own client may use.\n\nAdded to ``ingest.egress`` for this source's requests only; no other source\nand no other outbound client gets it. A range or domain that would reach a\ncloud-metadata endpoint is refused at load.",
+      "properties": {
+        "allowed_internal_domains": {
+          "description": "Domain suffixes whose private addresses this source may reach. A cloud-metadata host, or a suffix covering one, is refused.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Internal Domains",
+          "type": "array"
+        },
+        "allowed_private_subnets": {
+          "description": "Private CIDRs this source may reach (a resolved name must also match allowed_internal_domains). A range containing a cloud-metadata address (e.g. 169.254.169.254) is refused.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "ipv4network",
+                "type": "string"
+              },
+              {
+                "format": "ipv6network",
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Allowed Private Subnets",
+          "type": "array"
+        }
+      },
+      "title": "SourceEgressConfig",
       "type": "object"
     },
     "SourceReadersConfig": {

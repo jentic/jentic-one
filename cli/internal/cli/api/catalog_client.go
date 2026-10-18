@@ -320,16 +320,25 @@ func (c *catalogClient) Promote(ctx context.Context, vendor, name, version, revi
 	return apiErrorFor(resp, err)
 }
 
+// Refresh requests a background sync of every catalog source the caller can
+// see (GET /catalog/sources, then POST /catalog/sources/{slug}:sync each) and
+// returns how many it requested. The syncs run server-side after the call.
 func (c *catalogClient) Refresh(ctx context.Context) (int, error) {
-	// nil params: the CLI refresh never sets force.
-	resp, err := c.sdk.RefreshCatalogWithResponse(ctx, nil)
-	if err := apiErrorFor(resp, err); err != nil {
+	list, err := c.sdk.ListCatalogSourcesWithResponse(ctx)
+	if err := apiErrorFor(list, err); err != nil {
 		return 0, err
 	}
-	if resp.JSON200 == nil {
-		return 0, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
+	if list.JSON200 == nil {
+		return 0, fmt.Errorf("unexpected backend response (status %d)", list.StatusCode())
 	}
-	return resp.JSON200.Count, nil
+	for _, src := range list.JSON200.Data {
+		// nil params: the CLI refresh never sets force.
+		resp, err := c.sdk.SyncCatalogSourceWithResponse(ctx, src.Slug, nil)
+		if err := apiErrorFor(resp, err); err != nil {
+			return 0, err
+		}
+	}
+	return len(list.JSON200.Data), nil
 }
 
 // ── projections (generated -> CLI view, preserving json shape) ────────────────

@@ -239,14 +239,14 @@ func (m *catalogBrowser) onRefresh(msg catRefreshMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		var he *HTTPError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
-			m.status = m.st.Warnf("refresh needs org:admin")
+			m.status = m.st.Warnf("refresh needs catalog:sync")
 			return m, nil
 		}
 		m.status = m.st.Warnf("refresh failed: %v", msg.err)
 		return m, nil
 	}
-	m.status = m.st.Successf("cache updated · %d entries", msg.count)
-	// Reload the list from the freshly-refreshed snapshot.
+	m.status = m.st.Successf("sync requested · %d sources", msg.count)
+	// Reload the list; the syncs land in the background.
 	m.loading = true
 	return m, m.loadPage(true)
 }

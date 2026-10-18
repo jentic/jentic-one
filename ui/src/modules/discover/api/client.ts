@@ -15,7 +15,7 @@ import {
 	ApiError,
 	CatalogService,
 	type ApiImportResponse,
-	type CatalogRefreshResponse,
+	type CatalogSourceSyncResponse,
 	type OperationPreviewListResponse,
 } from '@/shared/api';
 import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
@@ -174,14 +174,17 @@ export async function importCatalogEntry(entryId: string): Promise<ApiImportResp
 }
 
 /**
- * Force the backend to re-sync its catalog sources (`POST /catalog:refresh`,
- * org:admin). Unlike a client refetch this resets their freshness —
- * `oldest_source_sync_age_seconds` returns to ~0 on the next `GET /catalog`,
- * which is what makes the "updated …" line move.
+ * Ask the backend to re-sync every catalog source the caller can see
+ * (`GET /catalog/sources`, then `POST /catalog/sources/{slug}:sync` each,
+ * `catalog:sync`). The syncs run in the background: each call only queues one
+ * (or joins one already pending), so the feed catches up a moment later.
  */
-export async function refreshCatalog(): Promise<CatalogRefreshResponse> {
+export async function refreshCatalog(): Promise<CatalogSourceSyncResponse[]> {
 	try {
-		return await CatalogService.refreshCatalog({});
+		const { data } = await CatalogService.listCatalogSources();
+		return await Promise.all(
+			data.map((source) => CatalogService.syncCatalogSource({ slug: source.slug })),
+		);
 	} catch (error) {
 		throw toDiscoverError(error, 'Failed to refresh the catalog.');
 	}

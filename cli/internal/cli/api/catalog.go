@@ -145,7 +145,7 @@ func newCatalogRefreshCmd(app *app) *cobra.Command {
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Refresh the catalog manifest from upstream (requires org:admin)",
+		Short: "Re-sync every visible catalog source from upstream (requires catalog:sync)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.catalogRefresh(cmd.Context(), cmdcore.JSONOrPretty(cmd, jsonFlag))
@@ -454,7 +454,7 @@ func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 	if err != nil {
 		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("refresh requires org:admin: %s", he.Detail())
+			return fmt.Errorf("refresh requires catalog:sync: %s", he.Detail())
 		}
 		return catalogListErr(err)
 	}
@@ -463,11 +463,11 @@ func (a *app) catalogRefresh(ctx context.Context, asJSON bool) error {
 			SchemaVersion: apiEnvelopeSchemaVersion,
 			Status:        ux.StatusUpdated,
 			Resource:      "catalog",
-			Message:       fmt.Sprintf("Catalog refreshed: %d entries", count),
-			Fields:        map[string]any{"count": count},
+			Message:       fmt.Sprintf("Catalog sync requested: %d sources", count),
+			Fields:        map[string]any{"sources": count},
 		})
 	}
-	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog refreshed: %d entries", count))
+	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog sync requested: %d sources", count))
 	return nil
 }
 

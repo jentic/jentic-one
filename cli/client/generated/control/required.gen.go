@@ -84,8 +84,19 @@ func (CatalogEntryResponse) RequiredFields() []string {
 func (CatalogListResponse) RequiredFields() []string {
 	return []string{"catalog_total", "data", "registered_count"}
 }
-func (CatalogRefreshResponse) RequiredFields() []string       { return []string{"count"} }
-func (CatalogRefreshSourceResponse) RequiredFields() []string { return []string{"slug", "status"} }
+func (CatalogSourceListResponse) RequiredFields() []string { return []string{"data"} }
+func (CatalogSourceReadersResponse) RequiredFields() []string {
+	return []string{"actor_ids", "permissions"}
+}
+func (CatalogSourceResponse) RequiredFields() []string {
+	return []string{"consecutive_failures", "kind", "last_sync_at", "live_entries", "slug", "status", "sync_pending", "visibility"}
+}
+func (CatalogSourceSyncResponse) RequiredFields() []string {
+	return []string{"due_at", "forced", "slug", "status"}
+}
+func (CatalogSourceWarningResponse) RequiredFields() []string {
+	return []string{"catalog_api_id", "code", "external_id"}
+}
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }

@@ -28,10 +28,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **170**._
+_Total endpoints: **172**._
 
 
-## Agent-facing (typically an agent) (32)
+## Agent-facing (typically an agent) (33)
 
 
 ### `apis`
@@ -65,6 +65,7 @@ _Total endpoints: **170**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/catalog` | `capabilities:read` | agent | List Catalog |
+| GET | `/catalog/sources` | `capabilities:read` | agent | List Catalog Sources |
 | GET | `/catalog/{entry_id}` | `capabilities:read` | agent | Get Catalog Entry |
 | GET | `/catalog/{entry_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
 | POST | `/catalog/{entry_id}:import` | `catalog:import` | agent | Import Catalog Entry |
@@ -203,7 +204,7 @@ _Total endpoints: **170**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (79)
+## Any authenticated actor (80)
 
 
 ### `actors`
@@ -252,11 +253,12 @@ _Total endpoints: **170**._
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive an API revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
 
-### `catalog:refresh`
+### `catalog`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/catalog:refresh` | `catalog:sync` | any | Refresh Catalog |
+| POST | `/catalog/sources/{slug}:notify` | `catalog:sync` | any | Notify Catalog Source |
+| POST | `/catalog/sources/{slug}:sync` | `catalog:sync` | any | Sync Catalog Source |
 
 ### `connect-sessions`
 

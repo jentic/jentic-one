@@ -495,6 +495,9 @@ type CatalogSourceConfig struct {
 	// Token bucket capacity; only used with requests_per_second.
 	Burst int `json:"burst,omitempty,omitzero" yaml:"burst,omitempty" mapstructure:"burst,omitempty"`
 
+	// Extra egress for this source's requests only (added to ingest.egress).
+	Egress *SourceEgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
+
 	// Disabled sources are never synced (kill switch for this source).
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
@@ -511,11 +514,16 @@ type CatalogSourceConfig struct {
 	Kind string `json:"kind" yaml:"kind" mapstructure:"kind"`
 
 	// Background sync interval. 0 disables automatic sync and background egress for
-	// this source; a manual refresh still syncs it.
+	// this source; a requested sync (POST /catalog/sources/{slug}:sync) still syncs
+	// it.
 	MaxAgeSeconds int `json:"max_age_seconds,omitempty,omitzero" yaml:"max_age_seconds,omitempty" mapstructure:"max_age_seconds,omitempty"`
 
 	// Mass-removal guard: a sync removing more than this share is held.
 	MaxRemovalRatio float64 `json:"max_removal_ratio,omitempty,omitzero" yaml:"max_removal_ratio,omitempty" mapstructure:"max_removal_ratio,omitempty"`
+
+	// A :notify within this many seconds of the source's last started sync joins it
+	// instead of asking for another.
+	MinNotifyIntervalSeconds int `json:"min_notify_interval_seconds,omitempty,omitzero" yaml:"min_notify_interval_seconds,omitempty" mapstructure:"min_notify_interval_seconds,omitempty"`
 
 	// The removal ratio only trips above this many removals.
 	MinRemovalCount int `json:"min_removal_count,omitempty,omitzero" yaml:"min_removal_count,omitempty" mapstructure:"min_removal_count,omitempty"`
@@ -707,6 +715,12 @@ func (j *CatalogSourceConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 0 > plain.MaxRemovalRatio {
 		return fmt.Errorf("field %s: must be >= %v", "max_removal_ratio", 0)
+	}
+	if v, ok := raw["min_notify_interval_seconds"]; !ok || v == nil {
+		plain.MinNotifyIntervalSeconds = 60
+	}
+	if 0 > plain.MinNotifyIntervalSeconds {
+		return fmt.Errorf("field %s: must be >= %v", "min_notify_interval_seconds", 0)
 	}
 	if v, ok := raw["min_removal_count"]; !ok || v == nil {
 		plain.MinRemovalCount = 5
@@ -2936,14 +2950,16 @@ func (j *SigningKeyConfig) UnmarshalJSON(value []byte) error {
 
 // How a catalog source authenticates its requests.
 //
-// Only “none“ is built in; other resolver types are registered by extensions.
-// The secret itself never appears here: “env“ names the variable holding it.
+// Built in: “none“, “bearer_from_env“ (“Authorization: Bearer <value of
+// env>“)
+// and “header_from_env“ (“<header>: <value of env>“); extensions register
+// more. The secret itself never appears here: “env“ names the variable
+// holding it, read on every request.
 type SourceAuthConfig struct {
-	// Name of the environment variable holding the secret, for a credentialed
-	// resolver to read; ignored by none.
+	// Environment variable holding the secret (never the secret).
 	Env interface{} `json:"env,omitempty,omitzero" yaml:"env,omitempty" mapstructure:"env,omitempty"`
 
-	// Request header a credentialed resolver sends the secret in; ignored by none.
+	// Header name the secret is sent in (header_from_env only).
 	Header interface{} `json:"header,omitempty,omitzero" yaml:"header,omitempty" mapstructure:"header,omitempty"`
 
 	// Auth resolver type; it must be registered. Only none is built in; startup fails
@@ -2971,6 +2987,22 @@ func (j *SourceAuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	*j = SourceAuthConfig(plain)
 	return nil
+}
+
+// Extra egress one catalog source's own client may use.
+//
+// Added to “ingest.egress“ for this source's requests only; no other source
+// and no other outbound client gets it. A range or domain that would reach a
+// cloud-metadata endpoint is refused at load.
+type SourceEgressConfig struct {
+	// Domain suffixes whose private addresses this source may reach. A cloud-metadata
+	// host, or a suffix covering one, is refused.
+	AllowedInternalDomains []string `json:"allowed_internal_domains,omitempty,omitzero" yaml:"allowed_internal_domains,omitempty" mapstructure:"allowed_internal_domains,omitempty"`
+
+	// Private CIDRs this source may reach (a resolved name must also match
+	// allowed_internal_domains). A range containing a cloud-metadata address (e.g.
+	// 169.254.169.254) is refused.
+	AllowedPrivateSubnets []interface{} `json:"allowed_private_subnets,omitempty,omitzero" yaml:"allowed_private_subnets,omitempty" mapstructure:"allowed_private_subnets,omitempty"`
 }
 
 // Reader ACL of a “restricted“ catalog source (any one match admits).
@@ -3544,15 +3576,11 @@ type VendorIdentityProbeConfig struct {
 type VendorIdentityProbeConfigMethod string
 
 const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
 
 type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
 const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
 
 // A single OAuth scope exposed by the vendor.
@@ -3601,7 +3629,13 @@ func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+type VendorScopeConfigClassification string
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
@@ -3657,6 +3691,28 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 		plain.Method = "GET"
 	}
 	*j = VendorIdentityProbeConfig(plain)
+	return nil
+}
+
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3751,24 +3807,9 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 type CatalogSourceConfigReaders_0 = SourceReadersConfig

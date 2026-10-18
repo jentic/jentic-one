@@ -558,8 +558,8 @@ func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 	if m.refreshing {
 		t.Error("refreshing flag not cleared")
 	}
-	if !strings.Contains(m.status, "org:admin") {
-		t.Errorf("status should hint org:admin, got %q", m.status)
+	if !strings.Contains(m.status, "catalog:sync") {
+		t.Errorf("status should hint catalog:sync, got %q", m.status)
 	}
 }
 
