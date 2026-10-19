@@ -37,14 +37,12 @@ import { cn } from '@/shared/lib/utils';
 /** The reveal's timings and curve, in one place. */
 export const REVEAL_MOTION = {
 	/** Height, opening. */
-	openMs: 240,
+	openMs: 200,
 	/** Height, closing — a little quicker than it came. */
-	closeMs: 180,
+	closeMs: 160,
 	/** How far into the height the content starts to fade and settle in. */
-	contentDelayMs: 40,
-	/** Material "standard": eases in briefly, then settles softly — an even
-	 * velocity, without the hard first-frame jump of a pure ease-out. */
-	ease: 'cubic-bezier(0.4, 0, 0.2, 1)',
+	contentDelayMs: 30,
+	ease: 'cubic-bezier(0.2, 0, 0, 1)',
 } as const;
 
 /** `mounting` and `leaving` hold still for two frames before the height
